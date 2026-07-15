@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 func TestOpenAPIJSON_Unregistered(t *testing.T) {

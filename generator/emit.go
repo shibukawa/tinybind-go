@@ -36,7 +36,7 @@ func Emit(plan *PackagePlan) ([]byte, error) {
 		b.WriteString("\t\"regexp\"\n")
 	}
 	b.WriteString("\t\"net/http\"\n\n")
-	b.WriteString("\t\"github.com/shibukawayoshiki/httpbind-go\"\n")
+	b.WriteString("\t\"github.com/shibukawa/httpbind-go\"\n")
 	b.WriteString(")\n\n")
 	b.WriteString("type jsonRaw = json.RawMessage\n\n")
 

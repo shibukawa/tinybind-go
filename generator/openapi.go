@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shibukawayoshiki/httpbind-go/parser"
+	"github.com/shibukawa/httpbind-go/parser"
 )
 
 // Document is an OpenAPI 3.1 document represented as ordered JSON-friendly maps.

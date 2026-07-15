@@ -36,7 +36,7 @@ type FieldPlan struct {
 }
 
 // httpbinderImportPath is the module path of this library (for recognizing File).
-const httpbinderImportPath = "github.com/shibukawayoshiki/httpbind-go"
+const httpbinderImportPath = "github.com/shibukawa/httpbind-go"
 
 // TypePlan is the mapping plan for one struct type.
 type TypePlan struct {

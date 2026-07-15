@@ -3,7 +3,7 @@ package httpbinder_test
 import (
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 func TestCheckEmail(t *testing.T) {

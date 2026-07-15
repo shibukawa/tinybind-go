@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/generator"
 )
 
 func TestAnalyzeAndEmit_NoReflect(t *testing.T) {
 	dir := t.TempDir()
 	src := `package sample
 
-import "github.com/shibukawayoshiki/httpbind-go"
+import "github.com/shibukawa/httpbind-go"
 
 type Req struct {
 	Name  string

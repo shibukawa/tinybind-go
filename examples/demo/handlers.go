@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 // in-memory toy store for the demo

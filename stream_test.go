@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 type evt struct {

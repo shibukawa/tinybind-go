@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 type jsonRaw = json.RawMessage

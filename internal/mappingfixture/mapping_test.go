@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/generator"
-	"github.com/shibukawayoshiki/httpbind-go/internal/mappingfixture"
+	"github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/internal/mappingfixture"
 )
 
 func TestBind_JSONAndMetadata(t *testing.T) {

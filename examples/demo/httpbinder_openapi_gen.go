@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/shibukawayoshiki/httpbind-go"
+import httpbinder "github.com/shibukawa/httpbind-go"
 
 func init() {
 	httpbinder.RegisterOpenAPI([]byte(openapiJSON), []byte(openapiYAML))

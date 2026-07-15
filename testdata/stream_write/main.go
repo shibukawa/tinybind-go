@@ -3,7 +3,7 @@ package app
 import (
 	"net/http"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 type ChatRequest struct {

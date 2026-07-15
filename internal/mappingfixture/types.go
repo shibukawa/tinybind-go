@@ -1,6 +1,6 @@
 package mappingfixture
 
-import "github.com/shibukawayoshiki/httpbind-go"
+import "github.com/shibukawa/httpbind-go"
 
 // CreateUserRequest exercises default input, path, and header sources.
 type CreateUserRequest struct {

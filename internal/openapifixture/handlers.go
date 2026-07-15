@@ -3,7 +3,7 @@ package openapifixture
 import (
 	"net/http"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 func createUserHandler(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 func TestSwaggerUI_ServesHTML(t *testing.T) {

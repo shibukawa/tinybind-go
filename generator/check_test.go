@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/generator"
 )
 
 func TestParseCheckTag_CoreRules(t *testing.T) {

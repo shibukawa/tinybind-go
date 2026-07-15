@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/generator"
-	_ "github.com/shibukawayoshiki/httpbind-go/internal/openapifixture"
+	"github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/generator"
+	_ "github.com/shibukawa/httpbind-go/internal/openapifixture"
 )
 
 func main() {

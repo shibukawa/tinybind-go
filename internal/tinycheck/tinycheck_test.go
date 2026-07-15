@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/internal/tinycheck"
+	"github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/internal/tinycheck"
 )
 
 func TestBindWrite(t *testing.T) {

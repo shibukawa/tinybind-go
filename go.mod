@@ -1,3 +1,3 @@
-module github.com/shibukawayoshiki/httpbind-go
+module github.com/shibukawa/httpbind-go
 
 go 1.25

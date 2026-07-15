@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/shibukawayoshiki/httpbind-go/parser"
+	"github.com/shibukawa/httpbind-go/parser"
 )
 
 func main() {

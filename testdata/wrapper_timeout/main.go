@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 type JobRequest struct{}

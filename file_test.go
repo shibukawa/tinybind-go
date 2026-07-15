@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	httpbinder "github.com/shibukawa/httpbind-go"
 )
 
 func multipartRequest(t *testing.T, fields map[string]string, files map[string]struct {

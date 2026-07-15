@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/shibukawayoshiki/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/generator"
 )
 
 func main() {

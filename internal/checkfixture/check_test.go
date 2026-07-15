@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/generator"
-	"github.com/shibukawayoshiki/httpbind-go/internal/checkfixture"
+	httpbinder "github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/internal/checkfixture"
 )
 
 func mustFieldErr(t *testing.T, err error, field, substr string) {

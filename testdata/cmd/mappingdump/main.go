@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/internal/mappingfixture"
+	"github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/internal/mappingfixture"
 )
 
 func main() {

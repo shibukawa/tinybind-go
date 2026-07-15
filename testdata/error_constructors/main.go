@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 type UserRequest struct {

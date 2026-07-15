@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go/generator"
+	"github.com/shibukawa/httpbind-go/generator"
 )
 
 func TestBuildOpenAPI_FromFixtureGoSource(t *testing.T) {
@@ -123,7 +123,7 @@ func TestBuildOpenAPI_YAMLRequiredList(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawayoshiki/httpbind-go"
+	"github.com/shibukawa/httpbind-go"
 )
 
 type Req struct {

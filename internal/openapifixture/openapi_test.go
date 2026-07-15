@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawayoshiki/httpbind-go"
-	"github.com/shibukawayoshiki/httpbind-go/generator"
-	_ "github.com/shibukawayoshiki/httpbind-go/internal/openapifixture" // register generated OpenAPI
+	"github.com/shibukawa/httpbind-go"
+	"github.com/shibukawa/httpbind-go/generator"
+	_ "github.com/shibukawa/httpbind-go/internal/openapifixture" // register generated OpenAPI
 )
 
 func TestOpenAPIServe_JSONAndYAML(t *testing.T) {
