@@ -16,7 +16,7 @@ import (
 // Symbol identity for route registration and httpbinder calls is resolved with
 // go/types (host-side only); see rule:go-types-symbol-identity.
 func ParsePackage(dir string) (*Result, error) {
-	return ParsePackageWithConfig(dir, Config{})
+	return ParsePackageWithConfig(dir, DefaultConfig())
 }
 
 // ParsePackageWithConfig analyzes dir with customizable discovery symbols.
@@ -25,7 +25,7 @@ func ParsePackageWithConfig(dir string, config Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseLoadedPackage(pkg, normalizedConfig(config))
+	return parseLoadedPackage(pkg, config)
 }
 
 // ParsePackageFiles is like ParsePackage but accepts an explicit file list
@@ -60,7 +60,12 @@ func parseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
 // CheckPackage runs analysis and returns diagnostics for undiscoverable route candidates.
 // Non-empty diagnostics mean OpenAPI would omit incomplete candidates.
 func CheckPackage(dir string) ([]Diagnostic, error) {
-	res, err := ParsePackage(dir)
+	return CheckPackageWithConfig(dir, DefaultConfig())
+}
+
+// CheckPackageWithConfig runs diagnostics with an authoritative symbol config.
+func CheckPackageWithConfig(dir string, config Config) ([]Diagnostic, error) {
+	res, err := ParsePackageWithConfig(dir, config)
 	if err != nil {
 		return nil, err
 	}

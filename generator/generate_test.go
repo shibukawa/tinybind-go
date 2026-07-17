@@ -89,7 +89,9 @@ type Resp struct {
 		}
 	}
 
-	path, err := generator.New(generator.Options{GenerateAll: true}).Generate(dir, dir, "out_gen.go")
+	opts := generator.DefaultOptions()
+	opts.GenerateAll = true
+	path, err := generator.New(opts).Generate(dir, dir, "out_gen.go")
 	if err != nil {
 		t.Fatal(err)
 	}

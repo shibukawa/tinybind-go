@@ -192,6 +192,9 @@ func ParseMultipartMap(r *http.Request) (form map[string]string, files map[strin
 var errFileTooLarge = errors.New("httpbinder: multipart file too large")
 
 func fileFromHeader(fh *multipart.FileHeader, limit int64) (File, error) {
+	if limit <= 0 {
+		limit = DefaultMaxMultipartBodyBytes
+	}
 	if limit > 0 && fh.Size > limit {
 		return File{}, errFileTooLarge
 	}
@@ -201,21 +204,13 @@ func fileFromHeader(fh *multipart.FileHeader, limit int64) (File, error) {
 	}
 	defer rc.Close()
 
-	var data []byte
-	if limit > 0 {
-		// Read at most limit+1 bytes so we can detect oversize without ReadAll.
-		data, err = io.ReadAll(io.LimitReader(rc, limit+1))
-		if err != nil {
-			return File{}, err
-		}
-		if int64(len(data)) > limit {
-			return File{}, errFileTooLarge
-		}
-	} else {
-		data, err = io.ReadAll(rc)
-		if err != nil {
-			return File{}, err
-		}
+	// Read at most limit+1 bytes so an unknown FileHeader size stays bounded.
+	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
+	if err != nil {
+		return File{}, err
+	}
+	if int64(len(data)) > limit {
+		return File{}, errFileTooLarge
 	}
 	ct := fh.Header.Get("Content-Type")
 	size := fh.Size

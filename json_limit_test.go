@@ -29,3 +29,19 @@ func TestDecodeJSONLimitRejectsUnknownLengthReader(t *testing.T) {
 		t.Fatalf("want 413, got %#v", err)
 	}
 }
+
+type globallyLimitedDocument struct{ Value string }
+
+func TestDecodeJSONUsesGlobalLimit(t *testing.T) {
+	old := MaxJSONBodyBytes()
+	SetMaxJSONBodyBytes(8)
+	defer SetMaxJSONBodyBytes(old)
+	RegisterDecode[globallyLimitedDocument](func([]byte) (globallyLimitedDocument, error) {
+		return globallyLimitedDocument{}, nil
+	})
+	_, err := DecodeJSON[globallyLimitedDocument](strings.NewReader(`{"value":"too large"}`))
+	he, ok := AsHTTPError(err)
+	if !ok || he.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("want 413, got %#v", err)
+	}
+}

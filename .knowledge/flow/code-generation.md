@@ -7,14 +7,15 @@ Generator reads same-package handlers and Go types, then emits runtime bind/writ
 
 ```yaml
 flow:
-  trigger: developer defines Go types and net/http handlers
+  trigger: developer defines Go types and handlers recognized by data:generator-options
   steps:
     - id: discover-handlers
-      action: run flow:handler-parse on same-package registrations
+      action: run flow:handler-parse on configured same-package registrations
       refs:
         - concept:handler-discovery
         - concept:route-discovery
         - decision:stdlib-servemux
+        - requirement:configurable-generator-discovery
     - id: unwrap-wrappers
       action: unwrap stdlib wrappers and custom middleware when static
       refs:

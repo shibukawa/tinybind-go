@@ -1,6 +1,7 @@
 {"category": "interface", "id": "api:bind", "path": ".knowledge/api/bind.md", "role": "primary", "title": "httpbinder.Bind", "type": "api"}
 {"category": "interface", "id": "api:decode-json", "path": ".knowledge/api/decode-json.md", "role": "primary", "title": "httpbinder.DecodeJSON", "type": "api"}
 {"category": "interface", "id": "api:encode-json", "path": ".knowledge/api/encode-json.md", "role": "primary", "title": "httpbinder.EncodeJSON", "type": "api"}
+{"category": "interface", "id": "api:generator-main", "path": ".knowledge/api/generator-main.md", "role": "primary", "title": "Configurable Generator CLI Main", "type": "api"}
 {"category": "interface", "id": "api:new-stream", "path": ".knowledge/api/new-stream.md", "role": "primary", "title": "httpbinder.NewStream", "type": "api"}
 {"category": "interface", "id": "api:openapi-json", "path": ".knowledge/api/openapi-json.md", "role": "primary", "title": "OpenAPI JSON Handler", "type": "api"}
 {"category": "interface", "id": "api:openapi-yaml", "path": ".knowledge/api/openapi-yaml.md", "role": "primary", "title": "OpenAPI YAML Handler", "type": "api"}
@@ -28,6 +29,7 @@
 {"category": "concept", "id": "concept:streaming", "path": ".knowledge/concept/streaming.md", "role": "supporting", "title": "Typed Streaming", "type": "concept"}
 {"category": "structure", "id": "data:create-user-request", "path": ".knowledge/data/create-user-request.md", "role": "supporting", "title": "CreateUserRequest Example", "type": "data"}
 {"category": "structure", "id": "data:file", "path": ".knowledge/data/file.md", "role": "supporting", "title": "httpbinder.File", "type": "data"}
+{"category": "structure", "id": "data:generator-options", "path": ".knowledge/data/generator-options.md", "role": "supporting", "title": "Generator Discovery Options", "type": "data"}
 {"category": "structure", "id": "data:nested-order-request", "path": ".knowledge/data/nested-order-request.md", "role": "supporting", "title": "NestedOrderRequest Example", "type": "data"}
 {"category": "structure", "id": "data:patch-with-extras-request", "path": ".knowledge/data/patch-with-extras-request.md", "role": "supporting", "title": "PatchWithExtrasRequest Example", "type": "data"}
 {"category": "structure", "id": "data:problem", "path": ".knowledge/data/problem.md", "role": "supporting", "title": "Problem", "type": "data"}
@@ -59,6 +61,7 @@
 {"category": "constraint", "id": "rule:default-input-tag", "path": ".knowledge/rule/default-input-tag.md", "role": "supporting", "title": "Default Field Tag is input", "type": "rule"}
 {"category": "constraint", "id": "rule:error-cause-preservation", "path": ".knowledge/rule/error-cause-preservation.md", "role": "supporting", "title": "Error Cause Preservation", "type": "rule"}
 {"category": "constraint", "id": "rule:error-response-discovery", "path": ".knowledge/rule/error-response-discovery.md", "role": "supporting", "title": "Error Response Discovery", "type": "rule"}
+{"category": "constraint", "id": "rule:generator-feature-disable", "path": ".knowledge/rule/generator-feature-disable.md", "role": "supporting", "title": "Generator Feature Disable", "type": "rule"}
 {"category": "constraint", "id": "rule:go-types-symbol-identity", "path": ".knowledge/rule/go-types-symbol-identity.md", "role": "supporting", "title": "go/types Symbol Identity", "type": "rule"}
 {"category": "constraint", "id": "rule:nested-request-binding", "path": ".knowledge/rule/nested-request-binding.md", "role": "supporting", "title": "Nested Struct Slice Map Binding", "type": "rule"}
 {"category": "constraint", "id": "rule:nested-wrapper-unwrap", "path": ".knowledge/rule/nested-wrapper-unwrap.md", "role": "supporting", "title": "Nested Wrapper Unwrap", "type": "rule"}

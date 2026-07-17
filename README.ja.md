@@ -116,13 +116,41 @@ _ = stream.Write(ChatEvent{Type: "done"})
 go run ./cmd/httpbinder-gen -dir ./path/to/package
 ```
 
-互換パッケージの探索には
-`generator.New(generator.Options{Symbols: ...})` を使えます。ルート登録関数も
-`parser.ParsePackageWithConfig` で `net/http.ServeMux` 以外を追加できます。
+独自ジェネレータのコマンドは `generator.Main` を呼ぶだけで作れます。
+`DefaultOptions` から始め、プロジェクトで許可する探索先を各 `Set` にすべて
+列挙します。
+
+```go
+package main
+
+import "github.com/shibukawa/httpbind-go/generator"
+
+func main() {
+    options := generator.DefaultOptions()
+    options.ServeMuxes.Set = []generator.TypePattern{
+        {PackagePath: "net/http", Name: "ServeMux"},
+        {PackagePath: "github.com/shibukawa/petitweb-go/handler", Name: "ServeMux"},
+    }
+    options.RuntimePackages.Set = []string{
+        "github.com/shibukawa/httpbind-go",
+        "github.com/shibukawa/petitweb-go/handler",
+    }
+    generator.Main(options)
+}
+```
+
+`RuntimePackages` は同名の `Bind`、`Write`、`WriteStatus`、`DecodeJSON`、
+`EncodeJSON`、`NewStream`、`ScanRows` を展開します。操作単位の
+`options.DecodeJSON.Set` などを指定すると、その操作だけ展開結果を置換します。
+`Set` は追加ではなく完全置換なので、標準と互換パッケージの両方が必要なら
+両方を列挙します。`generator.Options{}` の探索先は空です。各パターンの
+`Disabled` または `DisableFeatures` で、`-generate-all` 使用時も機能を
+無効化できます。
+
 生成は利用箇所単位で絞られ、`DecodeJSON[T]` だけを使うコードには JSON
-デコーダだけが生成され、`net/http` へ依存しません。
-従来どおり全マッピングを生成する場合は `Options.GenerateAll`、互換File型は
-`Options.FileTypes` で明示できます。
+デコーダだけが生成され、`net/http` へ依存しません。従来どおり有効な全
+マッピングを生成する場合は `Options.GenerateAll`、互換File型は
+`Options.FileTypes.Set` で明示できます。
 
 JSON の読み込み上限はデフォルト 1 MiB です。全体設定は
 `SetMaxJSONBodyBytes`、呼び出し単位では `DecodeJSONLimit` を使います。

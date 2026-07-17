@@ -605,7 +605,9 @@ func TestGenerator_EmitsTypeSpecificNoReflect(t *testing.T) {
 		t.Fatalf("go mod tidy: %v\n%s", err, out)
 	}
 	// package name in types.go is mappingfixture — keep it
-	out, err := generator.New(generator.Options{GenerateAll: true}).Generate(dir, dir, "httpbinder_gen.go")
+	opts := generator.DefaultOptions()
+	opts.GenerateAll = true
+	out, err := generator.New(opts).Generate(dir, dir, "httpbinder_gen.go")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

@@ -120,33 +120,6 @@ type DiscoverySymbol struct {
 	Usage       Usage
 }
 
-// Options customizes source symbol discovery. An empty Symbols slice uses
-// DefaultDiscoverySymbols. This is the extension point for compatibility
-// packages that expose httpbinder-compatible generic functions.
-type Options struct {
-	Symbols []DiscoverySymbol
-	// FileTypes are types accepted in the generated multipart File role.
-	// Empty uses github.com/shibukawa/httpbind-go.File.
-	FileTypes []QualifiedType
-	// GenerateAll emits legacy Bind/Write/JSON paths for every planned type.
-	GenerateAll bool
-}
-
-type QualifiedType struct{ PackagePath, Name string }
-
-// DefaultDiscoverySymbols returns a fresh copy of the built-in call targets.
-func DefaultDiscoverySymbols() []DiscoverySymbol {
-	return []DiscoverySymbol{
-		{httpbinderImportPath, "Bind", UsageBind},
-		{httpbinderImportPath, "Write", UsageWrite},
-		{httpbinderImportPath, "WriteStatus", UsageEncodeJSON},
-		{httpbinderImportPath, "DecodeJSON", UsageDecodeJSON},
-		{httpbinderImportPath, "EncodeJSON", UsageEncodeJSON},
-		{httpbinderImportPath, "NewStream", UsageEncodeJSON},
-		{httpbinderImportPath, "ScanRows", UsageScanRows},
-	}
-}
-
 // PackagePlan is all type plans in a package.
 type PackagePlan struct {
 	Package string
@@ -158,7 +131,9 @@ type PackagePlan struct {
 // AnalyzePackage builds field plans for all package-level structs with exported fields.
 // Generic call discovery (Bind/Write/DecodeJSON/EncodeJSON) uses go/types symbol identity.
 func AnalyzePackage(dir string) (*PackagePlan, error) {
-	return AnalyzePackageWithOptions(dir, Options{GenerateAll: true})
+	opts := DefaultOptions()
+	opts.GenerateAll = true
+	return AnalyzePackageWithOptions(dir, opts)
 }
 
 // AnalyzePackageWithOptions is AnalyzePackage with customizable call targets.
@@ -198,10 +173,8 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 
 	plan := &PackagePlan{Package: pkg.Name}
 	discovered := map[string]Usage{}
-	symbols := opts.Symbols
-	if len(symbols) == 0 {
-		symbols = DefaultDiscoverySymbols()
-	}
+	normalized := opts.normalized()
+	symbols := normalized.symbols
 	fset := pkg.Fset
 	for _, f := range pkg.Syntax {
 		if f == nil {
@@ -218,7 +191,7 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 			base == "httpbinder_openapi_gen.go" {
 			continue
 		}
-		binderNames := configuredTypeNames(f, opts.FileTypes, pkg.Imports)
+		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)
 		for name, usage := range discoverGenericTypeArgs(f, pkg.TypesInfo, symbols) {
 			discovered[name] |= usage
 		}
@@ -255,18 +228,15 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 	}
 	if opts.GenerateAll {
 		for i := range plan.Types {
-			plan.Types[i].Usage |= UsageAll
-			plan.Types[i].DirectUsage |= UsageAll
+			plan.Types[i].Usage |= UsageAll & normalized.enabledUsage
+			plan.Types[i].DirectUsage |= UsageAll & normalized.enabledUsage
 		}
 	}
 	propagateNestedUsage(plan.Types)
 	return plan, nil
 }
 
-func configuredTypeNames(f *ast.File, configured []QualifiedType, imports map[string]*packages.Package) map[string]bool {
-	if len(configured) == 0 {
-		configured = []QualifiedType{{httpbinderImportPath, "File"}}
-	}
+func configuredTypeNames(f *ast.File, configured []TypePattern, imports map[string]*packages.Package) map[string]bool {
 	out := map[string]bool{}
 	for _, imp := range f.Imports {
 		path, err := strconv.Unquote(imp.Path.Value)

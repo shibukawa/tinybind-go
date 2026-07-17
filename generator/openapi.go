@@ -18,11 +18,20 @@ type Document map[string]any
 // BuildOpenAPI analyzes dir with the route parser and field planner and returns
 // an OpenAPI 3.1 document derived only from Go source (not from handwritten YAML).
 func BuildOpenAPI(dir string) (Document, error) {
-	routes, err := parser.ParsePackage(dir)
+	return New(DefaultOptions()).BuildOpenAPI(dir)
+}
+
+// BuildOpenAPI builds a document using this generator's discovery identities.
+func (g *Generator) BuildOpenAPI(dir string) (Document, error) {
+	normalized := g.Options.normalized()
+	if !normalized.openAPI {
+		return nil, fmt.Errorf("%w: %s", ErrFeatureDisabled, FeatureOpenAPI)
+	}
+	routes, err := parser.ParsePackageWithConfig(dir, normalized.parserConfig)
 	if err != nil {
 		return nil, fmt.Errorf("parse routes: %w", err)
 	}
-	plan, err := AnalyzePackage(dir)
+	plan, err := g.Analyze(dir)
 	if err != nil {
 		return nil, fmt.Errorf("analyze types: %w", err)
 	}

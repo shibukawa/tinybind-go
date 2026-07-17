@@ -24,7 +24,7 @@ type RouteSymbol struct {
 	ReceiverPackagePath, ReceiverType string
 }
 
-// Config customizes symbols explored by the parser. Empty slices use defaults.
+// Config customizes symbols explored by the parser. Every slice is authoritative.
 type Config struct {
 	RouteRegistrations []RouteSymbol
 	GenericFunctions   []FunctionSymbol
@@ -49,20 +49,6 @@ func namesToSymbols(path string, names map[string]struct{}) []FunctionSymbol {
 		out = append(out, FunctionSymbol{path, name})
 	}
 	return out
-}
-
-func normalizedConfig(c Config) Config {
-	d := DefaultConfig()
-	if len(c.RouteRegistrations) == 0 {
-		c.RouteRegistrations = d.RouteRegistrations
-	}
-	if len(c.GenericFunctions) == 0 {
-		c.GenericFunctions = d.GenericFunctions
-	}
-	if len(c.ErrorFunctions) == 0 {
-		c.ErrorFunctions = d.ErrorFunctions
-	}
-	return c
 }
 
 // Fixed allowlist of httpbinder function names used in discovery.

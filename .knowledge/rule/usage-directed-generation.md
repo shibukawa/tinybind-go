@@ -20,9 +20,11 @@ imports: derive from emitted paths; JSON-only output must not import net/http
 unused_models: emit no mapping functions
 compatibility: explicit generate-all option may emit every supported path
 discovery: requirement:configurable-generator-discovery
+disablement: rule:generator-feature-disable
 related:
   - concept:code-generation
   - flow:code-generation
   - concept:standalone-json-codec
   - api:scan-rows
+  - rule:generator-feature-disable
 ```

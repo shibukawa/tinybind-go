@@ -23,7 +23,7 @@ func use() { _, _ = httpbinder.DecodeJSON[Note](nil) }
 		t.Fatal(err)
 	}
 	tidyTempModule(t, dir)
-	plan, err := generator.New(generator.Options{}).Analyze(dir)
+	plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +43,42 @@ func use() { _, _ = httpbinder.DecodeJSON[Note](nil) }
 	}
 }
 
+func TestEmit_EncodeOnlyHasNoNetHTTP(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	src := `package sample
+import (
+ "io"
+ "github.com/shibukawa/httpbind-go"
+)
+type Note struct { Text string ` + "`json:\"text\"`" + ` }
+type Unused struct { ID int }
+func use() { _ = httpbinder.EncodeJSON[Note](io.Discard, Note{}) }
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tidyTempModule(t, dir)
+	plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := generator.Emit(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(code)
+	if strings.Contains(s, `"net/http"`) || strings.Contains(s, "RegisterBind") || strings.Contains(s, "RegisterWrite") || strings.Contains(s, "RegisterDecode") {
+		t.Fatalf("encode-only output contains unrelated mapping:\n%s", s)
+	}
+	if !strings.Contains(s, "RegisterEncode[Note]") {
+		t.Fatalf("missing encoder:\n%s", s)
+	}
+	if strings.Contains(s, "Unused") {
+		t.Fatalf("unused model emitted:\n%s", s)
+	}
+}
+
 func TestEmit_ScanRowsOnlyBuildsReflectionFreeScanner(t *testing.T) {
 	dir := t.TempDir()
 	writeTempModule(t, dir)
@@ -51,7 +87,8 @@ import (
  "database/sql"
  "github.com/shibukawa/httpbind-go"
 )
-type User struct { ID int ` + "`db:\"user_id\" groupkey:\"\"`" + `; Name string ` + "`db:\"user_name\"`" + ` }
+type Role struct { ID int ` + "`db:\"role_id\" groupkey:\"\"`" + `; Name string ` + "`db:\"role_name\"`" + ` }
+type User struct { ID int ` + "`db:\"user_id\" groupkey:\"\"`" + `; Name string ` + "`db:\"user_name\"`" + `; Roles []Role }
 type Organization struct { ID int ` + "`db:\"org_id\" groupkey:\"\"`" + `; Name string ` + "`db:\"org_name\"`" + `; Users []User }
 func use(rows *sql.Rows) { _, _ = httpbinder.ScanRows[Organization](rows) }
 `
@@ -59,7 +96,7 @@ func use(rows *sql.Rows) { _, _ = httpbinder.ScanRows[Organization](rows) }
 		t.Fatal(err)
 	}
 	tidyTempModule(t, dir)
-	plan, err := generator.New(generator.Options{}).Analyze(dir)
+	plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,10 +133,10 @@ func (fixtureConn) Prepare(string)(driver.Stmt,error){return nil,driver.ErrSkip}
 func (fixtureConn) Close()error{return nil}
 func (fixtureConn) Begin()(driver.Tx,error){return nil,driver.ErrSkip}
 func (fixtureConn) QueryContext(context.Context,string,[]driver.NamedValue)(driver.Rows,error){return &fixtureRows{},nil}
-func (*fixtureRows) Columns()[]string{return []string{"org_id","org_name","user_id","user_name"}}
+func (*fixtureRows) Columns()[]string{return []string{"org_id","org_name","user_id","user_name","role_id","role_name"}}
 func (*fixtureRows) Close()error{return nil}
 func (r *fixtureRows) Next(dest []driver.Value)error{
- data:=[][]driver.Value{{int64(1),"Acme",int64(10),"A"},{int64(1),"Acme",int64(11),"B"},{int64(1),"Acme",int64(10),"A"},{int64(2),"Empty",nil,nil}}
+ data:=[][]driver.Value{{int64(1),"Acme",int64(10),"A",int64(100),"Admin"},{int64(1),"Acme",int64(10),"A",int64(101),"Editor"},{int64(1),"Acme",int64(11),"B",nil,nil},{int64(1),"Acme",int64(10),"A",int64(100),"Admin"},{int64(2),"Empty",nil,nil,nil,nil}}
  if r.pos>=len(data){return io.EOF};copy(dest,data[r.pos]);r.pos++;return nil
 }
 func init(){sql.Register("httpbinder_fixture",fixtureDriver{})}
@@ -107,7 +144,7 @@ func TestGeneratedTree(t *testing.T){
  db,err:=sql.Open("httpbinder_fixture","");if err!=nil{t.Fatal(err)};defer db.Close()
  rows,err:=db.QueryContext(context.Background(),"select");if err!=nil{t.Fatal(err)};defer rows.Close()
  got,err:=httpbinder.ScanRows[Organization](rows);if err!=nil{t.Fatal(err)}
- if len(got)!=2||got[0].Name!="Acme"||len(got[0].Users)!=2||got[0].Users[1].Name!="B"||len(got[1].Users)!=0{t.Fatalf("tree: %+v",got)}
+ if len(got)!=2||got[0].Name!="Acme"||len(got[0].Users)!=2||len(got[0].Users[0].Roles)!=2||got[0].Users[0].Roles[1].Name!="Editor"||got[0].Users[1].Name!="B"||len(got[0].Users[1].Roles)!=0||len(got[1].Users)!=0{t.Fatalf("tree: %+v",got)}
 }
 `
 	if err := os.WriteFile(filepath.Join(dir, "runtime_test.go"), []byte(runtimeTest), 0o644); err != nil {
@@ -147,7 +184,10 @@ func use() { _, _ = compat.DecodeJSON[Note](nil) }
 		t.Fatal(err)
 	}
 	tidyTempModule(t, dir)
-	g := generator.New(generator.Options{Symbols: []generator.DiscoverySymbol{{PackagePath: "tempmod/compat", Name: "DecodeJSON", Usage: generator.UsageDecodeJSON}}, FileTypes: []generator.QualifiedType{{PackagePath: "tempmod/compat", Name: "File"}}})
+	g := generator.New(generator.Options{
+		DecodeJSON: generator.PatternSet[generator.SymbolPattern]{Set: []generator.SymbolPattern{{PackagePath: "tempmod/compat", Name: "DecodeJSON"}}},
+		FileTypes:  generator.PatternSet[generator.TypePattern]{Set: []generator.TypePattern{{PackagePath: "tempmod/compat", Name: "File"}}},
+	})
 	plan, err := g.Analyze(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +215,7 @@ func use(w http.ResponseWriter,r *http.Request){ _ = httpbinder.Write(w,r,Respon
 		t.Fatal(err)
 	}
 	tidyTempModule(t, dir)
-	plan, err := generator.New(generator.Options{}).Analyze(dir)
+	plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

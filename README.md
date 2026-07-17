@@ -116,14 +116,41 @@ _ = stream.Write(ChatEvent{Type: "done"})
 go run ./cmd/httpbinder-gen -dir ./path/to/package
 ```
 
-The library API also supports custom symbol discovery. Construct
-`generator.New(generator.Options{Symbols: ...})` for compatible packages that
-expose different `Bind`/`DecodeJSON` functions, and use
-`parser.ParsePackageWithConfig` to add route registrars other than
-`net/http.ServeMux`. Generation is usage-aware: a package that only calls
-`DecodeJSON[T]` gets only its JSON decoder and does not import `net/http`.
-Set `Options.GenerateAll` for the legacy all-mappings mode. Compatible multipart
-file aliases can be listed in `Options.FileTypes`.
+Custom generator commands only need to call `generator.Main`. Start with
+`DefaultOptions`, then replace each authoritative `Set` with every identity the
+project accepts:
+
+```go
+package main
+
+import "github.com/shibukawa/httpbind-go/generator"
+
+func main() {
+    options := generator.DefaultOptions()
+    options.ServeMuxes.Set = []generator.TypePattern{
+        {PackagePath: "net/http", Name: "ServeMux"},
+        {PackagePath: "github.com/shibukawa/petitweb-go/handler", Name: "ServeMux"},
+    }
+    options.RuntimePackages.Set = []string{
+        "github.com/shibukawa/httpbind-go",
+        "github.com/shibukawa/petitweb-go/handler",
+    }
+    generator.Main(options)
+}
+```
+
+`RuntimePackages` expands the same-named `Bind`, `Write`, `WriteStatus`,
+`DecodeJSON`, `EncodeJSON`, `NewStream`, and `ScanRows` functions. An
+operation-specific set such as `options.DecodeJSON.Set` replaces that expansion.
+`Set` always replaces defaults; include both the standard and compatibility
+identity when both should be explored. `generator.Options{}` deliberately has
+no discovery identities. Set a pattern's `Disabled` field, or add its feature to
+`DisableFeatures`, to prevent discovery even under `-generate-all`.
+
+Generation is usage-aware: a package that only calls `DecodeJSON[T]` gets only
+its JSON decoder and does not import `net/http`. Set `Options.GenerateAll` for
+the legacy all-enabled-mappings mode. Compatible multipart file aliases can be
+listed in `Options.FileTypes.Set`.
 
 JSON reads are capped at 1 MiB by default. Use `SetMaxJSONBodyBytes` globally or
 `DecodeJSONLimit` per call. Oversize input returns HTTP 413.

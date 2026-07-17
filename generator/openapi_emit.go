@@ -12,11 +12,16 @@ import (
 // GenerateOpenAPI builds OpenAPI 3.1 from Go sources in dir and writes a generated
 // file that embeds the document and registers it with httpbinder for serving.
 func GenerateOpenAPI(dir, outDir, outName string) (string, error) {
-	doc, err := BuildOpenAPI(dir)
+	return New(DefaultOptions()).GenerateOpenAPI(dir, outDir, outName)
+}
+
+// GenerateOpenAPI writes OpenAPI generated with this generator's identities.
+func (g *Generator) GenerateOpenAPI(dir, outDir, outName string) (string, error) {
+	doc, err := g.BuildOpenAPI(dir)
 	if err != nil {
 		return "", err
 	}
-	plan, err := AnalyzePackage(dir)
+	plan, err := g.Analyze(dir)
 	if err != nil {
 		return "", err
 	}

@@ -9,7 +9,7 @@ import (
 // Generate analyzes dir and writes <outName> (default: httpbinder_gen.go) into outDir
 // (default: dir). Returns the absolute path of the written file.
 func Generate(dir, outDir, outName string) (string, error) {
-	return New(Options{}).Generate(dir, outDir, outName)
+	return New(DefaultOptions()).Generate(dir, outDir, outName)
 }
 
 // Generator is a reusable, configurable code generator.
