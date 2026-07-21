@@ -1,4 +1,6 @@
 {"category": "interface", "id": "api:bind", "path": ".knowledge/api/bind.md", "role": "primary", "title": "httpbind.Bind", "type": "api"}
+{"category": "interface", "id": "api:configbind-bind", "path": ".knowledge/api/configbind-bind.md", "role": "primary", "title": "configbind.Bind", "type": "api"}
+{"category": "interface", "id": "api:configbind-subcommand", "path": ".knowledge/api/configbind-subcommand.md", "role": "primary", "title": "configbind.SubCommand", "type": "api"}
 {"category": "interface", "id": "api:decode-json", "path": ".knowledge/api/decode-json.md", "role": "primary", "title": "jsonbind.DecodeJSON", "type": "api"}
 {"category": "interface", "id": "api:encode-json", "path": ".knowledge/api/encode-json.md", "role": "primary", "title": "jsonbind.EncodeJSON", "type": "api"}
 {"category": "interface", "id": "api:generator-main", "path": ".knowledge/api/generator-main.md", "role": "primary", "title": "Configurable Generator CLI Main", "type": "api"}
@@ -11,46 +13,94 @@
 {"category": "interface", "id": "api:write-status", "path": ".knowledge/api/write-status.md", "role": "primary", "title": "httpbind.WriteStatus", "type": "api"}
 {"category": "interface", "id": "api:write", "path": ".knowledge/api/write.md", "role": "primary", "title": "httpbind.Write", "type": "api"}
 {"category": "concept", "id": "concept:check-validation", "path": ".knowledge/concept/check-validation.md", "role": "supporting", "title": "Check Tag Validation", "type": "concept"}
+{"category": "concept", "id": "concept:cli-option-codegen", "path": ".knowledge/concept/cli-option-codegen.md", "role": "supporting", "title": "CLI Option Codegen", "type": "concept"}
 {"category": "concept", "id": "concept:code-generation", "path": ".knowledge/concept/code-generation.md", "role": "supporting", "title": "Generated Runtime Code", "type": "concept"}
+{"category": "concept", "id": "concept:config-overlay", "path": ".knowledge/concept/config-overlay.md", "role": "supporting", "title": "Config Overlay", "type": "concept"}
+{"category": "concept", "id": "concept:config-struct-mapping", "path": ".knowledge/concept/config-struct-mapping.md", "role": "supporting", "title": "Config Struct Mapping", "type": "concept"}
 {"category": "concept", "id": "concept:error-helpers", "path": ".knowledge/concept/error-helpers.md", "role": "supporting", "title": "Error Helpers", "type": "concept"}
 {"category": "concept", "id": "concept:future-generators", "path": ".knowledge/concept/future-generators.md", "role": "supporting", "title": "Future Generator Ideas", "type": "concept"}
 {"category": "concept", "id": "concept:handler-discovery", "path": ".knowledge/concept/handler-discovery.md", "role": "supporting", "title": "Handler Discovery", "type": "concept"}
 {"category": "concept", "id": "concept:handler-forms", "path": ".knowledge/concept/handler-forms.md", "role": "supporting", "title": "Handler Forms", "type": "concept"}
+{"category": "concept", "id": "concept:layered-config-sources", "path": ".knowledge/concept/layered-config-sources.md", "role": "supporting", "title": "Layered Config Sources", "type": "concept"}
 {"category": "concept", "id": "concept:net-http-handler", "path": ".knowledge/concept/net-http-handler.md", "role": "supporting", "title": "Standard net/http Handler", "type": "concept"}
 {"category": "concept", "id": "concept:openapi-embed", "path": ".knowledge/concept/openapi-embed.md", "role": "supporting", "title": "Embedded OpenAPI Document", "type": "concept"}
 {"category": "concept", "id": "concept:openapi-generation", "path": ".knowledge/concept/openapi-generation.md", "role": "supporting", "title": "OpenAPI Generation", "type": "concept"}
 {"category": "concept", "id": "concept:openapi-ui", "path": ".knowledge/concept/openapi-ui.md", "role": "supporting", "title": "Optional OpenAPI UI", "type": "concept"}
+{"category": "concept", "id": "concept:provenance-callback", "path": ".knowledge/concept/provenance-callback.md", "role": "supporting", "title": "Provenance Callback", "type": "concept"}
+{"category": "concept", "id": "concept:provenance-log-helper", "path": ".knowledge/concept/provenance-log-helper.md", "role": "supporting", "title": "Provenance Log Helper", "type": "concept"}
 {"category": "concept", "id": "concept:request-binding", "path": ".knowledge/concept/request-binding.md", "role": "supporting", "title": "Request Binding", "type": "concept"}
 {"category": "concept", "id": "concept:response-binding", "path": ".knowledge/concept/response-binding.md", "role": "supporting", "title": "Response Binding", "type": "concept"}
+{"category": "concept", "id": "concept:reusable-source-parsers", "path": ".knowledge/concept/reusable-source-parsers.md", "role": "supporting", "title": "Reusable Source Parsers", "type": "concept"}
 {"category": "concept", "id": "concept:route-discovery", "path": ".knowledge/concept/route-discovery.md", "role": "supporting", "title": "Route Discovery", "type": "concept"}
+{"category": "concept", "id": "concept:scaffold-templates", "path": ".knowledge/concept/scaffold-templates.md", "role": "supporting", "title": "Scaffold Templates", "type": "concept"}
 {"category": "concept", "id": "concept:service-layer", "path": ".knowledge/concept/service-layer.md", "role": "supporting", "title": "Service Layer", "type": "concept"}
 {"category": "concept", "id": "concept:standalone-json-codec", "path": ".knowledge/concept/standalone-json-codec.md", "role": "supporting", "title": "Standalone Typed JSON Codec", "type": "concept"}
 {"category": "concept", "id": "concept:stdlib-wrapper-unwrap", "path": ".knowledge/concept/stdlib-wrapper-unwrap.md", "role": "supporting", "title": "Stdlib Handler Wrapper Unwrap", "type": "concept"}
 {"category": "concept", "id": "concept:streaming", "path": ".knowledge/concept/streaming.md", "role": "supporting", "title": "Typed Streaming", "type": "concept"}
+{"category": "concept", "id": "concept:subcommand-binding", "path": ".knowledge/concept/subcommand-binding.md", "role": "supporting", "title": "Subcommand Binding", "type": "concept"}
+{"category": "concept", "id": "concept:typed-template-language", "path": ".knowledge/concept/typed-template-language.md", "role": "supporting", "title": "Compact Typed Template Language", "type": "concept"}
+{"category": "structure", "id": "data:cli-flag-def", "path": ".knowledge/data/cli-flag-def.md", "role": "supporting", "title": "CLI Flag Definition", "type": "data"}
 {"category": "structure", "id": "data:create-user-request", "path": ".knowledge/data/create-user-request.md", "role": "supporting", "title": "CreateUserRequest Example", "type": "data"}
 {"category": "structure", "id": "data:file", "path": ".knowledge/data/file.md", "role": "supporting", "title": "httpbind.File", "type": "data"}
 {"category": "structure", "id": "data:generator-options", "path": ".knowledge/data/generator-options.md", "role": "supporting", "title": "Generator Discovery Options", "type": "data"}
 {"category": "structure", "id": "data:nested-order-request", "path": ".knowledge/data/nested-order-request.md", "role": "supporting", "title": "NestedOrderRequest Example", "type": "data"}
+{"category": "structure", "id": "data:overlay-entry", "path": ".knowledge/data/overlay-entry.md", "role": "supporting", "title": "Overlay Entry", "type": "data"}
 {"category": "structure", "id": "data:patch-with-extras-request", "path": ".knowledge/data/patch-with-extras-request.md", "role": "supporting", "title": "PatchWithExtrasRequest Example", "type": "data"}
 {"category": "structure", "id": "data:problem", "path": ".knowledge/data/problem.md", "role": "supporting", "title": "Problem", "type": "data"}
+{"category": "structure", "id": "data:provenance-event", "path": ".knowledge/data/provenance-event.md", "role": "supporting", "title": "Provenance Event", "type": "data"}
 {"category": "structure", "id": "data:search-request", "path": ".knowledge/data/search-request.md", "role": "supporting", "title": "SearchRequest Example", "type": "data"}
+{"category": "structure", "id": "data:sql-statement", "path": ".knowledge/data/sql-statement.md", "role": "supporting", "title": "Generated SQL Statement", "type": "data"}
 {"category": "structure", "id": "data:upload-avatar-request", "path": ".knowledge/data/upload-avatar-request.md", "role": "supporting", "title": "UploadAvatarRequest Example", "type": "data"}
 {"category": "constraint", "id": "decision:check-tag-validation", "path": ".knowledge/decision/check-tag-validation.md", "role": "supporting", "title": "Check Tags as Validation SSOT", "type": "decision"}
+{"category": "constraint", "id": "decision:cli-flag-naming", "path": ".knowledge/decision/cli-flag-naming.md", "role": "supporting", "title": "CLI Flag Naming", "type": "decision"}
+{"category": "constraint", "id": "decision:config-file-path-resolution", "path": ".knowledge/decision/config-file-path-resolution.md", "role": "supporting", "title": "Config File Path Resolution", "type": "decision"}
+{"category": "constraint", "id": "decision:configbind-codegen-no-reflect", "path": ".knowledge/decision/configbind-codegen-no-reflect.md", "role": "supporting", "title": "configbind Codegen Without Reflection", "type": "decision"}
+{"category": "constraint", "id": "decision:configbind-runtime-architecture", "path": ".knowledge/decision/configbind-runtime-architecture.md", "role": "supporting", "title": "configbind Runtime Architecture", "type": "decision"}
+{"category": "constraint", "id": "decision:configbind-supported-types", "path": ".knowledge/decision/configbind-supported-types.md", "role": "supporting", "title": "configbind Supported Field Types", "type": "decision"}
 {"category": "constraint", "id": "decision:openapi-31", "path": ".knowledge/decision/openapi-31.md", "role": "supporting", "title": "OpenAPI 3.1 Target", "type": "decision"}
+{"category": "constraint", "id": "decision:postgresql-first-template-sql", "path": ".knowledge/decision/postgresql-first-template-sql.md", "role": "supporting", "title": "PostgreSQL-First Template SQL", "type": "decision"}
+{"category": "constraint", "id": "decision:prefix-table-binding", "path": ".knowledge/decision/prefix-table-binding.md", "role": "supporting", "title": "Prefix Table Binding", "type": "decision"}
 {"category": "constraint", "id": "decision:reflection-free", "path": ".knowledge/decision/reflection-free.md", "role": "supporting", "title": "Reflection-Free Runtime", "type": "decision"}
 {"category": "constraint", "id": "decision:runtime-package-boundaries", "path": ".knowledge/decision/runtime-package-boundaries.md", "role": "supporting", "title": "Runtime Package Boundaries", "type": "decision"}
 {"category": "constraint", "id": "decision:single-source-of-truth", "path": ".knowledge/decision/single-source-of-truth.md", "role": "supporting", "title": "Single Source of Truth", "type": "decision"}
+{"category": "constraint", "id": "decision:sql-dialect-generation-time", "path": ".knowledge/decision/sql-dialect-generation-time.md", "role": "supporting", "title": "SQL Dialect Fixed at Generation Time", "type": "decision"}
 {"category": "constraint", "id": "decision:stdlib-servemux", "path": ".knowledge/decision/stdlib-servemux.md", "role": "supporting", "title": "Stdlib ServeMux Routing", "type": "decision"}
+{"category": "constraint", "id": "decision:struct-field-tags", "path": ".knowledge/decision/struct-field-tags.md", "role": "supporting", "title": "Config Struct Field Tags", "type": "decision"}
+{"category": "constraint", "id": "decision:template-declaration-kinds", "path": ".knowledge/decision/template-declaration-kinds.md", "role": "supporting", "title": "Format-Specific Template Declarations", "type": "decision"}
+{"category": "constraint", "id": "decision:template-package-boundaries", "path": ".knowledge/decision/template-package-boundaries.md", "role": "supporting", "title": "Template Package Boundaries", "type": "decision"}
+{"category": "constraint", "id": "decision:template-parser-delegation", "path": ".knowledge/decision/template-parser-delegation.md", "role": "supporting", "title": "Delegated Template Parser Architecture", "type": "decision"}
+{"category": "constraint", "id": "decision:toml-config-format", "path": ".knowledge/decision/toml-config-format.md", "role": "supporting", "title": "TOML Config File Format", "type": "decision"}
+{"category": "constraint", "id": "decision:toml-shape-constraints", "path": ".knowledge/decision/toml-shape-constraints.md", "role": "supporting", "title": "TOML Shape Constraints", "type": "decision"}
 {"category": "behavior", "id": "flow:code-generation", "path": ".knowledge/flow/code-generation.md", "role": "primary", "title": "Code Generation Pipeline", "type": "flow"}
+{"category": "behavior", "id": "flow:config-load", "path": ".knowledge/flow/config-load.md", "role": "primary", "title": "Config Load Pipeline", "type": "flow"}
+{"category": "behavior", "id": "flow:configbind-codegen", "path": ".knowledge/flow/configbind-codegen.md", "role": "primary", "title": "configbind Codegen Pipeline", "type": "flow"}
 {"category": "behavior", "id": "flow:handler-parse", "path": ".knowledge/flow/handler-parse.md", "role": "primary", "title": "Handler Parse Flow", "type": "flow"}
 {"category": "behavior", "id": "flow:handler-request", "path": ".knowledge/flow/handler-request.md", "role": "primary", "title": "Handler Request Flow", "type": "flow"}
 {"category": "constraint", "id": "policy:json-read-limit", "path": ".knowledge/policy/json-read-limit.md", "role": "supporting", "title": "Bounded JSON Reads", "type": "policy"}
 {"category": "constraint", "id": "policy:problem-details", "path": ".knowledge/policy/problem-details.md", "role": "supporting", "title": "RFC 9457 Problem Details Errors", "type": "policy"}
 {"category": "objective", "id": "requirement:analysis-diagnostics", "path": ".knowledge/requirement/analysis-diagnostics.md", "role": "primary", "title": "Diagnostics for Undiscoverable Analysis", "type": "requirement"}
+{"category": "objective", "id": "requirement:cli-option-codegen", "path": ".knowledge/requirement/cli-option-codegen.md", "role": "primary", "title": "CLI Option Code Generation", "type": "requirement"}
+{"category": "objective", "id": "requirement:cli-subcommands", "path": ".knowledge/requirement/cli-subcommands.md", "role": "primary", "title": "CLI Subcommands", "type": "requirement"}
+{"category": "objective", "id": "requirement:config-file-discovery", "path": ".knowledge/requirement/config-file-discovery.md", "role": "primary", "title": "Config File Discovery", "type": "requirement"}
+{"category": "objective", "id": "requirement:configbind-product-goals", "path": ".knowledge/requirement/configbind-product-goals.md", "role": "primary", "title": "configbind Product Goals", "type": "requirement"}
+{"category": "objective", "id": "requirement:configbind-tinygo", "path": ".knowledge/requirement/configbind-tinygo.md", "role": "primary", "title": "configbind TinyGo Support", "type": "requirement"}
 {"category": "objective", "id": "requirement:configurable-generator-discovery", "path": ".knowledge/requirement/configurable-generator-discovery.md", "role": "primary", "title": "Configurable Generator Discovery", "type": "requirement"}
+{"category": "objective", "id": "requirement:explicit-output-control", "path": ".knowledge/requirement/explicit-output-control.md", "role": "primary", "title": "Explicit Output Escaping Control", "type": "requirement"}
+{"category": "objective", "id": "requirement:html-template-v1", "path": ".knowledge/requirement/html-template-v1.md", "role": "primary", "title": "HTML Template V1", "type": "requirement"}
+{"category": "objective", "id": "requirement:layered-config-load", "path": ".knowledge/requirement/layered-config-load.md", "role": "primary", "title": "Layered Config Load", "type": "requirement"}
 {"category": "objective", "id": "requirement:openapi-goals", "path": ".knowledge/requirement/openapi-goals.md", "role": "primary", "title": "OpenAPI Generator Goals", "type": "requirement"}
 {"category": "objective", "id": "requirement:product-goals", "path": ".knowledge/requirement/product-goals.md", "role": "primary", "title": "Product Goals", "type": "requirement"}
+{"category": "objective", "id": "requirement:scaffold-generation", "path": ".knowledge/requirement/scaffold-generation.md", "role": "primary", "title": "Config Scaffold Generation", "type": "requirement"}
+{"category": "objective", "id": "requirement:source-provenance-logging", "path": ".knowledge/requirement/source-provenance-logging.md", "role": "primary", "title": "Source Provenance Logging", "type": "requirement"}
+{"category": "objective", "id": "requirement:sql-generated-api-layers", "path": ".knowledge/requirement/sql-generated-api-layers.md", "role": "primary", "title": "Generated SQL API Layers", "type": "requirement"}
+{"category": "objective", "id": "requirement:sql-relation-composition", "path": ".knowledge/requirement/sql-relation-composition.md", "role": "primary", "title": "Typed SQL Relation Composition", "type": "requirement"}
+{"category": "objective", "id": "requirement:sql-template-v1", "path": ".knowledge/requirement/sql-template-v1.md", "role": "primary", "title": "SQL Template V1", "type": "requirement"}
 {"category": "objective", "id": "requirement:strict-symbol-identity", "path": ".knowledge/requirement/strict-symbol-identity.md", "role": "primary", "title": "Strict Symbol Identity for Static Analysis", "type": "requirement"}
+{"category": "objective", "id": "requirement:struct-field-metadata", "path": ".knowledge/requirement/struct-field-metadata.md", "role": "primary", "title": "Struct Field Defaults and Help", "type": "requirement"}
+{"category": "objective", "id": "requirement:struct-registration", "path": ".knowledge/requirement/struct-registration.md", "role": "primary", "title": "Config Struct Registration", "type": "requirement"}
+{"category": "objective", "id": "requirement:template-code-generation", "path": ".knowledge/requirement/template-code-generation.md", "role": "primary", "title": "Template Code Generation", "type": "requirement"}
+{"category": "objective", "id": "requirement:template-language-core", "path": ".knowledge/requirement/template-language-core.md", "role": "primary", "title": "Template Language Core", "type": "requirement"}
+{"category": "objective", "id": "requirement:template-v1-scope", "path": ".knowledge/requirement/template-v1-scope.md", "role": "primary", "title": "Template V1 Scope", "type": "requirement"}
 {"category": "objective", "id": "requirement:tinygo-wasm", "path": ".knowledge/requirement/tinygo-wasm.md", "role": "primary", "title": "TinyGo and WASM Support", "type": "requirement"}
 {"category": "constraint", "id": "rule:analysis-diagnostics-check", "path": ".knowledge/rule/analysis-diagnostics-check.md", "role": "supporting", "title": "Analysis Diagnostics Check", "type": "rule"}
 {"category": "constraint", "id": "rule:check-codegen-pipeline", "path": ".knowledge/rule/check-codegen-pipeline.md", "role": "supporting", "title": "Check Validation Codegen Pipeline", "type": "rule"}
@@ -60,6 +110,7 @@
 {"category": "constraint", "id": "rule:check-v1-rule-set", "path": ".knowledge/rule/check-v1-rule-set.md", "role": "supporting", "title": "Check Validation v1 Rule Set", "type": "rule"}
 {"category": "constraint", "id": "rule:custom-middleware-unwrap", "path": ".knowledge/rule/custom-middleware-unwrap.md", "role": "supporting", "title": "Custom Middleware Unwrap", "type": "rule"}
 {"category": "constraint", "id": "rule:default-input-tag", "path": ".knowledge/rule/default-input-tag.md", "role": "supporting", "title": "Default Field Tag is input", "type": "rule"}
+{"category": "constraint", "id": "rule:enum-value-validation", "path": ".knowledge/rule/enum-value-validation.md", "role": "supporting", "title": "Enum Value Validation", "type": "rule"}
 {"category": "constraint", "id": "rule:error-cause-preservation", "path": ".knowledge/rule/error-cause-preservation.md", "role": "supporting", "title": "Error Cause Preservation", "type": "rule"}
 {"category": "constraint", "id": "rule:error-response-discovery", "path": ".knowledge/rule/error-response-discovery.md", "role": "supporting", "title": "Error Response Discovery", "type": "rule"}
 {"category": "constraint", "id": "rule:generator-feature-disable", "path": ".knowledge/rule/generator-feature-disable.md", "role": "supporting", "title": "Generator Feature Disable", "type": "rule"}
@@ -81,19 +132,30 @@
 {"category": "constraint", "id": "rule:request-model-discovery", "path": ".knowledge/rule/request-model-discovery.md", "role": "supporting", "title": "Request Model Discovery", "type": "rule"}
 {"category": "constraint", "id": "rule:response-model-discovery", "path": ".knowledge/rule/response-model-discovery.md", "role": "supporting", "title": "Response Model Discovery", "type": "rule"}
 {"category": "constraint", "id": "rule:same-package-convention", "path": ".knowledge/rule/same-package-convention.md", "role": "supporting", "title": "Same-Package Analysis Convention", "type": "rule"}
+{"category": "constraint", "id": "rule:secret-redaction", "path": ".knowledge/rule/secret-redaction.md", "role": "supporting", "title": "Secret Redaction for Logs", "type": "rule"}
+{"category": "constraint", "id": "rule:source-precedence", "path": ".knowledge/rule/source-precedence.md", "role": "supporting", "title": "Config Source Precedence", "type": "rule"}
 {"category": "constraint", "id": "rule:sql-group-key", "path": ".knowledge/rule/sql-group-key.md", "role": "supporting", "title": "SQL Join Group Keys", "type": "rule"}
+{"category": "constraint", "id": "rule:sql-placeholder-emission", "path": ".knowledge/rule/sql-placeholder-emission.md", "role": "supporting", "title": "Generated SQL Placeholder Emission", "type": "rule"}
 {"category": "constraint", "id": "rule:standard-error-mapping", "path": ".knowledge/rule/standard-error-mapping.md", "role": "supporting", "title": "Standard Error Mapping", "type": "rule"}
 {"category": "constraint", "id": "rule:stream-content-negotiation", "path": ".knowledge/rule/stream-content-negotiation.md", "role": "supporting", "title": "Stream Content Negotiation", "type": "rule"}
+{"category": "constraint", "id": "rule:template-context-safety", "path": ".knowledge/rule/template-context-safety.md", "role": "supporting", "title": "Template Context Safety", "type": "rule"}
+{"category": "constraint", "id": "rule:template-name-casing", "path": ".knowledge/rule/template-name-casing.md", "role": "supporting", "title": "Template Name and Keyword Casing", "type": "rule"}
+{"category": "constraint", "id": "rule:toml-shape-validation", "path": ".knowledge/rule/toml-shape-validation.md", "role": "supporting", "title": "TOML Shape Validation", "type": "rule"}
 {"category": "constraint", "id": "rule:unsupported-route-patterns", "path": ".knowledge/rule/unsupported-route-patterns.md", "role": "supporting", "title": "Unsupported Route Patterns", "type": "rule"}
 {"category": "constraint", "id": "rule:usage-directed-generation", "path": ".knowledge/rule/usage-directed-generation.md", "role": "supporting", "title": "Usage-Directed Mapping Generation", "type": "rule"}
 {"category": "constraint", "id": "rule:wrapper-allow-query-semicolons", "path": ".knowledge/rule/wrapper-allow-query-semicolons.md", "role": "supporting", "title": "AllowQuerySemicolons Unwrap", "type": "rule"}
 {"category": "constraint", "id": "rule:wrapper-max-bytes-handler", "path": ".knowledge/rule/wrapper-max-bytes-handler.md", "role": "supporting", "title": "MaxBytesHandler Unwrap", "type": "rule"}
 {"category": "constraint", "id": "rule:wrapper-strip-prefix", "path": ".knowledge/rule/wrapper-strip-prefix.md", "role": "supporting", "title": "StripPrefix Unwrap", "type": "rule"}
 {"category": "constraint", "id": "rule:wrapper-timeout-handler", "path": ".knowledge/rule/wrapper-timeout-handler.md", "role": "supporting", "title": "TimeoutHandler Unwrap", "type": "rule"}
+{"category": "external", "id": "system:configbind", "path": ".knowledge/system/configbind.md", "role": "supporting", "title": "configbind Package", "type": "system"}
+{"category": "external", "id": "system:configdir", "path": ".knowledge/system/configdir.md", "role": "supporting", "title": "configdir Library", "type": "system"}
 {"category": "external", "id": "system:tinybind", "path": ".knowledge/system/tinybind.md", "role": "supporting", "title": "tinybind-go Library", "type": "system"}
+{"category": "vocabulary", "id": "term:config-key", "path": ".knowledge/term/config-key.md", "role": "supporting", "title": "Config Key", "type": "term"}
+{"category": "vocabulary", "id": "term:config-source", "path": ".knowledge/term/config-source.md", "role": "supporting", "title": "Config Source", "type": "term"}
 {"category": "vocabulary", "id": "term:http-metadata", "path": ".knowledge/term/http-metadata.md", "role": "supporting", "title": "HTTP Metadata Tags", "type": "term"}
 {"category": "vocabulary", "id": "term:input", "path": ".knowledge/term/input.md", "role": "supporting", "title": "input Tag", "type": "term"}
 {"category": "vocabulary", "id": "term:payload-rest", "path": ".knowledge/term/payload-rest.md", "role": "supporting", "title": "payload Rest Tag", "type": "term"}
 {"category": "vocabulary", "id": "term:payload", "path": ".knowledge/term/payload.md", "role": "supporting", "title": "payload Tag", "type": "term"}
 {"category": "vocabulary", "id": "term:query", "path": ".knowledge/term/query.md", "role": "supporting", "title": "query Tag", "type": "term"}
+{"category": "objective", "id": "vision:configbind", "path": ".knowledge/vision/configbind.md", "role": "primary", "title": "configbind Vision", "type": "vision"}
 {"category": "objective", "id": "vision:tinybind", "path": ".knowledge/vision/tinybind.md", "role": "primary", "title": "tinybind-go Vision", "type": "vision"}

@@ -107,9 +107,11 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / NewStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
-| `generator/` | Field-plan binders/writers + OpenAPI 3.1 embed generation |
+| `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |
-| `cmd/tinybind-gen` | CLI: binders + OpenAPI from a package dir |
+| `templates/htmlbind/` | Typed, context-safe HTML template compiler |
+| `templates/sqlbind/` | Typed, parameterized SQL template compiler |
+| `cmd/tinybind-gen` | CLI: binders + OpenAPI + templates from a package dir |
 | `examples/demo` | End-to-end sample app |
 | `internal/*` | Test fixtures |
 | `testdata/cmd/*` | Dev-only helpers (not for distribution; under `testdata` so `go get` / `./...` skip them) |
@@ -117,6 +119,28 @@ _ = stream.Write(ChatEvent{Type: "done"})
 ```bash
 go run ./cmd/tinybind-gen -dir ./path/to/package
 ```
+
+The CLI automatically discovers `.tb.html` and `.tb.sql` files in the target
+package and writes `tinybind_templates_gen.go`. SQL value expressions become
+driver arguments; PostgreSQL-style `$1`, `$2`, … placeholders are generated in
+encounter order:
+
+```text
+package store
+
+type User { id: int, name: string }
+
+export statement FindUser(id: int): sql.optional<User> {
+SELECT id, name FROM users WHERE id = {id}
+}
+```
+
+This generates both `BuildFindUser(id) (Statement, error)` and the
+`FindUser(ctx, db, id) (*User, error)` convenience API. The SQL compiler also
+supports `sql.exec`, `sql.one<T>`, `sql.many<T>`, private `sql.predicate`
+composition, private `sql.relation<T>` subqueries, conditional clauses, and
+array value-list expansion. Hand-authored placeholders and unguarded
+`UPDATE`/`DELETE` statements are rejected.
 
 Custom generator commands only need to call `generator.Main`. Start with
 `DefaultOptions`, then replace each authoritative `Set` with every identity the

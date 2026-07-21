@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/shibukawa/tinybind-go/parser"
 )
@@ -23,6 +24,7 @@ func Run(args []string, stdout, stderr io.Writer, options Options) int {
 	name := flags.String("name", "tinybind_gen.go", "binder/writer output file name")
 	openapi := flags.Bool("openapi", true, "also generate OpenAPI embed (tinybind_openapi_gen.go)")
 	openapiName := flags.String("openapi-name", "tinybind_openapi_gen.go", "OpenAPI output file name")
+	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	if err := flags.Parse(args); err != nil {
@@ -49,19 +51,58 @@ func Run(args []string, stdout, stderr io.Writer, options Options) int {
 
 	options.GenerateAll = options.GenerateAll || *generateAll
 	g := New(options)
-	path, err := g.Generate(*dir, *out, *name)
+	templatePath, err := g.GenerateTemplates(*dir, *out, *templatesName)
 	if err != nil {
-		fmt.Fprintf(stderr, "tinybind-gen: %v\n", err)
+		fmt.Fprintf(stderr, "tinybind-gen templates: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, path)
+	if templatePath != "" {
+		fmt.Fprintln(stdout, templatePath)
+	}
+
+	binderPath := ""
+	path, err := g.Generate(*dir, *out, *name)
+	if err != nil {
+		if !strings.Contains(err.Error(), "no generatable structs") {
+			fmt.Fprintf(stderr, "tinybind-gen: %v\n", err)
+			return 1
+		}
+		// packages may only define configbind.Bind targets
+	} else {
+		binderPath = path
+		fmt.Fprintln(stdout, path)
+	}
+
+	cfgPath, err := g.GenerateConfigBind(*dir, *out, defaultConfigBindOut)
+	if err != nil {
+		fmt.Fprintf(stderr, "tinybind-gen configbind: %v\n", err)
+		return 1
+	}
+	if cfgPath != "" {
+		fmt.Fprintln(stdout, cfgPath)
+	}
+
 	if *openapi && normalized.openAPI {
 		path, err := g.GenerateOpenAPI(*dir, *out, *openapiName)
 		if err != nil {
-			fmt.Fprintf(stderr, "tinybind-gen openapi: %v\n", err)
-			return 1
+			// soft-skip when package has no OpenAPI-capable types
+			if binderPath == "" && cfgPath != "" && strings.Contains(err.Error(), "no") {
+				// configbind-only package: ignore openapi failure
+			} else if binderPath != "" || templatePath != "" {
+				fmt.Fprintf(stderr, "tinybind-gen openapi: %v\n", err)
+				return 1
+			} else if cfgPath == "" {
+				fmt.Fprintf(stderr, "tinybind-gen openapi: %v\n", err)
+				return 1
+			}
+		} else {
+			fmt.Fprintln(stdout, path)
 		}
-		fmt.Fprintln(stdout, path)
+	}
+
+	if binderPath == "" && cfgPath == "" && templatePath == "" {
+		fmt.Fprintf(stderr, "tinybind-gen: nothing to generate in %s\n", *dir)
+		return 1
 	}
 	return 0
 }
