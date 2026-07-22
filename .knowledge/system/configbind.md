@@ -35,7 +35,7 @@ outputs:
   - populated Bind structs via generated apply
   - *T or nil from each SubCommand
   - generated CLI option and subcommand parser code
-  - generated ConfigbindScaffoldTOML and ConfigbindScaffoldEnv constants
+  - public TOML and .env scaffold output from registered data:config-scaffold-fragment values
   - provenance log records []{Key, Value, Place} for Bind keys
 load_order_bind:
   - defaults into overlay

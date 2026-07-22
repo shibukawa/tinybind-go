@@ -12,7 +12,7 @@ type ApplyFunc func(dst any, o *Overlay) error
 
 // Meta describes generated key tables and flags for one Bind target type.
 type Meta struct {
-	// TypeName is the Go type name used for registration (e.g. "WebServerConfig").
+	// TypeName is the package-qualified Go type identity used for diagnostics.
 	TypeName string
 	// KnownKeys lists stable config keys for env and provenance.
 	KnownKeys []string
@@ -29,8 +29,8 @@ var (
 	metaByTy = map[string]Meta{} // TypeName -> Meta
 )
 
-// RegisterMeta registers generated apply and key metadata for a type name.
-// Called from generated init functions.
+// RegisterMeta registers legacy metadata by a caller-supplied identity.
+// New generated code uses RegisterBinding so package and prefix identity cannot collide.
 func RegisterMeta(m Meta) {
 	if m.TypeName == "" || m.Apply == nil {
 		panic("configbind: RegisterMeta requires TypeName and Apply")
@@ -47,30 +47,51 @@ func lookupMeta(typeName string) (Meta, bool) {
 	return m, ok
 }
 
-// typeNames maps a zero pointer of T to its registered type name via BindType registration.
+// Typed metadata avoids collisions between same-named types in different packages.
 var (
-	typeMu    sync.RWMutex
-	typeNames = map[any]string{} // (*T)(nil) identity via named marker
+	typeMu       sync.RWMutex
+	typeMetas    = map[any]Meta{}
+	bindingMetas = map[bindingKey]Meta{}
 )
 
 type typeMarker[T any] struct{}
+type bindingKey struct {
+	typeID any
+	prefix string
+}
 
 func typeKey[T any]() any { return typeMarker[T]{} }
 
-// RegisterType associates a Go type parameter T with its generated type name and meta.
+// RegisterType associates T with prefix-independent legacy metadata.
+// New generated code uses RegisterBinding.
 func RegisterType[T any](typeName string, m Meta) {
 	m.TypeName = typeName
 	RegisterMeta(m)
 	typeMu.Lock()
-	typeNames[typeKey[T]()] = typeName
+	typeMetas[typeKey[T]()] = m
 	typeMu.Unlock()
 }
 
-func typeNameOf[T any]() (string, bool) {
+// RegisterBinding associates T and one generated Bind prefix with metadata.
+// Unlike RegisterType, it supports using the same type with multiple prefixes.
+func RegisterBinding[T any](prefix, typeName string, m Meta) {
+	if prefix == "" {
+		panic("configbind: RegisterBinding requires prefix")
+	}
+	m.TypeName = typeName
+	typeMu.Lock()
+	bindingMetas[bindingKey{typeID: typeKey[T](), prefix: prefix}] = m
+	typeMu.Unlock()
+}
+
+func metaForBinding[T any](prefix string) (Meta, bool) {
 	typeMu.RLock()
 	defer typeMu.RUnlock()
-	n, ok := typeNames[typeKey[T]()]
-	return n, ok
+	if m, ok := bindingMetas[bindingKey{typeID: typeKey[T](), prefix: prefix}]; ok {
+		return m, true
+	}
+	m, ok := typeMetas[typeKey[T]()]
+	return m, ok
 }
 
 // target is one Bind registration awaiting Load.
@@ -87,21 +108,17 @@ var (
 )
 
 // Bind allocates *T, registers it for the next Load, and returns the pointer.
-// Code generation must RegisterType[T] before Bind is used.
+// Code generation must RegisterBinding[T] before Bind is used.
 func Bind[T any](prefix string) *T {
-	name, ok := typeNameOf[T]()
+	meta, ok := metaForBinding[T](prefix)
 	if !ok {
-		panic(fmt.Sprintf("configbind: type not registered; run go generate (Bind[%T])", *new(T)))
-	}
-	meta, ok := lookupMeta(name)
-	if !ok {
-		panic(fmt.Sprintf("configbind: missing meta for %s", name))
+		panic(fmt.Sprintf("configbind: type/prefix not registered; run go generate (Bind[%T](%q))", *new(T), prefix))
 	}
 	dst := new(T)
 	targetsMu.Lock()
 	targets = append(targets, target{
 		prefix:   prefix,
-		typeName: name,
+		typeName: meta.TypeName,
 		dst:      dst,
 		meta:     meta,
 	})

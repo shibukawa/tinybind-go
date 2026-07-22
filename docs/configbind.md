@@ -55,14 +55,16 @@ When config targets are present, the default output is `configbind_gen.go`. The 
 
 ## Generating configuration scaffolds
 
-The generated file exports two plain-text constants derived from the `Bind` structs:
+Each generated package registers scaffold metadata for its own `Bind` calls. Public `configbind` functions combine metadata from the framework and every imported application package:
 
 ```go
-const ConfigbindScaffoldTOML string
-const ConfigbindScaffoldEnv string
+func ScaffoldTOML() (string, error)
+func ScaffoldEnv() (string, error)
+func WriteScaffoldTOML(w io.Writer) error
+func WriteScaffoldEnv(w io.Writer) error
 ```
 
-`ConfigbindScaffoldTOML` contains a restricted-subset TOML sample. `ConfigbindScaffoldEnv` contains a `.env` sample. Both use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
+The TOML output uses the supported restricted subset. Both formats use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
 
 For example, this definition:
 
@@ -73,10 +75,12 @@ type ServerConfig struct {
 	Internal string `env:"-"`
 }
 
-var server = configbind.Bind[ServerConfig]("server")
+func serverConfig() *ServerConfig {
+	return configbind.Bind[ServerConfig]("server")
+}
 ```
 
-produces constants whose text is equivalent to:
+contributes text equivalent to the following in the combined output:
 
 ```toml
 [server]
@@ -94,19 +98,24 @@ PORT=8080
 SERVER_HOST="localhost"
 ```
 
-The generator does not create files at runtime or add a scaffold subcommand to your application. Add the command shape that fits your application and print the constants. For example, code in the generated package can expose this helper through your preferred CLI framework:
+Generation may run separately in a server framework package and in each modular-monolith package. Importing those generated packages registers all fragments; the final application does not need to rescan their source. Output order is deterministic, and duplicate keys or environment names return an error.
+
+The generator does not create files at runtime or add a scaffold subcommand. Add the command shape that fits your application and call the public output functions:
 
 ```go
-import "fmt"
+import (
+	"fmt"
+	"os"
+
+	"github.com/shibukawa/tinybind-go/configbind"
+)
 
 func printConfigScaffold(format string) error {
 	if format == "env" {
-		fmt.Print(ConfigbindScaffoldEnv)
-		return nil
+		return configbind.WriteScaffoldEnv(os.Stdout)
 	}
 	if format == "toml" {
-		fmt.Print(ConfigbindScaffoldTOML)
-		return nil
+		return configbind.WriteScaffoldTOML(os.Stdout)
 	}
 	return fmt.Errorf("unknown scaffold format %q", format)
 }

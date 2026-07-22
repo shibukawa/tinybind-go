@@ -3,7 +3,7 @@ id: concept:openapi-generation
 type: concept
 title: OpenAPI Generation
 ---
-OpenAPI is generated from Go source via the shared IR; the document is never hand-edited and stays synchronized with binders, writers, and validation.
+OpenAPI package fragments are generated from each package's shared IR and assembled through public httpbind APIs; the document is never hand-edited.
 
 ```yaml
 primary_source: Go source code
@@ -36,6 +36,7 @@ route_analysis:
   - concept:stdlib-wrapper-unwrap
   - flow:handler-parse
 artifacts:
+  - data:openapi-fragment
   - concept:openapi-embed
   - api:openapi-json
   - api:openapi-yaml
@@ -50,6 +51,8 @@ pipeline:
   - error mapping
   - OpenAPI
 related:
+  - requirement:modular-package-generation
+  - requirement:openapi-fragment-aggregation
   - decision:single-source-of-truth
   - flow:code-generation
   - concept:code-generation

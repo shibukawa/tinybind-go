@@ -55,14 +55,16 @@ configbind の対象がある場合、既定では `configbind_gen.go` が生成
 
 ## 設定 file の雛形生成
 
-生成された file には、`Bind` した構造体から作った plain text の定数が2つ公開されます。
+各 package の生成コードは、その package 内の `Bind` に対応する雛形 metadata を登録します。公開された `configbind` の関数が、framework と import 済みの全 application package の metadata を統合します。
 
 ```go
-const ConfigbindScaffoldTOML string
-const ConfigbindScaffoldEnv string
+func ScaffoldTOML() (string, error)
+func ScaffoldEnv() (string, error)
+func WriteScaffoldTOML(w io.Writer) error
+func WriteScaffoldEnv(w io.Writer) error
 ```
 
-`ConfigbindScaffoldTOML` は対応 subset 内の TOML 例、`ConfigbindScaffoldEnv` は `.env` 例です。`default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
+TOML 出力は対応 subset 内の文法を使います。どちらの形式も `default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
 
 たとえば次の定義がある場合:
 
@@ -73,10 +75,12 @@ type ServerConfig struct {
 	Internal string `env:"-"`
 }
 
-var server = configbind.Bind[ServerConfig]("server")
+func serverConfig() *ServerConfig {
+	return configbind.Bind[ServerConfig]("server")
+}
 ```
 
-定数の内容は次のようになります。
+統合後の出力には、次と同等の内容が含まれます。
 
 ```toml
 [server]
@@ -94,19 +98,24 @@ PORT=8080
 SERVER_HOST="localhost"
 ```
 
-generator は実行時に file を作成せず、application に雛形出力用 subcommand も追加しません。application に合う command をユーザー側で用意して、定数を出力してください。たとえば生成先 package の次の helper を、任意の CLI framework から呼び出せます。
+server framework package とモジュラモノリスの各 package で、別々に generator を実行できます。生成済み package を import すると fragment がすべて登録されるため、最終 application が依存 package の source を再解析する必要はありません。出力順は deterministic で、key や環境変数名が重複した場合は error になります。
+
+generator は実行時に file を作成せず、application に雛形出力用 subcommand も追加しません。application に合う command をユーザー側で用意して、公開出力関数を呼び出してください。
 
 ```go
-import "fmt"
+import (
+	"fmt"
+	"os"
+
+	"github.com/shibukawa/tinybind-go/configbind"
+)
 
 func printConfigScaffold(format string) error {
 	if format == "env" {
-		fmt.Print(ConfigbindScaffoldEnv)
-		return nil
+		return configbind.WriteScaffoldEnv(os.Stdout)
 	}
 	if format == "toml" {
-		fmt.Print(ConfigbindScaffoldTOML)
-		return nil
+		return configbind.WriteScaffoldTOML(os.Stdout)
 	}
 	return fmt.Errorf("unknown scaffold format %q", format)
 }

@@ -112,9 +112,10 @@ func AnalyzeConfigBind(dir string) (pkgName string, specs []cbcg.Spec, err error
 			return "", nil, fmt.Errorf("configbind: %s: %w", b.TypeName, err)
 		}
 		specs = append(specs, cbcg.Spec{
-			TypeName: b.TypeName,
-			Prefix:   b.Prefix,
-			Fields:   fields,
+			PackagePath: pkg.PkgPath,
+			TypeName:    b.TypeName,
+			Prefix:      b.Prefix,
+			Fields:      fields,
 		})
 	}
 	return pkg.Name, specs, nil

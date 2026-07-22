@@ -40,7 +40,7 @@ go generate ./...
 既定では次のファイルが生成されます。
 
 - `tinybind_gen.go` — 利用されている型の HTTP / JSON バインディング
-- `tinybind_openapi_gen.go` — OpenAPI JSON / YAML の埋め込み
+- `tinybind_openapi_gen.go` — package-local な OpenAPI fragment の登録
 - `tinybind_templates_gen.go` — 同じディレクトリにテンプレートがある場合
 
 CI では、静的解析できないルート候補も失敗として扱う `-check` が便利です。
@@ -373,6 +373,18 @@ JSON array は閉じ `]` を `Close` が書くため、必ず `defer stream.Clos
 ## OpenAPI と Swagger UI
 
 ジェネレーターは、発見したルート、`Bind` の型、`Write` / `WriteStatus` / `NewStream` の型、HTTP エラーを OpenAPI に反映します。
+
+生成は package 単位です。framework package では health check などの組み込み route を一度生成し、モジュラモノリスの各 package はそれぞれの route を生成できます。それらの package を import すると fragment が登録され、`httpbind` が deterministic に1つの文書へ統合します。同じ path/method の競合は error になり、package が異なる同名 schema には package-qualified な component 名が割り当てられます。
+
+統合済み bytes と merge error を明示的に扱う場合は `AssembleOpenAPI` を使います。
+
+```go
+err := httpbind.SetOpenAPIInfo(httpbind.OpenAPIInfo{
+	Title:   "My Service API",
+	Version: "1.0.0",
+})
+jsonDoc, yamlDoc, err := httpbind.AssembleOpenAPI()
+```
 
 ```go
 mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)

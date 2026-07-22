@@ -3,7 +3,7 @@ id: api:openapi-json
 type: api
 title: OpenAPI JSON Handler
 ---
-Generated handler serializes the embedded OpenAPI document as JSON.
+Public handler serializes the document merged from every registered data:openapi-fragment as JSON.
 
 ```yaml
 signature: |
@@ -18,6 +18,8 @@ example: |
       httpbind.OpenAPIJSON,
   )
 source: concept:openapi-embed
+aggregation: requirement:openapi-fragment-aggregation
+assembly: api:openapi-assembly
 related:
   - api:openapi-yaml
   - concept:openapi-generation

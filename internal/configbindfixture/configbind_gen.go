@@ -10,19 +10,13 @@ import (
 	"github.com/shibukawa/tinybind-go/configbind"
 )
 
-// ConfigbindScaffoldTOML is a sample TOML configuration derived from Bind struct metadata.
-const ConfigbindScaffoldTOML = "[webserver]\n# HTTP listen port\nport = 8080\n# listen host\nhost = \"localhost\"\n# CORS origins\ncors_origins = []\n# enable TLS\ntls.enabled = false\n# TLS certificate path\ntls.cert_path = \"\"\n"
-
-// ConfigbindScaffoldEnv is a sample .env file derived from Bind struct metadata.
-const ConfigbindScaffoldEnv = "# HTTP listen port\nPORT=8080\n# listen host\nWEBSERVER_HOST=\"localhost\"\n# CORS origins\nWEBSERVER_CORS_ORIGINS=\"\"\n# enable TLS\nWEBSERVER_TLS_ENABLED=false\n# TLS certificate path\nTLS_CERT_FILE=\"\"\n"
-
 func init() {
-	registerWebServerConfig()
+	registerWebServerConfigBinding0()
 }
 
-func registerWebServerConfig() {
-	configbind.RegisterType[WebServerConfig]("WebServerConfig", configbind.Meta{
-		TypeName: "WebServerConfig",
+func registerWebServerConfigBinding0() {
+	configbind.RegisterBinding[WebServerConfig]("webserver", "github.com/shibukawa/tinybind-go/internal/configbindfixture.WebServerConfig", configbind.Meta{
+		TypeName: "github.com/shibukawa/tinybind-go/internal/configbindfixture.WebServerConfig",
 		KnownKeys: []string{
 			"webserver.port",
 			"webserver.host",
@@ -42,11 +36,18 @@ func registerWebServerConfig() {
 			{Prefix: "webserver", Key: "tls.enabled", Help: "enable TLS", Kind: cliparser.KindBool},
 			{Prefix: "webserver", Key: "tls.cert_path", Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
 		},
-		Apply: applyWebServerConfig,
+		Apply: applyWebServerConfigBinding0,
 	})
+	configbind.RegisterScaffold(configbind.ScaffoldFragment{ID: "github.com/shibukawa/tinybind-go/internal/configbindfixture.WebServerConfig@webserver", Prefix: "webserver", Fields: []configbind.ScaffoldField{
+		{Key: "port", Kind: configbind.ScaffoldInt, Default: "8080", Opt: "port,p", Help: "HTTP listen port"},
+		{Key: "host", Kind: configbind.ScaffoldString, Default: "localhost", Help: "listen host"},
+		{Key: "cors_origins", Kind: configbind.ScaffoldStringSlice, Help: "CORS origins"},
+		{Key: "tls.enabled", Kind: configbind.ScaffoldBool, Default: "false", Help: "enable TLS"},
+		{Key: "tls.cert_path", Kind: configbind.ScaffoldString, Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
+	}})
 }
 
-func applyWebServerConfig(dst any, o *configbind.Overlay) error {
+func applyWebServerConfigBinding0(dst any, o *configbind.Overlay) error {
 	p, ok := dst.(*WebServerConfig)
 	if !ok || p == nil {
 		return fmt.Errorf("configbind: apply WebServerConfig: bad destination")

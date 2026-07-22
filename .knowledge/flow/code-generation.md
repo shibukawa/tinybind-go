@@ -3,7 +3,7 @@ id: flow:code-generation
 type: flow
 title: Code Generation Pipeline
 ---
-Generator reads same-package handlers and Go types, then emits runtime bind/write functions, validation, OpenAPI, and streaming metadata from one IR.
+Generator reads same-package handlers and Go types, then emits local runtime functions and a registered OpenAPI fragment from one IR.
 
 ```yaml
 flow:
@@ -61,10 +61,11 @@ flow:
       refs:
         - concept:streaming
     - id: emit-openapi
-      action: generate OpenAPI 3.1 model, embed, and serve handlers
+      action: generate and register data:openapi-fragment; public handlers serve the merged application document
       refs:
         - concept:openapi-generation
         - concept:openapi-embed
+        - requirement:openapi-fragment-aggregation
         - api:openapi-json
         - api:openapi-yaml
         - decision:openapi-31

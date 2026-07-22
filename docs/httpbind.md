@@ -40,7 +40,7 @@ go generate ./...
 The default output files are:
 
 - `tinybind_gen.go` — HTTP and JSON bindings for types actually used
-- `tinybind_openapi_gen.go` — embedded OpenAPI JSON and YAML
+- `tinybind_openapi_gen.go` — package-local OpenAPI fragment registration
 - `tinybind_templates_gen.go` — generated templates, when the package contains templates
 
 Use `-check` in CI to fail when route candidates cannot be analyzed:
@@ -373,6 +373,18 @@ Always use `defer stream.Close()`: for the JSON array format, `Close` writes the
 ## OpenAPI and Swagger UI
 
 The generator reflects discovered routes, `Bind` types, `Write` / `WriteStatus` / `NewStream` types, and HTTP errors in OpenAPI.
+
+Generation is package-local. A framework package can generate built-in routes such as health checks once, while each modular-monolith package generates its own routes. Importing those packages registers their fragments; `httpbind` merges them deterministically into one document. Conflicting path/method operations are errors, and same-named but different schemas receive package-qualified component names.
+
+Use `AssembleOpenAPI` when the application needs the merged bytes and explicit merge errors:
+
+```go
+err := httpbind.SetOpenAPIInfo(httpbind.OpenAPIInfo{
+	Title:   "My Service API",
+	Version: "1.0.0",
+})
+jsonDoc, yamlDoc, err := httpbind.AssembleOpenAPI()
+```
 
 ```go
 mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)

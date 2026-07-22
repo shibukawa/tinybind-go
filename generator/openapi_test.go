@@ -186,11 +186,14 @@ func TestGenerateOpenAPI_EmitsRegisterNotHandwrittenYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(data)
-	if !strings.Contains(code, "RegisterOpenAPI") {
-		t.Fatalf("missing RegisterOpenAPI:\n%s", code)
+	if !strings.Contains(code, `RegisterOpenAPIFragment("github.com/shibukawa/tinybind-go/internal/openapifixture"`) {
+		t.Fatalf("missing package-qualified RegisterOpenAPIFragment:\n%s", code)
 	}
-	if !strings.Contains(code, `"openapi": "3.1.0"`) && !strings.Contains(code, `\"openapi\": \"3.1.0\"`) {
-		t.Fatalf("missing openapi 3.1 in embed:\n%s", code[:min(500, len(code))])
+	if !strings.Contains(code, `\"paths\"`) || !strings.Contains(code, `\"components\"`) {
+		t.Fatalf("missing package fragment data in embed:\n%s", code[:min(500, len(code))])
+	}
+	if strings.Contains(code, `\"info\"`) || strings.Contains(code, `\"openapi\"`) {
+		t.Fatalf("package fragment must not own final document metadata:\n%s", code[:min(500, len(code))])
 	}
 	// must not be loading a .yaml/.json file as primary input
 	if strings.Contains(code, "os.ReadFile") || strings.Contains(code, "openapi.yaml") {

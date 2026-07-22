@@ -125,8 +125,9 @@ type DiscoverySymbol struct {
 
 // PackagePlan is all type plans in a package.
 type PackagePlan struct {
-	Package string
-	Types   []TypePlan
+	Package     string
+	PackagePath string
+	Types       []TypePlan
 	// Discovered lists type names referenced by configured generic call sites.
 	Discovered []string
 }
@@ -174,7 +175,7 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 		return nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
 	}
 
-	plan := &PackagePlan{Package: pkg.Name}
+	plan := &PackagePlan{Package: pkg.Name, PackagePath: pkg.PkgPath}
 	discovered := map[string]Usage{}
 	normalized := opts.normalized()
 	symbols := normalized.symbols

@@ -11,12 +11,12 @@ import (
 )
 
 func init() {
-	registerServerConfig()
+	registerServerConfigBinding0()
 }
 
-func registerServerConfig() {
-	configbind.RegisterType[ServerConfig]("ServerConfig", configbind.Meta{
-		TypeName: "ServerConfig",
+func registerServerConfigBinding0() {
+	configbind.RegisterBinding[ServerConfig]("server", "github.com/shibukawa/tinybind-go/examples/demo.ServerConfig", configbind.Meta{
+		TypeName: "github.com/shibukawa/tinybind-go/examples/demo.ServerConfig",
 		KnownKeys: []string{
 			"server.port",
 		},
@@ -26,11 +26,14 @@ func registerServerConfig() {
 		FlagMetas: []cliparser.FieldMeta{
 			{Prefix: "server", Key: "port", Opt: "port,p", Help: "HTTP listen port"},
 		},
-		Apply: applyServerConfig,
+		Apply: applyServerConfigBinding0,
 	})
+	configbind.RegisterScaffold(configbind.ScaffoldFragment{ID: "github.com/shibukawa/tinybind-go/examples/demo.ServerConfig@server", Prefix: "server", Fields: []configbind.ScaffoldField{
+		{Key: "port", Kind: configbind.ScaffoldInt, Default: "8080", Opt: "port,p", Help: "HTTP listen port"},
+	}})
 }
 
-func applyServerConfig(dst any, o *configbind.Overlay) error {
+func applyServerConfigBinding0(dst any, o *configbind.Overlay) error {
 	p, ok := dst.(*ServerConfig)
 	if !ok || p == nil {
 		return fmt.Errorf("configbind: apply ServerConfig: bad destination")

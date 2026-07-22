@@ -11,11 +11,19 @@ import (
 )
 
 func TestGeneratedScaffolds(t *testing.T) {
-	if !strings.Contains(configbindfixture.ConfigbindScaffoldTOML, "[webserver]\n") {
-		t.Fatalf("TOML scaffold=%q", configbindfixture.ConfigbindScaffoldTOML)
+	tomlText, err := configbind.ScaffoldTOML()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(configbindfixture.ConfigbindScaffoldEnv, "TLS_CERT_FILE=\"\"\n") {
-		t.Fatalf("env scaffold=%q", configbindfixture.ConfigbindScaffoldEnv)
+	if !strings.Contains(tomlText, "[webserver]\n") {
+		t.Fatalf("TOML scaffold=%q", tomlText)
+	}
+	envText, err := configbind.ScaffoldEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(envText, "TLS_CERT_FILE=\"\"\n") {
+		t.Fatalf("env scaffold=%q", envText)
 	}
 }
 

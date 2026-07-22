@@ -14,8 +14,11 @@ goals:
   - TinyGo compatible
   - independent of handwritten YAML
   - based entirely on Go source code
+  - composable across independently generated framework and application packages
 developer_rule: never manually maintain the OpenAPI document as source of truth
 related:
+  - requirement:modular-package-generation
+  - requirement:openapi-fragment-aggregation
   - concept:openapi-generation
   - decision:single-source-of-truth
   - decision:reflection-free

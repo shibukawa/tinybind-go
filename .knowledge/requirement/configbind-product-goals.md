@@ -23,7 +23,7 @@ goals:
   - defaults, help, opt, enum, and secret tags live on struct field tags
   - CLI flags default to --prefix-key; opt overrides and suppresses default name
   - generator extracts CLI flag defs from structs
-  - generated constants expose TOML and .env scaffold plain text
+  - generated per-struct fragments compose into TOML and .env scaffold output
   - help tags feed CLI usage and TOML scaffold comments
   - SubCommand[T](name, help) returns *T or nil
   - subcommands are CLI-only; no TOML or env for subcommand fields
@@ -80,7 +80,7 @@ acceptance:
   - default CLI flag for [webserver] port is --webserver-port
   - opt:"port,p" yields --port and -p without --webserver-port
   - enum tags reject values outside the allowlist from any source
-  - generated ConfigbindScaffoldTOML and ConfigbindScaffoldEnv hold plain text
+  - public configbind APIs merge framework and application scaffold fragments
   - scaffolds cover Bind fields only, never SubCommand fields
   - SubCommand returns *T when selected and nil when not
   - arg required|optional|* parse positionals for subcommands

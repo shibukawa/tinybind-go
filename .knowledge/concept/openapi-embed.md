@@ -1,18 +1,17 @@
 ---
 id: concept:openapi-embed
 type: concept
-title: Embedded OpenAPI Document
+title: Embedded OpenAPI Fragments
 ---
-Generator builds an in-memory OpenAPI model and embeds it in generated Go code for runtime serving.
+Generator embeds one data:openapi-fragment per package; httpbind assembles registered fragments for runtime serving.
 
 ```yaml
 generated_file_example: tinybind_openapi_gen.go
-embedded_symbol_example: "var generatedOpenAPI = ..."
+embedded_symbol_example: "var generatedOpenAPIFragment = ..."
 includes:
-  - embedded OpenAPI specification
-  - JSON serve handler
-  - YAML serve handler
-  - schema metadata
+  - package-local operations
+  - package-local schema metadata
+aggregation: requirement:openapi-fragment-aggregation
 handlers:
   - api:openapi-json
   - api:openapi-yaml

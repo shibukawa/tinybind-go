@@ -25,7 +25,7 @@ func (g *Generator) GenerateOpenAPI(dir, outDir, outName string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	src, err := EmitOpenAPI(plan.Package, doc)
+	src, err := EmitOpenAPIFragment(plan.Package, plan.PackagePath, doc)
 	if err != nil {
 		return "", err
 	}
@@ -49,16 +49,26 @@ func (g *Generator) GenerateOpenAPI(dir, outDir, outName string) (string, error)
 	return abs, nil
 }
 
-// EmitOpenAPI produces Go source embedding OpenAPI JSON/YAML and registering it.
+// EmitOpenAPI produces Go source for a package-named fragment. Prefer
+// EmitOpenAPIFragment when the package import path is available.
 func EmitOpenAPI(pkg string, doc Document) ([]byte, error) {
+	return EmitOpenAPIFragment(pkg, pkg, doc)
+}
+
+// EmitOpenAPIFragment produces Go source embedding and registering one
+// package-local OpenAPI fragment.
+func EmitOpenAPIFragment(pkg, packagePath string, doc Document) ([]byte, error) {
 	if pkg == "" {
 		pkg = "main"
 	}
-	jsonBytes, err := doc.JSON()
-	if err != nil {
-		return nil, err
+	if packagePath == "" {
+		packagePath = pkg
 	}
-	yamlBytes, err := doc.YAML()
+	fragment := Document{
+		"paths":      doc["paths"],
+		"components": doc["components"],
+	}
+	jsonBytes, err := fragment.JSON()
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +78,9 @@ func EmitOpenAPI(pkg string, doc Document) ([]byte, error) {
 	fmt.Fprintf(&b, "package %s\n\n", pkg)
 	b.WriteString("import \"github.com/shibukawa/tinybind-go\"\n\n")
 	b.WriteString("func init() {\n")
-	b.WriteString("\thttpbind.RegisterOpenAPI([]byte(openapiJSON), []byte(openapiYAML))\n")
+	fmt.Fprintf(&b, "\thttpbind.RegisterOpenAPIFragment(%s, []byte(openapiFragmentJSON))\n", strconv.Quote(packagePath))
 	b.WriteString("}\n\n")
-	fmt.Fprintf(&b, "const openapiJSON = %s\n\n", strconv.Quote(string(jsonBytes)))
-	fmt.Fprintf(&b, "const openapiYAML = %s\n", strconv.Quote(string(yamlBytes)))
+	fmt.Fprintf(&b, "const openapiFragmentJSON = %s\n", strconv.Quote(string(jsonBytes)))
 
 	formatted, err := format.Source(b.Bytes())
 	if err != nil {
