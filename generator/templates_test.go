@@ -67,12 +67,19 @@ export statement Ping(): sql.exec {SELECT 1}`)
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	exit := generator.Run([]string{"-dir", dir, "-openapi=false"}, &stdout, &stderr, generator.DefaultOptions())
+	exit := generator.Run([]string{"-dir", dir, "-openapi=false", "-sql-context-api"}, &stdout, &stderr, generator.DefaultOptions())
 	if exit != 0 {
 		t.Fatalf("exit=%d stderr=%s", exit, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), generator.DefaultTemplatesName) {
 		t.Fatalf("stdout=%q", stdout.String())
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, generator.DefaultTemplatesName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte("func PingContext(ctx context.Context")) {
+		t.Fatalf("Context API was not generated:\n%s", generated)
 	}
 }
 
@@ -96,5 +103,52 @@ func TestTemplateFilesDoesNotDescendOrMatchOrdinaryFiles(t *testing.T) {
 	}
 	if len(files) != 2 || filepath.Base(files[0]) != "a.tb.html" || filepath.Base(files[1]) != "b.tb.sql" {
 		t.Fatalf("files=%v", files)
+	}
+}
+
+func TestGenerateTemplatesUsesCustomSQLExecutorResolver(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "dbctx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module fixture\n\ngo 1.26\n",
+		"query.tb.sql": `package fixture
+type User { id: int }
+export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id = {id}}`,
+		"dbctx/dbctx.go": `package dbctx
+import (
+    "context"
+    "database/sql"
+)
+type ExecutorInterface interface {
+    ExecContext(context.Context, string, ...any) (sql.Result, error)
+    QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+func Executor(context.Context) (ExecutorInterface, error) { return nil, nil }`,
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := generator.DefaultOptions()
+	opts.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "fixture/dbctx", Name: "Executor"}
+	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte(`_tinybindresolver "fixture/dbctx"`)) || !bytes.Contains(generated, []byte("func GetUserContext")) {
+		t.Fatalf("custom resolver wrapper missing:\n%s", generated)
+	}
+	command := exec.Command("go", "test", "./...")
+	command.Dir = dir
+	command.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("custom resolver output does not compile: %v\n%s\n%s", err, output, generated)
 	}
 }

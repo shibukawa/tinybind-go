@@ -38,9 +38,9 @@ maps_to:
   - api:encode-json
   - api:write-status
   - requirement:analysis-diagnostics
+  - requirement:bind-check-validation
   - rule:analysis-diagnostics-check
   - rule:same-package-convention
   - rule:openapi-success-status
 ```
-
 

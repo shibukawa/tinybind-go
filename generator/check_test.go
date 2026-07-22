@@ -31,6 +31,14 @@ func TestParseCheckTag_CoreRules(t *testing.T) {
 	if c.Min == nil || *c.Min != 1 || !c.HasDefault || c.Default != "-1" {
 		t.Fatalf("%+v", c)
 	}
+
+	c, err = generator.ParseCheckTag("default=1", "int")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HasValidation() {
+		t.Fatalf("default-only check must not advertise a validation failure: %+v", c)
+	}
 }
 
 func TestParseCheckTag_RejectsInvalid(t *testing.T) {

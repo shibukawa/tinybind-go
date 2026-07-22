@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"strings"
 
 	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinygodriver/httpmux"
@@ -21,20 +20,6 @@ func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[CreateUserRequest](r)
 	if err != nil {
 		httpbind.WriteError(w, r, err)
-		return
-	}
-	if input.Name == "" || input.Email == "" {
-		httpbind.WriteError(w, r, httpbind.Validation(
-			httpbind.Field("name", "payload", "required"),
-			httpbind.Field("email", "payload", "required"),
-		))
-		return
-	}
-	if !strings.Contains(input.Email, "@") {
-		httpbind.WriteError(w, r, httpbind.BadRequest(httpbind.Problem{
-			Code:    "invalid_email",
-			Message: "email is invalid",
-		}))
 		return
 	}
 	if input.Name == "taken" {
@@ -64,20 +49,9 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		httpbind.WriteError(w, r, err)
 		return
 	}
-	if input.Keyword == "" {
-		httpbind.WriteError(w, r, httpbind.BadRequest(httpbind.Problem{
-			Code:    "missing_keyword",
-			Message: "keyword is required",
-		}))
-		return
-	}
-	page := input.Page
-	if page <= 0 {
-		page = 1
-	}
 	out := SearchResponse{
 		Keyword: input.Keyword,
-		Page:    page,
+		Page:    input.Page,
 		Filter:  input.Filter,
 		Hits:    1,
 	}
@@ -90,12 +64,6 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[EchoRequest](r)
 	if err != nil {
 		httpbind.WriteError(w, r, err)
-		return
-	}
-	if input.Message == "" {
-		httpbind.WriteError(w, r, httpbind.Validation(
-			httpbind.Field("message", "payload", "required"),
-		))
 		return
 	}
 	out := EchoResponse{Message: input.Message, N: input.N}
@@ -188,7 +156,7 @@ func forbiddenDemoHandler(w http.ResponseWriter, r *http.Request) {
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(indexHTML))
+	_ = IndexPage(w, indexJavaScript)
 }
 
 // RegisterDemoRoutes mounts all demo routes on mux (also used for OpenAPI discovery).
@@ -214,123 +182,3 @@ func RegisterDemoRoutes(mux *httpmux.ServeMux) {
 		http.Redirect(w, r, "/docs/", http.StatusFound)
 	})
 }
-
-const indexHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>httpbind demo</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 54rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
-    code, pre { background: #f4f4f5; border-radius: 4px; }
-    pre { padding: 0.75rem 1rem; overflow-x: auto; }
-    h1 { margin-bottom: 0.25rem; }
-    .muted { color: #666; }
-    a { color: #0b57d0; }
-    #stream-out { white-space: pre-wrap; min-height: 4rem; border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; }
-  </style>
-</head>
-<body>
-  <h1>httpbind demo</h1>
-  <p class="muted">Bind / Write / WriteError / OpenAPI / <code>NewStream[T]</code> (SSE / NDJSON-JSONL / JSON array).</p>
-  <ul>
-    <li><a href="/docs/">GET /docs/</a> — Swagger UI</li>
-    <li><a href="/health">GET /health</a></li>
-    <li><a href="/openapi.json">GET /openapi.json</a></li>
-    <li><a href="/openapi.yaml">GET /openapi.yaml</a></li>
-  </ul>
-
-  <h2>Browser stream (fetch → format via Accept)</h2>
-  <p>
-    <input id="msg" value="hello" />
-    <button type="button" id="btn-sse">Stream as SSE</button>
-    <button type="button" id="btn-nd">Stream as NDJSON/JSONL</button>
-    <button type="button" id="btn-ja">Stream as JSON array</button>
-  </p>
-  <div id="stream-out" class="muted">output…</div>
-
-  <h2>curl recipes</h2>
-  <pre># create user (JSON + path + header)
-curl -sS -X POST 'http://localhost:8080/orgs/acme/users' \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer secret' \
-  -d '{"name":"Alice","email":"a@example.com"}'
-
-# create user (query input)
-curl -sS -X POST 'http://localhost:8080/orgs/acme/users?name=Bob&email=b@example.com' \
-  -H 'Authorization: Bearer secret'
-
-# create user (form)
-curl -sS -X POST 'http://localhost:8080/orgs/acme/users' \
-  -H 'Authorization: Bearer secret' \
-  -d 'name=Carol&email=c@example.com'
-
-# validation error
-curl -sS -X POST 'http://localhost:8080/orgs/acme/users' \
-  -H 'Content-Type: application/json' -H 'Authorization: Bearer x' -d '{}'
-
-# search: query + JSON payload field
-curl -sS -X POST 'http://localhost:8080/search?keyword=go&page=2' \
-  -H 'Content-Type: application/json' -d '{"filter":"active"}'
-
-# echo
-curl -sS -X POST 'http://localhost:8080/echo?n=3' \
-  -H 'Content-Type: application/json' -d '{"message":"hi"}'
-
-# session cookie
-curl -sS 'http://localhost:8080/session' -H 'Cookie: session=abc'
-
-# not found
-curl -sS 'http://localhost:8080/users/missing'
-
-# stream — curl UA defaults to NDJSON; use -N to not buffer
-curl -sSN -X POST 'http://localhost:8080/chat' \
-  -H 'Content-Type: application/json' -d '{"message":"hello"}'
-
-# stream — force SSE via query
-curl -sSN -X POST 'http://localhost:8080/chat?stream=sse' \
-  -H 'Content-Type: application/json' -d '{"message":"hello"}'
-
-# stream — force SSE via Accept
-curl -sSN -X POST 'http://localhost:8080/chat' \
-  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
-  -d '{"message":"hello"}'
-
-# stream — force NDJSON/JSONL via query (even with browser-like Accept)
-curl -sSN -X POST 'http://localhost:8080/chat?stream=ndjson' \
-  -H 'Content-Type: application/json' -d '{"message":"hello"}'
-
-# stream — JSON array document (not JSONL): [obj1,obj2,...]
-curl -sSN -X POST 'http://localhost:8080/chat' \
-  -H 'Content-Type: application/json' -H 'Accept: application/json' \
-  -d '{"message":"hello"}'
-</pre>
-  <script>
-    async function runStream(accept) {
-      const out = document.getElementById('stream-out');
-      out.textContent = '…';
-      const msg = document.getElementById('msg').value || 'hello';
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': accept,
-        },
-        body: JSON.stringify({ message: msg }),
-      });
-      out.textContent = 'HTTP ' + res.status + '  Content-Type: ' + res.headers.get('content-type') + '\n\n';
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        out.textContent += dec.decode(value, { stream: true });
-      }
-    }
-    document.getElementById('btn-sse').onclick = () => runStream('text/event-stream');
-    document.getElementById('btn-nd').onclick = () => runStream('application/x-ndjson');
-    document.getElementById('btn-ja').onclick = () => runStream('application/json');
-  </script>
-</body>
-</html>
-`

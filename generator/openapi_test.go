@@ -154,6 +154,13 @@ func init() {
 	if err != nil {
 		t.Fatalf("BuildOpenAPI: %v", err)
 	}
+	paths := doc["paths"].(map[string]any)
+	post := paths["/x"].(map[string]any)["post"].(map[string]any)
+	responses := post["responses"].(map[string]any)
+	validation, ok := responses["400"].(map[string]any)
+	if !ok || validation["description"] != "Validation" {
+		t.Fatalf("check validation response missing: %#v", responses)
+	}
 	y, err := doc.YAML()
 	if err != nil {
 		t.Fatal(err)

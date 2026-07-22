@@ -10,13 +10,14 @@ signature: "func Bind[T any](r *http.Request) (T, error)"
 example: "input, err := httpbind.Bind[CreateUserRequest](r)"
 behavior:
   - bind query, payload, path, header, cookie, method per field tags
-  - validate check tags then apply defaults per concept:check-validation
+  - validate check tags then apply defaults per requirement:bind-check-validation
   - return typed value or error
   - no runtime reflection
 uses:
   - concept:request-binding
   - concept:code-generation
   - concept:check-validation
+  - requirement:bind-check-validation
   - rule:default-input-tag
   - rule:check-codegen-pipeline
 discovery: rule:request-model-discovery

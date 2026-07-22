@@ -18,6 +18,8 @@ owned_flags:
   - name
   - openapi
   - openapi-name
+  - templates-name
+  - sql-context-api
   - check
   - generate-all
 option_behavior:

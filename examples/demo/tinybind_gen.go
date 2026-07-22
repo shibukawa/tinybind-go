@@ -58,6 +58,8 @@ func decodeCreateUserRequestJSON(raw json.RawMessage) (CreateUserRequest, error)
 
 func bindCreateUserRequest(r *http.Request) (CreateUserRequest, error) {
 	var out CreateUserRequest
+	var presentName bool
+	var presentEmail bool
 	var jsonBody map[string]jsonRaw
 	var formBody map[string]string
 	var bodyRead bool
@@ -93,12 +95,14 @@ func bindCreateUserRequest(r *http.Request) (CreateUserRequest, error) {
 		return nil
 	}
 	if qv, ok := httpbind.QueryValue(r, "name"); ok {
+		presentName = true
 		out.Name = qv
 	} else {
 		if err := readBody(); err != nil {
 			return out, err
 		}
 		if raw, ok := jsonBody["name"]; ok {
+			presentName = true
 			v, err := jsonbind.DecodeJSONString(raw)
 			if err != nil {
 				return out, jsonbind.FieldError("name", "invalid string", err)
@@ -106,17 +110,20 @@ func bindCreateUserRequest(r *http.Request) (CreateUserRequest, error) {
 			out.Name = v
 		} else if formBody != nil {
 			if fv, ok := formBody["name"]; ok {
+				presentName = true
 				out.Name = fv
 			}
 		}
 	}
 	if qv, ok := httpbind.QueryValue(r, "email"); ok {
+		presentEmail = true
 		out.Email = qv
 	} else {
 		if err := readBody(); err != nil {
 			return out, err
 		}
 		if raw, ok := jsonBody["email"]; ok {
+			presentEmail = true
 			v, err := jsonbind.DecodeJSONString(raw)
 			if err != nil {
 				return out, jsonbind.FieldError("email", "invalid string", err)
@@ -124,12 +131,41 @@ func bindCreateUserRequest(r *http.Request) (CreateUserRequest, error) {
 			out.Email = v
 		} else if formBody != nil {
 			if fv, ok := formBody["email"]; ok {
+				presentEmail = true
 				out.Email = fv
 			}
 		}
 	}
 	out.OrgID = httpbind.PathValue(r, "org_id")
 	out.Token = httpbind.HeaderValue(r, "Authorization")
+	var checkFields []httpbind.FieldError
+	if !presentName || out.Name == "" {
+		checkFields = append(checkFields, httpbind.Field("name", "input", "required"))
+	}
+	if presentName {
+		if len(out.Name) < 1 {
+			checkFields = append(checkFields, httpbind.Field("name", "input", "length must be >= 1"))
+		}
+		if len(out.Name) > 64 {
+			checkFields = append(checkFields, httpbind.Field("name", "input", "length must be <= 64"))
+		}
+	}
+	if !presentEmail || out.Email == "" {
+		checkFields = append(checkFields, httpbind.Field("email", "input", "required"))
+	}
+	if presentEmail {
+		if len(out.Email) > 254 {
+			checkFields = append(checkFields, httpbind.Field("email", "input", "length must be <= 254"))
+		}
+		if out.Email != "" {
+			if !httpbind.CheckEmail(out.Email) {
+				checkFields = append(checkFields, httpbind.Field("email", "input", "must be a valid email"))
+			}
+		}
+	}
+	if len(checkFields) > 0 {
+		return out, httpbind.Validation(checkFields...)
+	}
 	return out, nil
 }
 
@@ -173,6 +209,8 @@ func decodeSearchRequestJSON(raw json.RawMessage) (SearchRequest, error) {
 
 func bindSearchRequest(r *http.Request) (SearchRequest, error) {
 	var out SearchRequest
+	var presentKeyword bool
+	var presentPage bool
 	var jsonBody map[string]jsonRaw
 	var formBody map[string]string
 	var bodyRead bool
@@ -208,9 +246,11 @@ func bindSearchRequest(r *http.Request) (SearchRequest, error) {
 		return nil
 	}
 	if qv, ok := httpbind.QueryValue(r, "keyword"); ok {
+		presentKeyword = true
 		out.Keyword = qv
 	}
 	if qv, ok := httpbind.QueryValue(r, "page"); ok {
+		presentPage = true
 		v, err := httpbind.ParseInt(qv)
 		if err != nil {
 			return out, httpbind.BindError("page", "query", "invalid int")
@@ -230,6 +270,21 @@ func bindSearchRequest(r *http.Request) (SearchRequest, error) {
 		if fv, ok := formBody["filter"]; ok {
 			out.Filter = fv
 		}
+	}
+	var checkFields []httpbind.FieldError
+	if !presentKeyword || out.Keyword == "" {
+		checkFields = append(checkFields, httpbind.Field("keyword", "query", "required"))
+	}
+	if presentPage {
+		if out.Page < 1 {
+			checkFields = append(checkFields, httpbind.Field("page", "query", "must be >= 1"))
+		}
+	}
+	if len(checkFields) > 0 {
+		return out, httpbind.Validation(checkFields...)
+	}
+	if !presentPage {
+		out.Page = 1
 	}
 	return out, nil
 }
@@ -274,6 +329,7 @@ func decodeEchoRequestJSON(raw json.RawMessage) (EchoRequest, error) {
 
 func bindEchoRequest(r *http.Request) (EchoRequest, error) {
 	var out EchoRequest
+	var presentMessage bool
 	var jsonBody map[string]jsonRaw
 	var formBody map[string]string
 	var bodyRead bool
@@ -309,12 +365,14 @@ func bindEchoRequest(r *http.Request) (EchoRequest, error) {
 		return nil
 	}
 	if qv, ok := httpbind.QueryValue(r, "message"); ok {
+		presentMessage = true
 		out.Message = qv
 	} else {
 		if err := readBody(); err != nil {
 			return out, err
 		}
 		if raw, ok := jsonBody["message"]; ok {
+			presentMessage = true
 			v, err := jsonbind.DecodeJSONString(raw)
 			if err != nil {
 				return out, jsonbind.FieldError("message", "invalid string", err)
@@ -322,6 +380,7 @@ func bindEchoRequest(r *http.Request) (EchoRequest, error) {
 			out.Message = v
 		} else if formBody != nil {
 			if fv, ok := formBody["message"]; ok {
+				presentMessage = true
 				out.Message = fv
 			}
 		}
@@ -332,6 +391,13 @@ func bindEchoRequest(r *http.Request) (EchoRequest, error) {
 			return out, httpbind.BindError("n", "query", "invalid int")
 		}
 		out.N = v
+	}
+	var checkFields []httpbind.FieldError
+	if !presentMessage || out.Message == "" {
+		checkFields = append(checkFields, httpbind.Field("message", "input", "required"))
+	}
+	if len(checkFields) > 0 {
+		return out, httpbind.Validation(checkFields...)
 	}
 	return out, nil
 }

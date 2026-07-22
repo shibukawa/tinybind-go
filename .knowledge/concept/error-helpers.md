@@ -39,12 +39,13 @@ validation_example: |
       httpbind.Field("age", "payload", "must be greater than or equal to 18"),
   )
 generated_validation: concept:check-validation
-note: handwritten Validation/Field remains for domain rules; field-level input checks move to check tags
+bind_validation: requirement:bind-check-validation
+note: handwritten Validation/Field remains for domain and cross-field rules; field-level input checks move to check tags and api:bind
 field_helper:
   name: httpbind.Field
   args:
     - field name
-    - location (payload|query|path|header|cookie)
+    - location (input|payload|query|path|header|cookie|method)
     - message
 cause_wrapping: rule:error-cause-preservation
 response_writer: api:write-error
@@ -54,5 +55,6 @@ related:
   - rule:error-response-discovery
   - data:problem
   - concept:check-validation
+  - requirement:bind-check-validation
   - rule:check-codegen-pipeline
 ```

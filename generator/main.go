@@ -25,6 +25,7 @@ func Run(args []string, stdout, stderr io.Writer, options Options) int {
 	openapi := flags.Bool("openapi", true, "also generate OpenAPI embed (tinybind_openapi_gen.go)")
 	openapiName := flags.String("openapi-name", "tinybind_openapi_gen.go", "OpenAPI output file name")
 	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
+	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	if err := flags.Parse(args); err != nil {
@@ -50,6 +51,7 @@ func Run(args []string, stdout, stderr io.Writer, options Options) int {
 	}
 
 	options.GenerateAll = options.GenerateAll || *generateAll
+	options.SQLContextAPI = options.SQLContextAPI || *sqlContextAPI
 	g := New(options)
 	templatePath, err := g.GenerateTemplates(*dir, *out, *templatesName)
 	if err != nil {

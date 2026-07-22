@@ -11,7 +11,9 @@ Sample app that exercises the main library features end-to-end.
 | `query` / `payload` | `SearchRequest` |
 | `path` / `header` | create user, get user |
 | `cookie` | `GET /session` |
-| Validation / 4xx / 5xx helpers | handlers + `WriteError` |
+| Generated `check` validation | request struct tags + `Bind` / `WriteError` |
+| Domain 4xx / 5xx helpers | handlers + `WriteError` |
+| Typed HTML template | `index.tb.html` → generated `IndexPage` |
 | OpenAPI 3.1 embed | `/openapi.json`, `/openapi.yaml` |
 | Swagger UI | `/docs/` |
 | **Streaming ideal API** | `POST /chat` via `NewStream[T]` + multi `Write` |
@@ -105,10 +107,13 @@ curl -sSN -X POST 'http://localhost:8080/chat' \
 examples/demo/
   main.go
   handlers.go                 # routes + NewStream chat
+  index.tb.html               # typed, context-safe HTML template
+  index_script.go             # JavaScript passed as trusted script content
   types.go                    # includes ServerConfig (configbind)
   generate.go                 # go:generate
   tinybind_gen.go             # generated Bind/Write
   tinybind_openapi_gen.go     # generated OpenAPI embed
+  tinybind_templates_gen.go   # generated typed HTML renderer
   configbind_gen.go           # generated config apply / flags / env
   demo_test.go
   README.md

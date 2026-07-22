@@ -10,9 +10,96 @@ import (
 	"github.com/shibukawa/tinygodriver/httpmux"
 )
 
+type problemResponse struct {
+	Code   string `json:"code"`
+	Errors []struct {
+		Field    string `json:"field"`
+		Location string `json:"location"`
+		Message  string `json:"message"`
+	} `json:"errors"`
+}
+
+func TestDemoRoutes_CheckValidationRunsInsideBind(t *testing.T) {
+	mux := httpmux.NewServeMux()
+	RegisterDemoRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/orgs/acme/users", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create validation status %d %s", rec.Code, rec.Body.String())
+	}
+	var problem problemResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if problem.Code != "validation_failed" || len(problem.Errors) != 2 {
+		t.Fatalf("create validation %#v", problem)
+	}
+	wantFields := map[string]bool{"name": false, "email": false}
+	for _, field := range problem.Errors {
+		if field.Location != "input" {
+			t.Fatalf("default input location = %q, want input: %#v", field.Location, problem.Errors)
+		}
+		if field.Message == "required" {
+			if _, ok := wantFields[field.Field]; ok {
+				wantFields[field.Field] = true
+			}
+		}
+	}
+	for field, found := range wantFields {
+		if !found {
+			t.Fatalf("missing required error for %s: %#v", field, problem.Errors)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/orgs/acme/users", strings.NewReader(`{"name":"Alice","email":"bad"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "valid email") {
+		t.Fatalf("email validation status %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/search?keyword=go", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"page":1`) {
+		t.Fatalf("search default status %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"field":"message"`) {
+		t.Fatalf("echo validation status %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestDemoRoutes_Smoke(t *testing.T) {
 	mux := httpmux.NewServeMux()
 	RegisterDemoRoutes(mux)
+
+	// index page is rendered by the generated typed HTML template.
+	recI := httptest.NewRecorder()
+	mux.ServeHTTP(recI, httptest.NewRequest(http.MethodGet, "/", nil))
+	if recI.Code != http.StatusOK {
+		t.Fatalf("index %d %s", recI.Code, recI.Body.String())
+	}
+	indexBody := recI.Body.String()
+	for _, want := range []string{
+		"<title>httpbind demo</title>",
+		"async function runStream",
+		"JSON.stringify({ message: msg })",
+		`-d '{"name":"Alice","email":"a@example.com"}'`,
+	} {
+		if !strings.Contains(indexBody, want) {
+			t.Fatalf("index body missing %q: %s", want, indexBody)
+		}
+	}
 
 	// create user
 	body := `{"name":"Alice","email":"a@example.com"}`

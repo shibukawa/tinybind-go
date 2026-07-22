@@ -17,11 +17,13 @@ example:
       location: payload
       message: must be a valid email
 error_locations:
+  - input
   - payload
   - query
   - path
   - header
   - cookie
+  - method
 constructors: concept:error-helpers
 problem_type: data:problem
 write_path: api:write-error

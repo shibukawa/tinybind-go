@@ -9,6 +9,7 @@ Struct-tag validation rules on request models generate runtime checks and OpenAP
 status: designed
 tag_name: check
 intent: replace handwritten Validation/Field checks with generated validate functions
+bind_requirement: requirement:bind-check-validation
 ssot:
   input: Go struct check tags
   outputs:
@@ -39,6 +40,7 @@ related:
   - concept:openapi-generation
   - concept:error-helpers
   - api:bind
+  - requirement:bind-check-validation
   - decision:reflection-free
   - decision:single-source-of-truth
   - requirement:tinygo-wasm

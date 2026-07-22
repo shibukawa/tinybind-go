@@ -6,10 +6,10 @@ type ServerConfig struct {
 	Port int `default:"8080" help:"HTTP listen port" opt:"port,p"`
 }
 
-// CreateUserRequest demos default input, path, and header binding.
+// CreateUserRequest demos default input, generated validation, path, and header binding.
 type CreateUserRequest struct {
-	Name  string
-	Email string
+	Name  string `check:"required,minlen=1,maxlen=64"`
+	Email string `check:"required,email,maxlen=254"`
 	OrgID string `path:"org_id"`
 	Token string `header:"Authorization"`
 }
@@ -24,8 +24,8 @@ type CreateUserResponse struct {
 
 // SearchRequest demos query-only and payload-only fields.
 type SearchRequest struct {
-	Keyword string `query:"keyword"`
-	Page    int    `query:"page"`
+	Keyword string `query:"keyword" check:"required"`
+	Page    int    `query:"page" check:"min=1,default=1"`
 	Filter  string `payload:"filter"`
 }
 
@@ -39,8 +39,8 @@ type SearchResponse struct {
 
 // EchoRequest demos input from query or form/JSON body.
 type EchoRequest struct {
-	Message string
-	N       int `query:"n"`
+	Message string `check:"required"`
+	N       int    `query:"n"`
 }
 
 // EchoResponse echoes back.

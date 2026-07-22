@@ -35,6 +35,16 @@ func (c CheckRules) HasRules() bool {
 		c.Email || c.UUID || c.Date || c.Time || c.DateTime
 }
 
+// HasValidation reports whether the rules can reject a bound value.
+// A default alone changes an absent value but cannot produce a validation error.
+func (c CheckRules) HasValidation() bool {
+	return c.Required ||
+		c.Min != nil || c.Max != nil ||
+		c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
+		len(c.Enum) > 0 || c.Pattern != "" ||
+		c.Email || c.UUID || c.Date || c.Time || c.DateTime
+}
+
 // NeedsPresence is true when codegen must track whether the field was present.
 func (c CheckRules) NeedsPresence() bool {
 	return c.HasRules()

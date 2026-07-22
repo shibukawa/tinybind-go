@@ -114,7 +114,11 @@ func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, erro
 			if err := checkTemplatePackage(path, module.Package, pkg); err != nil {
 				return "", err
 			}
-			code, err = templatesql.Generate(path, source, templatesql.GenerateOptions{Package: pkg})
+			sqlOptions := templatesql.GenerateOptions{Package: pkg, ContextAPI: g.Options.SQLContextAPI}
+			if resolver := g.Options.SQLExecutorResolver; resolver != nil {
+				sqlOptions.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
+			}
+			code, err = templatesql.Generate(path, source, sqlOptions)
 		}
 		if err != nil {
 			return "", err

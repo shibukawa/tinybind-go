@@ -46,8 +46,9 @@ const (
 	FeatureMultipartFile  Feature = "multipart-file"
 )
 
-// Options configures every identity explored by the generator. A zero Options
-// value intentionally discovers nothing; use DefaultOptions for standard behavior.
+// Options configures discovery identities and generated template APIs. A zero
+// Options value intentionally discovers nothing and disables optional wrappers;
+// use DefaultOptions for standard behavior.
 type Options struct {
 	ServeMuxes      PatternSet[TypePattern]
 	RouteMethods    PatternSet[MethodPattern]
@@ -62,6 +63,11 @@ type Options struct {
 	NewStream   PatternSet[SymbolPattern]
 	ScanRows    PatternSet[SymbolPattern]
 	FileTypes   PatternSet[TypePattern]
+	// SQLContextAPI adds Context-resolved wrappers for exported SQL templates.
+	SQLContextAPI bool
+	// SQLExecutorResolver selects a framework-specific Context resolver and
+	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
+	SQLExecutorResolver *SymbolPattern
 
 	DisableFeatures []Feature
 	GenerateAll     bool

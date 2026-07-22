@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"strconv"
 	"strings"
 	"unicode"
@@ -14,6 +15,19 @@ type GenerateOptions struct {
 	Package string
 	// PlaceholderStyle is "dollar" (the PostgreSQL default) or "question".
 	PlaceholderStyle string
+	// ContextAPI adds <Component>Context wrappers which resolve an executor
+	// from context.Context while preserving the explicit executor APIs.
+	ContextAPI bool
+	// ExecutorResolver selects a framework-specific Context resolver. A nil
+	// resolver uses sqlbind.SQLExecutorFromContext. Setting it implies ContextAPI.
+	ExecutorResolver *ExecutorResolver
+}
+
+// ExecutorResolver identifies a package function with the signature
+// func(context.Context) (SQLExecutor, error).
+type ExecutorResolver struct {
+	PackagePath string
+	Name        string
 }
 
 // Generate parses, validates, and compiles a SQL template module to Go.
@@ -32,6 +46,12 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 	if options.PlaceholderStyle != "dollar" && options.PlaceholderStyle != "question" {
 		return nil, fmt.Errorf("unsupported SQL placeholder style %q", options.PlaceholderStyle)
 	}
+	if options.ExecutorResolver != nil {
+		if options.ExecutorResolver.PackagePath == "" || !token.IsIdentifier(options.ExecutorResolver.Name) || !unicode.IsUpper([]rune(options.ExecutorResolver.Name)[0]) {
+			return nil, fmt.Errorf("invalid SQL executor resolver %q.%q", options.ExecutorResolver.PackagePath, options.ExecutorResolver.Name)
+		}
+		options.ContextAPI = true
+	}
 	generated, err := c.emit(options)
 	if err != nil {
 		return nil, err
@@ -44,14 +64,23 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 }
 
 type goEmitter struct {
-	c      *compiler
-	b      bytes.Buffer
-	indent int
-	style  string
+	c          *compiler
+	b          bytes.Buffer
+	indent     int
+	style      string
+	contextAPI bool
+	resolver   *ExecutorResolver
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
-	e := &goEmitter{c: c, style: options.PlaceholderStyle}
+	e := &goEmitter{c: c, style: options.PlaceholderStyle, contextAPI: options.ContextAPI, resolver: options.ExecutorResolver}
+	if e.contextAPI {
+		for _, statement := range c.statements {
+			if statement.decl.Exported && statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
+				return nil, c.error(statement.decl.Pos, "generated Context API conflicts with declaration "+statement.decl.Name+"Context")
+			}
+		}
+	}
 	pkg := options.Package
 	if pkg == "" && c.module.Package != nil {
 		pkg = c.module.Package.Name
@@ -80,14 +109,28 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 
 func (e *goEmitter) emitImports() {
 	executable := false
+	many := false
 	for _, s := range e.c.statements {
 		if s.decl.Exported && s.cardinality != "predicate" && s.cardinality != "relation" {
 			executable = true
+		}
+		if s.decl.Exported && s.cardinality == "many" {
+			many = true
 		}
 	}
 	e.b.WriteString("import (\n")
 	if executable {
 		e.b.WriteString("\t\"context\"\n\t\"database/sql\"\n")
+	}
+	if many {
+		e.b.WriteString("\t\"iter\"\n")
+	}
+	if e.hasContextAPI() {
+		if e.resolver == nil {
+			e.b.WriteString("\t_tinybindsql \"github.com/shibukawa/tinybind-go/sqlbind\"\n")
+		} else {
+			fmt.Fprintf(&e.b, "\t_tinybindresolver %q\n", e.resolver.PackagePath)
+		}
 	}
 	e.b.WriteString("\t\"fmt\"\n")
 	if e.style == "dollar" {
@@ -101,6 +144,25 @@ func (e *goEmitter) emitImports() {
 		e.b.WriteString("\t\"net/url\"\n")
 	}
 	e.b.WriteString(")\n\n")
+}
+
+func (e *goEmitter) hasContextAPI() bool {
+	if !e.contextAPI {
+		return false
+	}
+	for _, statement := range e.c.statements {
+		if statement.decl.Exported && statement.cardinality != "predicate" && statement.cardinality != "relation" {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *goEmitter) resolverCall() string {
+	if e.resolver == nil {
+		return "_tinybindsql.SQLExecutorFromContext(ctx)"
+	}
+	return "_tinybindresolver." + e.resolver.Name + "(ctx)"
 }
 
 func (e *goEmitter) emitRuntime() {
@@ -194,6 +256,9 @@ func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	case "one", "optional", "many":
 		e.emitQueryAPI(statement, info)
 	}
+	if e.contextAPI && info.cardinality != "predicate" && info.cardinality != "relation" {
+		e.emitContextAPI(statement, info)
+	}
 	return nil
 }
 
@@ -230,11 +295,13 @@ func (e *goEmitter) emitExecAPI(statement *TemplateDecl) {
 
 func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 	result := goType(info.result)
+	if info.cardinality == "many" {
+		e.emitManyAPI(statement, info, result)
+		return
+	}
 	returnType := result
 	if info.cardinality == "optional" {
 		returnType = "*" + result
-	} else if info.cardinality == "many" {
-		returnType = "[]" + result
 	}
 	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", statement.Name)
 	for _, p := range statement.Parameters {
@@ -246,18 +313,10 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 	zero := result + "{}"
 	if info.cardinality == "optional" {
 		zero = "nil"
-	} else if info.cardinality == "many" {
-		zero = "nil"
 	}
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
 	e.b.WriteString("\trows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)\n")
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n\tdefer rows.Close()\n", zero)
-	if info.cardinality == "many" {
-		fmt.Fprintf(&e.b, "\tvar results []%s\n\tfor rows.Next() {\n\t\tvar result %s\n", result, result)
-		e.emitScan("\t\t", info.result, "result", zero)
-		e.b.WriteString("\t\tresults = append(results, result)\n\t}\n\tif err := rows.Err(); err != nil { return nil, err }\n\treturn results, nil\n}\n\n")
-		return
-	}
 	fmt.Fprintf(&e.b, "\tif !rows.Next() { if err := rows.Err(); err != nil { return %s, err }; ", zero)
 	if info.cardinality == "one" {
 		fmt.Fprintf(&e.b, "return %s, sql.ErrNoRows", zero)
@@ -276,13 +335,68 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 	}
 }
 
+func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, result string) {
+	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", statement.Name)
+	for _, p := range statement.Parameters {
+		t, _ := e.c.resolveType(p.Type)
+		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
+	}
+	fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
+	fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
+	fmt.Fprintf(&e.b, "\t\tstatement, err := Build%s(%s)\n", statement.Name, strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
+	e.b.WriteString("\t\trows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)\n")
+	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n\t\tdefer rows.Close()\n", result)
+	fmt.Fprintf(&e.b, "\t\tfor rows.Next() {\n\t\t\tvar result %s\n", result)
+	fmt.Fprintf(&e.b, "\t\t\tif err := rows.Scan(%s); err != nil { yield(%s{}, err); return }\n", e.scanArgs(info.result, "result"), result)
+	e.b.WriteString("\t\t\tif !yield(result, nil) { return }\n\t\t}\n")
+	fmt.Fprintf(&e.b, "\t\tif err := rows.Err(); err != nil { yield(%s{}, err) }\n", result)
+	e.b.WriteString("\t}\n}\n\n")
+}
+
+func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo) {
+	name := statement.Name + "Context"
+	result := goType(info.result)
+	fmt.Fprintf(&e.b, "func %s(ctx context.Context", name)
+	for _, p := range statement.Parameters {
+		t, _ := e.c.resolveType(p.Type)
+		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
+	}
+	if info.cardinality == "many" {
+		fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
+		fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
+		fmt.Fprintf(&e.b, "\t\texecutor, err := %s\n", e.resolverCall())
+		fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
+		fmt.Fprintf(&e.b, "\t\tfor value, err := range %s(ctx, executor%s) {\n", statement.Name, e.callParams(statement.Parameters))
+		e.b.WriteString("\t\t\tif !yield(value, err) { return }\n\t\t}\n\t}\n}\n\n")
+		return
+	}
+
+	returnType := "sql.Result"
+	zero := "nil"
+	if info.cardinality == "one" {
+		returnType = result
+		zero = result + "{}"
+	} else if info.cardinality == "optional" {
+		returnType = "*" + result
+	}
+	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
+	fmt.Fprintf(&e.b, "\texecutor, err := %s\n", e.resolverCall())
+	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
+	fmt.Fprintf(&e.b, "\treturn %s(ctx, executor%s)\n}\n\n", statement.Name, e.callParams(statement.Parameters))
+}
+
 func (e *goEmitter) emitScan(indent string, t valueType, target, zero string) {
+	fmt.Fprintf(&e.b, "%sif err := rows.Scan(%s); err != nil { return %s, err }\n", indent, e.scanArgs(t, target), zero)
+}
+
+func (e *goEmitter) scanArgs(t valueType, target string) string {
 	record := e.c.records[t.name]
 	var fields []string
 	for _, f := range record.Fields {
 		fields = append(fields, "&"+target+"."+goPublicName(f.Name))
 	}
-	fmt.Fprintf(&e.b, "%sif err := rows.Scan(%s); err != nil { return %s, err }\n", indent, strings.Join(fields, ", "), zero)
+	return strings.Join(fields, ", ")
 }
 
 func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {

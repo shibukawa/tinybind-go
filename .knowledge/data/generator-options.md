@@ -36,6 +36,8 @@ options:
   NewStream: SymbolPattern set
   ScanRows: SymbolPattern set
   FileTypes: TypePattern set
+  SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
+  SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]

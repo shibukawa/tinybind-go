@@ -105,12 +105,16 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 	var bodyRequired []string
 	needBody := false
 	bodyAdditionalProps := false
+	hasCheckValidation := false
 
 	if route.Request != "" {
 		reqName := stripPackage(route.Request)
 		ensureSchema(schemas, reqName, types[reqName])
 		if tp, ok := types[reqName]; ok {
 			for _, f := range tp.Fields {
+				if f.Check.HasValidation() {
+					hasCheckValidation = true
+				}
 				switch f.Source {
 				case SourcePath:
 					params = append(params, parameter("path", f, true || f.Check.Required))
@@ -258,6 +262,18 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 					"schema": schemaRef("ProblemDetails"),
 				},
 			},
+		}
+	}
+	if hasCheckValidation {
+		if _, ok := responses["400"]; !ok {
+			responses["400"] = map[string]any{
+				"description": "Validation",
+				"content": map[string]any{
+					"application/problem+json": map[string]any{
+						"schema": schemaRef("ProblemDetails"),
+					},
+				},
+			}
 		}
 	}
 

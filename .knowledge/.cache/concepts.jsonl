@@ -63,6 +63,7 @@
 {"category": "constraint", "id": "decision:reflection-free", "path": ".knowledge/decision/reflection-free.md", "role": "supporting", "title": "Reflection-Free Runtime", "type": "decision"}
 {"category": "constraint", "id": "decision:runtime-package-boundaries", "path": ".knowledge/decision/runtime-package-boundaries.md", "role": "supporting", "title": "Runtime Package Boundaries", "type": "decision"}
 {"category": "constraint", "id": "decision:single-source-of-truth", "path": ".knowledge/decision/single-source-of-truth.md", "role": "supporting", "title": "Single Source of Truth", "type": "decision"}
+{"category": "constraint", "id": "decision:sql-context-executor-api", "path": ".knowledge/decision/sql-context-executor-api.md", "role": "supporting", "title": "Optional Context SQL Executor API", "type": "decision"}
 {"category": "constraint", "id": "decision:sql-dialect-generation-time", "path": ".knowledge/decision/sql-dialect-generation-time.md", "role": "supporting", "title": "SQL Dialect Fixed at Generation Time", "type": "decision"}
 {"category": "constraint", "id": "decision:stdlib-servemux", "path": ".knowledge/decision/stdlib-servemux.md", "role": "supporting", "title": "Stdlib ServeMux Routing", "type": "decision"}
 {"category": "constraint", "id": "decision:struct-field-tags", "path": ".knowledge/decision/struct-field-tags.md", "role": "supporting", "title": "Config Struct Field Tags", "type": "decision"}
@@ -79,6 +80,7 @@
 {"category": "constraint", "id": "policy:json-read-limit", "path": ".knowledge/policy/json-read-limit.md", "role": "supporting", "title": "Bounded JSON Reads", "type": "policy"}
 {"category": "constraint", "id": "policy:problem-details", "path": ".knowledge/policy/problem-details.md", "role": "supporting", "title": "RFC 9457 Problem Details Errors", "type": "policy"}
 {"category": "objective", "id": "requirement:analysis-diagnostics", "path": ".knowledge/requirement/analysis-diagnostics.md", "role": "primary", "title": "Diagnostics for Undiscoverable Analysis", "type": "requirement"}
+{"category": "objective", "id": "requirement:bind-check-validation", "path": ".knowledge/requirement/bind-check-validation.md", "role": "primary", "title": "Bind Executes Check Validation", "type": "requirement"}
 {"category": "objective", "id": "requirement:cli-option-codegen", "path": ".knowledge/requirement/cli-option-codegen.md", "role": "primary", "title": "CLI Option Code Generation", "type": "requirement"}
 {"category": "objective", "id": "requirement:cli-subcommands", "path": ".knowledge/requirement/cli-subcommands.md", "role": "primary", "title": "CLI Subcommands", "type": "requirement"}
 {"category": "objective", "id": "requirement:config-file-discovery", "path": ".knowledge/requirement/config-file-discovery.md", "role": "primary", "title": "Config File Discovery", "type": "requirement"}

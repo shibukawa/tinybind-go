@@ -142,6 +142,54 @@ composition, private `sql.relation<T>` subqueries, conditional clauses, and
 array value-list expansion. Hand-authored placeholders and unguarded
 `UPDATE`/`DELETE` statements are rejected.
 
+`sql.many<T>` streams rows as `iter.Seq2[T, error]` without first allocating a
+result slice. Query, scan, and iteration errors are yielded as the error value,
+and stopping the range early closes the underlying `sql.Rows`:
+
+```go
+for user, err := range FindUsers(ctx, db, filter) {
+    if err != nil {
+        return err
+    }
+    // consume user
+}
+```
+
+Web frameworks can opt in to executor-from-Context wrappers while the explicit
+`db` APIs remain available:
+
+```bash
+go run ./cmd/tinybind-gen -dir ./path/to/package -sql-context-api
+```
+
+The generated `FindUsersContext(ctx, filter)` resolves the `*sql.DB`,
+`*sql.Conn`, or `*sql.Tx` installed with `sqlbind.WithSQLExecutor`. This allows
+transaction middleware to keep the executor inside its callback Context:
+
+```go
+web.Transaction(func(ctx context.Context) error {
+    for user, err := range FindUsersContext(ctx, filter) {
+        if err != nil {
+            return err
+        }
+        // consume user within the transaction
+    }
+    return nil
+})
+```
+
+Custom generator commands may use a framework-owned Context key by setting a
+resolver with the signature
+`func(context.Context) (SQLExecutor, error)`; setting it also enables the
+Context wrappers:
+
+```go
+options.SQLExecutorResolver = &generator.SymbolPattern{
+    PackagePath: "example.com/web/dbctx",
+    Name:        "Executor",
+}
+```
+
 Custom generator commands only need to call `generator.Main`. Start with
 `DefaultOptions`, then replace each authoritative `Set` with every identity the
 project accepts:

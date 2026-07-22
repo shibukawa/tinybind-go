@@ -1,6 +1,7 @@
-{"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "concept:check-validation", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "requirement:bind-check-validation", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "concept:request-binding", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "concept:code-generation", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "concept:check-validation", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "rule:default-input-tag", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "rule:check-codegen-pipeline", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/api/bind.md", "source": "api:bind", "target": "rule:request-model-discovery", "target_category": "constraint", "target_type": "rule"}
@@ -83,6 +84,7 @@
 {"context": "body", "path": ".knowledge/api/write.md", "source": "api:write", "target": "concept:handler-discovery", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/api/write.md", "source": "api:write", "target": "api:write-error", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/api/write.md", "source": "api:write", "target": "rule:openapi-success-status", "target_category": "constraint", "target_type": "rule"}
+{"context": "body", "path": ".knowledge/concept/check-validation.md", "source": "concept:check-validation", "target": "requirement:bind-check-validation", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/concept/check-validation.md", "source": "concept:check-validation", "target": "rule:check-codegen-pipeline", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/concept/check-validation.md", "source": "concept:check-validation", "target": "rule:check-tag-syntax", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/concept/check-validation.md", "source": "concept:check-validation", "target": "rule:check-v1-rule-set", "target_category": "constraint", "target_type": "rule"}
@@ -179,6 +181,8 @@
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "rule:go-types-symbol-identity", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "data:problem", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "concept:check-validation", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "requirement:bind-check-validation", "target_category": "objective", "target_type": "requirement"}
+{"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "api:bind", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "rule:error-cause-preservation", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "api:write-error", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/concept/error-helpers.md", "source": "concept:error-helpers", "target": "policy:problem-details", "target_category": "constraint", "target_type": "policy"}
@@ -402,6 +406,7 @@
 {"context": "body", "path": ".knowledge/data/file.md", "source": "data:file", "target": "data:upload-avatar-request", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/data/file.md", "source": "data:file", "target": "term:payload", "target_category": "vocabulary", "target_type": "term"}
 {"context": "body", "path": ".knowledge/data/file.md", "source": "data:file", "target": "concept:request-binding", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/data/generator-options.md", "source": "data:generator-options", "target": "decision:sql-context-executor-api", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/data/generator-options.md", "source": "data:generator-options", "target": "rule:generator-feature-disable", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/data/generator-options.md", "source": "data:generator-options", "target": "api:generator-main", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/data/generator-options.md", "source": "data:generator-options", "target": "requirement:configurable-generator-discovery", "target_category": "objective", "target_type": "requirement"}
@@ -514,6 +519,7 @@
 {"context": "body", "path": ".knowledge/decision/single-source-of-truth.md", "source": "decision:single-source-of-truth", "target": "concept:openapi-generation", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/decision/single-source-of-truth.md", "source": "decision:single-source-of-truth", "target": "concept:openapi-embed", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/decision/single-source-of-truth.md", "source": "decision:single-source-of-truth", "target": "requirement:openapi-goals", "target_category": "objective", "target_type": "requirement"}
+{"context": "body", "path": ".knowledge/decision/sql-context-executor-api.md", "source": "decision:sql-context-executor-api", "target": "requirement:sql-generated-api-layers", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/decision/sql-dialect-generation-time.md", "source": "decision:sql-dialect-generation-time", "target": "concept:typed-template-language", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/decision/sql-dialect-generation-time.md", "source": "decision:sql-dialect-generation-time", "target": "rule:sql-placeholder-emission", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/decision/sql-dialect-generation-time.md", "source": "decision:sql-dialect-generation-time", "target": "requirement:sql-generated-api-layers", "target_category": "objective", "target_type": "requirement"}
@@ -697,6 +703,14 @@
 {"context": "body", "path": ".knowledge/requirement/analysis-diagnostics.md", "source": "requirement:analysis-diagnostics", "target": "concept:route-discovery", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/requirement/analysis-diagnostics.md", "source": "requirement:analysis-diagnostics", "target": "concept:openapi-generation", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/requirement/analysis-diagnostics.md", "source": "requirement:analysis-diagnostics", "target": "flow:handler-parse", "target_category": "behavior", "target_type": "flow"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "api:bind", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "concept:check-validation", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "rule:check-codegen-pipeline", "target_category": "constraint", "target_type": "rule"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "api:write-error", "target_category": "interface", "target_type": "api"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "concept:error-helpers", "target_category": "concept", "target_type": "concept"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "policy:problem-details", "target_category": "constraint", "target_type": "policy"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "decision:check-tag-validation", "target_category": "constraint", "target_type": "decision"}
+{"context": "body", "path": ".knowledge/requirement/bind-check-validation.md", "source": "requirement:bind-check-validation", "target": "decision:reflection-free", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/requirement/cli-option-codegen.md", "source": "requirement:cli-option-codegen", "target": "data:cli-flag-def", "target_category": "structure", "target_type": "data"}
 {"context": "body", "path": ".knowledge/requirement/cli-option-codegen.md", "source": "requirement:cli-option-codegen", "target": "api:configbind-subcommand", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/requirement/cli-option-codegen.md", "source": "requirement:cli-option-codegen", "target": "api:configbind-bind", "target_category": "interface", "target_type": "api"}
@@ -831,6 +845,7 @@
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "api:encode-json", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "api:write-status", "target_category": "interface", "target_type": "api"}
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "requirement:analysis-diagnostics", "target_category": "objective", "target_type": "requirement"}
+{"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "requirement:bind-check-validation", "target_category": "objective", "target_type": "requirement"}
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "rule:analysis-diagnostics-check", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "rule:same-package-convention", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/requirement/product-goals.md", "source": "requirement:product-goals", "target": "rule:openapi-success-status", "target_category": "constraint", "target_type": "rule"}
@@ -859,6 +874,7 @@
 {"context": "body", "path": ".knowledge/requirement/source-provenance-logging.md", "source": "requirement:source-provenance-logging", "target": "flow:config-load", "target_category": "behavior", "target_type": "flow"}
 {"context": "body", "path": ".knowledge/requirement/sql-generated-api-layers.md", "source": "requirement:sql-generated-api-layers", "target": "concept:typed-template-language", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/requirement/sql-generated-api-layers.md", "source": "requirement:sql-generated-api-layers", "target": "data:sql-statement", "target_category": "structure", "target_type": "data"}
+{"context": "body", "path": ".knowledge/requirement/sql-generated-api-layers.md", "source": "requirement:sql-generated-api-layers", "target": "decision:sql-context-executor-api", "target_category": "constraint", "target_type": "decision"}
 {"context": "body", "path": ".knowledge/requirement/sql-relation-composition.md", "source": "requirement:sql-relation-composition", "target": "concept:typed-template-language", "target_category": "concept", "target_type": "concept"}
 {"context": "body", "path": ".knowledge/requirement/sql-relation-composition.md", "source": "requirement:sql-relation-composition", "target": "rule:sql-placeholder-emission", "target_category": "constraint", "target_type": "rule"}
 {"context": "body", "path": ".knowledge/requirement/sql-relation-composition.md", "source": "requirement:sql-relation-composition", "target": "data:sql-statement", "target_category": "structure", "target_type": "data"}
