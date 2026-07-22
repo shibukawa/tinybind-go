@@ -55,6 +55,9 @@ func Generate(packageName, funcName string, fields []cliparser.FieldMeta) ([]byt
 		if d.Help != "" {
 			fmt.Fprintf(&b, "\t\t\tHelp: %s,\n", strconv.Quote(d.Help))
 		}
+		if d.Env != "" {
+			fmt.Fprintf(&b, "\t\t\tEnv: %s,\n", strconv.Quote(d.Env))
+		}
 		fmt.Fprintf(&b, "\t\t\tKind: cliparser.%s,\n", kindConst(d.Kind))
 		if d.UsesOptOverride {
 			b.WriteString("\t\t\tUsesOptOverride: true,\n")

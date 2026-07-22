@@ -16,6 +16,62 @@ func TestDefaultLongNameAndConfigKey(t *testing.T) {
 	if got := cliparser.DefaultLongName("webserver", "tls.enabled"); got != "webserver-tls-enabled" {
 		t.Fatalf("nested DefaultLongName=%q", got)
 	}
+	if got := cliparser.DefaultLongName("middleware.cache", "max_entries"); got != "middleware-cache-max_entries" {
+		t.Fatalf("dotted prefix DefaultLongName=%q", got)
+	}
+	if got := cliparser.ConfigKeyPath("middleware.cache", "max_entries"); got != "middleware.cache.max_entries" {
+		t.Fatalf("dotted prefix ConfigKeyPath=%q", got)
+	}
+}
+
+func TestParseDottedPrefixFlag(t *testing.T) {
+	defs, err := cliparser.BuildDefs([]cliparser.FieldMeta{
+		{Prefix: "middleware.cache", Key: "max_entries"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defs[0].Longs[0]; got != "middleware-cache-max_entries" {
+		t.Fatalf("long option=%q", got)
+	}
+
+	res, err := cliparser.Parse([]string{"--middleware-cache-max_entries", "100"}, defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Values["middleware.cache.max_entries"]; got != "100" {
+		t.Fatalf("value=%q", got)
+	}
+}
+
+func TestEnvironmentOverrideMetadata(t *testing.T) {
+	defs, err := cliparser.BuildDefs([]cliparser.FieldMeta{
+		{Prefix: "observability", Key: "service_name", Env: "OTEL_SERVICE_NAME"},
+		{Prefix: "observability", Key: "endpoint", Env: "-"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defs[0].Env; got != "OTEL_SERVICE_NAME" {
+		t.Fatalf("env override=%q", got)
+	}
+	if got := defs[1].Env; got != "-" {
+		t.Fatalf("env disabled=%q", got)
+	}
+}
+
+func TestEnvironmentOverrideValidation(t *testing.T) {
+	if _, err := cliparser.BuildDefs([]cliparser.FieldMeta{
+		{Prefix: "observability", Key: "service_name", Env: "OTEL-SERVICE-NAME"},
+	}); err == nil {
+		t.Fatal("expected invalid environment name error")
+	}
+	if _, err := cliparser.BuildDefs([]cliparser.FieldMeta{
+		{Prefix: "observability", Key: "service_name", Env: "OTEL_SERVICE_NAME"},
+		{Prefix: "telemetry", Key: "name", Env: "OTEL_SERVICE_NAME"},
+	}); err == nil {
+		t.Fatal("expected duplicate environment name error")
+	}
 }
 
 func TestParseDefaultPrefixedFlag(t *testing.T) {

@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - 設定構造体と `configbind.Bind[T]` の利用箇所の発見
 - 構造体 field から TOML key、CLI option、環境変数名の決定
-- `default`、`key`、`opt`、`help` tag の反映
+- `default`、`key`、`opt`、`env`、`help` tag の反映
 - nested struct と `[]string` の設定 mapping
 - default → TOML → env → CLI の merge
 - string、bool、int、`[]string` への型変換
@@ -101,6 +101,8 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `key:"name"` | TOML と内部 key の field 名を変更 | `key:"listen_port"` |
 | `opt:"long"` | CLI long option 名を上書き | `opt:"port"` |
 | `opt:"long,p"` | long option と1文字の short option を指定 | `opt:"port,p"` |
+| `env:"NAME"` | 環境変数名を正確な名前で上書き | `env:"OTEL_SERVICE_NAME"` |
+| `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
 
 ```go
@@ -145,6 +147,21 @@ type TLSConfig struct {
 | `TLS.CertPath` | `webserver.tls.cert_path` | `--webserver-tls-cert_path` | `WEBSERVER_TLS_CERT_PATH` |
 
 Go field 名は snake case の key になります。CLI では nested key の `.` が `-` へ変わります。環境変数では `-` と `.` が `_` になり、全体が大文字になります。
+
+prefix 自体に `.` を含めることもできます。prefix と field key の階層は設定 key と TOML では `.` のまま保持され、CLI ではすべて `-` へ正規化されます。
+
+```go
+cache := configbind.Bind[CacheConfig]("middleware.cache")
+```
+
+`MaxEntries` field の名前は次のようになります。
+
+| 種類 | 名前 |
+| --- | --- |
+| 設定 key | `middleware.cache.max_entries` |
+| TOML table | `[middleware.cache]` |
+| CLI | `--middleware-cache-max_entries` |
+| 環境変数 | `MIDDLEWARE_CACHE_MAX_ENTRIES` |
 
 ## TOML file
 
@@ -241,6 +258,29 @@ SERVER_HOST=127.0.0.1
 ```
 
 prefix だけを見て `SERVER_PORT` にするのではなく、`opt:"port,p"` により long option が `port` なので環境変数も `PORT` になります。
+
+### 環境変数名を上書きする
+
+外部の標準や既存の運用規約に合わせる場合は `env` tag を使います。TOML key とCLI optionはそのままに、環境変数名だけを独立して変更できます。
+
+```go
+type ObservabilityConfig struct {
+	ServiceName string `env:"OTEL_SERVICE_NAME"`
+	Endpoint    string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+}
+
+observability := configbind.Bind[ObservabilityConfig]("observability")
+```
+
+`ServiceName` は次の名前になります。
+
+| 種類 | 名前 |
+| --- | --- |
+| TOML | `[observability] service_name = "checkout"` |
+| CLI | `--observability-service_name checkout` |
+| 環境変数 | `OTEL_SERVICE_NAME=checkout` |
+
+`env` の値は大文字・小文字を含めてそのまま利用され、英字または `_` で始まる環境変数名を指定します。同じ環境変数名を複数 field に割り当てると生成 error になります。環境変数から設定されたくない field には `env:"-"` を指定できます。
 
 ## CLI option
 

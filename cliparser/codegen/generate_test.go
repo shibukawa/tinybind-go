@@ -42,6 +42,18 @@ func TestGenerateEmitsStableKeysAndOptFlags(t *testing.T) {
 	}
 }
 
+func TestGenerateEmitsEnvironmentOverride(t *testing.T) {
+	src, err := codegen.Generate("fixture", "ObservabilityFlagDefs", []cliparser.FieldMeta{
+		{Prefix: "observability", Key: "service_name", Env: "OTEL_SERVICE_NAME"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `Env:       "OTEL_SERVICE_NAME"`) {
+		t.Fatalf("generated environment override missing:\n%s", src)
+	}
+}
+
 func TestGenerateMatchesCommittedFixture(t *testing.T) {
 	src, err := codegen.Generate("fixture", "WebServerFlagDefs", codegen.WebServerFixtureFields())
 	if err != nil {

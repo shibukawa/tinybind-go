@@ -30,7 +30,8 @@ tls.cert_path = "toml.crt"
 	// Env names follow CLI long opts: port -> PORT; host -> WEBSERVER_HOST; etc.
 	environ := []string{
 		"WEBSERVER_HOST=from-env",
-		"WEBSERVER_TLS_CERT_PATH=env.crt",
+		"TLS_CERT_FILE=env.crt",
+		"WEBSERVER_TLS_CERT_PATH=ignored.crt",
 		"PORT=2",
 	}
 	// CLI wins port; also sets cors

@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - Discovering configuration structs used by `configbind.Bind[T]`
 - Deriving TOML keys, CLI options, and environment names from struct fields
-- Applying `default`, `key`, `opt`, and `help` tags
+- Applying `default`, `key`, `opt`, `env`, and `help` tags
 - Mapping nested structs and `[]string`
 - Merging defaults, TOML, environment, and CLI values
 - Converting values to string, bool, int, and `[]string`
@@ -101,6 +101,8 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `key:"name"` | Override the field's TOML and stable key name | `key:"listen_port"` |
 | `opt:"long"` | Override the CLI long option | `opt:"port"` |
 | `opt:"long,p"` | Set a long option and one-character short option | `opt:"port,p"` |
+| `env:"NAME"` | Override the environment variable with an exact name | `env:"OTEL_SERVICE_NAME"` |
+| `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
 
 ```go
@@ -145,6 +147,21 @@ type TLSConfig struct {
 | `TLS.CertPath` | `webserver.tls.cert_path` | `--webserver-tls-cert_path` | `WEBSERVER_TLS_CERT_PATH` |
 
 Go field names become snake-case keys. Nested dots become hyphens in CLI names. Environment names replace hyphens and dots with underscores and uppercase the result.
+
+The prefix itself may contain dots. Prefix and field hierarchy retain dots in stable keys and TOML, while every dot is normalized to a hyphen for CLI options.
+
+```go
+cache := configbind.Bind[CacheConfig]("middleware.cache")
+```
+
+For a `MaxEntries` field, the names are:
+
+| Surface | Name |
+| --- | --- |
+| Stable key | `middleware.cache.max_entries` |
+| TOML table | `[middleware.cache]` |
+| CLI | `--middleware-cache-max_entries` |
+| Environment | `MIDDLEWARE_CACHE_MAX_ENTRIES` |
 
 ## TOML files
 
@@ -241,6 +258,29 @@ SERVER_HOST=127.0.0.1
 ```
 
 The port variable is `PORT`, not `SERVER_PORT`, because `opt:"port,p"` changes the long option to `port`.
+
+### Overriding an environment name
+
+Use the `env` tag to follow an external standard or an established deployment convention. It changes only the environment name; the TOML key and CLI option remain unchanged.
+
+```go
+type ObservabilityConfig struct {
+	ServiceName string `env:"OTEL_SERVICE_NAME"`
+	Endpoint    string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+}
+
+observability := configbind.Bind[ObservabilityConfig]("observability")
+```
+
+`ServiceName` then has these names:
+
+| Surface | Name |
+| --- | --- |
+| TOML | `[observability] service_name = "checkout"` |
+| CLI | `--observability-service_name checkout` |
+| Environment | `OTEL_SERVICE_NAME=checkout` |
+
+The `env` value is used exactly as written and must begin with a letter or `_`. Assigning the same environment name to multiple fields is a generation error. Use `env:"-"` for a field that must not accept environment input.
 
 ## CLI options
 

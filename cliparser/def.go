@@ -32,6 +32,9 @@ type Def struct {
 	Shorts []string
 	// Help is optional usage text.
 	Help string
+	// Env is an optional exact environment variable override. Empty derives the
+	// name from the first long option; "-" disables environment loading.
+	Env string
 	// Kind selects value parsing behavior.
 	Kind Kind
 	// UsesOptOverride is true when names came from an opt-style override.
@@ -49,6 +52,9 @@ type FieldMeta struct {
 	Opt string
 	// Help is optional CLI help text.
 	Help string
+	// Env is an optional exact environment variable override, or "-" to disable
+	// environment loading for this field.
+	Env string
 	// Kind defaults to KindString when zero value is left as KindString.
 	Kind Kind
 }
@@ -66,11 +72,12 @@ func ConfigKeyPath(prefix, key string) string {
 	return prefix + "." + key
 }
 
-// DefaultLongName builds the default long flag name without dashes: "{prefix}-{key}"
-// with '.' in key replaced by '-'.
+// DefaultLongName builds the default long flag name without leading dashes:
+// "{prefix}-{key}", with '.' in both prefix and key replaced by '-'.
 func DefaultLongName(prefix, key string) string {
 	prefix = strings.TrimSpace(prefix)
 	key = strings.TrimSpace(key)
+	prefix = strings.ReplaceAll(prefix, ".", "-")
 	key = strings.ReplaceAll(key, ".", "-")
 	if prefix == "" {
 		return key
@@ -93,7 +100,11 @@ func DefFromField(m FieldMeta) (Def, error) {
 	d := Def{
 		ConfigKey: cfgKey,
 		Help:      m.Help,
+		Env:       strings.TrimSpace(m.Env),
 		Kind:      m.Kind,
+	}
+	if d.Env != "" && d.Env != "-" && !validEnvName(d.Env) {
+		return Def{}, fmt.Errorf("cliparser: invalid environment variable name %q", d.Env)
 	}
 	opt := strings.TrimSpace(m.Opt)
 	if opt == "" {
@@ -116,6 +127,7 @@ func BuildDefs(fields []FieldMeta) ([]Def, error) {
 	out := make([]Def, 0, len(fields))
 	seenLong := make(map[string]string)  // long -> config key
 	seenShort := make(map[string]string) // short -> config key
+	seenEnv := make(map[string]string)   // environment name -> config key
 	for _, f := range fields {
 		d, err := DefFromField(f)
 		if err != nil {
@@ -133,9 +145,46 @@ func BuildDefs(fields []FieldMeta) ([]Def, error) {
 			}
 			seenShort[sh] = d.ConfigKey
 		}
+		if env := effectiveEnvName(d); env != "" {
+			if prev, ok := seenEnv[env]; ok {
+				return nil, fmt.Errorf("cliparser: duplicate environment variable %q for %q and %q", env, prev, d.ConfigKey)
+			}
+			seenEnv[env] = d.ConfigKey
+		}
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func effectiveEnvName(d Def) string {
+	if d.Env == "-" {
+		return ""
+	}
+	if d.Env != "" {
+		return d.Env
+	}
+	if len(d.Longs) == 0 {
+		return ""
+	}
+	return envName(d.Longs[0])
+}
+
+func envName(longOpt string) string {
+	s := strings.TrimSpace(longOpt)
+	s = strings.TrimPrefix(s, "--")
+	s = strings.ReplaceAll(s, "-", "_")
+	s = strings.ReplaceAll(s, ".", "_")
+	return strings.ToUpper(s)
+}
+
+func validEnvName(name string) bool {
+	for i, r := range name {
+		if r == '_' || unicode.IsLetter(r) || (i > 0 && unicode.IsDigit(r)) {
+			continue
+		}
+		return false
+	}
+	return name != ""
 }
 
 func parseOpt(opt string) (longs []string, shorts []string, err error) {

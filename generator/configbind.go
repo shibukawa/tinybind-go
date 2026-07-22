@@ -189,6 +189,7 @@ func configFieldsFromStruct(st *types.Struct, keyPrefix string) ([]cbcg.Field, e
 		// convention: toml/json snake from name if no key tag — already snake from fieldKeyFromName
 		def := structTagGet(tag, "default")
 		opt := structTagGet(tag, "opt")
+		env := structTagGet(tag, "env")
 		help := structTagGet(tag, "help")
 
 		ft := f.Type()
@@ -205,6 +206,7 @@ func configFieldsFromStruct(st *types.Struct, keyPrefix string) ([]cbcg.Field, e
 					Nested:  nested,
 					Default: def,
 					Opt:     opt,
+					Env:     env,
 					Help:    help,
 				})
 				continue
@@ -220,6 +222,7 @@ func configFieldsFromStruct(st *types.Struct, keyPrefix string) ([]cbcg.Field, e
 			Kind:    kind,
 			Default: def,
 			Opt:     opt,
+			Env:     env,
 			Help:    help,
 		})
 	}

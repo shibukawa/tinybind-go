@@ -38,6 +38,8 @@ type Field struct {
 	Default string
 	// Opt is an optional CLI name override ("long" or "long,short").
 	Opt string
+	// Env is an optional exact environment variable override, or "-" to disable it.
+	Env string
 	// Help is optional CLI/scaffold help text.
 	Help string
 }

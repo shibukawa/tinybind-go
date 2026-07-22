@@ -11,5 +11,5 @@ type WebServerConfig struct {
 // TLSConfig is nested under webserver.tls.
 type TLSConfig struct {
 	Enabled  bool   `default:"false" help:"enable TLS"`
-	CertPath string `help:"TLS certificate path"`
+	CertPath string `env:"TLS_CERT_FILE" help:"TLS certificate path"`
 }

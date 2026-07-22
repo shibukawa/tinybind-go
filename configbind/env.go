@@ -37,10 +37,16 @@ func ReadEnv(defs []cliparser.Def, environ []string) map[string]string {
 	}
 	out := make(map[string]string)
 	for _, d := range defs {
-		if d.ConfigKey == "" || len(d.Longs) == 0 {
+		if d.ConfigKey == "" || d.Env == "-" {
 			continue
 		}
-		name := EnvName(d.Longs[0])
+		name := d.Env
+		if name == "" {
+			if len(d.Longs) == 0 {
+				continue
+			}
+			name = EnvName(d.Longs[0])
+		}
 		if v, ok := envMap[name]; ok {
 			out[d.ConfigKey] = v
 		}

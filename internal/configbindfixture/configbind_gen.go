@@ -34,7 +34,7 @@ func registerWebServerConfig() {
 			{Prefix: "webserver", Key: "host", Help: "listen host"},
 			{Prefix: "webserver", Key: "cors_origins", Help: "CORS origins", Kind: cliparser.KindArray},
 			{Prefix: "webserver", Key: "tls.enabled", Help: "enable TLS", Kind: cliparser.KindBool},
-			{Prefix: "webserver", Key: "tls.cert_path", Help: "TLS certificate path"},
+			{Prefix: "webserver", Key: "tls.cert_path", Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
 		},
 		Apply: applyWebServerConfig,
 	})

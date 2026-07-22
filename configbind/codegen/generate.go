@@ -76,6 +76,9 @@ func emitType(b *bytes.Buffer, s Spec) error {
 	keys := collectKeys(s.Prefix, s.Fields)
 	defaults := collectDefaults(s.Prefix, s.Fields)
 	flagMetas := collectFlagMetas(s.Prefix, s.Fields)
+	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 
 	fmt.Fprintf(b, "func register%s() {\n", s.TypeName)
 	b.WriteString("\tconfigbind.RegisterType[")
@@ -103,6 +106,9 @@ func emitType(b *bytes.Buffer, s Spec) error {
 		fmt.Fprintf(b, "\t\t\t{Prefix: %s, Key: %s", strconv.Quote(m.Prefix), strconv.Quote(m.Key))
 		if m.Opt != "" {
 			fmt.Fprintf(b, ", Opt: %s", strconv.Quote(m.Opt))
+		}
+		if m.Env != "" {
+			fmt.Fprintf(b, ", Env: %s", strconv.Quote(m.Env))
 		}
 		if m.Help != "" {
 			fmt.Fprintf(b, ", Help: %s", strconv.Quote(m.Help))
@@ -249,6 +255,7 @@ func collectFlagMetas(prefix string, fields []Field) []cliparser.FieldMeta {
 				Prefix: prefix,
 				Key:    key,
 				Opt:    f.Opt,
+				Env:    f.Env,
 				Help:   f.Help,
 			}
 			switch f.Kind {

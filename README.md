@@ -4,7 +4,7 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, and SQL packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md)
 
 Define request/response structs once. The generator emits type-specific binders and writers, so the same model covers **JSON, form, multipart, and query** (plus path / header / cookie via tags). Responses adapt to the client **`Accept`** (and streaming negotiation where used). From the same analysis it also **generates OpenAPI 3.1**, kept in sync with binders and writers. Route registration is discovered by **static analysis of real `net/http` styles** (`HandleFunc`, `Handle`, method values, wrappers, and so on)—not by a separate DSL.
 
