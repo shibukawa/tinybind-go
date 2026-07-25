@@ -14,6 +14,7 @@ behavior:
   - normalize data:generator-options once, as api:generator-execution does
   - run the same template, binding, configbind, and OpenAPI phases
   - attribute every emitted declaration to the source file that caused it
+  - emit no runtime declaration and no package-shared artifact, per decision:generated-runtime-in-module
   - return artifacts in deterministic order independent of filesystem iteration
   - write, create, or remove no file
   - return typed errors and diagnostics rather than formatted process output

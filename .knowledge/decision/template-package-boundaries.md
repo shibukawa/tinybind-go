@@ -20,7 +20,8 @@ packages:
 constraints:
   - public users select a format package explicitly
   - templates/sqlbind remains distinct from existing root sqlbind row-scanning runtime
-  - generated SQL code may use the existing root sqlbind runtime
+  - generated SQL code uses the root sqlbind runtime and declares no runtime of its own, per decision:generated-runtime-in-module
+  - generated HTML code uses the root htmlbind runtime on the same terms
   - generated SQL exposes data:sql-statement builders and requirement:sql-generated-api-layers wrappers
   - shared core does not import HTML- or database-specific runtime dependencies
   - format parsers discover embedded boundaries and supply opaque namespaced contexts through decision:template-parser-delegation

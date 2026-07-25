@@ -21,7 +21,7 @@ rules:
   - callers never rewrite generated source to change its meaning
 derivation:
   mapping: imports follow qualifier use in the emitted body, not per-type usage flags
-  templates: merged and per-source template files drop imports left unused by skipped duplicate runtime declarations
+  templates: a template artifact imports the module runtime packages it calls and nothing else, per decision:generated-runtime-in-module
 phase_combinations:
   - template only
   - SQL only

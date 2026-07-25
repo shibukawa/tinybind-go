@@ -46,7 +46,7 @@ context_only_mode:
     internal: _tinybindExec<Component>, unexported and non-conflicting
     builder: Build<Component> stays exported and unchanged
   rules:
-    - no exported function accepts sql.DB, sql.Tx, SQLQuerier, or SQLExecer
+    - no exported function accepts sql.DB, sql.Tx, sqlbind.Execer, or sqlbind.Querier
     - no <Component>Context wrapper is generated; that name stays free
     - the same public function is used inside and outside a transaction
     - transaction selection stays in the Context, not in the signature

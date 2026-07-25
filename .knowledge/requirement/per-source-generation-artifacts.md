@@ -16,14 +16,14 @@ problem:
 rules:
   - analysis results are retrievable as data:generation-artifact values
   - each artifact carries owning source path, suggested output base, artifact kind, and generated Go source
-  - package-shared helpers are emitted as separate package_shared artifacts, never duplicated into per-source artifacts
+  - no package-shared artifact exists; runtime support is imported from the module per decision:generated-runtime-in-module
   - the caller derives the final file name from OutputBase, for example '{base}_pw_gen.go'
   - api:generator-artifacts returns the same artifacts without writing files, which is sufficient for check mode
   - aggregation into one package output remains available through api:generator-execution
 isolation:
   - generated identifiers are unique across all artifacts of one package
   - per-source artifacts do not redeclare a shared type, helper, or variable
-  - template runtime helpers move to the package_shared artifact instead of repeating per source
+  - a generated artifact declares nothing that is not derived from its own source, so uniqueness needs no hoisting pass or runtime-name list
   - config definition registrar names carry the package-wide spec index
   - init registrations from separate artifacts of one package coexist without conflict
   - emitting a subset of a package's artifacts never breaks the emitted subset's compilation of its own declarations
@@ -34,7 +34,10 @@ acceptance:
   - one Go source with recognized calls yields binding and configbind artifacts naming that source
   - writing every returned artifact of a package compiles and passes go test
   - regenerating without source change produces byte-identical artifacts
+  - two SQL sources in one package generate without a duplicate-declaration failure
+  - no artifact named after the removed shared base is produced
 related:
+  - decision:generated-runtime-in-module
   - api:generator-artifacts
   - data:generation-artifact
   - api:generator-execution

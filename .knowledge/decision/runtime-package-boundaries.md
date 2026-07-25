@@ -29,12 +29,15 @@ packages:
     owns:
       - api:scan-rows
       - SQL scanner registry and row helpers
+      - data:sql-statement, Execer, Querier, Builder, and AppendValues used by generated SQL
+      - decision:sql-context-executor-api standard resolver
     excludes:
       - net/http
   htmlbind:
     owns:
       - decision:generated-render-plan coordinator
       - requirement:head-merging and requirement:chain-render-pipeline execution
+      - trusted value types, Escape, and the scalar and JSON formatters used by generated HTML
     excludes:
       - net/http
     note: requirement:html-component-api is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
@@ -44,6 +47,7 @@ dependency_direction:
 forbidden:
   - jsonbind -> httpbind
   - shared runtime code importing net/http or database/sql for every mode
+  - generated code declaring its own copy of a runtime type or helper, per decision:generated-runtime-in-module
 generation:
   JSON-only: import and register with jsonbind
   HTTP: import httpbind and jsonbind; register each entry with its owner

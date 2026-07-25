@@ -8,7 +8,7 @@ One generated output unit plus the source file that owns it, returned instead of
 ```yaml
 status: required
 fields:
-  SourcePath: real on-disk path of the owning source file; empty only for package-shared artifacts
+  SourcePath: real on-disk path of the owning source file; empty only for the package-wide OpenAPI fragment
   Kind: ArtifactKind
   Destination: go_package or public_asset
   OutputBase: suggested output base name without directory, extension, or generated suffix
@@ -26,14 +26,13 @@ kinds:
   binding: binders, writers, JSON codecs, validation, and scanners for the types declared in one Go source file
   configbind: config definitions and subcommands for one Go source file
   openapi: package OpenAPI fragment
-  package_shared: template runtime helpers reused by per-source template artifacts
   stylesheet: extracted component CSS from decision:component-style-delivery
   script: extracted component JavaScript from requirement:static-asset-extraction
 owning_source:
   templates: the template file itself
   binding: the Go file declaring the type
   configbind: the Go file containing the discovered call
-  package_wide: empty SourcePath for package_shared and openapi
+  package_wide: empty SourcePath for openapi only
 naming:
   base: owning source base name minus its template suffix or Go extension
   caller_owns_suffix: caller maps OutputBase to its own generated file name
@@ -44,7 +43,9 @@ naming:
 content:
   - standard generated-file header marking the file as generated and not editable, in the comment syntax of the output language
   - Go artifacts are self-contained per rule:generated-source-self-contained
+  - no artifact carries runtime types or helpers, per decision:generated-runtime-in-module
 related:
+  - decision:generated-runtime-in-module
   - api:generator-artifacts
   - requirement:per-source-generation-artifacts
   - api:generator-execution
