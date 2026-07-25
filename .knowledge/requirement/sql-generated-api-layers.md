@@ -22,6 +22,10 @@ context_adapter:
   name: <Component>Context
   inputs: context.Context, typed component parameters
   behavior: resolve executor from Context and delegate to <Component>
+context_only_surface:
+  decision: decision:sql-context-executor-api context_only_mode
+  default: disabled
+  effect: <Component> becomes the context-resolved public function and the executor-taking function becomes unexported
 executor_interfaces:
   sql.exec: ExecContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
   row_outputs: QueryContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx

@@ -47,6 +47,15 @@ go generate ./...
 
 `.tb.html` と `.tb.sql` は `tinybind_templates_gen.go` にまとめられます。対象ディレクトリ直下だけが探索対象です。
 
+別の命名規則を使う場合は、ベース名に対する glob を
+`-html-template-pattern` と `-sql-template-pattern` で指定します。
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
+```
+
+既定値は引き続き `*.tb.html` と `*.tb.sql` です。
+
 既定の placeholder は PostgreSQL 形式の `$1`, `$2`, ... です。dialect や placeholder を実行時に選ぶ API はありません。
 
 ## 最小の query
@@ -408,6 +417,31 @@ Context に executor がなければ `sqlbind.ErrNoSQLExecutor` が返ります�
 
 executor を引数で明示する通常 API も残るため、用途に応じて併用できます。
 
+## context のみの公開 API
+
+宣言した statement 名をそのまま唯一の実行 API として公開する framework 向けに、
+Context 解決版をその名前で生成できます。
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-only-api
+```
+
+```go
+func FindUser(ctx context.Context, id int) (User, error)
+```
+
+このモードでは:
+
+- `*sql.DB`、`*sql.Tx`、`SQLQuerier`、`SQLExecer` を受け取る公開関数を生成しません
+- executor を受け取る関数は非公開になります
+- `BuildName` は従来どおり公開されます
+- `NameContext` を生成しないため、その名前は空いたままです
+- executor は Context から解決されるため、transaction の内外で同じ公開関数を使えます
+
+`-sql-context-only-api` は `-sql-context-api` を含みます。
+`sqlbind.SQLExecutorFromContext` の代わりに framework の関数で解決する場合は
+`Options.SQLExecutorResolver` を設定します。
+
 ## SQL template で作られる関数シグネチャ一覧
 
 以下の `P...` は template parameter 群、`p...` は対応する Go 引数です。
@@ -449,6 +483,15 @@ func NameContext(ctx context.Context, p ...P) (sql.Result, error)     // exec
 func NameContext(ctx context.Context, p ...P) (T, error)              // one
 func NameContext(ctx context.Context, p ...P) (*T, error)             // optional
 func NameContext(ctx context.Context, p ...P) iter.Seq2[T, error]     // many
+```
+
+### `-sql-context-only-api` を有効にした場合
+
+```go
+func Name(ctx context.Context, p ...P) (sql.Result, error) // exec
+func Name(ctx context.Context, p ...P) (T, error)          // one
+func Name(ctx context.Context, p ...P) (*T, error)         // optional
+func Name(ctx context.Context, p ...P) iter.Seq2[T, error] // many
 ```
 
 ### private `sql.predicate` / `sql.relation<T>`

@@ -18,6 +18,10 @@ type GenerateOptions struct {
 	// ContextAPI adds <Component>Context wrappers which resolve an executor
 	// from context.Context while preserving the explicit executor APIs.
 	ContextAPI bool
+	// ContextOnly publishes the Context-resolved function under the declared
+	// component name and makes the executor-taking function unexported. It
+	// implies ContextAPI and generates no <Component>Context wrapper.
+	ContextOnly bool
 	// ExecutorResolver selects a framework-specific Context resolver. A nil
 	// resolver uses sqlbind.SQLExecutorFromContext. Setting it implies ContextAPI.
 	ExecutorResolver *ExecutorResolver
@@ -52,6 +56,9 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 		}
 		options.ContextAPI = true
 	}
+	if options.ContextOnly {
+		options.ContextAPI = true
+	}
 	generated, err := c.emit(options)
 	if err != nil {
 		return nil, err
@@ -64,17 +71,18 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 }
 
 type goEmitter struct {
-	c          *compiler
-	b          bytes.Buffer
-	indent     int
-	style      string
-	contextAPI bool
-	resolver   *ExecutorResolver
+	c           *compiler
+	b           bytes.Buffer
+	indent      int
+	style       string
+	contextAPI  bool
+	contextOnly bool
+	resolver    *ExecutorResolver
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
-	e := &goEmitter{c: c, style: options.PlaceholderStyle, contextAPI: options.ContextAPI, resolver: options.ExecutorResolver}
-	if e.contextAPI {
+	e := &goEmitter{c: c, style: options.PlaceholderStyle, contextAPI: options.ContextAPI, contextOnly: options.ContextOnly, resolver: options.ExecutorResolver}
+	if e.contextAPI && !e.contextOnly {
 		for _, statement := range c.statements {
 			if statement.decl.Exported && statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
 				return nil, c.error(statement.decl.Pos, "generated Context API conflicts with declaration "+statement.decl.Name+"Context")
@@ -156,6 +164,24 @@ func (e *goEmitter) hasContextAPI() bool {
 		}
 	}
 	return false
+}
+
+// executorAPIName names the function that takes an explicit executor.
+// Context-only mode makes it unexported so the declared component name can
+// carry the Context-resolved public API instead.
+func (e *goEmitter) executorAPIName(name string) string {
+	if e.contextOnly {
+		return "_tinybindExec" + name
+	}
+	return name
+}
+
+// contextAPIName names the Context-resolved function.
+func (e *goEmitter) contextAPIName(name string) string {
+	if e.contextOnly {
+		return name
+	}
+	return name + "Context"
 }
 
 func (e *goEmitter) resolverCall() string {
@@ -283,7 +309,7 @@ func (e *goEmitter) callParams(params []Parameter) string {
 }
 
 func (e *goEmitter) emitExecAPI(statement *TemplateDecl) {
-	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLExecer", statement.Name)
+	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLExecer", e.executorAPIName(statement.Name))
 	for _, p := range statement.Parameters {
 		t, _ := e.c.resolveType(p.Type)
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
@@ -303,7 +329,7 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 	if info.cardinality == "optional" {
 		returnType = "*" + result
 	}
-	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", statement.Name)
+	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", e.executorAPIName(statement.Name))
 	for _, p := range statement.Parameters {
 		t, _ := e.c.resolveType(p.Type)
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
@@ -336,7 +362,7 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 }
 
 func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, result string) {
-	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", statement.Name)
+	fmt.Fprintf(&e.b, "func %s(ctx context.Context, db SQLQuerier", e.executorAPIName(statement.Name))
 	for _, p := range statement.Parameters {
 		t, _ := e.c.resolveType(p.Type)
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
@@ -355,7 +381,7 @@ func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, re
 }
 
 func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo) {
-	name := statement.Name + "Context"
+	name := e.contextAPIName(statement.Name)
 	result := goType(info.result)
 	fmt.Fprintf(&e.b, "func %s(ctx context.Context", name)
 	for _, p := range statement.Parameters {
@@ -367,7 +393,7 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 		fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
 		fmt.Fprintf(&e.b, "\t\texecutor, err := %s\n", e.resolverCall())
 		fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
-		fmt.Fprintf(&e.b, "\t\tfor value, err := range %s(ctx, executor%s) {\n", statement.Name, e.callParams(statement.Parameters))
+		fmt.Fprintf(&e.b, "\t\tfor value, err := range %s(ctx, executor%s) {\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
 		e.b.WriteString("\t\t\tif !yield(value, err) { return }\n\t\t}\n\t}\n}\n\n")
 		return
 	}
@@ -383,7 +409,7 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
 	fmt.Fprintf(&e.b, "\texecutor, err := %s\n", e.resolverCall())
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
-	fmt.Fprintf(&e.b, "\treturn %s(ctx, executor%s)\n}\n\n", statement.Name, e.callParams(statement.Parameters))
+	fmt.Fprintf(&e.b, "\treturn %s(ctx, executor%s)\n}\n\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
 }
 
 func (e *goEmitter) emitScan(indent string, t valueType, target, zero string) {

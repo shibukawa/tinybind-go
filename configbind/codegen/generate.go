@@ -39,6 +39,13 @@ const (
 
 // Generate emits package source that registers one Definition for each Spec.
 func Generate(packageName string, specs []Spec) ([]byte, error) {
+	return GenerateGroup(packageName, specs, 0)
+}
+
+// GenerateGroup generates one subset of a package's specs. indexOffset is the
+// position of specs[0] within the package's full spec list; it keeps generated
+// identifiers unique when a package is emitted as several files.
+func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, error) {
 	if packageName == "" {
 		return nil, fmt.Errorf("configbind/codegen: package name required")
 	}
@@ -60,7 +67,7 @@ func Generate(packageName string, specs []Spec) ([]byte, error) {
 
 	b.WriteString("func init() {\n")
 	for i, s := range specs {
-		fmt.Fprintf(&b, "\tregister%sDefinition%d()\n", s.TypeName, i)
+		fmt.Fprintf(&b, "\tregister%sDefinition%d()\n", s.TypeName, indexOffset+i)
 	}
 	b.WriteString("}\n\n")
 
@@ -68,7 +75,7 @@ func Generate(packageName string, specs []Spec) ([]byte, error) {
 		if s.PackagePath == "" {
 			s.PackagePath = packageName
 		}
-		registerName := fmt.Sprintf("register%sDefinition%d", s.TypeName, i)
+		registerName := fmt.Sprintf("register%sDefinition%d", s.TypeName, indexOffset+i)
 		var err error
 		if s.SubCommand {
 			err = emitSubCommandType(&b, s, registerName)

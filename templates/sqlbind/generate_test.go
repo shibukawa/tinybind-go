@@ -3,6 +3,10 @@ package sqlbind_test
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -228,4 +232,99 @@ func runGenerated(t *testing.T, generated, runtimeTest []byte) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("generated code failed: %v\n%s\n%s", err, output, generated)
 	}
+}
+
+func TestGenerateContextOnlyAPI(t *testing.T) {
+	source := []byte(`package queries
+type User { id: int, name: string }
+export statement FindUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement MaybeUser(id: int): sql.optional<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}
+export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
+	generated, err := sqlbind.Generate("users.pw.sql", source, sqlbind.GenerateOptions{ContextOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"func FindUser(ctx context.Context, id int) (User, error)",
+		"func MaybeUser(ctx context.Context, id int) (*User, error)",
+		"func ListUsers(ctx context.Context) iter.Seq2[User, error]",
+		"func DeleteUser(ctx context.Context, id int) (sql.Result, error)",
+		"func BuildFindUser(id int) (Statement, error)",
+		"func _tinybindExecFindUser(ctx context.Context, db SQLQuerier",
+	}
+	for _, signature := range want {
+		if !bytes.Contains(generated, []byte(signature)) {
+			t.Fatalf("generated output lacks %q:\n%s", signature, generated)
+		}
+	}
+	for _, unwanted := range []string{"func FindUserContext(", "func ListUsersContext(", "func DeleteUserContext("} {
+		if bytes.Contains(generated, []byte(unwanted)) {
+			t.Fatalf("context-only output still declares %q:\n%s", unwanted, generated)
+		}
+	}
+	for _, exported := range exportedFuncSignatures(t, generated) {
+		if strings.Contains(exported, "SQLQuerier") || strings.Contains(exported, "SQLExecer") {
+			t.Fatalf("context-only output exports an executor-taking function: %s", exported)
+		}
+	}
+	runtimeTest := []byte(`package queries
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "testing"
+    rootsql "github.com/shibukawa/tinybind-go/sqlbind"
+)
+var errQuery = errors.New("query failed")
+var errExec = errors.New("exec failed")
+type failingExecutor struct{}
+func (failingExecutor) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errQuery }
+func (failingExecutor) ExecContext(context.Context, string, ...any) (sql.Result, error) { return nil, errExec }
+func TestContextOnlyAPIs(t *testing.T) {
+    if _, err := FindUser(context.Background(), 1); !errors.Is(err, rootsql.ErrNoSQLExecutor) { t.Fatalf("missing executor error = %v", err) }
+    ctx := rootsql.WithSQLExecutor(context.Background(), failingExecutor{})
+    if _, err := FindUser(ctx, 1); !errors.Is(err, errQuery) { t.Fatalf("query error = %v", err) }
+    if _, err := MaybeUser(ctx, 1); !errors.Is(err, errQuery) { t.Fatalf("optional query error = %v", err) }
+    if _, err := DeleteUser(ctx, 1); !errors.Is(err, errExec) { t.Fatalf("exec error = %v", err) }
+    count := 0
+    for _, err := range ListUsers(ctx) { count++; if !errors.Is(err, errQuery) { t.Fatalf("many error = %v", err) } }
+    if count != 1 { t.Fatalf("many error yields = %d", count) }
+    if statement, err := BuildFindUser(3); err != nil || statement.SQL == "" { t.Fatalf("builder = %q, %v", statement.SQL, err) }
+}`)
+	runGenerated(t, generated, runtimeTest)
+}
+
+func TestGenerateContextOnlyKeepsDeclaredNameFree(t *testing.T) {
+	source := []byte(`package queries
+type Row { id: int }
+export statement Get(): sql.one<Row> {SELECT id FROM rows}
+statement GetContext(): sql.exec {SELECT 1}`)
+	if _, err := sqlbind.Generate("free.pw.sql", source, sqlbind.GenerateOptions{ContextOnly: true}); err != nil {
+		t.Fatalf("context-only generation must not reserve GetContext: %v", err)
+	}
+}
+
+// exportedFuncSignatures returns the source text of every exported top-level
+// function declaration in generated Go source.
+func exportedFuncSignatures(t *testing.T, generated []byte) []string {
+	t.Helper()
+	files := token.NewFileSet()
+	file, err := parser.ParseFile(files, "generated.go", generated, parser.AllErrors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Recv != nil || !function.Name.IsExported() {
+			continue
+		}
+		var buffer bytes.Buffer
+		if err := format.Node(&buffer, files, &ast.FuncDecl{Name: function.Name, Type: function.Type}); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, buffer.String())
+	}
+	return out
 }

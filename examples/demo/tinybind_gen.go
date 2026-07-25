@@ -11,8 +11,6 @@ import (
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
-type jsonRaw = json.RawMessage
-
 func init() {
 	httpbind.RegisterBind[CreateUserRequest](bindCreateUserRequest)
 	httpbind.RegisterWrite[CreateUserResponse](writeCreateUserResponse)
@@ -25,7 +23,7 @@ func init() {
 	httpbind.RegisterBind[UserGetRequest](bindUserGetRequest)
 	httpbind.RegisterWrite[UserGetResponse](writeUserGetResponse)
 	httpbind.RegisterBind[ChatRequest](bindChatRequest)
-	jsonbind.RegisterEncode[ChatEvent](encodeChatEvent)
+	httpbind.RegisterWrite[ChatEvent](writeChatEvent)
 	httpbind.RegisterWrite[HealthResponse](writeHealthResponse)
 }
 
@@ -60,7 +58,7 @@ func bindCreateUserRequest(r *http.Request) (CreateUserRequest, error) {
 	var out CreateUserRequest
 	var presentName bool
 	var presentEmail bool
-	var jsonBody map[string]jsonRaw
+	var jsonBody map[string]json.RawMessage
 	var formBody map[string]string
 	var bodyRead bool
 	readBody := func() error {
@@ -211,7 +209,7 @@ func bindSearchRequest(r *http.Request) (SearchRequest, error) {
 	var out SearchRequest
 	var presentKeyword bool
 	var presentPage bool
-	var jsonBody map[string]jsonRaw
+	var jsonBody map[string]json.RawMessage
 	var formBody map[string]string
 	var bodyRead bool
 	readBody := func() error {
@@ -330,7 +328,7 @@ func decodeEchoRequestJSON(raw json.RawMessage) (EchoRequest, error) {
 func bindEchoRequest(r *http.Request) (EchoRequest, error) {
 	var out EchoRequest
 	var presentMessage bool
-	var jsonBody map[string]jsonRaw
+	var jsonBody map[string]json.RawMessage
 	var formBody map[string]string
 	var bodyRead bool
 	readBody := func() error {
@@ -506,7 +504,7 @@ func decodeChatRequestJSON(raw json.RawMessage) (ChatRequest, error) {
 
 func bindChatRequest(r *http.Request) (ChatRequest, error) {
 	var out ChatRequest
-	var jsonBody map[string]jsonRaw
+	var jsonBody map[string]json.RawMessage
 	var formBody map[string]string
 	var bodyRead bool
 	readBody := func() error {
@@ -570,6 +568,11 @@ func encodeChatEventMap(v ChatEvent) map[string]any {
 
 func encodeChatEvent(w io.Writer, v ChatEvent) error {
 	return json.NewEncoder(w).Encode(encodeChatEventMap(v))
+}
+
+func writeChatEvent(w http.ResponseWriter, r *http.Request, v ChatEvent) error {
+	_ = r
+	return httpbind.WriteJSON(w, http.StatusOK, encodeChatEventMap(v))
 }
 
 func encodeHealthResponseMap(v HealthResponse) map[string]any {

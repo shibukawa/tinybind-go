@@ -94,8 +94,11 @@ const (
 
 // TypePlan is the mapping plan for one struct type.
 type TypePlan struct {
-	Name   string
-	Fields []FieldPlan
+	Name string
+	// SourcePath is the Go file that declares the type. It is the owning source
+	// of every artifact generated for this type.
+	SourcePath string
+	Fields     []FieldPlan
 	// Usage records which generated entry points are referenced by source code.
 	// Zero means the type is unused and emits no mapping paths.
 	Usage Usage
@@ -191,9 +194,10 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 		if f == nil {
 			continue
 		}
-		base := ""
+		base, sourcePath := "", ""
 		if fset != nil {
-			base = filepath.Base(fset.File(f.Pos()).Name())
+			sourcePath = fset.File(f.Pos()).Name()
+			base = filepath.Base(sourcePath)
 		}
 		if strings.HasSuffix(base, "_test.go") ||
 			strings.HasSuffix(base, "_httpbind_gen.go") ||
@@ -231,6 +235,7 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 					return nil, fmt.Errorf("%s: %w", ts.Name.Name, err)
 				}
 				if ok {
+					tp.SourcePath = sourcePath
 					plan.Types = append(plan.Types, tp)
 				}
 			}

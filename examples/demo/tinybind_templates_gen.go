@@ -91,4 +91,3 @@ func IndexPage(w http.ResponseWriter, r *http.Request, javascript string) (_tiny
 	}
 	return nil
 }
-

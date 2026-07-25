@@ -16,6 +16,9 @@ generation_options:
   SQLContextAPI:
     type: bool
     behavior: generate <Component>Context wrappers without executor parameters
+  SQLContextOnlyAPI:
+    type: bool
+    behavior: publish only the context-resolved surface under the source-declared name
   SQLExecutorResolver:
     type: optional SymbolPattern
     behavior: select a framework resolver; implies SQLContextAPI
@@ -35,6 +38,23 @@ wrapper_behavior:
 naming:
   explicit: <Component>
   context: <Component>Context
+context_only_mode:
+  motivation: a framework publishes the source-declared name as its only executable API
+  requires: standard runtime resolver or configured SQLExecutorResolver
+  naming:
+    public: <Component> taking context.Context plus typed component parameters
+    internal: _tinybindExec<Component>, unexported and non-conflicting
+    builder: Build<Component> stays exported and unchanged
+  rules:
+    - no exported function accepts sql.DB, sql.Tx, SQLQuerier, or SQLExecer
+    - no <Component>Context wrapper is generated; that name stays free
+    - the same public function is used inside and outside a transaction
+    - transaction selection stays in the Context, not in the signature
+    - mode is fixed at generation time and applies to the whole package
+  acceptance:
+    - FindUser generates as func FindUser(ctx context.Context, id int) (User, error)
+    - a call inside a transaction Context reaches sql.Tx through the resolver
+    - the explicit and wrapper surfaces remain available when the mode is off
 framework_flow:
   - transaction middleware derives a Context containing sql.Tx
   - handler calls <Component>Context with that Context

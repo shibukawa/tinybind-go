@@ -8,6 +8,7 @@ One context-aware API executes all enabled generation phases without parsing pro
 ```yaml
 public_shape:
   - "func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest) (GenerateResult, error)"
+per_source_variant: api:generator-artifacts
 GenerateRequest:
   fields:
     - package directory
@@ -39,4 +40,6 @@ related:
   - flow:configbind-codegen
   - requirement:extensible-generator-command
   - requirement:modular-package-generation
+  - api:generator-artifacts
+  - rule:generated-source-self-contained
 ```

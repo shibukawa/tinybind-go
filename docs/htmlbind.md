@@ -39,6 +39,15 @@ go generate ./...
 
 The generator discovers `.tb.html` and `.tb.sql` files directly inside the target directory and combines them in `tinybind_templates_gen.go`. It does not descend into child package directories; generate each package separately.
 
+To use another naming convention, pass base-name globs with
+`-html-template-pattern` and `-sql-template-pattern`, for example:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
+```
+
+The defaults remain `*.tb.html` and `*.tb.sql`.
+
 ## Minimal component
 
 `hello.tb.html`:
@@ -374,6 +383,39 @@ export component Layout(): html { ... }
 ```go
 func Layout(w http.ResponseWriter, r *http.Request) error
 ```
+
+### Writer mode (`-html-writer-api`)
+
+A framework that owns the HTTP response itself can generate HTTP-independent
+components:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-writer-api
+```
+
+```go
+type UserPageParams struct {
+	User User
+}
+
+func UserPage(w io.Writer, params UserPageParams) error
+```
+
+The rule is the same for zero, one, and many parameters: every component gets a
+`{ComponentName}Params` struct with one exported field per declared parameter, in
+declaration order. Private components get an unexported `render{Name}Params`.
+
+In this mode the generated function keeps escaping, typed field access, loops,
+and JSON output, but sets no `Content-Type` or `Content-Encoding`, prepares no
+compression, commits no response, and renders no error page. The `html`
+parameter type becomes `func(io.Writer) error`. Because the shape is
+`func(io.Writer, P) error`, the framework can accept it directly:
+
+```go
+func WriteHTML[P any](w http.ResponseWriter, r *http.Request, render func(io.Writer, P) error, params P) error
+```
+
+The default `http.ResponseWriter` form stays unchanged when the option is off.
 
 ### Private component
 

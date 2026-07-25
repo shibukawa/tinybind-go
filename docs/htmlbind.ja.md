@@ -39,6 +39,15 @@ go generate ./...
 
 ジェネレーターは対象ディレクトリ直下だけを調べ、`.tb.html` と `.tb.sql` をまとめて `tinybind_templates_gen.go` に出力します。子ディレクトリは別パッケージとして個別に生成してください。
 
+別の命名規則を使う場合は、ベース名に対する glob を
+`-html-template-pattern` と `-sql-template-pattern` で指定します。
+
+```go
+//go:generate go run github.com/shibukaway/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
+```
+
+既定値は引き続き `*.tb.html` と `*.tb.sql` です。
+
 ## 最小の component
 
 `hello.tb.html`:
@@ -371,6 +380,37 @@ export component Layout(): html { ... }
 ```go
 func Layout(w http.ResponseWriter, r *http.Request) error
 ```
+
+### writer モード (`-html-writer-api`)
+
+HTTP response を framework 自身が扱う場合は、HTTP から独立した component を生成できます。
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-writer-api
+```
+
+```go
+type UserPageParams struct {
+	User User
+}
+
+func UserPage(w io.Writer, params UserPageParams) error
+```
+
+引数なし・1 引数・複数引数で規則は同じです。すべての component に対し、宣言順で
+1 引数 1 フィールドを持つ `{ComponentName}Params` 型を生成します。private component には
+非公開の `render{Name}Params` を生成します。
+
+このモードでも escaping、typed field access、loop、JSON 出力は変わりませんが、
+`Content-Type` と `Content-Encoding` の設定、圧縮準備、response commit、エラー応答は
+行いません。`html` 型の引数は `func(io.Writer) error` になります。
+形が `func(io.Writer, P) error` なので、framework 側でそのまま受け取れます。
+
+```go
+func WriteHTML[P any](w http.ResponseWriter, r *http.Request, render func(io.Writer, P) error, params P) error
+```
+
+無効時は従来の `http.ResponseWriter` 形式のままです。
 
 ### private component
 

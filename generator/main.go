@@ -25,7 +25,11 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	openapi := flags.Bool("openapi", true, "also generate OpenAPI embed (tinybind_openapi_gen.go)")
 	openapiName := flags.String("openapi-name", "tinybind_openapi_gen.go", "OpenAPI output file name")
 	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
+	htmlTemplatePattern := flags.String("html-template-pattern", templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern), "HTML template file glob")
+	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
+	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
+	htmlWriterAPI := flags.Bool("html-writer-api", false, "generate io.Writer HTML components with a generated Params struct")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	if err := flags.Parse(args); err != nil {
@@ -46,8 +50,11 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	result, err := New(options).GeneratePackage(ctx, GenerateRequest{
 		Dir: *dir, Out: *out, Name: *name,
 		OpenAPI: *openapi, OpenAPIName: *openapiName,
-		TemplatesName: *templatesName,
-		Check:         *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
+		TemplatesName:       *templatesName,
+		HTMLTemplatePattern: *htmlTemplatePattern,
+		SQLTemplatePattern:  *sqlTemplatePattern,
+		Check:               *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
+		SQLContextOnlyAPI: *sqlContextOnlyAPI, HTMLWriterAPI: *htmlWriterAPI,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)
@@ -68,4 +75,11 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		fmt.Fprintln(stdout, path)
 	}
 	return 0
+}
+
+func templatePattern(configured, fallback string) string {
+	if configured != "" {
+		return configured
+	}
+	return fallback
 }

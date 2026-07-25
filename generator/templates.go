@@ -15,111 +15,107 @@ import (
 	templatesql "github.com/shibukawa/tinybind-go/templates/sqlbind"
 )
 
-const DefaultTemplatesName = "tinybind_templates_gen.go"
+const (
+	DefaultTemplatesName       = "tinybind_templates_gen.go"
+	DefaultHTMLTemplatePattern = "*.tb.html"
+	DefaultSQLTemplatePattern  = "*.tb.sql"
+)
+
+type templateKind uint8
+
+const (
+	htmlTemplate templateKind = iota
+	sqlTemplate
+)
+
+type templateFile struct {
+	path string
+	kind templateKind
+}
 
 // TemplateFiles returns the .tb.html and .tb.sql files directly contained in
 // dir. A generator invocation targets one Go package and therefore does not
 // descend into child package directories.
 func TemplateFiles(dir string) ([]string, error) {
+	return TemplateFilesWithPatterns(dir, DefaultHTMLTemplatePattern, DefaultSQLTemplatePattern)
+}
+
+// TemplateFilesWithPatterns returns files directly contained in dir whose base
+// names match the filepath.Match patterns for HTML and SQL templates.
+func TemplateFilesWithPatterns(dir, htmlPattern, sqlPattern string) ([]string, error) {
+	discovered, err := discoverTemplateFiles(dir, htmlPattern, sqlPattern)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, len(discovered))
+	for i, file := range discovered {
+		files[i] = file.path
+	}
+	return files, nil
+}
+
+func discoverTemplateFiles(dir, htmlPattern, sqlPattern string) ([]templateFile, error) {
+	htmlPattern = templatePattern(htmlPattern, DefaultHTMLTemplatePattern)
+	sqlPattern = templatePattern(sqlPattern, DefaultSQLTemplatePattern)
+	if _, err := filepath.Match(htmlPattern, ""); err != nil {
+		return nil, fmt.Errorf("invalid HTML template pattern %q: %w", htmlPattern, err)
+	}
+	if _, err := filepath.Match(sqlPattern, ""); err != nil {
+		return nil, fmt.Errorf("invalid SQL template pattern %q: %w", sqlPattern, err)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	var files []string
+	var files []templateFile
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if strings.HasSuffix(name, ".tb.html") || strings.HasSuffix(name, ".tb.sql") {
-			files = append(files, filepath.Join(dir, name))
+		html, err := filepath.Match(htmlPattern, name)
+		if err != nil {
+			return nil, err // patterns were validated above
+		}
+		sql, err := filepath.Match(sqlPattern, name)
+		if err != nil {
+			return nil, err // patterns were validated above
+		}
+		if html && sql {
+			return nil, fmt.Errorf("template file %q matches both HTML pattern %q and SQL pattern %q", name, htmlPattern, sqlPattern)
+		}
+		if html {
+			files = append(files, templateFile{path: filepath.Join(dir, name), kind: htmlTemplate})
+		} else if sql {
+			files = append(files, templateFile{path: filepath.Join(dir, name), kind: sqlTemplate})
 		}
 	}
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	return files, nil
 }
 
-// GenerateTemplates discovers the standard template extensions and writes one
-// Go file containing all generated declarations. It returns an empty path when
-// no templates exist.
+// GenerateTemplates discovers files using the configured template patterns and
+// writes one Go file containing all generated declarations. It returns an empty
+// path when no templates exist.
 func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, error) {
-	files, err := TemplateFiles(dir)
+	files, err := discoverTemplateFiles(dir, g.Options.HTMLTemplatePattern, g.Options.SQLTemplatePattern)
 	if err != nil {
 		return "", err
 	}
 	if len(files) == 0 {
 		return "", nil
 	}
-	pkg, err := packageName(dir)
+	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
 		return "", err
 	}
-	if pkg == "" {
-		for _, path := range files {
-			source, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return "", readErr
-			}
-			declared := ""
-			if strings.HasSuffix(path, ".tb.html") {
-				module, parseErr := htmlbind.Parse(path, source)
-				if parseErr != nil {
-					return "", parseErr
-				}
-				if module.Package != nil {
-					declared = module.Package.Name
-				}
-			} else {
-				module, parseErr := templatesql.Parse(path, source)
-				if parseErr != nil {
-					return "", parseErr
-				}
-				if module.Package != nil {
-					declared = module.Package.Name
-				}
-			}
-			if declared != "" {
-				if i := strings.LastIndex(declared, "."); i >= 0 {
-					declared = declared[i+1:]
-				}
-				pkg = goTemplateIdentifier(declared)
-				break
-			}
-		}
-		if pkg == "" {
-			pkg = "templates"
-		}
-	}
 	var generated [][]byte
-	for _, path := range files {
-		source, err := os.ReadFile(path)
+	for _, file := range files {
+		source, err := os.ReadFile(file.path)
 		if err != nil {
 			return "", err
 		}
-		var code []byte
-		if strings.HasSuffix(path, ".tb.html") {
-			module, parseErr := htmlbind.Parse(path, source)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			if err := checkTemplatePackage(path, module.Package, pkg); err != nil {
-				return "", err
-			}
-			code, err = htmlbind.Generate(path, source, htmlbind.GenerateOptions{Package: pkg})
-		} else {
-			module, parseErr := templatesql.Parse(path, source)
-			if parseErr != nil {
-				return "", parseErr
-			}
-			if err := checkTemplatePackage(path, module.Package, pkg); err != nil {
-				return "", err
-			}
-			sqlOptions := templatesql.GenerateOptions{Package: pkg, ContextAPI: g.Options.SQLContextAPI}
-			if resolver := g.Options.SQLExecutorResolver; resolver != nil {
-				sqlOptions.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
-			}
-			code, err = templatesql.Generate(path, source, sqlOptions)
-		}
+		code, err := g.generateTemplate(file, source, pkg)
 		if err != nil {
 			return "", err
 		}
@@ -147,6 +143,86 @@ func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, erro
 		return path, nil
 	}
 	return abs, nil
+}
+
+// templatePackageName resolves the Go package the generated templates join:
+// the package of the Go sources in dir, or the package declared by the first
+// template that declares one.
+func (g *Generator) templatePackageName(dir string, files []templateFile) (string, error) {
+	pkg, err := packageName(dir)
+	if err != nil {
+		return "", err
+	}
+	if pkg != "" {
+		return pkg, nil
+	}
+	for _, file := range files {
+		source, err := os.ReadFile(file.path)
+		if err != nil {
+			return "", err
+		}
+		declared := ""
+		if file.kind == htmlTemplate {
+			module, err := htmlbind.Parse(file.path, source)
+			if err != nil {
+				return "", err
+			}
+			if module.Package != nil {
+				declared = module.Package.Name
+			}
+		} else {
+			module, err := templatesql.Parse(file.path, source)
+			if err != nil {
+				return "", err
+			}
+			if module.Package != nil {
+				declared = module.Package.Name
+			}
+		}
+		if declared == "" {
+			continue
+		}
+		if i := strings.LastIndex(declared, "."); i >= 0 {
+			declared = declared[i+1:]
+		}
+		return goTemplateIdentifier(declared), nil
+	}
+	return "templates", nil
+}
+
+// generateTemplate compiles one discovered template source with the configured
+// generated API shape. Diagnostics keep the discovered path, so custom input
+// suffixes are reported exactly as they exist on disk.
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string) ([]byte, error) {
+	if file.kind == htmlTemplate {
+		module, err := htmlbind.Parse(file.path, source)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
+			return nil, err
+		}
+		return htmlbind.Generate(file.path, source, htmlbind.GenerateOptions{
+			Package:   pkg,
+			WriterAPI: g.Options.HTMLWriterAPI,
+		})
+	}
+	module, err := templatesql.Parse(file.path, source)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
+		return nil, err
+	}
+	options := templatesql.GenerateOptions{
+		Package:     pkg,
+		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
+		ContextOnly: g.Options.SQLContextOnlyAPI,
+	}
+	if resolver := g.Options.SQLExecutorResolver; resolver != nil {
+		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
+	}
+	return templatesql.Generate(file.path, source, options)
 }
 
 func checkTemplatePackage(filename string, declaration *htmlbind.PackageDecl, pkg string) error {
@@ -247,12 +323,14 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 	}
 	file := &ast.File{Name: ast.NewIdent(pkg), Decls: declarations}
 	var out strings.Builder
-	out.WriteString("// Code generated by tinybind templates; DO NOT EDIT.\n\n")
+	out.WriteString(templateGeneratedHeader)
 	if err := format.Node(&out, fset, file); err != nil {
 		return nil, err
 	}
 	out.WriteByte('\n')
-	return []byte(out.String()), nil
+	// Merging several template files can leave an import that only the skipped
+	// duplicate runtime declarations referenced.
+	return dropUnusedImports([]byte(out.String()))
 }
 
 func declarationNames(declaration ast.Decl) []string {

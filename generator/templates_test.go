@@ -117,6 +117,80 @@ func TestTemplateFilesDoesNotDescendOrMatchOrdinaryFiles(t *testing.T) {
 	}
 }
 
+func TestGenerateTemplatesUsesCustomFilePatterns(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"page.tmpl": `package fixture
+export component Page(): html {<h1>custom</h1>}`,
+		"query.sqlt": `package fixture
+export statement Ping(): sql.exec {SELECT 1}`,
+		"ignored.tb.html": `not parsed`,
+		"ignored.tb.sql":  `not parsed`,
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := generator.DefaultOptions()
+	opts.HTMLTemplatePattern = "*.tmpl"
+	opts.SQLTemplatePattern = "*.sqlt"
+	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, symbol := range []string{"func Page", "func Ping"} {
+		if !bytes.Contains(generated, []byte(symbol)) {
+			t.Errorf("generated output lacks %q", symbol)
+		}
+	}
+}
+
+func TestTemplateFilesWithPatternsRejectsInvalidOrOverlappingPatterns(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "page.tmpl"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := generator.TemplateFilesWithPatterns(dir, "[", "*.sql"); err == nil || !strings.Contains(err.Error(), "invalid HTML template pattern") {
+		t.Fatalf("invalid pattern error = %v", err)
+	}
+	if _, err := generator.TemplateFilesWithPatterns(dir, "*.tmpl", "page.*"); err == nil || !strings.Contains(err.Error(), "matches both") {
+		t.Fatalf("overlap error = %v", err)
+	}
+}
+
+func TestGenerateCommandUsesCustomTemplatePatterns(t *testing.T) {
+	dir := t.TempDir()
+	source := []byte(`package fixture
+export statement Ping(): sql.exec {SELECT 1}`)
+	if err := os.WriteFile(filepath.Join(dir, "ping.query"), source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fixture\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	set := generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))
+	exit := set.Run(context.Background(), []string{
+		"generate", "-dir", dir, "-openapi=false",
+		"-html-template-pattern=*.page", "-sql-template-pattern=*.query",
+	}, generator.CommandIO{Stdout: &stdout, Stderr: &stderr})
+	if exit != 0 {
+		t.Fatalf("exit=%d stderr=%s", exit, stderr.String())
+	}
+	generated, err := os.ReadFile(filepath.Join(dir, generator.DefaultTemplatesName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte("func Ping")) {
+		t.Fatalf("custom-pattern SQL template was not generated:\n%s", generated)
+	}
+}
+
 func TestGenerateTemplatesUsesCustomSQLExecutorResolver(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "dbctx"), 0o755); err != nil {

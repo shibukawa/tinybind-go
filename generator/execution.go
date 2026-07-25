@@ -14,16 +14,24 @@ var ErrNothingToGenerate = errors.New("generator: nothing to generate")
 
 // GenerateRequest configures one package-local generation execution.
 type GenerateRequest struct {
-	Dir            string
-	Out            string
-	Name           string
-	OpenAPI        bool
-	OpenAPIName    string
-	TemplatesName  string
-	ConfigBindName string
-	Check          bool
-	GenerateAll    bool
-	SQLContextAPI  bool
+	Dir           string
+	Out           string
+	Name          string
+	OpenAPI       bool
+	OpenAPIName   string
+	TemplatesName string
+	// HTMLTemplatePattern and SQLTemplatePattern override template discovery
+	// globs. Empty values retain the generator options.
+	HTMLTemplatePattern string
+	SQLTemplatePattern  string
+	ConfigBindName      string
+	Check               bool
+	GenerateAll         bool
+	SQLContextAPI       bool
+	// SQLContextOnlyAPI and HTMLWriterAPI enable the generated API shapes for
+	// this run. They can turn an option on, never off.
+	SQLContextOnlyAPI bool
+	HTMLWriterAPI     bool
 }
 
 // GenerateResult records generated artifacts or check diagnostics.
@@ -70,9 +78,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 		request.ConfigBindName = defaultConfigBindOut
 	}
 
-	options := g.Options
-	options.GenerateAll = options.GenerateAll || request.GenerateAll
-	options.SQLContextAPI = options.SQLContextAPI || request.SQLContextAPI
+	options := request.applyTo(g.Options)
 	normalized, err := options.normalized()
 	if err != nil {
 		return GenerateResult{}, err

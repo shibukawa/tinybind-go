@@ -28,6 +28,15 @@ type ConfigBindBinding struct {
 	SubCommand bool
 	Name       string
 	Help       string
+	// SourcePath is the Go file containing the discovered call.
+	SourcePath string
+}
+
+// ConfigBindSpec pairs one generated config definition with the source file
+// whose call declared it.
+type ConfigBindSpec struct {
+	SourcePath string
+	Spec       cbcg.Spec
 }
 
 // AnalyzeConfigBind discovers default Bind[T](prefix) registrations.
@@ -37,6 +46,20 @@ func AnalyzeConfigBind(dir string) (pkgName string, specs []cbcg.Spec, err error
 
 // AnalyzeConfigBindWithOptions discovers configured config-bind calls.
 func AnalyzeConfigBindWithOptions(dir string, options Options) (pkgName string, specs []cbcg.Spec, err error) {
+	pkgName, sourced, err := AnalyzeConfigBindSources(dir, options)
+	if err != nil {
+		return "", nil, err
+	}
+	specs = make([]cbcg.Spec, 0, len(sourced))
+	for _, spec := range sourced {
+		specs = append(specs, spec.Spec)
+	}
+	return pkgName, specs, nil
+}
+
+// AnalyzeConfigBindSources is AnalyzeConfigBindWithOptions with the owning
+// source file retained for every discovered definition.
+func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, specs []ConfigBindSpec, err error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", nil, err
@@ -101,9 +124,10 @@ func AnalyzeConfigBindWithOptions(dir string, options Options) (pkgName string, 
 		if f == nil {
 			continue
 		}
-		base := ""
+		base, sourcePath := "", ""
 		if fset != nil {
-			base = filepath.Base(fset.File(f.Pos()).Name())
+			sourcePath = fset.File(f.Pos()).Name()
+			base = filepath.Base(sourcePath)
 		}
 		if strings.HasSuffix(base, "_test.go") ||
 			base == "configbind_gen.go" ||
@@ -114,6 +138,9 @@ func AnalyzeConfigBindWithOptions(dir string, options Options) (pkgName string, 
 		discovered, err := discoverConfigBindCalls(f, pkg.TypesInfo, configPatterns)
 		if err != nil {
 			return "", nil, err
+		}
+		for i := range discovered {
+			discovered[i].SourcePath = sourcePath
 		}
 		bindings = append(bindings, discovered...)
 	}
@@ -137,14 +164,17 @@ func AnalyzeConfigBindWithOptions(dir string, options Options) (pkgName string, 
 		if err != nil {
 			return "", nil, fmt.Errorf("configbind: %s: %w", b.TypeName, err)
 		}
-		specs = append(specs, cbcg.Spec{
-			PackagePath: pkg.PkgPath,
-			TypeName:    b.TypeName,
-			Prefix:      b.Prefix,
-			SubCommand:  b.SubCommand,
-			Name:        b.Name,
-			Help:        b.Help,
-			Fields:      fields,
+		specs = append(specs, ConfigBindSpec{
+			SourcePath: b.SourcePath,
+			Spec: cbcg.Spec{
+				PackagePath: pkg.PkgPath,
+				TypeName:    b.TypeName,
+				Prefix:      b.Prefix,
+				SubCommand:  b.SubCommand,
+				Name:        b.Name,
+				Help:        b.Help,
+				Fields:      fields,
+			},
 		})
 	}
 	return pkg.Name, specs, nil

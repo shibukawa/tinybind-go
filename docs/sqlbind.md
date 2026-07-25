@@ -47,6 +47,15 @@ go generate ./...
 
 The generator combines `.tb.html` and `.tb.sql` output in `tinybind_templates_gen.go`. Only files directly inside the target directory are discovered.
 
+To use another naming convention, pass base-name globs with
+`-html-template-pattern` and `-sql-template-pattern`, for example:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
+```
+
+The defaults remain `*.tb.html` and `*.tb.sql`.
+
 The default placeholder style is PostgreSQL `$1`, `$2`, and so on. Generated runtime APIs do not accept a dialect or placeholder option.
 
 ## Minimal query
@@ -408,6 +417,58 @@ Without an executor, these functions return `sqlbind.ErrNoSQLExecutor`. `WithSQL
 
 The ordinary explicit-executor APIs remain available, so both styles can coexist.
 
+## Context-only public API
+
+A framework that publishes the declared statement names as its only executable
+API can generate the Context-resolved form under those names:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-only-api
+```
+
+```go
+func FindUser(ctx context.Context, id int) (User, error)
+```
+
+In this mode:
+
+- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
+- the executor-taking function becomes unexported;
+- `BuildName` stays exported and unchanged;
+- no `NameContext` wrapper is generated, so that name stays free;
+- the same public function is used inside and outside a transaction, because the
+  executor comes from the Context.
+
+`-sql-context-only-api` implies `-sql-context-api`. Set
+`Options.SQLExecutorResolver` to resolve the executor through a framework
+function instead of `sqlbind.SQLExecutorFromContext`.
+
+## Context-only public API
+
+A framework that publishes the declared statement names as its only executable
+API can generate the Context-resolved form under those names:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-only-api
+```
+
+```go
+func FindUser(ctx context.Context, id int) (User, error)
+```
+
+In this mode:
+
+- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
+- the executor-taking function becomes unexported;
+- `BuildName` stays exported and unchanged;
+- no `NameContext` wrapper is generated, so that name stays free;
+- the same public function is used inside and outside a transaction, because the
+  executor comes from the Context.
+
+`-sql-context-only-api` implies `-sql-context-api`. Set
+`Options.SQLExecutorResolver` to resolve the executor through a framework
+function instead of `sqlbind.SQLExecutorFromContext`.
+
 ## Generated SQL template signatures
 
 In the signatures below, `p ...P` represents the mapped template parameters.
@@ -449,6 +510,24 @@ func NameContext(ctx context.Context, p ...P) (sql.Result, error) // exec
 func NameContext(ctx context.Context, p ...P) (T, error)          // one
 func NameContext(ctx context.Context, p ...P) (*T, error)         // optional
 func NameContext(ctx context.Context, p ...P) iter.Seq2[T, error] // many
+```
+
+### With `-sql-context-only-api`
+
+```go
+func Name(ctx context.Context, p ...P) (sql.Result, error) // exec
+func Name(ctx context.Context, p ...P) (T, error)          // one
+func Name(ctx context.Context, p ...P) (*T, error)         // optional
+func Name(ctx context.Context, p ...P) iter.Seq2[T, error] // many
+```
+
+### With `-sql-context-only-api`
+
+```go
+func Name(ctx context.Context, p ...P) (sql.Result, error) // exec
+func Name(ctx context.Context, p ...P) (T, error)          // one
+func Name(ctx context.Context, p ...P) (*T, error)         // optional
+func Name(ctx context.Context, p ...P) iter.Seq2[T, error] // many
 ```
 
 ### Private `sql.predicate` and `sql.relation<T>`

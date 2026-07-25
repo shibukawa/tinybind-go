@@ -57,11 +57,23 @@ type Options struct {
 	RuntimePackages PatternSet[string]
 	Calls           PatternSet[CallPattern]
 	FileTypes       PatternSet[TypePattern]
+	// HTMLTemplatePattern and SQLTemplatePattern are filepath.Match patterns
+	// applied to file base names. Empty values use the standard patterns.
+	HTMLTemplatePattern string
+	SQLTemplatePattern  string
 	// SQLContextAPI adds Context-resolved wrappers for exported SQL templates.
 	SQLContextAPI bool
+	// SQLContextOnlyAPI publishes only the Context-resolved SQL surface under
+	// the name declared in the template. The executor-taking function becomes
+	// unexported and no <Component>Context wrapper is generated. It implies
+	// SQLContextAPI.
+	SQLContextOnlyAPI bool
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// HTMLWriterAPI generates HTTP-independent HTML components with the
+	// signature func Component(w io.Writer, params ComponentParams) error.
+	HTMLWriterAPI bool
 
 	DisableFeatures []Feature
 	GenerateAll     bool
@@ -78,8 +90,10 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages: PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath}},
-		FileTypes:       PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
+		RuntimePackages:     PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath}},
+		FileTypes:           PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
+		HTMLTemplatePattern: DefaultHTMLTemplatePattern,
+		SQLTemplatePattern:  DefaultSQLTemplatePattern,
 	}
 }
 
