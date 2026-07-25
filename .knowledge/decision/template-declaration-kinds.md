@@ -18,7 +18,7 @@ declarations:
     format: SQL
     required_output_prefix: sql
 common:
-  - optional export modifier controls generated public API visibility
+  - optional export modifier controls both requirement:template-file-scope visibility and generated public API visibility
   - PascalCase declaration name
   - typed parameters and explicit output type
   - private declaration when export is absent

@@ -14,6 +14,7 @@ chain_assembly:
   origin: page or exported entry component that fills the innermost slot
   members: origin plus its ordered layout ancestors, outermost first
   plan: data:html-render-route-plan for generated routes
+  manual: api:render-html-chain for a handler assembling the chain itself
   timing:
     generated_plan: chain is fixed at generation time and its classification is precomputed
     runtime_override: chain is assembled per request and classified then
@@ -23,12 +24,18 @@ classification:
   async_chain: expose the merged decision:async-component-signature sequence for the whole chain
   slot_owner: compiled async-agnostic; a layout never fixes the classification of whatever fills its slot
   no_partial_mode: a sync member inside an async chain still runs through the async driver
+executor: decision:generated-render-plan coordinator walking each member plan
+head_pass:
+  input: requirement:head-merging contributions from every member plan and every supplied slot value
+  timing: before the first body byte, so no output is buffered
+  output: the merged root head written by decision:html-document-shell
 initial_pass:
   order: sequential and nested; outermost frame prefix inward through each slot continuation to the origin, then unwinding suffixes
   target: the single io.Writer argument
   content: static markup plus each decision:async-boundary-syntax fallback and its placeholder
   laziness: a member runs only when its parent actually renders its requirement:html-slot-syntax slot
   dropped_member: a member below an unrendered conditional slot starts no work, opens no boundary, and is excluded from the completion pass
+  head_note: a dropped member still contributed head content, because contributions are collected from supplied composition rather than from what rendered
   end: flush; the response status and headers are committed
 completion_pass:
   concurrency: range every async member sequence concurrently

@@ -15,10 +15,14 @@ flow:
       action: mark the chain async when any member is async_boundary in data:component-render-capabilities
     - id: sync-path
       action: on a sync chain run the existing writer composition and return
+    - id: collect-head
+      action: merge requirement:head-merging contributions from every member plan and supplied slot value
+    - id: write-head
+      action: emit doctype, html, and the merged head through decision:html-document-shell
     - id: schedule
       action: start requirement:async-external-functions work for every member under the request context
     - id: initial-pass
-      action: write outermost frame prefix, descend through each slot continuation to the origin, write fallbacks and placeholders, unwind suffixes
+      action: walk each decision:generated-render-plan through the coordinator, writing frame prefixes, slot continuations, fallbacks, and placeholders
     - id: commit
       action: flush the initial bytes; status and headers become final
     - id: fan-out
@@ -30,6 +34,7 @@ flow:
     - id: finish
       action: end when all member sequences are exhausted, the consumer stops, or the request context cancels
   failure:
+    head_conflict: generation-time error; never reached at request time
     before_commit: yield zero content with the error and emit no chunk
     member_error: flow:suspense-html-render recover path inside the failing member only
     sibling_isolation: surviving members keep streaming

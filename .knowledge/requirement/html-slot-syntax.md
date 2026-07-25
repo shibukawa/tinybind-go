@@ -28,10 +28,14 @@ required_rules:
   alternative_rejected: declaring the slot parameter in the signature with an optional type; it would force authors to write every slot twice
   layout: a layout may mark its slot required, but data:html-render-route-plan still owns the exactly-one-unnamed-slot shape rule
 fill:
-  named: template element with a static slot attribute among the component call children
+  named: template element with a static name attribute among the component call children
   unnamed: remaining bare children of the call; no wrapper element
+  symmetry: declaration and fill use the same name attribute
   static_names: fill and slot names are static; expressions are forbidden
   not_vue2: the shape is chosen on its own merits; Vue 2 compatibility is not a goal
+go_binding:
+  type: decision:async-component-signature slot type; a bound decision:generated-render-plan value, not a rendered string
+  cross_file: requirement:cross-template-components covers filling a slot from another template or from Go
 value_access:
   decision: a slot parameter is never readable in the expression language; the slot element is its only use site
   reason:
@@ -51,10 +55,9 @@ conditional:
   laziness: a slot argument is a continuation, never pre-rendered before its insertion point is reached
 reserved:
   slot_element: slot is reserved as an element name and never emitted
-  slot_attribute: slot is not reserved as an attribute name; ordinary elements keep passing it through to external Web Components
-  template_element: template is a fill block only when it carries a slot attribute and is a direct child of a component call
-  disambiguation: every other template element, including one directly under a component call without a slot attribute, is ordinary emitted HTML
-  lost_case: authoring a literal template element carrying a slot attribute directly under a component call; wrap it in an element or place it inside a named fill
+  slot_attribute: slot is never reserved as an attribute name; every element passes it through to external Web Components, template included
+  template_element: template is a fill block only when it carries a name attribute and is a direct child of a component call
+  disambiguation: every other template element, including one directly under a component call without a name attribute, is ordinary emitted HTML
   authoring: this framework does not author Web Components, so no escape for a literal slot element is needed
 layout:
   shape: exactly one unnamed slot declaration site
@@ -80,8 +83,8 @@ acceptance:
   - named and unnamed slots compose in one component without ordering rules on the fill side
   - the same slot placed in both branches of an if compiles; the same slot inside a for does not
   - a layout that conditionally drops its slot never executes the child chain member
-  - a template element without a slot attribute is always emitted verbatim, including directly under a component call
-  - a template element under an ordinary element is emitted verbatim, slot attribute included
+  - a template element without a name attribute is always emitted verbatim, including directly under a component call
+  - a template element carrying a slot attribute is emitted verbatim in every position
   - a fill naming an undeclared slot fails at generation time with both positions
 update_interaction:
   no_anchor: an absent slot leaves nothing to target, so a later partial update cannot fill that position in place

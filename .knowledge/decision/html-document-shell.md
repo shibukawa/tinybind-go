@@ -16,11 +16,13 @@ roles:
   document.tb.html: optional route-root-only owner of html, head, body, and generated bootstrap insertion points
 fallback: generator supplies a minimal safe document shell when document.tb.html is absent
 composition:
+  - document body interior is an unnamed requirement:html-slot-syntax slot; a handler-invoked template renders only that interior
+  - requirement:cross-template-components supplies the fill when the chain is not statically discovered
   - document wraps outermost layout and page result for complete HTML responses
   - partial navigation retains the existing document shell and updates layout or page boundaries
   - document is not an api:client-component-update target
 injection:
-  head: generated metadata, optional data:html-client-bootstrap metadata, and application-provided head nodes
+  head: requirement:head-merging merged contributions, generated metadata, optional data:html-client-bootstrap metadata, and application-provided head nodes
   body_end: requirement:html-runtime-bootstrap script when route capabilities require it
   validation:
     - exactly one html, head, and body in an explicit document shell

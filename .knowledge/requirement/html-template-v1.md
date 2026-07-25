@@ -20,8 +20,9 @@ structure:
   children: elements, calls, text, expressions, if, and for
   nested_content: reserved children parameter of type html
   slots: requirement:html-slot-syntax reserved slot element
-  reserved_elements: slot is reserved as an element name and never emitted; template is a fill block only with a slot attribute directly under a component call; the slot attribute name stays ordinary
+  reserved_elements: slot is reserved as an element name and never emitted; template is a fill block only with a name attribute directly under a component call; the slot attribute name stays ordinary everywhere
   raw_text: script and style content use distinct insertion contexts
+  head: requirement:head-merging hoists a declared head element into the root document head
 attributes:
   names: static
   values: expressions allowed; block if and for forbidden

@@ -11,6 +11,7 @@ applies_to:
   - api:generator-execution
   - api:generator-artifacts
   - api:generator-main generate command
+applies_only_to: data:generation-artifact entries with a go_package destination; a requirement:static-asset-extraction public asset is written verbatim
 rules:
   - output passes go/format before it is returned or written
   - the import block contains every package the artifact references

@@ -29,6 +29,7 @@ logical_lowering:
 generation:
   - emit only handlers required by the capability set
   - select the render signature through decision:async-component-signature
+  - lower each component into a decision:generated-render-plan value consumed by the shared coordinator
   - allow implementation fusion while preserving logical ordering and failure semantics
   - retain requirement:html-rendering-compatibility for components with the baseline capability set
 diagnostics:

@@ -11,7 +11,7 @@ parser_architecture: decision:template-parser-delegation
 declarations:
   - optional package or module and imports
   - primitive, record, array, optional, and basic enum types
-  - typed external functions
+  - typed external functions and external components through requirement:template-file-scope
   - HTML component and SQL statement declarations from decision:template-declaration-kinds
   - exported and private typed declarations; visibility uses export, not capitalization
 naming: rule:template-name-casing

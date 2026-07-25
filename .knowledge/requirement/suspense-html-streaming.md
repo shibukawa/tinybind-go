@@ -17,6 +17,7 @@ boundary:
 initial_response:
   - write a unique placeholder element or boundary marker containing fallback output to the io.Writer argument
   - omit Content-Length and flush available bytes when transport and encoding support it
+  - flushing goes through the api:render-html-chain writer check, because writer mode has no HTTP handle
   - rely on net/http streaming semantics; do not require HTTP/1.1 chunk framing on every protocol
 completion:
   success:

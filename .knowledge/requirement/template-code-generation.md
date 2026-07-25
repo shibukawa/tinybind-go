@@ -24,17 +24,21 @@ compiler_pipeline:
   - validate HTML escaping and SQL parameters, identifiers, result shape, and cardinality
   - lower typed SQL IR using decision:sql-dialect-generation-time
   - expand typed SQL relations before dialect lowering and placeholder emission
+  - resolve requirement:template-file-scope exports and external declarations against their targets
+  - hoist requirement:head-merging contributions and validate their singleton conflicts
   - generate context-checked raw output and typed JsonForScript serialization from requirement:explicit-output-control
-  - coalesce static output and emit Go
+  - coalesce static output and emit decision:generated-render-plan values plus typed entry functions
 html_api:
   shape: requirement:html-component-api
   async: decision:async-component-signature
+  cross_file: requirement:cross-template-components
+  execution: decision:generated-render-plan coordinator
 sql_api: requirement:sql-generated-api-layers
 artifact_attribution: requirement:per-source-generation-artifacts
 runtime_constraints:
   - no runtime template parsing
   - no reflection or dynamic type lookup
   - no runtime string evaluation
-  - no virtual DOM
+  - no virtual DOM; the render plan is generation-time data and only head metadata is collected before streaming
   - preserve write, query, scan, and cardinality errors
 ```
