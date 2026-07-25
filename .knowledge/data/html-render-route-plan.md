@@ -31,7 +31,7 @@ selection:
 validation:
   - unique normalized route and generated symbols
   - every supplied parameter exists and matches its declaration type
-  - every layout owns exactly one compatible html slot
+  - every layout owns exactly one unnamed requirement:html-slot-syntax slot declaration site
   - explicit chain is acyclic and ordered outermost to innermost
   - dependency groups and generated handler symbols are collision-free
 ```

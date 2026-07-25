@@ -13,6 +13,7 @@ declarations:
   component:
     format: HTML
     required_output: html
+    slots: requirement:html-slot-syntax makes a component slot-capable; layouts need no separate keyword
   statement:
     format: SQL
     required_output_prefix: sql

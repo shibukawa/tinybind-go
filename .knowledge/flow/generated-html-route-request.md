@@ -23,6 +23,8 @@ flow:
       action: render page into layouts and decision:html-document-shell with component capability lowering
     - id: respond
       action: send complete HTML, streaming updates, or negotiated delta response
+    - id: drain
+      action: run flow:chain-render-pipeline when the assembled chain is async, writing and flushing each data:async-boundary-content item
   failure:
     before_commit: configured typed HTTP error mapping
     async_after_commit: decision:async-boundary-syntax recover content and server diagnostics

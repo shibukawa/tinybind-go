@@ -19,6 +19,8 @@ structure:
   component_calls: uppercase names with named arguments
   children: elements, calls, text, expressions, if, and for
   nested_content: reserved children parameter of type html
+  slots: requirement:html-slot-syntax reserved slot element
+  reserved_elements: slot is reserved as an element name and never emitted; template is a fill block only with a slot attribute directly under a component call; the slot attribute name stays ordinary
   raw_text: script and style content use distinct insertion contexts
 attributes:
   names: static

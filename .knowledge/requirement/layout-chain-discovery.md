@@ -20,6 +20,7 @@ precedence: explicit page setting overrides convention; absence means auto
 generation:
   output: data:html-render-route-plan
   validate: requirement:nested-layout-composition slot, types, visibility, order, and cycles
+  layout_shape: ordinary component carrying one unnamed requirement:html-slot-syntax slot
   runtime: execute precompiled components only
 acceptance:
   - adding an ancestor layout changes descendant default plans deterministically

@@ -19,6 +19,7 @@ handler_pipeline:
   - invoke generated document, layout, and page render plan
   - dispatch template external calls through data:html-route-dependencies
   - apply async, cache, partial-update, bootstrap, compression, and error behavior from component capabilities
+  - classify the assembled chain through requirement:chain-render-pipeline and range the merged decision:async-component-signature sequence, writing each data:async-boundary-content item as an identified template plus update record
   - finalize response and observability
 generated_endpoints:
   page_navigation: GET complete HTML and negotiated partial navigation response

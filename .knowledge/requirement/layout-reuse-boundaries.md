@@ -22,6 +22,7 @@ navigation:
   unchanged_frame: retain existing wrapper DOM and update only child slot descendants
   changed_frame: replace layout boundary and regenerate its descendant manifest
   changed_deeper_parameter: does not invalidate an ancestor layout that cannot receive that parameter
+  slot_presence_change: an absent requirement:html-slot-syntax slot leaves no anchor, so replace the nearest enclosing boundary instead of patching that position
 cache:
   automatic_boundary: does not imply requirement:component-output-cache
   explicit_full_output_cache: includes slot identity or bytes through rule:component-capability-combinations
@@ -33,6 +34,6 @@ acceptance:
   - navigating between sibling dynamic IDs reuses layouts above the changed dynamic segment
   - child replacement does not resend unchanged ancestor wrapper HTML
 open_questions:
-  - legal slot positions for DOM-preserving frame reuse
+  - focus and scroll behavior when a boundary is replaced because a conditional slot changed presence
   - focus, scroll, and client-owned state retention policy on layout replacement
 ```

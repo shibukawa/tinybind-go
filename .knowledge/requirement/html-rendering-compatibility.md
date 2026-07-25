@@ -19,7 +19,7 @@ activation:
   nested_layout: only for an explicit or convention-generated data:html-render-route-plan
   filesystem_routing: only below an explicitly configured route root
   cache: only on explicitly cache-enabled components
-  async: only on explicitly async external declarations inside a suspense boundary
+  async: only on explicitly async external declarations inside a decision:async-boundary-syntax await boundary; only the owning component takes the decision:async-component-signature iterator signature
   partial_update: only on explicitly update-enabled component boundaries and update requests
 acceptance:
   - unchanged templates generate compatible public APIs and equivalent bytes

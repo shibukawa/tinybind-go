@@ -14,11 +14,11 @@ declaration:
 execution:
   - invoke generated adapter in a goroutine with request cancellation context
   - start each invocation once and expose a typed pending result to its dependent subtree
-  - send completion to one response coordinator; goroutines never write http.ResponseWriter directly
-  - wait for or cancel all request-owned work before the exported renderer returns
+  - send completion to one response coordinator; goroutines never write the response directly
+  - wait for or cancel all request-owned work before the decision:async-component-signature sequence ends
 usage:
-  - a component subtree that reads a pending value must be enclosed by requirement:suspense-html-streaming
-  - use outside a suspense boundary is a generation error
+  - a component subtree that reads a pending value must be enclosed by a decision:async-boundary-syntax await clause
+  - use outside an await boundary is a generation error
 failure:
   - normalize returned error, adapter panic, and configured timeout as data:async-render-error
   - route failure to the nearest decision:async-boundary-syntax recover clause

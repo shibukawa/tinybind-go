@@ -11,11 +11,13 @@ included:
   - requirement:template-language-core
   - requirement:sql-relation-composition
   - requirement:html-template-v1
+  - requirement:html-slot-syntax unnamed slot, default content, and required marker
   - requirement:explicit-output-control
   - requirement:sql-template-v1
   - requirement:sql-generated-api-layers
   - requirement:template-code-generation
 deferred:
+  - requirement:html-slot-syntax named slots
   - immutable let bindings
   - explicit enum underlying values and field mapping annotations
   - anonymous SQL row types if named rows suffice for the first milestone

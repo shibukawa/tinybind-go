@@ -33,6 +33,8 @@ functions:
   template_declaration: reusable typed output composition
   intrinsic: compiler-known context-sensitive functions from requirement:explicit-output-control
 opaque_output_types: [trusted_html, trusted_css, trusted_javascript, script_json]
+non_value_types:
+  html: continuation usable only at a requirement:html-slot-syntax slot element; never an expression operand
 validation:
   - resolve types, declarations, and functions at compile time
   - reject invalid insertion and structural contexts

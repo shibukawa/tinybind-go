@@ -19,6 +19,7 @@ extensions:
   - requirement:component-output-cache
   - requirement:async-external-functions
   - requirement:suspense-html-streaming
+  - requirement:chain-render-pipeline
   - requirement:partial-update-boundaries
   - requirement:component-delta-rendering
   - requirement:boundary-parameter-updates
