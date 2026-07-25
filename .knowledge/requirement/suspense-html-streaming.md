@@ -37,7 +37,7 @@ safety:
   - recover content receives only safe public error fields; raw Go errors remain server-side
   - update helper is fixed trusted runtime code loaded through requirement:html-runtime-bootstrap
   - fallback and resolved primary trees follow rule:template-context-safety
-  - flushing remains correct with existing optional zstd encoding
+  - flushing remains correct when the caller wraps the writer in a compressing encoder
 failure:
   before_commit: return the existing rendering error path
   after_fallback_commit: render recover update; if recovery rendering fails, keep fallback and apply outer or server policy

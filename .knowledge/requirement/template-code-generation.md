@@ -26,9 +26,7 @@ compiler_pipeline:
   - expand typed SQL relations before dialect lowering and placeholder emission
   - generate context-checked raw output and typed JsonForScript serialization from requirement:explicit-output-control
   - coalesce static output and emit Go
-html_api:
-  default: func Component(w http.ResponseWriter, r *http.Request, typed parameters...) error
-  writer_mode: requirement:html-writer-api-mode
+html_api: requirement:html-component-api
 sql_api: requirement:sql-generated-api-layers
 artifact_attribution: requirement:per-source-generation-artifacts
 runtime_constraints:

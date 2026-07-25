@@ -5,14 +5,11 @@ package main
 import (
 	"html"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
-
-	runtimehtmlbind "github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(http.ResponseWriter, *http.Request) error
+type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
@@ -68,18 +65,13 @@ func _tinybindJSONQuote(value string) string {
 	return out.String()
 }
 
-func IndexPage(w http.ResponseWriter, r *http.Request, javascript string) (_tinybindErr error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var _tinybindClose func() error
-	w, _tinybindClose, _tinybindErr = runtimehtmlbind.PrepareResponse(w, r)
-	if _tinybindErr != nil {
-		return _tinybindErr
-	}
-	defer func() {
-		if err := _tinybindClose(); _tinybindErr == nil {
-			_tinybindErr = err
-		}
-	}()
+type IndexPageParams struct {
+	Javascript string
+}
+
+func IndexPage(w io.Writer, _tinybindParams IndexPageParams) error {
+	javascript := _tinybindParams.Javascript
+	_ = javascript
 	if err := _tinybindWrite(w, "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <title>httpbind demo</title>\n  <style>\n    body { font-family: system-ui, sans-serif; max-width: 54rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }\n    code, pre { background: #f4f4f5; border-radius: 4px; }\n    pre { padding: 0.75rem 1rem; overflow-x: auto; }\n    h1 { margin-bottom: 0.25rem; }\n    .muted { color: #666; }\n    a { color: #0b57d0; }\n    #stream-out { white-space: pre-wrap; min-height: 4rem; border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; }\n  </style>\n</head>\n<body>\n  <h1>httpbind demo</h1>\n  <p class=\"muted\">Bind / Write / WriteError / OpenAPI / <code>NewStream[T]</code> (SSE / NDJSON-JSONL / JSON array).</p>\n  <ul>\n    <li><a href=\"/docs/\">GET /docs/</a> — Swagger UI</li>\n    <li><a href=\"/health\">GET /health</a></li>\n    <li><a href=\"/openapi.json\">GET /openapi.json</a></li>\n    <li><a href=\"/openapi.yaml\">GET /openapi.yaml</a></li>\n  </ul>\n\n  <h2>Browser stream (fetch → format via Accept)</h2>\n  <p>\n    <input id=\"msg\" value=\"hello\" />\n    <button type=\"button\" id=\"btn-sse\">Stream as SSE</button>\n    <button type=\"button\" id=\"btn-nd\">Stream as NDJSON/JSONL</button>\n    <button type=\"button\" id=\"btn-ja\">Stream as JSON array</button>\n  </p>\n  <div id=\"stream-out\" class=\"muted\">output…</div>\n\n  <h2>curl recipes</h2>\n  <pre># create user (JSON + path + header)\ncurl -sS -X POST 'http://localhost:8080/orgs/acme/users' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Authorization: Bearer secret' \\\n  -d '{\"name\":\"Alice\",\"email\":\"a@example.com\"}'\n\n# create user (query input)\ncurl -sS -X POST 'http://localhost:8080/orgs/acme/users?name=Bob&amp;email=b@example.com' \\\n  -H 'Authorization: Bearer secret'\n\n# create user (form)\ncurl -sS -X POST 'http://localhost:8080/orgs/acme/users' \\\n  -H 'Authorization: Bearer secret' \\\n  -d 'name=Carol&amp;email=c@example.com'\n\n# validation error\ncurl -sS -X POST 'http://localhost:8080/orgs/acme/users' \\\n  -H 'Content-Type: application/json' -H 'Authorization: Bearer x' -d '{}'\n\n# search: query + JSON payload field\ncurl -sS -X POST 'http://localhost:8080/search?keyword=go&amp;page=2' \\\n  -H 'Content-Type: application/json' -d '{\"filter\":\"active\"}'\n\n# echo\ncurl -sS -X POST 'http://localhost:8080/echo?n=3' \\\n  -H 'Content-Type: application/json' -d '{\"message\":\"hi\"}'\n\n# session cookie\ncurl -sS 'http://localhost:8080/session' -H 'Cookie: session=abc'\n\n# not found\ncurl -sS 'http://localhost:8080/users/missing'\n\n# stream — curl UA defaults to NDJSON; use -N to not buffer\ncurl -sSN -X POST 'http://localhost:8080/chat' \\\n  -H 'Content-Type: application/json' -d '{\"message\":\"hello\"}'\n\n# stream — force SSE via query\ncurl -sSN -X POST 'http://localhost:8080/chat?stream=sse' \\\n  -H 'Content-Type: application/json' -d '{\"message\":\"hello\"}'\n\n# stream — force SSE via Accept\ncurl -sSN -X POST 'http://localhost:8080/chat' \\\n  -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \\\n  -d '{\"message\":\"hello\"}'\n\n# stream — force NDJSON/JSONL via query (even with browser-like Accept)\ncurl -sSN -X POST 'http://localhost:8080/chat?stream=ndjson' \\\n  -H 'Content-Type: application/json' -d '{\"message\":\"hello\"}'\n\n# stream — JSON array document (not JSONL): [obj1,obj2,...]\ncurl -sSN -X POST 'http://localhost:8080/chat' \\\n  -H 'Content-Type: application/json' -H 'Accept: application/json' \\\n  -d '{\"message\":\"hello\"}'\n  </pre>\n  <script>"); err != nil {
 		return err
 	}

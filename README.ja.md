@@ -113,7 +113,6 @@ _ = stream.Write(ChatEvent{Type: "done"})
 |------|------|
 | `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / NewStream / OpenAPI 配信 / SwaggerUI |
 | `jsonbind/` | 単独の DecodeJSON / EncodeJSON。`net/http` と `database/sql` を import しない |
-| `htmlbind/` | 生成 HTML レスポンスのランタイムと Zstandard 圧縮のオプション設定 |
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
 | `generator/` | フィールド計画に基づくバインダ／ライタ + OpenAPI 3.1 埋め込み生成 |
 | `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`NewStream`、エラー） |

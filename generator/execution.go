@@ -28,10 +28,9 @@ type GenerateRequest struct {
 	Check               bool
 	GenerateAll         bool
 	SQLContextAPI       bool
-	// SQLContextOnlyAPI and HTMLWriterAPI enable the generated API shapes for
-	// this run. They can turn an option on, never off.
+	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
+	// turn the option on, never off.
 	SQLContextOnlyAPI bool
-	HTMLWriterAPI     bool
 }
 
 // GenerateResult records generated artifacts or check diagnostics.

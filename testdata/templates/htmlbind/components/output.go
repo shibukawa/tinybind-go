@@ -5,14 +5,11 @@ package pages
 import (
 	"html"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
-
-	runtimehtmlbind "github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(http.ResponseWriter, *http.Request) error
+type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
@@ -72,7 +69,20 @@ type User struct {
 	Name string
 }
 
-func renderBadge(w http.ResponseWriter, r *http.Request, label string, children HTML) error {
+type renderBadgeParams struct {
+	Label    string
+	Children HTML
+}
+
+type CardParams struct {
+	User User
+}
+
+func renderBadge(w io.Writer, _tinybindParams renderBadgeParams) error {
+	label := _tinybindParams.Label
+	_ = label
+	children := _tinybindParams.Children
+	_ = children
 	if err := _tinybindWrite(w, "\n<span class=\"badge\"><strong>"); err != nil {
 		return err
 	}
@@ -82,7 +92,7 @@ func renderBadge(w http.ResponseWriter, r *http.Request, label string, children 
 	if err := _tinybindWrite(w, "</strong>"); err != nil {
 		return err
 	}
-	if err := children(w, r); err != nil {
+	if err := children(w); err != nil {
 		return err
 	}
 	if err := _tinybindWrite(w, "</span>\n"); err != nil {
@@ -91,32 +101,21 @@ func renderBadge(w http.ResponseWriter, r *http.Request, label string, children 
 	return nil
 }
 
-func Card(w http.ResponseWriter, r *http.Request, user User) (_tinybindErr error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var _tinybindClose func() error
-	w, _tinybindClose, _tinybindErr = runtimehtmlbind.PrepareResponse(w, r)
-	if _tinybindErr != nil {
-		return _tinybindErr
-	}
-	defer func() {
-		if err := _tinybindClose(); _tinybindErr == nil {
-			_tinybindErr = err
-		}
-	}()
+func Card(w io.Writer, _tinybindParams CardParams) error {
+	user := _tinybindParams.User
+	_ = user
 	if err := _tinybindWrite(w, "\n"); err != nil {
 		return err
 	}
-	if err := renderBadge(
-		w,
-		r,
-		user.Name,
-		func(w http.ResponseWriter, r *http.Request) error {
+	if err := renderBadge(w, renderBadgeParams{
+		Label: user.Name,
+		Children: func(w io.Writer) error {
 			if err := _tinybindWrite(w, "<em>member</em>"); err != nil {
 				return err
 			}
 			return nil
 		},
-	); err != nil {
+	}); err != nil {
 		return err
 	}
 	if err := _tinybindWrite(w, "\n"); err != nil {

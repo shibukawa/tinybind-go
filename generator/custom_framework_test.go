@@ -44,7 +44,6 @@ func customFrameworkOptions(t *testing.T) generator.Options {
 	}
 	options.HTMLTemplatePattern = "*.pw.html"
 	options.SQLTemplatePattern = "*.pw.sql"
-	options.HTMLWriterAPI = true
 	options.SQLContextOnlyAPI = true
 	options.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "tempmod/pw", Name: "SQLExecutor"}
 	return options
@@ -297,8 +296,8 @@ func TestGenerateArtifactsUsesDefaultTemplateSuffixes(t *testing.T) {
 		if filepath.Base(artifact.SourcePath) != "page.tb.html" {
 			t.Fatalf("owner = %q", artifact.SourcePath)
 		}
-		if !bytes.Contains(artifact.GoSource, []byte("func Page(w http.ResponseWriter, r *http.Request")) {
-			t.Fatalf("default mode changed:\n%s", artifact.GoSource)
+		if !bytes.Contains(artifact.GoSource, []byte("func Page(w io.Writer, _tinybindParams PageParams) error")) {
+			t.Fatalf("default suffix output changed:\n%s", artifact.GoSource)
 		}
 	}
 	if !found {

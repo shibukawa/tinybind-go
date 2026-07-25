@@ -1,6 +1,6 @@
 # htmlbind User Guide
 
-`htmlbind` compiles typed `.tb.html` templates into Go HTTP response functions. Templates are not parsed at runtime; value types and HTML insertion contexts are checked during generation.
+`htmlbind` compiles typed `.tb.html` templates into Go rendering functions that write to an `io.Writer`. Templates are not parsed at runtime; value types and HTML insertion contexts are checked during generation.
 
 ## What is automated
 
@@ -68,38 +68,39 @@ export component Hello(name: string): html {
 Generated public signature:
 
 ```go
-func Hello(w http.ResponseWriter, r *http.Request, name string) error
+type HelloParams struct {
+	Name string
+}
+
+func Hello(w io.Writer, params HelloParams) error
 ```
 
-The generated function sets `Content-Type` to `text/html; charset=utf-8` before writing the body:
+Generated components own template concerns only: escaping, typed field access,
+loops, and JSON output. They write bytes to an `io.Writer` and nothing else — no
+header, no content negotiation, no compression, no response commit. The caller
+decides all of that:
 
 ```go
 func hello(w http.ResponseWriter, r *http.Request) {
-	if err := Hello(w, r, r.URL.Query().Get("name")); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	params := HelloParams{Name: r.URL.Query().Get("name")}
+	if err := Hello(w, params); err != nil {
+		// The response is already partly written; log rather than rewrite it.
+		log.Printf("render index: %v", err)
 	}
 }
 ```
 
-## Optional Zstandard compression
-
-Generated HTML responses are uncompressed by default. To allow Zstandard
-compression, enable it once during application startup:
+Because the writer is an ordinary `io.Writer`, the same component renders to a
+buffer, a file, or an email body with no HTTP types involved:
 
 ```go
-import runtimehtmlbind "github.com/shibukawa/tinybind-go/htmlbind"
-
-func main() {
-	runtimehtmlbind.ZstdCompression = true
-	// Register handlers and start the server.
-}
+var out strings.Builder
+err := Hello(&out, HelloParams{Name: "Ada"})
 ```
 
-When enabled, generated functions add `Vary: Accept-Encoding`. If the request's
-`Accept-Encoding` contains an enabled `zstd` coding, the response is streamed
-through `tinygodriver/compress/zstd` and sent with `Content-Encoding: zstd`.
-The flag is intended as startup configuration and must not be changed while
-requests are being served.
+Compression, caching, and content negotiation are ordinary HTTP middleware
+concerns. tinybind neither performs nor configures them.
 
 ## Declaring types
 
@@ -141,7 +142,12 @@ const (
 	ToneSecondary Tone = "Secondary"
 )
 
-func Profile(w http.ResponseWriter, r *http.Request, user User, tone Tone) error
+type ProfileParams struct {
+	User User
+	Tone Tone
+}
+
+func Profile(w io.Writer, params ProfileParams) error
 ```
 
 Types declared in a template become types in the generated Go package. Application code constructs those generated types when calling components.
@@ -159,7 +165,7 @@ Types declared in a template become types in the generated Go package. Applicati
 | `url` | `url.URL` |
 | `T[]` | `[]T` |
 | `T?` | `*T` |
-| `html` | `HTML` (`func(http.ResponseWriter, *http.Request) error`), primarily for component children |
+| `html` | `HTML` (`func(io.Writer) error`), primarily for component children |
 
 ## Conditions
 
@@ -230,7 +236,11 @@ export component Card(user: User): html {
 The application-facing signature is only the exported component:
 
 ```go
-func Card(w http.ResponseWriter, r *http.Request, user User) error
+type CardParams struct {
+	User User
+}
+
+func Card(w io.Writer, params CardParams) error
 ```
 
 A component with a `children: html` parameter receives the content between its start and end tags. Components without children can be called with self-closing syntax:
@@ -371,8 +381,16 @@ export component Name(p1: T1, p2: T2): html { ... }
 Public API:
 
 ```go
-func Name(w http.ResponseWriter, r *http.Request, p1 T1, p2 T2) error
+type NameParams struct {
+	P1 T1
+	P2 T2
+}
+
+func Name(w io.Writer, params NameParams) error
 ```
+
+Every component takes exactly two arguments. The parameter struct has one
+exported field per declared parameter, in declaration order.
 
 ### No parameters
 
@@ -381,41 +399,25 @@ export component Layout(): html { ... }
 ```
 
 ```go
-func Layout(w http.ResponseWriter, r *http.Request) error
+type LayoutParams struct{}
+
+func Layout(w io.Writer, params LayoutParams) error
 ```
 
-### Writer mode (`-html-writer-api`)
+### Writing to an HTTP response
 
-A framework that owns the HTTP response itself can generate HTTP-independent
-components:
+Generated components take no `http.ResponseWriter` and no `*http.Request`, and
+handle no `Content-Type`, `Content-Encoding`, compression, response commit, or
+error page. An `http.ResponseWriter` is an `io.Writer`, so a handler passes it
+straight in and owns those decisions itself:
 
 ```go
-//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-writer-api
+w.Header().Set("Content-Type", "text/html; charset=utf-8")
+err := Name(w, NameParams{P1: p1, P2: p2})
 ```
 
-```go
-type UserPageParams struct {
-	User User
-}
-
-func UserPage(w io.Writer, params UserPageParams) error
-```
-
-The rule is the same for zero, one, and many parameters: every component gets a
-`{ComponentName}Params` struct with one exported field per declared parameter, in
-declaration order. Private components get an unexported `render{Name}Params`.
-
-In this mode the generated function keeps escaping, typed field access, loops,
-and JSON output, but sets no `Content-Type` or `Content-Encoding`, prepares no
-compression, commits no response, and renders no error page. The `html`
-parameter type becomes `func(io.Writer) error`. Because the shape is
-`func(io.Writer, P) error`, the framework can accept it directly:
-
-```go
-func WriteHTML[P any](w http.ResponseWriter, r *http.Request, render func(io.Writer, P) error, params P) error
-```
-
-The default `http.ResponseWriter` form stays unchanged when the option is off.
+Because every component has the shape `func(io.Writer, P) error`, a framework
+can accept one the same way and apply its own response policy.
 
 ### Private component
 

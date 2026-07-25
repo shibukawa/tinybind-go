@@ -41,7 +41,6 @@ options:
   SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
-  HTMLWriterAPI: bool; requirement:html-writer-api-mode io.Writer component signatures
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]
@@ -81,7 +80,6 @@ related:
   - requirement:framework-wrapper-discovery
   - api:generator-call-registration
   - requirement:configurable-template-file-patterns
-  - requirement:html-writer-api-mode
   - decision:sql-context-executor-api
   - requirement:custom-framework-generation-profile
 ```

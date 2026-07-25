@@ -17,10 +17,6 @@ import (
 type GenerateOptions struct {
 	// Package overrides the template package/module declaration.
 	Package string
-	// WriterAPI generates HTTP-independent components with the signature
-	// func Component(w io.Writer, params ComponentParams) error instead of the
-	// default http.ResponseWriter form.
-	WriterAPI bool
 }
 
 // Generate parses, validates, and compiles an HTML template module to Go.
@@ -45,16 +41,15 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 }
 
 type goEmitter struct {
-	c         *compiler
-	b         bytes.Buffer
-	indent    int
-	pending   strings.Builder
-	temp      int
-	writerAPI bool
+	c       *compiler
+	b       bytes.Buffer
+	indent  int
+	pending strings.Builder
+	temp    int
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
-	e := &goEmitter{c: c, writerAPI: options.WriterAPI}
+	e := &goEmitter{c: c}
 	pkg := options.Package
 	if pkg == "" && c.module.Package != nil {
 		pkg = c.module.Package.Name
@@ -71,10 +66,8 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e.emitImports()
 	e.emitRuntimeHelpers()
 	e.emitDeclaredTypes()
-	if e.writerAPI {
-		if err := e.emitComponentParams(); err != nil {
-			return nil, err
-		}
+	if err := e.emitComponentParams(); err != nil {
+		return nil, err
 	}
 	e.emitJSONHelpers()
 	for _, declaration := range c.module.Declarations {
@@ -90,14 +83,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 }
 
 func (e *goEmitter) emitImports() {
-	e.b.WriteString("import (\n\t\"html\"\n\t\"io\"\n")
-	if !e.writerAPI {
-		e.b.WriteString("\t\"net/http\"\n")
-	}
-	e.b.WriteString("\t\"strconv\"\n\t\"strings\"\n")
-	if e.usesHTTPRuntime() {
-		e.b.WriteString("\n\truntimehtmlbind \"github.com/shibukawa/tinybind-go/htmlbind\"\n")
-	}
+	e.b.WriteString("import (\n\t\"html\"\n\t\"io\"\n\t\"strconv\"\n\t\"strings\"\n")
 	if e.c.usesKind(kindDateTime) || e.c.usesKind(kindDate) || e.c.usesKind(kindTime) {
 		e.b.WriteString("\t\"time\"\n")
 	}
@@ -116,27 +102,8 @@ func (e *goEmitter) emitImports() {
 	e.b.WriteString(")\n\n")
 }
 
-// usesHTTPRuntime reports whether the generated file references the htmlbind
-// response runtime. Writer-mode components and files without exported
-// components must not import it.
-func (e *goEmitter) usesHTTPRuntime() bool {
-	if e.writerAPI {
-		return false
-	}
-	for _, declaration := range e.c.module.Declarations {
-		if component, ok := declaration.(*TemplateDecl); ok && component.Exported {
-			return true
-		}
-	}
-	return false
-}
-
 func (e *goEmitter) emitRuntimeHelpers() {
-	if e.writerAPI {
-		e.b.WriteString("type HTML func(io.Writer) error\n")
-	} else {
-		e.b.WriteString("type HTML func(http.ResponseWriter, *http.Request) error\n")
-	}
+	e.b.WriteString("type HTML func(io.Writer) error\n")
 	e.b.WriteString("type TrustedHTML string\ntype TrustedCSS string\ntype TrustedJavaScript string\ntype ScriptJSON string\n\n")
 	e.b.WriteString("func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }\n")
 	e.b.WriteString("func _tinybindEscape(value string) string { return html.EscapeString(value) }\n")
@@ -193,8 +160,8 @@ func (e *goEmitter) emitDeclaredTypes() {
 }
 
 // emitComponentParams declares one {Component}Params struct per component so
-// writer-mode components keep a stable two-argument shape for zero, one, and
-// many parameters.
+// every component keeps the same two-argument shape for zero, one, and many
+// parameters.
 func (e *goEmitter) emitComponentParams() error {
 	for _, declaration := range e.c.module.Declarations {
 		component, ok := declaration.(*TemplateDecl)
@@ -219,52 +186,16 @@ func (e *goEmitter) emitComponentParams() error {
 	return nil
 }
 
+// emitComponent emits the HTTP-independent component form. The generated
+// function owns escaping and writing only; content negotiation, compression,
+// response commit, and error responses belong to the caller.
 func (e *goEmitter) emitComponent(component *TemplateDecl) error {
 	name := e.c.componentGoName(component.Name)
-	if e.writerAPI {
-		return e.emitWriterComponent(component, name)
-	}
-	fmt.Fprintf(&e.b, "func %s(w http.ResponseWriter, r *http.Request", name)
-	for _, parameter := range component.Parameters {
-		t, _ := e.c.resolveType(parameter.Type)
-		fmt.Fprintf(&e.b, ", %s %s", goLocalName(parameter.Name), goType(t))
-	}
-	if component.Exported {
-		e.b.WriteString(") (_tinybindErr error) {\n")
-	} else {
-		e.b.WriteString(") error {\n")
-	}
-	e.indent = 1
-	if component.Exported {
-		e.line(`w.Header().Set("Content-Type", "text/html; charset=utf-8")`)
-		e.line("var _tinybindClose func() error")
-		e.line("w, _tinybindClose, _tinybindErr = runtimehtmlbind.PrepareResponse(w, r)")
-		e.line("if _tinybindErr != nil { return _tinybindErr }")
-		e.line("defer func() {")
-		e.indent++
-		e.line("if err := _tinybindClose(); _tinybindErr == nil { _tinybindErr = err }")
-		e.indent--
-		e.line("}()")
-	}
-	body := component.Body.([]Node)
-	if err := e.emitNodes(body, e.c.components[component.Name].params); err != nil {
-		return err
-	}
-	e.flushStatic()
-	e.line("return nil")
-	e.b.WriteString("}\n\n")
-	return nil
-}
-
-// emitWriterComponent emits the HTTP-independent component form. The generated
-// function owns escaping and writing only; content negotiation, compression,
-// and response commit belong to the caller.
-func (e *goEmitter) emitWriterComponent(component *TemplateDecl, name string) error {
-	fmt.Fprintf(&e.b, "func %s(w io.Writer, %s %s) error {\n", name, writerParamsIdent, e.c.paramsGoName(component.Name))
+	fmt.Fprintf(&e.b, "func %s(w io.Writer, %s %s) error {\n", name, paramsIdent, e.c.paramsGoName(component.Name))
 	e.indent = 1
 	for _, parameter := range component.Parameters {
 		local := goLocalName(parameter.Name)
-		e.line(local + " := " + writerParamsIdent + "." + goPublicName(parameter.Name))
+		e.line(local + " := " + paramsIdent + "." + goPublicName(parameter.Name))
 		e.line("_ = " + local)
 	}
 	body := component.Body.([]Node)
@@ -277,9 +208,9 @@ func (e *goEmitter) emitWriterComponent(component *TemplateDecl, name string) er
 	return nil
 }
 
-// writerParamsIdent names the generated parameter struct argument. It is
-// reserved so a template parameter cannot shadow it.
-const writerParamsIdent = "_tinybindParams"
+// paramsIdent names the generated parameter struct argument. It is reserved so
+// a template parameter cannot shadow it.
+const paramsIdent = "_tinybindParams"
 
 func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 	for _, node := range nodes {
@@ -435,42 +366,6 @@ func (e *goEmitter) emitComponentCall(node *ComponentNode, scope map[string]valu
 		values[argument.Name] = code
 	}
 	name := e.c.componentGoName(node.Name)
-	if e.writerAPI {
-		return e.emitWriterComponentCall(node, component, values, name, scope)
-	}
-	if len(node.Children) == 0 {
-		args := []string{"w", "r"}
-		for _, parameter := range component.order {
-			args = append(args, values[parameter.Name])
-		}
-		e.line("if err := " + name + "(" + strings.Join(args, ", ") + "); err != nil { return err }")
-		return nil
-	}
-	e.line("if err := " + name + "(")
-	e.indent++
-	e.line("w,")
-	e.line("r,")
-	for _, parameter := range component.order {
-		if parameter.Name != "children" {
-			e.line(values[parameter.Name] + ",")
-			continue
-		}
-		e.line("func(w http.ResponseWriter, r *http.Request) error {")
-		e.indent++
-		if err := e.emitNodes(node.Children, scope); err != nil {
-			return err
-		}
-		e.flushStatic()
-		e.line("return nil")
-		e.indent--
-		e.line("},")
-	}
-	e.indent--
-	e.line("); err != nil { return err }")
-	return nil
-}
-
-func (e *goEmitter) emitWriterComponentCall(node *ComponentNode, component *componentInfo, values map[string]string, name string, scope map[string]valueType) error {
 	params := e.c.paramsGoName(node.Name)
 	if len(node.Children) == 0 {
 		fields := make([]string, 0, len(component.order))
@@ -542,11 +437,7 @@ func (e *goEmitter) emitExpressionWrite(expr Expr, context string, scope map[str
 		return nil
 	}
 	if t.kind == kindHTML {
-		if e.writerAPI {
-			e.line("if err := " + code + "(w); err != nil { return err }")
-		} else {
-			e.line("if err := " + code + "(w, r); err != nil { return err }")
-		}
+		e.line("if err := " + code + "(w); err != nil { return err }")
 		return nil
 	}
 	if context == "html:script" && t.kind == kindScriptJSON {

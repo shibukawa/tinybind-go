@@ -29,7 +29,6 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
-	htmlWriterAPI := flags.Bool("html-writer-api", false, "generate io.Writer HTML components with a generated Params struct")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	if err := flags.Parse(args); err != nil {
@@ -54,7 +53,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		HTMLTemplatePattern: *htmlTemplatePattern,
 		SQLTemplatePattern:  *sqlTemplatePattern,
 		Check:               *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
-		SQLContextOnlyAPI: *sqlContextOnlyAPI, HTMLWriterAPI: *htmlWriterAPI,
+		SQLContextOnlyAPI: *sqlContextOnlyAPI,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)

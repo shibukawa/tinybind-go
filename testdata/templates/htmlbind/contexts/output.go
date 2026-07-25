@@ -5,14 +5,11 @@ package pages
 import (
 	"html"
 	"io"
-	"net/http"
 	"strconv"
 	"strings"
-
-	runtimehtmlbind "github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(http.ResponseWriter, *http.Request) error
+type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
@@ -74,6 +71,13 @@ type Payload struct {
 	Enabled bool
 }
 
+type DocumentParams struct {
+	Markup     string
+	Css        string
+	Javascript string
+	Payload    Payload
+}
+
 func _tinybindJSONBool(value bool) string {
 	return strconv.FormatBool(value)
 }
@@ -101,18 +105,15 @@ func _tinybindJSONString(value string) string {
 	return _tinybindJSONQuote(value)
 }
 
-func Document(w http.ResponseWriter, r *http.Request, markup string, css string, javascript string, payload Payload) (_tinybindErr error) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var _tinybindClose func() error
-	w, _tinybindClose, _tinybindErr = runtimehtmlbind.PrepareResponse(w, r)
-	if _tinybindErr != nil {
-		return _tinybindErr
-	}
-	defer func() {
-		if err := _tinybindClose(); _tinybindErr == nil {
-			_tinybindErr = err
-		}
-	}()
+func Document(w io.Writer, _tinybindParams DocumentParams) error {
+	markup := _tinybindParams.Markup
+	_ = markup
+	css := _tinybindParams.Css
+	_ = css
+	javascript := _tinybindParams.Javascript
+	_ = javascript
+	payload := _tinybindParams.Payload
+	_ = payload
 	if err := _tinybindWrite(w, "\n"); err != nil {
 		return err
 	}

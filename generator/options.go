@@ -71,9 +71,6 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
-	// HTMLWriterAPI generates HTTP-independent HTML components with the
-	// signature func Component(w io.Writer, params ComponentParams) error.
-	HTMLWriterAPI bool
 
 	DisableFeatures []Feature
 	GenerateAll     bool

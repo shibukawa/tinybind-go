@@ -66,7 +66,12 @@ func TestGenerateFixtures(t *testing.T) {
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
-			typeCheckGenerated(t, outputPath, got, runtimeTest)
+			for _, forbidden := range []string{"net/http", "http.ResponseWriter", "runtimehtmlbind"} {
+				if bytes.Contains(got, []byte(forbidden)) {
+					t.Fatalf("generated component references %s:\n%s", forbidden, got)
+				}
+			}
+			typeCheckGenerated(t, outputPath, got, declarationsOnly(t, runtimeTest))
 			runGeneratedTests(t, got, runtimeTest)
 		})
 	}
@@ -110,57 +115,60 @@ func typeCheckGenerated(t *testing.T, filename string, source, companion []byte)
 	}
 	parsed := []*ast.File{file}
 	if len(companion) > 0 {
-		companionFile, err := parser.ParseFile(files, "runtime_test.go", companion, parser.AllErrors)
+		companionFile, err := parser.ParseFile(files, "companion.go", companion, parser.AllErrors)
 		if err != nil {
 			t.Fatalf("parse generated Go companion: %v", err)
 		}
 		parsed = append(parsed, companionFile)
 	}
-	config := types.Config{Importer: generatedImporter{Importer: importer.Default()}, Error: func(err error) { t.Errorf("generated Go type error: %v", err) }}
+	config := types.Config{Importer: importer.Default(), Error: func(err error) { t.Errorf("generated Go type error: %v", err) }}
 	if _, err := config.Check(file.Name.Name, files, parsed, nil); err != nil {
 		t.Fatalf("type-check generated Go: %v", err)
 	}
 }
 
-type generatedImporter struct {
-	types.Importer
-}
-
-func (i generatedImporter) Import(path string) (*types.Package, error) {
-	if path != "github.com/shibukawa/tinybind-go/htmlbind" {
-		return i.Importer.Import(path)
+// declarationsOnly keeps only a fixture companion's helper declarations, so a
+// companion written against the tinybind runtime can still supply the external
+// functions the generated code calls. Running the companion itself is covered by
+// runGeneratedTests, which compiles it against the real module.
+func declarationsOnly(t *testing.T, source []byte) []byte {
+	t.Helper()
+	if len(source) == 0 {
+		return nil
 	}
-	httpPackage, err := i.Importer.Import("net/http")
+	files := token.NewFileSet()
+	file, err := parser.ParseFile(files, "companion.go", source, parser.AllErrors)
 	if err != nil {
-		return nil, err
+		t.Fatal(err)
 	}
-	responseWriter := httpPackage.Scope().Lookup("ResponseWriter").Type()
-	request := httpPackage.Scope().Lookup("Request").Type()
-	errorType := types.Universe.Lookup("error").Type()
-	closer := types.NewSignature(
-		nil,
-		types.NewTuple(),
-		types.NewTuple(types.NewVar(token.NoPos, nil, "", errorType)),
-		false,
-	)
-	signature := types.NewSignature(
-		nil,
-		types.NewTuple(
-			types.NewVar(token.NoPos, nil, "w", responseWriter),
-			types.NewVar(token.NoPos, nil, "r", types.NewPointer(request)),
-		),
-		types.NewTuple(
-			types.NewVar(token.NoPos, nil, "w", responseWriter),
-			types.NewVar(token.NoPos, nil, "close", closer),
-			types.NewVar(token.NoPos, nil, "err", errorType),
-		),
-		false,
-	)
-	pkg := types.NewPackage(path, "htmlbind")
-	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "PrepareResponse", signature))
-	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ZstdCompression", types.Typ[types.Bool]))
-	pkg.MarkComplete()
-	return pkg, nil
+	kept := file.Decls[:0]
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && strings.HasPrefix(function.Name.Name, "Test") {
+			continue
+		}
+		kept = append(kept, declaration)
+	}
+	file.Decls = kept
+	for _, imported := range append([]*ast.ImportSpec(nil), file.Imports...) {
+		path, err := strconv.Unquote(imported.Path.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if astutil.UsesImport(file, path) {
+			continue
+		}
+		alias := ""
+		if imported.Name != nil {
+			alias = imported.Name.Name
+		}
+		astutil.DeleteNamedImport(files, file, alias, path)
+	}
+	var out bytes.Buffer
+	if err := format.Node(&out, files, file); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
 }
 
 func TestGenerateDiagnostics(t *testing.T) {
@@ -192,8 +200,10 @@ export component Keyword(type: string): html {<p>{type}</p>}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(generated, []byte("package _type")) || !bytes.Contains(generated, []byte("_type string")) {
-		t.Fatalf("generated Go does not mangle keywords:\n%s", generated)
+	for _, want := range []string{"package _type", "Type string", "_type := _tinybindParams.Type"} {
+		if !bytes.Contains(generated, []byte(want)) {
+			t.Fatalf("generated Go does not mangle keywords (%q missing):\n%s", want, generated)
+		}
 	}
 	typeCheckGenerated(t, "keywords.go", generated, nil)
 }
@@ -206,47 +216,7 @@ func TestGenerateDiagnosticIncludesPosition(t *testing.T) {
 	}
 }
 
-func TestGenerateWriterAPIFixtures(t *testing.T) {
-	root := filepath.Join("..", "..", "testdata", "templates", "htmlbind")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		t.Run(entry.Name(), func(t *testing.T) {
-			inputPath := filepath.Join(root, entry.Name(), "input.txt")
-			input, err := os.ReadFile(inputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			generated, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{WriterAPI: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bytes.Contains(generated, []byte("net/http")) {
-				t.Fatalf("writer-mode output imports net/http:\n%s", generated)
-			}
-			if bytes.Contains(generated, []byte("http.ResponseWriter")) {
-				t.Fatalf("writer-mode output references http.ResponseWriter:\n%s", generated)
-			}
-			if bytes.Contains(generated, []byte("runtimehtmlbind")) {
-				t.Fatalf("writer-mode output references the HTTP response runtime:\n%s", generated)
-			}
-			companion, err := os.ReadFile(filepath.Join(root, entry.Name(), "runtime_test.go"))
-			if err != nil && !os.IsNotExist(err) {
-				t.Fatal(err)
-			}
-			// The fixture companions call the HTTP-mode API, so only their
-			// external-function declarations are reusable here.
-			typeCheckGenerated(t, filepath.Join(entry.Name(), "writer.go"), generated, declarationsOnly(t, companion))
-		})
-	}
-}
-
-func TestGenerateWriterAPIParameterShapes(t *testing.T) {
+func TestGenerateParameterShapes(t *testing.T) {
 	source := []byte(`package pages
 
 type User { name: string }
@@ -258,7 +228,7 @@ export component One(user: User): html {<p>{user.name}</p>}
 export component Many(user: User, tone: string, count: int): html {
 <p class={tone}>{user.name}{count}</p>
 }`)
-	generated, err := htmlbind.Generate("shapes.pw.html", source, htmlbind.GenerateOptions{WriterAPI: true})
+	generated, err := htmlbind.Generate("shapes.tb.html", source, htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,10 +248,10 @@ export component Many(user: User, tone: string, count: int): html {
 	typeCheckGenerated(t, "shapes.go", generated, nil)
 }
 
-func TestGenerateWriterAPIAssignableToWriteHTML(t *testing.T) {
+func TestGenerateComponentRendersToAnyWriter(t *testing.T) {
 	source := []byte(`package pages
 export component Page(title: string): html {<title>{title}</title>}`)
-	generated, err := htmlbind.Generate("page.pw.html", source, htmlbind.GenerateOptions{WriterAPI: true})
+	generated, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,13 +263,13 @@ import (
 	"testing"
 )
 
-func writeHTML[P any](w io.Writer, render func(io.Writer, P) error, params P) error {
-	return render(w, params)
-}
+// render mirrors how a caller stores a component: the shape is the whole
+// contract, with no HTTP type involved.
+var render func(io.Writer, PageParams) error = Page
 
-func TestWriterModeRender(t *testing.T) {
+func TestRenderToBuilder(t *testing.T) {
 	var out strings.Builder
-	if err := writeHTML(&out, Page, PageParams{Title: "a<b"}); err != nil {
+	if err := render(&out, PageParams{Title: "a<b"}); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "<title>a&lt;b</title>" {
@@ -310,126 +280,14 @@ func TestWriterModeRender(t *testing.T) {
 	runGeneratedTests(t, generated, companion)
 }
 
-func TestGenerateWriterAPIRejectsParamsTypeConflict(t *testing.T) {
+func TestGenerateRejectsParamsTypeConflict(t *testing.T) {
 	source := []byte(`package pages
 
 type CardParams { name: string }
 
 export component Card(value: string): html {<p>{value}</p>}`)
-	_, err := htmlbind.Generate("conflict.pw.html", source, htmlbind.GenerateOptions{WriterAPI: true})
+	_, err := htmlbind.Generate("conflict.tb.html", source, htmlbind.GenerateOptions{})
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("CardParams")) {
 		t.Fatalf("error = %v, want a CardParams conflict diagnostic", err)
 	}
-}
-
-// declarationsOnly strips Test functions and now-unused imports from a fixture
-// companion so its helper declarations can be reused against a different
-// generated API shape.
-func declarationsOnly(t *testing.T, source []byte) []byte {
-	t.Helper()
-	if len(source) == 0 {
-		return nil
-	}
-	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, "companion.go", source, parser.AllErrors)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kept := file.Decls[:0]
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && strings.HasPrefix(function.Name.Name, "Test") {
-			continue
-		}
-		kept = append(kept, declaration)
-	}
-	file.Decls = kept
-	for _, imported := range append([]*ast.ImportSpec(nil), file.Imports...) {
-		path, err := strconv.Unquote(imported.Path.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		alias := ""
-		if imported.Name != nil {
-			alias = imported.Name.Name
-		}
-		if !astutil.UsesImport(file, path) {
-			astutil.DeleteNamedImport(files, file, alias, path)
-		}
-	}
-	var out bytes.Buffer
-	if err := format.Node(&out, files, file); err != nil {
-		t.Fatal(err)
-	}
-	return out.Bytes()
-}
-
-// TestWriterAPIProducesTheSameBodyBytes compares the emitted write sequence of
-// both modes. Writer mode must differ only in the transport wrapper, never in
-// the bytes a component renders.
-func TestWriterAPIProducesTheSameBodyBytes(t *testing.T) {
-	root := filepath.Join("..", "..", "testdata", "templates", "htmlbind")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		t.Run(entry.Name(), func(t *testing.T) {
-			inputPath := filepath.Join(root, entry.Name(), "input.txt")
-			input, err := os.ReadFile(inputPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			httpMode, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			writerMode, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{WriterAPI: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := writeCalls(t, httpMode)
-			got := writeCalls(t, writerMode)
-			if len(want) != len(got) {
-				t.Fatalf("write call count = %d, want %d", len(got), len(want))
-			}
-			for i := range want {
-				if want[i] != got[i] {
-					t.Fatalf("write call %d = %s, want %s", i, got[i], want[i])
-				}
-			}
-		})
-	}
-}
-
-// writeCalls returns the source text of every _tinybindWrite argument, in
-// emission order.
-func writeCalls(t *testing.T, generated []byte) []string {
-	t.Helper()
-	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, "generated.go", generated, parser.AllErrors)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		name, ok := call.Fun.(*ast.Ident)
-		if !ok || name.Name != "_tinybindWrite" || len(call.Args) != 2 {
-			return true
-		}
-		var buffer bytes.Buffer
-		if err := format.Node(&buffer, files, call.Args[1]); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, buffer.String())
-		return true
-	})
-	return out
 }

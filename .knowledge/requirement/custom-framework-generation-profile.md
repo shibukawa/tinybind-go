@@ -17,7 +17,7 @@ capabilities:
   discovery: api:generator-call-registration with data:generator-call-pattern
   input_suffixes: requirement:configurable-template-file-patterns
   artifacts: requirement:per-source-generation-artifacts
-  html_shape: requirement:html-writer-api-mode
+  html_shape: requirement:html-component-api
   sql_shape: decision:sql-context-executor-api context-only mode
   output_hygiene: rule:generated-source-self-contained
 integration_fixture:
@@ -33,7 +33,6 @@ integration_fixture:
     - framework subcommand wrapper over api:configbind-subcommand carrying name and help
   options:
     - custom HTML and SQL template patterns
-    - HTMLWriterAPI enabled
     - SQLContextOnlyAPI enabled with a framework SQLExecutorResolver
 acceptance:
   - custom package and function names are discovered through the registered call patterns
@@ -50,7 +49,7 @@ related:
   - requirement:extensible-generator-command
   - requirement:configurable-template-file-patterns
   - requirement:per-source-generation-artifacts
-  - requirement:html-writer-api-mode
+  - requirement:html-component-api
   - rule:generated-source-self-contained
   - decision:sql-context-executor-api
   - api:generator-artifacts

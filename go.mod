@@ -4,8 +4,6 @@ go 1.26.0
 
 require golang.org/x/tools v0.48.0
 
-require github.com/klauspost/compress v1.19.1 // indirect
-
 require (
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
 	github.com/shibukawa/tinygodriver v1.0.3

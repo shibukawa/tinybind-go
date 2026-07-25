@@ -112,7 +112,6 @@ _ = stream.Write(ChatEvent{Type: "done"})
 |------|------|
 | `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / NewStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
-| `htmlbind/` | Generated HTML response runtime and optional Zstandard compression configuration |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |

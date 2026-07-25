@@ -1,6 +1,6 @@
 # htmlbind 利用ガイド
 
-`htmlbind` は `.tb.html` に書いた型付き HTML テンプレートを、HTTP レスポンスを描画する Go 関数へ変換します。テンプレートは実行時に解析されず、値の型と HTML 上の挿入位置をコード生成時に検査します。
+`htmlbind` は `.tb.html` に書いた型付き HTML テンプレートを、`io.Writer` へ書き出す Go 関数へ変換します。テンプレートは実行時に解析されず、値の型と HTML 上の挿入位置をコード生成時に検査します。
 
 ## 自動化されること
 
@@ -68,38 +68,39 @@ export component Hello(name: string): html {
 生成される公開関数シグネチャ:
 
 ```go
-func Hello(w http.ResponseWriter, r *http.Request, name string) error
+type HelloParams struct {
+	Name string
+}
+
+func Hello(w io.Writer, params HelloParams) error
 ```
 
-生成された関数は body を書く前に `Content-Type` を `text/html; charset=utf-8` に設定します。
+生成された component が担うのは template 固有の責務、つまり escaping、typed field
+access、loop、JSON 出力だけです。`io.Writer` へバイト列を書くだけで、header 設定も
+content negotiation も圧縮も response commit も行いません。それらはすべて呼び出し側が
+決めます。
 
 ```go
 func hello(w http.ResponseWriter, r *http.Request) {
-	if err := Hello(w, r, r.URL.Query().Get("name")); err != nil {
-		http.Error(w, "render failed", http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	params := HelloParams{Name: r.URL.Query().Get("name")}
+	if err := Hello(w, params); err != nil {
+		// response は書き始めているので、書き換えずにログに残す
+		log.Printf("render index: %v", err)
 	}
 }
 ```
 
-## Zstandard 圧縮（オプション）
-
-生成される HTML レスポンスはデフォルトでは圧縮されません。Zstandard
-圧縮を許可するには、アプリケーション起動時に一度だけ有効化します。
+writer は単なる `io.Writer` なので、同じ component を buffer、file、メール本文へも
+HTTP の型なしで描画できます。
 
 ```go
-import runtimehtmlbind "github.com/shibukawa/tinybind-go/htmlbind"
-
-func main() {
-	runtimehtmlbind.ZstdCompression = true
-	// handler を登録して server を起動する
-}
+var out strings.Builder
+err := Hello(&out, HelloParams{Name: "Ada"})
 ```
 
-有効にすると、生成関数は `Vary: Accept-Encoding` を追加します。request の
-`Accept-Encoding` に有効な `zstd` coding が含まれる場合は、
-`tinygodriver/compress/zstd` を通してストリーム圧縮し、
-`Content-Encoding: zstd` を設定して返します。このフラグは起動時設定用であり、
-request の処理中に変更しないでください。
+圧縮、キャッシュ、content negotiation は通常の HTTP middleware の担当です。
+tinybind はそれらを実行も設定もしません。
 
 ## 型を宣言する
 
@@ -141,7 +142,12 @@ const (
 	ToneSecondary Tone = "Secondary"
 )
 
-func Profile(w http.ResponseWriter, r *http.Request, user User, tone Tone) error
+type ProfileParams struct {
+	User User
+	Tone Tone
+}
+
+func Profile(w io.Writer, params ProfileParams) error
 ```
 
 テンプレートで宣言した型は生成後の同じ Go パッケージに属します。Go 側ではその型を使って引数を組み立てます。
@@ -159,7 +165,7 @@ func Profile(w http.ResponseWriter, r *http.Request, user User, tone Tone) error
 | `url` | `url.URL` |
 | `T[]` | `[]T` |
 | `T?` | `*T` |
-| `html` | `HTML`（`func(http.ResponseWriter, *http.Request) error`）、component の children 用 |
+| `html` | `HTML`（`func(io.Writer) error`）、component の children 用 |
 
 ## 条件分岐
 
@@ -230,7 +236,11 @@ export component Card(user: User): html {
 アプリケーションから呼べるシグネチャは公開 component だけです。
 
 ```go
-func Card(w http.ResponseWriter, r *http.Request, user User) error
+type CardParams struct {
+	User User
+}
+
+func Card(w io.Writer, params CardParams) error
 ```
 
 `children: html` を持つ component は開始タグと終了タグの間の内容を受け取れます。children を取らない component は self-closing でも呼べます。
@@ -368,8 +378,17 @@ export component Name(p1: T1, p2: T2): html { ... }
 呼び出し API:
 
 ```go
-func Name(w http.ResponseWriter, r *http.Request, p1 T1, p2 T2) error
+type NameParams struct {
+	P1 T1
+	P2 T2
+}
+
+func Name(w io.Writer, params NameParams) error
 ```
+
+component の引数は常に 2 つです。parameter 構造体は宣言順に、宣言した引数 1 つに
+つき 1 つの公開フィールドを持ちます。private component の parameter 型は
+`render{Name}Params` という非公開名になります。
 
 ### 引数なし
 
@@ -378,39 +397,25 @@ export component Layout(): html { ... }
 ```
 
 ```go
-func Layout(w http.ResponseWriter, r *http.Request) error
+type LayoutParams struct{}
+
+func Layout(w io.Writer, params LayoutParams) error
 ```
 
-### writer モード (`-html-writer-api`)
+### HTTP response へ書き出す
 
-HTTP response を framework 自身が扱う場合は、HTTP から独立した component を生成できます。
+生成される component は `http.ResponseWriter` も `*http.Request` も受け取らず、
+`Content-Type`、`Content-Encoding`、圧縮、response commit、エラー応答も扱いません。
+`http.ResponseWriter` は `io.Writer` なので、handler はそのまま渡し、これらの判断は
+handler 自身が持ちます。
 
 ```go
-//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-writer-api
+w.Header().Set("Content-Type", "text/html; charset=utf-8")
+err := Name(w, NameParams{P1: p1, P2: p2})
 ```
 
-```go
-type UserPageParams struct {
-	User User
-}
-
-func UserPage(w io.Writer, params UserPageParams) error
-```
-
-引数なし・1 引数・複数引数で規則は同じです。すべての component に対し、宣言順で
-1 引数 1 フィールドを持つ `{ComponentName}Params` 型を生成します。private component には
-非公開の `render{Name}Params` を生成します。
-
-このモードでも escaping、typed field access、loop、JSON 出力は変わりませんが、
-`Content-Type` と `Content-Encoding` の設定、圧縮準備、response commit、エラー応答は
-行いません。`html` 型の引数は `func(io.Writer) error` になります。
-形が `func(io.Writer, P) error` なので、framework 側でそのまま受け取れます。
-
-```go
-func WriteHTML[P any](w http.ResponseWriter, r *http.Request, render func(io.Writer, P) error, params P) error
-```
-
-無効時は従来の `http.ResponseWriter` 形式のままです。
+すべての component が `func(io.Writer, P) error` という形なので、framework 側でも
+同じ形で受け取り、独自の response 方針を適用できます。
 
 ### private component
 
