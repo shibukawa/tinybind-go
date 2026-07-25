@@ -274,30 +274,13 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 			if gen, ok := declaration.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
 				continue
 			}
+			// Every declaration now derives from its own template source, so a
+			// repeated name is a genuine conflict rather than a shared runtime
+			// helper that each file happened to emit.
 			names := declarationNames(declaration)
-			duplicate := ""
-			allRuntime := len(names) > 0
 			for _, name := range names {
-				if seen[name] && !templateRuntimeName(name) {
-					duplicate = name
-					break
-				}
-				if !templateRuntimeName(name) {
-					allRuntime = false
-				}
-			}
-			if duplicate != "" {
-				return nil, fmt.Errorf("duplicate generated template declaration %s", duplicate)
-			}
-			if allRuntime {
-				skip := true
-				for _, name := range names {
-					if !seen[name] {
-						skip = false
-					}
-				}
-				if skip {
-					continue
+				if seen[name] {
+					return nil, fmt.Errorf("duplicate generated template declaration %s", name)
 				}
 			}
 			declarations = append(declarations, declaration)
@@ -325,8 +308,8 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	out.WriteByte('\n')
-	// Merging several template files can leave an import that only the skipped
-	// duplicate runtime declarations referenced.
+	// Merging several template files unions their import blocks, so an import
+	// one file needed can be unused by the combined declarations.
 	return dropUnusedImports([]byte(out.String()))
 }
 
@@ -348,13 +331,6 @@ func declarationNames(declaration ast.Decl) []string {
 		}
 	}
 	return names
-}
-func templateRuntimeName(name string) bool {
-	switch name {
-	case "HTML", "TrustedHTML", "TrustedCSS", "TrustedJavaScript", "ScriptJSON", "Statement", "SQLExecer", "SQLQuerier", "_tinybindSQLBuilder":
-		return true
-	}
-	return strings.HasPrefix(name, "_tinybindJSON") || name == "_tinybindWrite" || name == "_tinybindEscape" || name == "_tinybindBool" || name == "_tinybindInt" || name == "_tinybindFloat" || name == "_tinybindSQLArgs" || name == "_tinybindStatement" || name == "_tinybindSafeMutation"
 }
 func goTemplateIdentifier(value string) string {
 	var out strings.Builder

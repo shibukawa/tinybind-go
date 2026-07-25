@@ -2,7 +2,6 @@ package sqlbind
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 )
 
@@ -11,10 +10,12 @@ import (
 // remain ordinary error-returning APIs.
 var ErrNoSQLExecutor = errors.New("sqlbind: no SQL executor in context")
 
-// SQLExecutor is implemented by *sql.DB, *sql.Conn, and *sql.Tx.
+// SQLExecutor is implemented by *sql.DB, *sql.Conn, and *sql.Tx. It combines
+// the two minimal interfaces generated code takes, so one Context value serves
+// both mutating and row-returning components.
 type SQLExecutor interface {
-	ExecContext(context.Context, string, ...any) (sql.Result, error)
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	Execer
+	Querier
 }
 
 type sqlExecutorContextKey struct{}

@@ -296,8 +296,8 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 			return err
 		}
 		p.flush()
-		p.op(fmt.Sprintf("Raw(func(%s %s) string { return _tinybindJSON%s(%s) })",
-			receiverIdent, p.scope.goType, jsonTypeKey(e.c.exprTypes[argument]), argCode))
+		p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
+			receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
 		return nil
 	}
 	raw := t.required().kind == kindTrustedHTML || t.required().kind == kindTrustedCSS || t.required().kind == kindTrustedJS || t.required().kind == kindScriptJSON

@@ -2,64 +2,7 @@
 
 package main
 
-import (
-	"github.com/shibukawa/tinybind-go/htmlbind"
-	"strconv"
-	"strings"
-)
-
-type TrustedHTML string
-type TrustedCSS string
-type TrustedJavaScript string
-type ScriptJSON string
-
-func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string       { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
-
-func _tinybindJSONQuote(value string) string {
-	const hex = "0123456789abcdef"
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			out.WriteString("\\\"")
-		case '\\':
-			out.WriteString("\\\\")
-		case '\b':
-			out.WriteString("\\b")
-		case '\f':
-			out.WriteString("\\f")
-		case '\n':
-			out.WriteString("\\n")
-		case '\r':
-			out.WriteString("\\r")
-		case '\t':
-			out.WriteString("\\t")
-		case '<':
-			out.WriteString("\\u003c")
-		case '>':
-			out.WriteString("\\u003e")
-		case '&':
-			out.WriteString("\\u0026")
-		case '\u2028':
-			out.WriteString("\\u2028")
-		case '\u2029':
-			out.WriteString("\\u2029")
-		default:
-			if r < 0x20 {
-				out.WriteString("\\u00")
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
-			} else {
-				out.WriteRune(r)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
+import "github.com/shibukawa/tinybind-go/htmlbind"
 
 type IndexPageParams struct {
 	Javascript string

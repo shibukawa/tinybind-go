@@ -87,8 +87,8 @@ type User struct {
 	Active bool
 }
 
-func BuildGetUser(id int) (Statement, error)
-func GetUser(ctx context.Context, db SQLQuerier, id int) (User, error)
+func BuildGetUser(id int) (sqlbind.Statement, error)
+func GetUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
 ```
 
 ```go
@@ -367,9 +367,11 @@ log.Printf("sql=%s args=%v", statement.SQL, statement.Args)
 rows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)
 ```
 
-これは SQL のテスト、ログ、独自 DB abstraction との接続に便利です。`Statement` は次の利用者向け shape です。
+これは SQL のテスト、ログ、独自 DB abstraction との接続に便利です。`Statement` は生成パッケージごとではなく runtime package `github.com/shibukawa/tinybind-go/sqlbind` に一度だけ宣言されるので、パッケージ間をそのまま渡せます。
 
 ```go
+package sqlbind
+
 type Statement struct {
 	SQL  string
 	Args []any
@@ -432,7 +434,7 @@ func FindUser(ctx context.Context, id int) (User, error)
 
 このモードでは:
 
-- `*sql.DB`、`*sql.Tx`、`SQLQuerier`、`SQLExecer` を受け取る公開関数を生成しません
+- `*sql.DB`、`*sql.Tx`、`sqlbind.Querier`、`sqlbind.Execer` を受け取る公開関数を生成しません
 - executor を受け取る関数は非公開になります
 - `BuildName` は従来どおり公開されます
 - `NameContext` を生成しないため、その名前は空いたままです
@@ -449,31 +451,31 @@ func FindUser(ctx context.Context, id int) (User, error)
 ### すべての exported statement
 
 ```go
-func BuildName(p ...P) (Statement, error)
+func BuildName(p ...P) (sqlbind.Statement, error)
 ```
 
 ### `sql.exec`
 
 ```go
-func Name(ctx context.Context, db SQLExecer, p ...P) (sql.Result, error)
+func Name(ctx context.Context, db sqlbind.Execer, p ...P) (sql.Result, error)
 ```
 
 ### `sql.one<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (T, error)
 ```
 
 ### `sql.optional<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (*T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (*T, error)
 ```
 
 ### `sql.many<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) iter.Seq2[T, error]
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) iter.Seq2[T, error]
 ```
 
 ### `-sql-context-api` を有効にした場合

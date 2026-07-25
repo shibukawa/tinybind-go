@@ -196,8 +196,13 @@ func TestGenerateTemplatesUsesCustomSQLExecutorResolver(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "dbctx"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Generated SQL always references the module runtime package.
+	moduleRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string]string{
-		"go.mod": "module fixture\n\ngo 1.26\n",
+		"go.mod": "module fixture\n\ngo 1.26\n\nrequire github.com/shibukawa/tinybind-go v0.0.0\n\nreplace github.com/shibukawa/tinybind-go => " + filepath.ToSlash(moduleRoot) + "\n",
 		"query.tb.sql": `package fixture
 type User { id: int }
 export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id = {id}}`,
@@ -232,7 +237,7 @@ func Executor(context.Context) (ExecutorInterface, error) { return nil, nil }`,
 	}
 	command := exec.Command("go", "test", "./...")
 	command.Dir = dir
-	command.Env = append(os.Environ(), "GOWORK=off")
+	command.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("custom resolver output does not compile: %v\n%s\n%s", err, output, generated)
 	}

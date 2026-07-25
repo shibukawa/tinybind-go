@@ -87,8 +87,8 @@ type User struct {
 	Active bool
 }
 
-func BuildGetUser(id int) (Statement, error)
-func GetUser(ctx context.Context, db SQLQuerier, id int) (User, error)
+func BuildGetUser(id int) (sqlbind.Statement, error)
+func GetUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
 ```
 
 ```go
@@ -367,9 +367,11 @@ log.Printf("sql=%s args=%v", statement.SQL, statement.Args)
 rows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)
 ```
 
-This is useful for SQL tests, logging, and custom database abstractions. The application-facing shape is:
+This is useful for SQL tests, logging, and custom database abstractions. `Statement` is declared once in the runtime package `github.com/shibukawa/tinybind-go/sqlbind`, not per generated package, so a value crosses package boundaries unchanged:
 
 ```go
+package sqlbind
+
 type Statement struct {
 	SQL  string
 	Args []any
@@ -432,7 +434,7 @@ func FindUser(ctx context.Context, id int) (User, error)
 
 In this mode:
 
-- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
+- no exported function accepts `*sql.DB`, `*sql.Tx`, `sqlbind.Querier`, or `sqlbind.Execer`;
 - the executor-taking function becomes unexported;
 - `BuildName` stays exported and unchanged;
 - no `NameContext` wrapper is generated, so that name stays free;
@@ -458,7 +460,7 @@ func FindUser(ctx context.Context, id int) (User, error)
 
 In this mode:
 
-- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
+- no exported function accepts `*sql.DB`, `*sql.Tx`, `sqlbind.Querier`, or `sqlbind.Execer`;
 - the executor-taking function becomes unexported;
 - `BuildName` stays exported and unchanged;
 - no `NameContext` wrapper is generated, so that name stays free;
@@ -476,31 +478,31 @@ In the signatures below, `p ...P` represents the mapped template parameters.
 ### Every exported statement
 
 ```go
-func BuildName(p ...P) (Statement, error)
+func BuildName(p ...P) (sqlbind.Statement, error)
 ```
 
 ### `sql.exec`
 
 ```go
-func Name(ctx context.Context, db SQLExecer, p ...P) (sql.Result, error)
+func Name(ctx context.Context, db sqlbind.Execer, p ...P) (sql.Result, error)
 ```
 
 ### `sql.one<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (T, error)
 ```
 
 ### `sql.optional<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (*T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (*T, error)
 ```
 
 ### `sql.many<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) iter.Seq2[T, error]
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) iter.Seq2[T, error]
 ```
 
 ### With `-sql-context-api`

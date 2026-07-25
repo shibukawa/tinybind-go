@@ -46,8 +46,8 @@ UPDATE users SET name = {name} {if enabled}WHERE id = {id}{/if}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(generated, []byte("b.WriteByte('?')")) {
-		t.Fatalf("question placeholder not generated:\n%s", generated)
+	if !bytes.Contains(generated, []byte("_tinybindsql.NewBuilder(_tinybindsql.Question)")) {
+		t.Fatalf("question placeholder style not selected:\n%s", generated)
 	}
 	runGenerated(t, generated, nil)
 }
@@ -101,7 +101,7 @@ export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, signature := range []string{"func GetUser(ctx context.Context, db SQLQuerier", "func GetUserContext(ctx context.Context", "func MaybeUserContext(ctx context.Context", "func ListUsersContext(ctx context.Context", "func DeleteUserContext(ctx context.Context"} {
+	for _, signature := range []string{"func GetUser(ctx context.Context, db _tinybindsql.Querier", "func GetUserContext(ctx context.Context", "func MaybeUserContext(ctx context.Context", "func ListUsersContext(ctx context.Context", "func DeleteUserContext(ctx context.Context"} {
 		if !bytes.Contains(generated, []byte(signature)) {
 			t.Fatalf("generated output lacks %q:\n%s", signature, generated)
 		}
@@ -170,8 +170,10 @@ export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id 
 	if !bytes.Contains(generated, []byte(`_tinybindresolver "example.com/web/dbctx"`)) || !bytes.Contains(generated, []byte(`_tinybindresolver.Executor(ctx)`)) {
 		t.Fatalf("custom resolver missing:\n%s", generated)
 	}
-	if bytes.Contains(generated, []byte(`github.com/shibukawa/tinybind-go/sqlbind`)) {
-		t.Fatalf("standard resolver imported with custom resolver:\n%s", generated)
+	// The runtime package is always imported for Statement and Builder; only
+	// the standard Context resolver must be absent.
+	if bytes.Contains(generated, []byte(`_tinybindsql.SQLExecutorFromContext`)) {
+		t.Fatalf("standard resolver used with custom resolver:\n%s", generated)
 	}
 	if _, err := sqlbind.Generate("custom.tb.sql", source, sqlbind.GenerateOptions{ExecutorResolver: &sqlbind.ExecutorResolver{Name: "not-exported"}}); err == nil || !strings.Contains(err.Error(), "invalid SQL executor resolver") {
 		t.Fatalf("invalid resolver error = %v", err)
@@ -250,8 +252,8 @@ export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id
 		"func MaybeUser(ctx context.Context, id int) (*User, error)",
 		"func ListUsers(ctx context.Context) iter.Seq2[User, error]",
 		"func DeleteUser(ctx context.Context, id int) (sql.Result, error)",
-		"func BuildFindUser(id int) (Statement, error)",
-		"func _tinybindExecFindUser(ctx context.Context, db SQLQuerier",
+		"func BuildFindUser(id int) (_tinybindsql.Statement, error)",
+		"func _tinybindExecFindUser(ctx context.Context, db _tinybindsql.Querier",
 	}
 	for _, signature := range want {
 		if !bytes.Contains(generated, []byte(signature)) {
@@ -264,7 +266,7 @@ export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id
 		}
 	}
 	for _, exported := range exportedFuncSignatures(t, generated) {
-		if strings.Contains(exported, "SQLQuerier") || strings.Contains(exported, "SQLExecer") {
+		if strings.Contains(exported, "_tinybindsql.Querier") || strings.Contains(exported, "_tinybindsql.Execer") {
 			t.Fatalf("context-only output exports an executor-taking function: %s", exported)
 		}
 	}

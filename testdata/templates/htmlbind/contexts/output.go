@@ -3,64 +3,10 @@
 package pages
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
-
-type TrustedHTML string
-type TrustedCSS string
-type TrustedJavaScript string
-type ScriptJSON string
-
-func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string       { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
-
-func _tinybindJSONQuote(value string) string {
-	const hex = "0123456789abcdef"
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			out.WriteString("\\\"")
-		case '\\':
-			out.WriteString("\\\\")
-		case '\b':
-			out.WriteString("\\b")
-		case '\f':
-			out.WriteString("\\f")
-		case '\n':
-			out.WriteString("\\n")
-		case '\r':
-			out.WriteString("\\r")
-		case '\t':
-			out.WriteString("\\t")
-		case '<':
-			out.WriteString("\\u003c")
-		case '>':
-			out.WriteString("\\u003e")
-		case '&':
-			out.WriteString("\\u0026")
-		case '\u2028':
-			out.WriteString("\\u2028")
-		case '\u2029':
-			out.WriteString("\\u2029")
-		default:
-			if r < 0x20 {
-				out.WriteString("\\u00")
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
-			} else {
-				out.WriteRune(r)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
 
 type Payload struct {
 	Message string
@@ -75,31 +21,19 @@ type DocumentParams struct {
 	Payload    Payload
 }
 
-func _tinybindJSONBool(value bool) string {
-	return strconv.FormatBool(value)
-}
-
-func _tinybindJSONInt(value int) string {
-	return strconv.Itoa(value)
-}
-
 func _tinybindJSONPayload(value Payload) string {
 	var out strings.Builder
 	out.WriteByte('{')
 	out.WriteString("\"message\":")
-	out.WriteString(_tinybindJSONString(value.Message))
+	out.WriteString(htmlbind.JSONString[string](value.Message))
 	out.WriteByte(',')
 	out.WriteString("\"count\":")
-	out.WriteString(_tinybindJSONInt(value.Count))
+	out.WriteString(htmlbind.JSONInt(value.Count))
 	out.WriteByte(',')
 	out.WriteString("\"enabled\":")
-	out.WriteString(_tinybindJSONBool(value.Enabled))
+	out.WriteString(htmlbind.JSONBool(value.Enabled))
 	out.WriteByte('}')
 	return out.String()
-}
-
-func _tinybindJSONString(value string) string {
-	return _tinybindJSONQuote(value)
 }
 
 var planDocumentOps = htmlbind.Builder[DocumentParams]{}
