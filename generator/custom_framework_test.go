@@ -140,7 +140,7 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 	html := byKind[generator.ArtifactHTMLTemplate][0].GoSource
 	for _, want := range []string{
 		"type UserPageParams struct {",
-		"func UserPage(w io.Writer, _tinybindParams UserPageParams) error",
+		"func UserPage(params UserPageParams) htmlbind.Fragment",
 	} {
 		if !bytes.Contains(html, []byte(want)) {
 			t.Fatalf("HTML artifact lacks %q:\n%s", want, html)
@@ -262,7 +262,7 @@ func TestCustomFrameworkPackageAggregationSharesTheAPIShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"func UserPage(w io.Writer, _tinybindParams UserPageParams) error",
+		"func UserPage(params UserPageParams) htmlbind.Fragment",
 		"func FindUser(ctx context.Context, id int) (UserRow, error)",
 	} {
 		if !bytes.Contains(templates, []byte(want)) {
@@ -296,8 +296,8 @@ func TestGenerateArtifactsUsesDefaultTemplateSuffixes(t *testing.T) {
 		if filepath.Base(artifact.SourcePath) != "page.tb.html" {
 			t.Fatalf("owner = %q", artifact.SourcePath)
 		}
-		if !bytes.Contains(artifact.GoSource, []byte("func Page(w io.Writer, _tinybindParams PageParams) error")) {
-			t.Fatalf("default suffix output changed:\n%s", artifact.GoSource)
+		if !bytes.Contains(artifact.GoSource, []byte("func Page(params PageParams) htmlbind.Fragment")) {
+			t.Fatalf("generated shape changed:\n%s", artifact.GoSource)
 		}
 	}
 	if !found {

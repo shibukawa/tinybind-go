@@ -15,6 +15,13 @@ type htmlParser struct {
 	baseOffset int
 	basePos    Position
 	pos        int
+	// insideHTMLElement marks that parsing is below an html element, where a
+	// head element is the document shell rather than a contribution.
+	insideHTMLElement bool
+	// insideHeadContribution marks that parsing is inside a contributing head
+	// element, where style and script bodies are raw text like a single-file
+	// component block rather than template markup.
+	insideHeadContribution bool
 }
 
 var voidElements = map[string]bool{
@@ -74,7 +81,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 				}
 				return nodes, nil, nil
 			}
-			node, err := p.parseElement()
+			node, err := p.parseElement(context)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -115,12 +122,15 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 	return nodes, nil, nil
 }
 
-func (p *htmlParser) parseElement() (Node, error) {
+func (p *htmlParser) parseElement(context string) (Node, error) {
 	start := p.pos
 	p.pos++
 	name := p.readName()
 	if name == "" {
 		return nil, p.errAt(start, "expected HTML element or component name")
+	}
+	if name == "slot" {
+		return p.parseSlot(start, context)
 	}
 	isComponent := startsUpper(name)
 	if isComponent {
@@ -134,16 +144,40 @@ func (p *htmlParser) parseElement() (Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	context := "html:child"
+	childContext := "html:child"
 	if name == "script" {
-		context = "html:script"
+		childContext = "html:script"
 	} else if name == "style" {
-		context = "html:style"
+		childContext = "html:style"
+	}
+	// A style or script body inside a head contribution is authored content,
+	// not markup, so braces belong to CSS and JavaScript rather than to the
+	// template language.
+	if p.insideHeadContribution && (name == "style" || name == "script") && !selfClosing {
+		text, err := p.readRawUntilClose(name)
+		if err != nil {
+			return nil, err
+		}
+		var children []Node
+		if text != "" {
+			children = []Node{&TextNode{Kind: "html:text", Pos: p.position(start), Text: text}}
+		}
+		return &ElementNode{Kind: "html:element", Pos: p.position(start), Name: name, Attributes: attrs, Children: children}, nil
 	}
 	var children []Node
 	if !selfClosing && !voidElements[name] {
 		var terminator *syntax.Terminator
-		children, terminator, err = p.parseNodes(name, context)
+		if name == "html" {
+			outer := p.insideHTMLElement
+			p.insideHTMLElement = true
+			defer func() { p.insideHTMLElement = outer }()
+		}
+		if name == "head" && !p.insideHTMLElement {
+			outer := p.insideHeadContribution
+			p.insideHeadContribution = true
+			defer func() { p.insideHeadContribution = outer }()
+		}
+		children, terminator, err = p.parseNodes(name, childContext)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +188,104 @@ func (p *htmlParser) parseElement() (Node, error) {
 	if isComponent {
 		return &ComponentNode{Kind: "html:component", Pos: p.position(start), Name: name, Arguments: attrs, Children: children, SelfClosing: selfClosing}, nil
 	}
+	// A head outside the document shell contributes to the merged head. The
+	// shell's own head stays an ordinary element and marks the injection point.
+	if name == "head" && !p.insideHTMLElement {
+		if len(attrs) > 0 {
+			return nil, p.errAt(start, "a contributing head element takes no attributes")
+		}
+		return &HeadNode{Kind: "html:head", Pos: p.position(start), Children: children}, nil
+	}
 	return &ElementNode{Kind: "html:element", Pos: p.position(start), Name: name, Attributes: attrs, Children: children, SelfClosing: selfClosing}, nil
+}
+
+// parseSlot reads a reserved slot element. The element itself is never
+// emitted; only the bound argument or the declared default content is.
+func (p *htmlParser) parseSlot(start int, context string) (Node, error) {
+	if context != "html:child" {
+		return nil, p.errAt(start, "slot is only allowed in child-node position")
+	}
+	attrs, selfClosing, err := p.parseAttributes(false)
+	if err != nil {
+		return nil, err
+	}
+	slot := &SlotNode{Kind: "html:slot", Pos: p.position(start)}
+	for _, attribute := range attrs {
+		switch attribute.Name {
+		case "name":
+			value, ok := staticAttributeText(attribute)
+			if !ok {
+				return nil, p.errAt(start, "slot name must be a static value")
+			}
+			if !isLowerCamel(value) {
+				return nil, p.errAt(start, "slot name must be lowerCamelCase")
+			}
+			if value == "children" {
+				return nil, p.errAt(start, "omit the name attribute to declare the unnamed slot")
+			}
+			slot.Name = value
+		case "required":
+			if !attribute.Boolean {
+				return nil, p.errAt(start, "required must be a bare attribute")
+			}
+			slot.Required = true
+		default:
+			return nil, p.errAt(start, "unknown slot attribute "+attribute.Name)
+		}
+	}
+	if selfClosing {
+		return slot, nil
+	}
+	children, terminator, err := p.parseNodes("slot", context)
+	if err != nil {
+		return nil, err
+	}
+	if terminator != nil {
+		return nil, p.errAt(p.pos, "missing closing tag </slot>")
+	}
+	slot.Default = children
+	return slot, nil
+}
+
+// readRawUntilClose consumes the verbatim body of a raw-text element and
+// leaves the parser after its closing tag.
+func (p *htmlParser) readRawUntilClose(name string) (string, error) {
+	closing := "</" + name
+	start := p.pos
+	for offset := p.pos; ; {
+		index := strings.Index(strings.ToLower(p.source[offset:]), closing)
+		if index < 0 {
+			return "", p.errAt(start, "missing closing tag </"+name+">")
+		}
+		end := offset + index
+		after := end + len(closing)
+		// Require a tag terminator so a substring such as </styles> is content.
+		rest := p.source[after:]
+		trimmed := strings.TrimLeft(rest, " \t\r\n")
+		if !strings.HasPrefix(trimmed, ">") {
+			offset = after
+			continue
+		}
+		text := p.source[start:end]
+		p.pos = after + (len(rest) - len(trimmed)) + 1
+		return text, nil
+	}
+}
+
+// staticAttributeText returns the literal text of an attribute whose value
+// contains no embedded expression.
+func staticAttributeText(attribute Attribute) (string, bool) {
+	if attribute.Boolean {
+		return "", false
+	}
+	var text strings.Builder
+	for _, part := range attribute.Value {
+		if part.Expression != nil {
+			return "", false
+		}
+		text.WriteString(part.Text)
+	}
+	return text.String(), true
 }
 
 func (p *htmlParser) parseAttributes(component bool) ([]Attribute, bool, error) {

@@ -1,13 +1,16 @@
 package pages
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 func TestRenderedOutput(t *testing.T) {
-	var output strings.Builder
-	if err := Card(&output, CardParams{User: User{Name: "A&B"}}); err != nil {
+	var output bytes.Buffer
+	if err := htmlbind.Render(&output, Card(CardParams{User: User{Name: "A&B"}})); err != nil {
 		t.Fatal(err)
 	}
 	want := `<span class="badge"><strong>A&amp;B</strong><em>member</em></span>`

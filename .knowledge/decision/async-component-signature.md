@@ -8,10 +8,10 @@ Give only components owning an await boundary an iterator-returning render signa
 ```yaml
 source:
   - requirement:template-code-generation
-  - requirement:html-writer-api-mode
+  - requirement:html-component-api
   - user signature decision 2026-07-25
 review_gate: approved 2026-07-25
-baseline: requirement:html-writer-api-mode writer signature and generated params struct
+baseline: requirement:html-component-api fragment signature and generated params struct
 executor: decision:generated-render-plan coordinator; the entry function is a typed facade over it
 sync_api: func Component(w io.Writer, params ComponentParams) error
 async_api: func Component(ctx context.Context, w io.Writer, params ComponentParams) iter.Seq2[Content, error]

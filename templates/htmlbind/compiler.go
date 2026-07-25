@@ -65,6 +65,15 @@ type componentInfo struct {
 	decl   *TemplateDecl
 	params map[string]valueType
 	order  []Parameter
+	// head holds the nodes contributed by head elements declared outside the
+	// document shell, already scoped and ready to merge.
+	head []Node
+	// scope carries the requirement:scoped-component-style renaming applied to
+	// this component's style block, or nil when it declares none.
+	scope *styleScope
+	// shell marks a component that owns the document head, which is where
+	// merged contributions are injected.
+	shell bool
 }
 
 type compiler struct {
@@ -77,6 +86,17 @@ type compiler struct {
 	externals   map[string]functionSig
 	components  map[string]*componentInfo
 	exprTypes   map[Expr]valueType
+
+	// current tracks the component being analyzed so slot elements can bind to
+	// its parameters.
+	current *componentInfo
+	// slotUsed records which slot parameters are already rendered on the
+	// current execution path. Mutually exclusive if branches get independent
+	// copies, so the same slot may appear in both.
+	slotUsed map[string]bool
+	// loopDepth is non-zero inside a for body, where a slot cannot guarantee
+	// at most one rendering.
+	loopDepth int
 }
 
 type CompileError struct {
@@ -186,9 +206,18 @@ func (c *compiler) analyze() error {
 		if !ok {
 			return c.error(component.Pos, "invalid HTML component body")
 		}
+		c.current = info
+		c.slotUsed = map[string]bool{}
+		c.loopDepth = 0
+		// Head contributions are collected before the body is analyzed so the
+		// style scope is known when class attributes are checked.
+		if err := c.collectHead(info, body); err != nil {
+			return err
+		}
 		if err := c.analyzeNodes(body, scope); err != nil {
 			return err
 		}
+		c.current = nil
 	}
 	return nil
 }
@@ -263,6 +292,9 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			if err := c.validateInsertion(node.Context, t, exprPos(node.Expression)); err != nil {
 				return err
 			}
+			if err := c.markHTMLParameterUse(node.Expression, t); err != nil {
+				return err
+			}
 		case *syntax.IfNode:
 			t, err := c.infer(node.Condition, scope)
 			if err != nil {
@@ -271,11 +303,19 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			if t.kind != kindBool || t.optional {
 				return c.error(exprPos(node.Condition), "if condition must be bool")
 			}
+			// Branches are mutually exclusive, so each starts from the state
+			// before the if and the result is their union.
+			before := copyUsage(c.slotUsed)
 			if err := c.analyzeNodes(node.Then, copyScope(scope)); err != nil {
 				return err
 			}
+			thenUsed := c.slotUsed
+			c.slotUsed = copyUsage(before)
 			if err := c.analyzeNodes(node.Else, copyScope(scope)); err != nil {
 				return err
+			}
+			for name := range thenUsed {
+				c.slotUsed[name] = true
 			}
 		case *syntax.ForNode:
 			t, err := c.infer(node.Iterable, scope)
@@ -290,9 +330,11 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			if node.Index != "" {
 				inner[node.Index] = valueType{kind: kindInt}
 			}
+			c.loopDepth++
 			if err := c.analyzeNodes(node.Body, inner); err != nil {
 				return err
 			}
+			c.loopDepth--
 		case *ElementNode:
 			for _, attribute := range node.Attributes {
 				if err := c.analyzeAttribute(node.Name, attribute, scope); err != nil {
@@ -300,6 +342,13 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 				}
 			}
 			if err := c.analyzeNodes(node.Children, scope); err != nil {
+				return err
+			}
+		case *HeadNode:
+			// Contributions are validated and scoped by collectHead before the
+			// body is analyzed, and they carry no expressions to type-check.
+		case *SlotNode:
+			if err := c.analyzeSlot(node, scope); err != nil {
 				return err
 			}
 		case *ComponentNode:
@@ -310,6 +359,182 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			return c.error(Position{Line: 1, Col: 1}, fmt.Sprintf("unsupported HTML node %T", node))
 		}
 	}
+	return nil
+}
+
+// collectHead gathers the component's head contributions, scopes its style
+// block, and records whether the component owns the document shell.
+func (c *compiler) collectHead(info *componentInfo, body []Node) error {
+	var heads []*HeadNode
+	var walk func(nodes []Node)
+	walk = func(nodes []Node) {
+		for _, node := range nodes {
+			switch node := node.(type) {
+			case *HeadNode:
+				heads = append(heads, node)
+			case *ElementNode:
+				if node.Name == "head" {
+					info.shell = true
+				}
+				walk(node.Children)
+			case *SlotNode:
+				walk(node.Default)
+			case *syntax.IfNode:
+				walk(node.Then)
+				walk(node.Else)
+			case *syntax.ForNode:
+				walk(node.Body)
+			case *ComponentNode:
+				walk(node.Children)
+			}
+		}
+	}
+	walk(body)
+	if len(heads) == 0 {
+		return nil
+	}
+	if len(heads) > 1 {
+		return c.error(heads[1].Pos, "component "+info.decl.Name+" declares more than one head element")
+	}
+	head := heads[0]
+	for _, node := range head.Children {
+		if err := c.validateHeadChild(node); err != nil {
+			return err
+		}
+	}
+	if err := c.scopeHeadStyles(info, head); err != nil {
+		return err
+	}
+	info.head = head.Children
+	return nil
+}
+
+// validateHeadChild keeps head contributions static, because the merged head
+// is written before any body byte and cannot wait for request data.
+func (c *compiler) validateHeadChild(node Node) error {
+	switch node := node.(type) {
+	case *TextNode, *CommentNode:
+		return nil
+	case *ElementNode:
+		switch node.Name {
+		case "link", "meta", "style", "script", "title":
+		default:
+			return c.error(node.Pos, "head contribution cannot contain "+node.Name)
+		}
+		for _, attribute := range node.Attributes {
+			if _, static := staticAttributeText(attribute); !static && !attribute.Boolean {
+				return c.error(attribute.Pos, "head contribution attributes must be static")
+			}
+		}
+		for _, child := range node.Children {
+			if _, ok := child.(*TextNode); !ok {
+				return c.error(node.Pos, "head contribution "+node.Name+" accepts static text only")
+			}
+		}
+		return nil
+	default:
+		return c.error(Position{Line: 1, Col: 1}, "head contribution must be static markup")
+	}
+}
+
+// scopeHeadStyles rewrites the component's style block so its class and
+// keyframes names cannot collide with another component's.
+func (c *compiler) scopeHeadStyles(info *componentInfo, head *HeadNode) error {
+	for _, node := range head.Children {
+		element, ok := node.(*ElementNode)
+		if !ok || element.Name != "style" {
+			continue
+		}
+		if info.scope != nil {
+			return c.error(element.Pos, "component "+info.decl.Name+" declares more than one style block")
+		}
+		var source strings.Builder
+		for _, child := range element.Children {
+			source.WriteString(child.(*TextNode).Text)
+		}
+		rewritten, scope, err := rewriteCSS(source.String(), scopeSuffix(c.filename, info.decl.Name))
+		if err != nil {
+			return c.error(element.Pos, err.Error())
+		}
+		element.Children = []Node{&TextNode{Kind: "html:text", Pos: element.Pos, Text: rewritten}}
+		info.scope = scope
+	}
+	return nil
+}
+
+// scopeSuffix derives a stable per-component identifier. It depends only on the
+// template path and component name, so unrelated edits keep generated class
+// names unchanged.
+func scopeSuffix(filename, component string) string {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	hash := uint64(offset64)
+	for _, b := range []byte(filename + "\x00" + component) {
+		hash ^= uint64(b)
+		hash *= prime64
+	}
+	const digits = "abcdefghijklmnopqrstuvwxyz0123456789"
+	out := make([]byte, 6)
+	for i := range out {
+		out[i] = digits[hash%uint64(len(digits))]
+		hash /= uint64(len(digits))
+	}
+	return string(out)
+}
+
+// analyzeSlot binds a slot element to the html parameter it names and enforces
+// the rules that keep slot rendering statically predictable.
+func (c *compiler) analyzeSlot(node *SlotNode, scope map[string]valueType) error {
+	if c.current == nil {
+		return c.error(node.Pos, "slot is only allowed inside a component body")
+	}
+	name := node.Parameter()
+	t, ok := c.current.params[name]
+	if !ok {
+		return c.error(node.Pos, "slot "+name+" has no matching parameter; declare "+name+": html")
+	}
+	if t.kind != kindHTML {
+		return c.error(node.Pos, "slot "+name+" must bind an html parameter, got "+t.String())
+	}
+	if node.Required && t.optional {
+		return c.error(node.Pos, "required slot "+name+" must be declared html, not html?")
+	}
+	if !node.Required && !t.optional {
+		return c.error(node.Pos, "slot "+name+" binds a required parameter; add the required attribute")
+	}
+	if node.Required && len(node.Default) > 0 {
+		return c.error(node.Pos, "required slot "+name+" cannot declare default content")
+	}
+	if c.loopDepth > 0 {
+		return c.error(node.Pos, "slot "+name+" cannot appear inside a for body")
+	}
+	if c.slotUsed[name] {
+		return c.error(node.Pos, "slot "+name+" is rendered more than once on the same path")
+	}
+	c.slotUsed[name] = true
+	return c.analyzeNodes(node.Default, copyScope(scope))
+}
+
+// markHTMLParameterUse records a bare html parameter reference so mixing
+// {children} and a slot element for the same parameter is still caught.
+func (c *compiler) markHTMLParameterUse(expr Expr, t valueType) error {
+	if c.current == nil || t.kind != kindHTML {
+		return nil
+	}
+	identifier, ok := expr.(*IdentifierExpr)
+	if !ok {
+		return nil
+	}
+	if _, ok := c.current.params[identifier.Name]; !ok {
+		return nil
+	}
+	if c.loopDepth > 0 {
+		return c.error(identifier.Pos, "slot "+identifier.Name+" cannot appear inside a for body")
+	}
+	if c.slotUsed[identifier.Name] {
+		return c.error(identifier.Pos, "slot "+identifier.Name+" is rendered more than once on the same path")
+	}
+	c.slotUsed[identifier.Name] = true
 	return nil
 }
 
@@ -359,28 +584,112 @@ func (c *compiler) analyzeComponentCall(node *ComponentNode, scope map[string]va
 			return c.error(argument.Pos, "argument "+argument.Name+" expects "+want.String()+", got "+got.String())
 		}
 	}
-	for name := range component.params {
-		if name == "children" {
+	fills, rest, err := splitFills(node.Children)
+	if err != nil {
+		return c.error(node.Pos, err.Error())
+	}
+	filled := map[string]bool{}
+	for _, fill := range fills {
+		want, ok := component.params[fill.Name]
+		if !ok || want.kind != kindHTML {
+			return c.error(fill.Pos, "component "+node.Name+" has no slot named "+fill.Name)
+		}
+		if provided[fill.Name] || filled[fill.Name] {
+			return c.error(fill.Pos, "component "+node.Name+" received slot "+fill.Name+" twice")
+		}
+		filled[fill.Name] = true
+	}
+	if hasContent(rest) {
+		childrenType, acceptsChildren := component.params["children"]
+		if !acceptsChildren || childrenType.kind != kindHTML {
+			return c.error(node.Pos, "component "+node.Name+" does not accept children")
+		}
+		if provided["children"] {
+			return c.error(node.Pos, "component "+node.Name+" received children twice")
+		}
+		filled["children"] = true
+	}
+	for name, want := range component.params {
+		if provided[name] || filled[name] {
 			continue
 		}
-		if !provided[name] {
-			return c.error(node.Pos, "missing argument "+name+" for "+node.Name)
+		if want.kind == kindHTML {
+			if want.optional {
+				continue
+			}
+			if name == "children" {
+				return c.error(node.Pos, "component "+node.Name+" requires children")
+			}
+			return c.error(node.Pos, "component "+node.Name+" requires slot "+name)
+		}
+		return c.error(node.Pos, "missing argument "+name+" for "+node.Name)
+	}
+	// Fill content belongs to the caller, so it keeps the caller slot usage
+	// state rather than the callee's.
+	for _, fill := range fills {
+		if err := c.analyzeNodes(fill.Body, copyScope(scope)); err != nil {
+			return err
 		}
 	}
-	childrenType, acceptsChildren := component.params["children"]
-	if len(node.Children) > 0 && (!acceptsChildren || childrenType.kind != kindHTML) {
-		return c.error(node.Pos, "component "+node.Name+" does not accept children")
+	return c.analyzeNodes(rest, scope)
+}
+
+// slotFill is one template element carrying a static name attribute directly
+// under a component call.
+type slotFill struct {
+	Name string
+	Pos  Position
+	Body []Node
+}
+
+// splitFills separates named fill blocks from the content that fills the
+// unnamed slot. A template element without a name attribute is ordinary markup.
+func splitFills(children []Node) ([]slotFill, []Node, error) {
+	var fills []slotFill
+	var rest []Node
+	for _, child := range children {
+		element, ok := child.(*ElementNode)
+		if !ok || element.Name != "template" {
+			rest = append(rest, child)
+			continue
+		}
+		name := ""
+		named := false
+		for _, attribute := range element.Attributes {
+			if attribute.Name != "name" {
+				continue
+			}
+			value, static := staticAttributeText(attribute)
+			if !static {
+				return nil, nil, fmt.Errorf("slot fill name must be a static value")
+			}
+			name, named = value, true
+		}
+		if !named {
+			rest = append(rest, child)
+			continue
+		}
+		if len(element.Attributes) != 1 {
+			return nil, nil, fmt.Errorf("slot fill template accepts only the name attribute")
+		}
+		fills = append(fills, slotFill{Name: name, Pos: element.Pos, Body: element.Children})
 	}
-	if len(node.Children) > 0 && provided["children"] {
-		return c.error(node.Pos, "component "+node.Name+" received children twice")
+	return fills, rest, nil
+}
+
+// hasContent reports whether nodes carry anything but insignificant whitespace,
+// so formatting between fill blocks does not count as unnamed slot content.
+func hasContent(nodes []Node) bool {
+	for _, node := range nodes {
+		text, ok := node.(*TextNode)
+		if !ok {
+			return true
+		}
+		if strings.TrimSpace(text.Text) != "" {
+			return true
+		}
 	}
-	if len(node.Children) > 0 && childrenType.optional {
-		return c.error(node.Pos, "component "+node.Name+" children parameter must be html, not html?")
-	}
-	if acceptsChildren && !provided["children"] && len(node.Children) == 0 {
-		return c.error(node.Pos, "component "+node.Name+" requires children")
-	}
-	return c.analyzeNodes(node.Children, scope)
+	return false
 }
 
 func (c *compiler) attributeValueType(attribute Attribute, scope map[string]valueType) (valueType, error) {
@@ -750,6 +1059,13 @@ func findField(record *TypeDecl, name string) (Field, bool) {
 		}
 	}
 	return Field{}, false
+}
+func copyUsage(in map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 func copyScope(in map[string]valueType) map[string]valueType {
 	out := make(map[string]valueType, len(in))

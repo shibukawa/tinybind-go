@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinygodriver/httpmux"
 )
 
@@ -155,8 +156,10 @@ func forbiddenDemoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
+	// Generated templates own rendering only, so the handler owns the response
+	// headers.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = IndexPage(w, IndexPageParams{Javascript: indexJavaScript})
+	_ = htmlbind.Render(w, IndexPage(IndexPageParams{Javascript: indexJavaScript}))
 }
 
 // RegisterDemoRoutes mounts all demo routes on mux (also used for OpenAPI discovery).

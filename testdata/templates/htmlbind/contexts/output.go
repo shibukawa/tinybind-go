@@ -3,23 +3,20 @@
 package pages
 
 import (
-	"html"
-	"io"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
 type ScriptJSON string
 
-func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }
-func _tinybindEscape(value string) string            { return html.EscapeString(value) }
-func _tinybindBool(value bool) string                { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string                  { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string            { return strconv.FormatFloat(value, 'g', -1, 64) }
+func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
+func _tinybindInt(value int) string       { return strconv.Itoa(value) }
+func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
 
 func _tinybindJSONQuote(value string) string {
 	const hex = "0123456789abcdef"
@@ -105,41 +102,24 @@ func _tinybindJSONString(value string) string {
 	return _tinybindJSONQuote(value)
 }
 
-func Document(w io.Writer, _tinybindParams DocumentParams) error {
-	markup := _tinybindParams.Markup
-	_ = markup
-	css := _tinybindParams.Css
-	_ = css
-	javascript := _tinybindParams.Javascript
-	_ = javascript
-	payload := _tinybindParams.Payload
-	_ = payload
-	if err := _tinybindWrite(w, "\n"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, markup); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "\n<style>"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, css); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</style>\n<script>"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, javascript); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</script>\n<script>window.payload = "); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, _tinybindJSONPayload(payload)); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, ";</script>\n"); err != nil {
-		return err
-	}
-	return nil
+var planDocumentOps = htmlbind.Builder[DocumentParams]{}
+
+var planDocumentPlan = &htmlbind.Plan[DocumentParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[DocumentParams]{
+		planDocumentOps.Static("\n"),
+		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Markup) }),
+		planDocumentOps.Static("\n<style>"),
+		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Css) }),
+		planDocumentOps.Static("</style>\n<script>"),
+		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Javascript) }),
+		planDocumentOps.Static("</script>\n<script>window.payload = "),
+		planDocumentOps.Raw(func(p DocumentParams) string { return _tinybindJSONPayload(p.Payload) }),
+		planDocumentOps.Static(";</script>\n"),
+	},
+}
+
+// Document binds Document to its parameters, producing a renderable fragment.
+func Document(params DocumentParams) htmlbind.Fragment {
+	return htmlbind.Bind(planDocumentPlan, params)
 }

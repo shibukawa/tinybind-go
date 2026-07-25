@@ -4,11 +4,11 @@ package pw
 
 import (
 	"context"
-	"io"
 	"net/http"
 
 	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/configbind"
+	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/sqlbind"
 )
 
@@ -22,9 +22,9 @@ func WriteAPI[T any](w http.ResponseWriter, r *http.Request, value T) error {
 
 // WriteHTML owns every HTTP concern of HTML rendering so generated templates
 // stay independent of net/http.
-func WriteHTML[P any](w http.ResponseWriter, r *http.Request, render func(io.Writer, P) error, params P) error {
+func WriteHTML(w http.ResponseWriter, r *http.Request, fragment htmlbind.Fragment) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	return render(w, params)
+	return htmlbind.Render(w, fragment)
 }
 
 // RegisterConfig registers one configuration section.

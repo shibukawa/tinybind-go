@@ -3,24 +3,21 @@
 package pages
 
 import (
-	"html"
-	"io"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
 type ScriptJSON string
 
-func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }
-func _tinybindEscape(value string) string            { return html.EscapeString(value) }
-func _tinybindBool(value bool) string                { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string                  { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string            { return strconv.FormatFloat(value, 'g', -1, 64) }
+func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
+func _tinybindInt(value int) string       { return strconv.Itoa(value) }
+func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
 
 func _tinybindJSONQuote(value string) string {
 	const hex = "0123456789abcdef"
@@ -78,74 +75,55 @@ type ProfileParams struct {
 	User User
 }
 
-func Profile(w io.Writer, _tinybindParams ProfileParams) error {
-	user := _tinybindParams.User
-	_ = user
-	if err := _tinybindWrite(w, "\n<article"); err != nil {
-		return err
-	}
-	if !(user.Active) {
-		if err := _tinybindWrite(w, " hidden"); err != nil {
-			return err
-		}
-	}
-	if user.Nickname != nil {
-		if err := _tinybindWrite(w, " title=\""); err != nil {
-			return err
-		}
-		if err := _tinybindWrite(w, _tinybindEscape(*(user.Nickname))); err != nil {
-			return err
-		}
-		if err := _tinybindWrite(w, "\""); err != nil {
-			return err
-		}
-	}
-	if err := _tinybindWrite(w, ">\n  <a href=\""); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, _tinybindEscape(user.ProfileURL.String())); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "\">"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, _tinybindEscape(user.Name)); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</a>\n  "); err != nil {
-		return err
-	}
-	if user.Active {
-		if err := _tinybindWrite(w, "\n    <ul>"); err != nil {
-			return err
-		}
-		for index, tag := range user.Tags {
-			if err := _tinybindWrite(w, "<li data-index=\""); err != nil {
-				return err
-			}
-			if err := _tinybindWrite(w, _tinybindEscape(_tinybindInt(index))); err != nil {
-				return err
-			}
-			if err := _tinybindWrite(w, "\">"); err != nil {
-				return err
-			}
-			if err := _tinybindWrite(w, _tinybindEscape(tag)); err != nil {
-				return err
-			}
-			if err := _tinybindWrite(w, "</li>"); err != nil {
-				return err
-			}
-		}
-		if err := _tinybindWrite(w, "</ul>\n  "); err != nil {
-			return err
-		}
-	} else {
-		if err := _tinybindWrite(w, "\n    <p>inactive</p>\n  "); err != nil {
-			return err
-		}
-	}
-	if err := _tinybindWrite(w, "\n</article>\n"); err != nil {
-		return err
-	}
-	return nil
+type planProfileOpsScope1 struct {
+	Outer ProfileParams
+	Item  string
+	Index int
 }
+
+var planProfileOpsScope1Ops = htmlbind.Builder[planProfileOpsScope1]{}
+
+var planProfileOps = htmlbind.Builder[ProfileParams]{}
+
+var planProfilePlan = &htmlbind.Plan[ProfileParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[ProfileParams]{
+		planProfileOps.Static("\n<article"),
+		planProfileOps.BoolAttr("hidden", func(p ProfileParams) bool { return !(p.User.Active) }),
+		planProfileOps.Attr("title", func(p ProfileParams) (string, bool) {
+			if p.User.Nickname == nil {
+				return "", false
+			}
+			return htmlbind.Escape(*(p.User.Nickname)), true
+		}),
+		planProfileOps.Static(">\n  <a"),
+		planProfileOps.Attr("href", func(p ProfileParams) (string, bool) { return htmlbind.Escape(p.User.ProfileURL.String()), true }),
+		planProfileOps.Static(">"),
+		planProfileOps.Text(func(p ProfileParams) string { return p.User.Name }),
+		planProfileOps.Static("</a>\n  "),
+		planProfileOps.If(func(p ProfileParams) bool { return p.User.Active },
+			[]htmlbind.Op[ProfileParams]{
+				planProfileOps.Static("\n    <ul>"),
+				htmlbind.For(
+					func(p ProfileParams) []string { return p.User.Tags },
+					func(p ProfileParams, item string, index int) planProfileOpsScope1 {
+						return planProfileOpsScope1{Outer: p, Item: item, Index: index}
+					},
+					[]htmlbind.Op[planProfileOpsScope1]{
+						planProfileOpsScope1Ops.Static("<li"),
+						planProfileOpsScope1Ops.Attr("data-index", func(p planProfileOpsScope1) (string, bool) { return htmlbind.Escape(_tinybindInt(p.Index)), true }),
+						planProfileOpsScope1Ops.Static(">"),
+						planProfileOpsScope1Ops.Text(func(p planProfileOpsScope1) string { return p.Item }),
+						planProfileOpsScope1Ops.Static("</li>"),
+					}),
+				planProfileOps.Static("</ul>\n  "),
+			},
+			[]htmlbind.Op[ProfileParams]{
+				planProfileOps.Static("\n    <p>inactive</p>\n  "),
+			}),
+		planProfileOps.Static("\n</article>\n"),
+	},
+}
+
+// Profile binds Profile to its parameters, producing a renderable fragment.
+func Profile(params ProfileParams) htmlbind.Fragment { return htmlbind.Bind(planProfilePlan, params) }

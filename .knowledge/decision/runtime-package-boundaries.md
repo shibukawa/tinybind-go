@@ -37,7 +37,7 @@ packages:
       - requirement:head-merging and requirement:chain-render-pipeline execution
     excludes:
       - net/http
-    note: requirement:html-writer-api-mode is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
+    note: requirement:html-component-api is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
 dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf

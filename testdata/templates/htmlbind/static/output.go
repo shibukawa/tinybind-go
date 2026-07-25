@@ -3,23 +3,20 @@
 package pages
 
 import (
-	"html"
-	"io"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
 type ScriptJSON string
 
-func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }
-func _tinybindEscape(value string) string            { return html.EscapeString(value) }
-func _tinybindBool(value bool) string                { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string                  { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string            { return strconv.FormatFloat(value, 'g', -1, 64) }
+func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
+func _tinybindInt(value int) string       { return strconv.Itoa(value) }
+func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
 
 func _tinybindJSONQuote(value string) string {
 	const hex = "0123456789abcdef"
@@ -67,9 +64,14 @@ func _tinybindJSONQuote(value string) string {
 
 type HelloParams struct{}
 
-func Hello(w io.Writer, _tinybindParams HelloParams) error {
-	if err := _tinybindWrite(w, "\n<!DOCTYPE html>\n<h1>Hello &amp; welcome</h1>\n"); err != nil {
-		return err
-	}
-	return nil
+var planHelloOps = htmlbind.Builder[HelloParams]{}
+
+var planHelloPlan = &htmlbind.Plan[HelloParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[HelloParams]{
+		planHelloOps.Static("\n<!DOCTYPE html>\n<h1>Hello &amp; welcome</h1>\n"),
+	},
 }
+
+// Hello binds Hello to its parameters, producing a renderable fragment.
+func Hello(params HelloParams) htmlbind.Fragment { return htmlbind.Bind(planHelloPlan, params) }

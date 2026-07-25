@@ -1,0 +1,16 @@
+package pages
+
+component Panel(title: string, header: html?, children: html, footer: html?): html {
+<section class="panel">
+  <div class="head"><slot name="header"><b>{title}</b></slot></div>
+  <div class="body"><slot required /></div>
+  <slot name="footer" />
+</section>
+}
+
+export component Page(caption: string): html {
+<Panel title={caption}>
+  <template name="header"><em>Guide</em></template>
+  <p>body text</p>
+</Panel>
+}

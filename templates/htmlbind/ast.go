@@ -70,6 +70,37 @@ type ElementNode struct {
 
 func (n *ElementNode) NodeType() string { return n.Kind }
 
+// HeadNode is a head element declared outside the document shell. Its children
+// are hoisted into the merged document head instead of being emitted in place.
+type HeadNode struct {
+	Kind     string   `json:"kind"`
+	Pos      Position `json:"pos"`
+	Children []Node   `json:"children,omitempty"`
+}
+
+func (n *HeadNode) NodeType() string { return n.Kind }
+
+// SlotNode marks where a bound html parameter is inserted. Name is empty for
+// the reserved children parameter. Default holds the content rendered when the
+// bound argument is absent.
+type SlotNode struct {
+	Kind     string   `json:"kind"`
+	Pos      Position `json:"pos"`
+	Name     string   `json:"name,omitempty"`
+	Required bool     `json:"required,omitempty"`
+	Default  []Node   `json:"default,omitempty"`
+}
+
+func (n *SlotNode) NodeType() string { return n.Kind }
+
+// Parameter reports the component parameter this slot binds to.
+func (n *SlotNode) Parameter() string {
+	if n.Name == "" {
+		return "children"
+	}
+	return n.Name
+}
+
 type ComponentNode struct {
 	Kind        string      `json:"kind"`
 	Pos         Position    `json:"pos"`

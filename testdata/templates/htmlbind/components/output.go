@@ -3,23 +3,20 @@
 package pages
 
 import (
-	"html"
-	"io"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
 type ScriptJSON string
 
-func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }
-func _tinybindEscape(value string) string            { return html.EscapeString(value) }
-func _tinybindBool(value bool) string                { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string                  { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string            { return strconv.FormatFloat(value, 'g', -1, 64) }
+func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
+func _tinybindInt(value int) string       { return strconv.Itoa(value) }
+func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
 
 func _tinybindJSONQuote(value string) string {
 	const hex = "0123456789abcdef"
@@ -71,55 +68,47 @@ type User struct {
 
 type renderBadgeParams struct {
 	Label    string
-	Children HTML
+	Children htmlbind.Fragment
 }
 
 type CardParams struct {
 	User User
 }
 
-func renderBadge(w io.Writer, _tinybindParams renderBadgeParams) error {
-	label := _tinybindParams.Label
-	_ = label
-	children := _tinybindParams.Children
-	_ = children
-	if err := _tinybindWrite(w, "\n<span class=\"badge\"><strong>"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, _tinybindEscape(label)); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</strong>"); err != nil {
-		return err
-	}
-	if err := children(w); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</span>\n"); err != nil {
-		return err
-	}
-	return nil
+var planCardOpsFill1Plan = &htmlbind.Plan[CardParams]{Ops: []htmlbind.Op[CardParams]{
+	planCardOps.Static("<em>member</em>"),
+}}
+
+var planBadgeOps = htmlbind.Builder[renderBadgeParams]{}
+
+var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[renderBadgeParams]{
+		planBadgeOps.Static("\n<span class=\"badge\"><strong>"),
+		planBadgeOps.Text(func(p renderBadgeParams) string { return p.Label }),
+		planBadgeOps.Static("</strong>"),
+		planBadgeOps.Slot(func(p renderBadgeParams) htmlbind.Fragment { return p.Children }, nil),
+		planBadgeOps.Static("</span>\n"),
+	},
 }
 
-func Card(w io.Writer, _tinybindParams CardParams) error {
-	user := _tinybindParams.User
-	_ = user
-	if err := _tinybindWrite(w, "\n"); err != nil {
-		return err
-	}
-	if err := renderBadge(w, renderBadgeParams{
-		Label: user.Name,
-		Children: func(w io.Writer) error {
-			if err := _tinybindWrite(w, "<em>member</em>"); err != nil {
-				return err
-			}
-			return nil
-		},
-	}); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "\n"); err != nil {
-		return err
-	}
-	return nil
+// renderBadge binds Badge to its parameters, producing a renderable fragment.
+func renderBadge(params renderBadgeParams) htmlbind.Fragment {
+	return htmlbind.Bind(planBadgePlan, params)
 }
+
+var planCardOps = htmlbind.Builder[CardParams]{}
+
+var planCardPlan = &htmlbind.Plan[CardParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[CardParams]{
+		planCardOps.Static("\n"),
+		planCardOps.Component(func(p CardParams) htmlbind.Fragment {
+			return renderBadge(renderBadgeParams{Label: p.User.Name, Children: htmlbind.Bind(planCardOpsFill1Plan, p)})
+		}),
+		planCardOps.Static("\n"),
+	},
+}
+
+// Card binds Card to its parameters, producing a renderable fragment.
+func Card(params CardParams) htmlbind.Fragment { return htmlbind.Bind(planCardPlan, params) }

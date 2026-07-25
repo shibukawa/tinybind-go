@@ -1,19 +1,21 @@
 package pages
 
 import (
-	"strings"
+	"bytes"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 func TestRenderedOutput(t *testing.T) {
-	var output strings.Builder
-	err := Document(&output, DocumentParams{
+	var output bytes.Buffer
+	fragment := Document(DocumentParams{
 		Markup:     "<b>raw</b>",
 		Css:        "body > p { color: red; }",
 		Javascript: "window.ready = true;",
 		Payload:    Payload{Message: "<unsafe>&", Count: 2, Enabled: true},
 	})
-	if err != nil {
+	if err := htmlbind.Render(&output, fragment); err != nil {
 		t.Fatal(err)
 	}
 	want := "\n<b>raw</b>\n<style>body > p { color: red; }</style>\n" +

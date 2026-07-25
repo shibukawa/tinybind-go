@@ -1,9 +1,12 @@
 package pages
 
 import (
+	"bytes"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 func TestRenderedOutput(t *testing.T) {
@@ -19,8 +22,8 @@ func TestRenderedOutput(t *testing.T) {
 		ProfileURL: *profileURL,
 		Tags:       []string{"go", "<html>"},
 	}
-	var output strings.Builder
-	if err := Profile(&output, ProfileParams{User: user}); err != nil {
+	var output bytes.Buffer
+	if err := htmlbind.Render(&output, Profile(ProfileParams{User: user})); err != nil {
 		t.Fatal(err)
 	}
 	rendered := output.String()
@@ -35,7 +38,22 @@ func TestRenderedOutput(t *testing.T) {
 			t.Errorf("output %q does not contain %q", rendered, want)
 		}
 	}
-	if strings.Contains(rendered, " hidden") || strings.Contains(rendered, "inactive") {
-		t.Fatalf("unexpected inactive output: %q", rendered)
+}
+
+func TestInactiveUserTakesTheElseBranch(t *testing.T) {
+	var output bytes.Buffer
+	user := User{Name: "Bob", ProfileURL: url.URL{Scheme: "https", Host: "example.com"}}
+	if err := htmlbind.Render(&output, Profile(ProfileParams{User: user})); err != nil {
+		t.Fatal(err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "<p>inactive</p>") {
+		t.Fatalf("else branch missing from %q", rendered)
+	}
+	if !strings.Contains(rendered, "<article hidden>") {
+		t.Fatalf("boolean attribute missing from %q", rendered)
+	}
+	if strings.Contains(rendered, "title=") {
+		t.Fatalf("absent optional attribute was emitted: %q", rendered)
 	}
 }

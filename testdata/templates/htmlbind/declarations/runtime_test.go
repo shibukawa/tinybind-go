@@ -1,8 +1,10 @@
 package pages
 
 import (
-	"strings"
+	"bytes"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 func Decorate(value string, tone Tone) string {
@@ -10,8 +12,8 @@ func Decorate(value string, tone Tone) string {
 }
 
 func TestRenderedOutput(t *testing.T) {
-	var output strings.Builder
-	if err := Label(&output, LabelParams{Value: "<value>", Tone: TonePrimary}); err != nil {
+	var output bytes.Buffer
+	if err := htmlbind.Render(&output, Label(LabelParams{Value: "<value>", Tone: TonePrimary})); err != nil {
 		t.Fatal(err)
 	}
 	want := "\n<span>Primary:&lt;value&gt;</span>\n"

@@ -34,7 +34,7 @@ coordinator:
   imports: generated files reference it like any other runtime package, so rule:generated-source-self-contained is unaffected
   phases: requirement:chain-render-pipeline owns the ordered lifecycle
   entry: api:render-html-chain for manual composition; generated route handlers call the same coordinator
-  writes: streams to the io.Writer from requirement:html-writer-api-mode
+  writes: streams to the io.Writer supplied by requirement:html-component-api rendering
   flush: performed when the writer implements a flush method, since io.Writer alone cannot
   emits: data:async-boundary-content for settled boundaries
 representation:

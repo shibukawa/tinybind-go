@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/shibukawa/tinybind-go/templates/internal/syntax"
 )
 
 // GenerateOptions controls the generated Go file.
@@ -20,6 +18,11 @@ type GenerateOptions struct {
 }
 
 // Generate parses, validates, and compiles an HTML template module to Go.
+//
+// Each component becomes an immutable render plan: an instruction list typed by
+// its parameter struct, executed by the shared htmlbind coordinator. Generated
+// code owns no response concerns, so it depends on neither net/http nor any
+// content negotiation.
 func Generate(filename string, source []byte, options GenerateOptions) ([]byte, error) {
 	module, err := Parse(filename, source)
 	if err != nil {
@@ -41,11 +44,17 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 }
 
 type goEmitter struct {
-	c       *compiler
-	b       bytes.Buffer
-	indent  int
-	pending strings.Builder
-	temp    int
+	c *compiler
+	b bytes.Buffer
+	// declarations collects loop scope types and fill plans, which must be
+	// declared outside the plan literal that references them.
+	declarations bytes.Buffer
+	// scopeCount makes generated scope and fill names unique per file.
+	scopeCount int
+	// scope is the style renaming of the component being emitted.
+	scope *styleScope
+	// shell marks that the component being emitted owns the document head.
+	shell bool
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
@@ -70,26 +79,35 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 		return nil, err
 	}
 	e.emitJSONHelpers()
+	// Plans are emitted into a side buffer first so the declarations they need
+	// can be written ahead of them.
+	var plans bytes.Buffer
 	for _, declaration := range c.module.Declarations {
 		component, ok := declaration.(*TemplateDecl)
 		if !ok {
 			continue
 		}
-		if err := e.emitComponent(component); err != nil {
+		start := e.b.Len()
+		if err := e.emitComponentPlan(component); err != nil {
 			return nil, err
 		}
+		plans.Write(e.b.Bytes()[start:])
+		e.b.Truncate(start)
 	}
+	e.b.Write(e.declarations.Bytes())
+	e.b.Write(plans.Bytes())
 	return e.b.Bytes(), nil
 }
 
 func (e *goEmitter) emitImports() {
-	e.b.WriteString("import (\n\t\"html\"\n\t\"io\"\n\t\"strconv\"\n\t\"strings\"\n")
+	e.b.WriteString("import (\n\t\"strconv\"\n\t\"strings\"\n")
 	if e.c.usesKind(kindDateTime) || e.c.usesKind(kindDate) || e.c.usesKind(kindTime) {
 		e.b.WriteString("\t\"time\"\n")
 	}
 	if e.c.usesKind(kindURL) {
 		e.b.WriteString("\t\"net/url\"\n")
 	}
+	e.b.WriteString("\n\t\"github.com/shibukawa/tinybind-go/htmlbind\"\n")
 	for _, imported := range e.c.module.Imports {
 		alias := imported.Alias
 		if alias == "" {
@@ -103,10 +121,7 @@ func (e *goEmitter) emitImports() {
 }
 
 func (e *goEmitter) emitRuntimeHelpers() {
-	e.b.WriteString("type HTML func(io.Writer) error\n")
 	e.b.WriteString("type TrustedHTML string\ntype TrustedCSS string\ntype TrustedJavaScript string\ntype ScriptJSON string\n\n")
-	e.b.WriteString("func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }\n")
-	e.b.WriteString("func _tinybindEscape(value string) string { return html.EscapeString(value) }\n")
 	e.b.WriteString("func _tinybindBool(value bool) string { return strconv.FormatBool(value) }\n")
 	e.b.WriteString("func _tinybindInt(value int) string { return strconv.Itoa(value) }\n")
 	e.b.WriteString("func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }\n\n")
@@ -160,8 +175,8 @@ func (e *goEmitter) emitDeclaredTypes() {
 }
 
 // emitComponentParams declares one {Component}Params struct per component so
-// every component keeps the same two-argument shape for zero, one, and many
-// parameters.
+// every component keeps the same two-argument binding shape for zero, one, and
+// many parameters.
 func (e *goEmitter) emitComponentParams() error {
 	for _, declaration := range e.c.module.Declarations {
 		component, ok := declaration.(*TemplateDecl)
@@ -186,569 +201,107 @@ func (e *goEmitter) emitComponentParams() error {
 	return nil
 }
 
-// emitComponent emits the HTTP-independent component form. The generated
-// function owns escaping and writing only; content negotiation, compression,
-// response commit, and error responses belong to the caller.
-func (e *goEmitter) emitComponent(component *TemplateDecl) error {
-	name := e.c.componentGoName(component.Name)
-	fmt.Fprintf(&e.b, "func %s(w io.Writer, %s %s) error {\n", name, paramsIdent, e.c.paramsGoName(component.Name))
-	e.indent = 1
-	for _, parameter := range component.Parameters {
-		local := goLocalName(parameter.Name)
-		e.line(local + " := " + paramsIdent + "." + goPublicName(parameter.Name))
-		e.line("_ = " + local)
+// scopedClassList renames the classes the active component's style block
+// declares. Classes it does not declare pass through untouched.
+func (e *goEmitter) scopedClassList(value string) string {
+	if e.scope == nil {
+		return value
 	}
-	body := component.Body.([]Node)
-	if err := e.emitNodes(body, e.c.components[component.Name].params); err != nil {
-		return err
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return value
 	}
-	e.flushStatic()
-	e.line("return nil")
-	e.b.WriteString("}\n\n")
-	return nil
+	for i, field := range fields {
+		fields[i] = e.scope.className(field)
+	}
+	return strings.Join(fields, " ")
 }
 
-// paramsIdent names the generated parameter struct argument. It is reserved so
-// a template parameter cannot shadow it.
-const paramsIdent = "_tinybindParams"
+// slotBodies maps each filled slot parameter of a component call to the nodes
+// that fill it.
+func (e *goEmitter) slotBodies(node *ComponentNode) (map[string][]Node, error) {
+	fills, rest, err := splitFills(node.Children)
+	if err != nil {
+		return nil, err
+	}
+	bodies := map[string][]Node{}
+	for _, fill := range fills {
+		bodies[fill.Name] = fill.Body
+	}
+	if hasContent(rest) {
+		bodies["children"] = rest
+	}
+	return bodies, nil
+}
 
-func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
+// renderStaticHTML serializes validated head contribution nodes to the literal
+// bytes the merged head writes.
+func renderStaticHTML(nodes []Node) string {
+	var out strings.Builder
 	for _, node := range nodes {
 		switch node := node.(type) {
 		case *TextNode:
-			e.static(node.Text)
+			out.WriteString(node.Text)
 		case *CommentNode:
-			e.static("<!--" + node.Text + "-->")
-		case *DoctypeNode:
-			e.static("<!" + node.Text + ">")
-		case *syntax.ExpressionNode:
-			e.flushStatic()
-			if err := e.emitExpressionWrite(node.Expression, node.Context, scope); err != nil {
-				return err
-			}
-		case *syntax.IfNode:
-			e.flushStatic()
-			condition, err := e.expr(node.Condition, scope)
-			if err != nil {
-				return err
-			}
-			e.line("if " + condition + " {")
-			e.indent++
-			if err := e.emitNodes(node.Then, copyScope(scope)); err != nil {
-				return err
-			}
-			e.flushStatic()
-			e.indent--
-			if len(node.Else) > 0 {
-				e.line("} else {")
-				e.indent++
-				if err := e.emitNodes(node.Else, copyScope(scope)); err != nil {
-					return err
-				}
-				e.flushStatic()
-				e.indent--
-				e.line("}")
-			} else {
-				e.line("}")
-			}
-		case *syntax.ForNode:
-			e.flushStatic()
-			iterable, err := e.expr(node.Iterable, scope)
-			if err != nil {
-				return err
-			}
-			index := "_"
-			if node.Index != "" {
-				index = node.Index
-			}
-			e.line(fmt.Sprintf("for %s, %s := range %s {", goLocalName(index), goLocalName(node.Variable), iterable))
-			e.indent++
-			inner := copyScope(scope)
-			t := e.c.exprTypes[node.Iterable]
-			inner[node.Variable] = *t.elem
-			if node.Index != "" {
-				inner[node.Index] = valueType{kind: kindInt}
-			}
-			if err := e.emitNodes(node.Body, inner); err != nil {
-				return err
-			}
-			e.flushStatic()
-			e.indent--
-			e.line("}")
+			out.WriteString("<!--" + node.Text + "-->")
 		case *ElementNode:
-			if err := e.emitElement(node, scope); err != nil {
-				return err
-			}
-		case *ComponentNode:
-			if err := e.emitComponentCall(node, scope); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported HTML node %T", node)
-		}
-	}
-	return nil
-}
-
-func (e *goEmitter) emitElement(node *ElementNode, scope map[string]valueType) error {
-	e.static("<" + node.Name)
-	for _, attribute := range node.Attributes {
-		if attribute.Boolean {
-			e.static(" " + attribute.Name)
-			continue
-		}
-		if len(attribute.Value) == 1 && attribute.Value[0].Expression != nil {
-			part := attribute.Value[0]
-			t := e.c.exprTypes[part.Expression]
-			code, err := e.expr(part.Expression, scope)
-			if err != nil {
-				return err
-			}
-			if t.optional {
-				e.flushStatic()
-				e.line("if " + code + " != nil {")
-				e.indent++
-				if t.required().kind == kindBool {
-					e.line("if *(" + code + ") { if err := _tinybindWrite(w, " + strconv.Quote(" "+attribute.Name) + "); err != nil { return err } }")
-				} else {
-					e.writeStaticNow(" " + attribute.Name + "=\"")
-					e.writeValue("*("+code+")", t.required(), true)
-					e.writeStaticNow("\"")
+			out.WriteString("<" + node.Name)
+			for _, attribute := range node.Attributes {
+				if attribute.Boolean {
+					out.WriteString(" " + attribute.Name)
+					continue
 				}
-				e.indent--
-				e.line("}")
-				continue
+				value, _ := staticAttributeText(attribute)
+				out.WriteString(" " + attribute.Name + "=\"" + value + "\"")
 			}
-			if t.kind == kindBool {
-				e.flushStatic()
-				e.line("if " + code + " { if err := _tinybindWrite(w, " + strconv.Quote(" "+attribute.Name) + "); err != nil { return err } }")
-				continue
+			out.WriteString(">")
+			out.WriteString(renderStaticHTML(node.Children))
+			if !voidElements[node.Name] {
+				out.WriteString("</" + node.Name + ">")
 			}
 		}
-		e.static(" " + attribute.Name + "=\"")
-		for _, part := range attribute.Value {
-			if part.Expression == nil {
-				e.static(part.Text)
-				continue
-			}
-			e.flushStatic()
-			code, err := e.expr(part.Expression, scope)
-			if err != nil {
-				return err
-			}
-			e.writeValue(code, e.c.exprTypes[part.Expression], true)
-		}
-		e.static("\"")
 	}
-	if node.SelfClosing {
-		e.static(" />")
-		return nil
-	}
-	e.static(">")
-	if err := e.emitNodes(node.Children, scope); err != nil {
-		return err
-	}
-	if !voidElements[node.Name] {
-		e.static("</" + node.Name + ">")
-	}
-	return nil
-}
-
-func (e *goEmitter) emitComponentCall(node *ComponentNode, scope map[string]valueType) error {
-	e.flushStatic()
-	component := e.c.components[node.Name]
-	values := map[string]string{}
-	for _, argument := range node.Arguments {
-		code, err := e.attributeCode(argument, scope)
-		if err != nil {
-			return err
-		}
-		values[argument.Name] = code
-	}
-	name := e.c.componentGoName(node.Name)
-	params := e.c.paramsGoName(node.Name)
-	if len(node.Children) == 0 {
-		fields := make([]string, 0, len(component.order))
-		for _, parameter := range component.order {
-			fields = append(fields, goPublicName(parameter.Name)+": "+values[parameter.Name])
-		}
-		e.line("if err := " + name + "(w, " + params + "{" + strings.Join(fields, ", ") + "}); err != nil { return err }")
-		return nil
-	}
-	e.line("if err := " + name + "(w, " + params + "{")
-	e.indent++
-	for _, parameter := range component.order {
-		if parameter.Name != "children" {
-			e.line(goPublicName(parameter.Name) + ": " + values[parameter.Name] + ",")
-			continue
-		}
-		e.line(goPublicName(parameter.Name) + ": func(w io.Writer) error {")
-		e.indent++
-		if err := e.emitNodes(node.Children, scope); err != nil {
-			return err
-		}
-		e.flushStatic()
-		e.line("return nil")
-		e.indent--
-		e.line("},")
-	}
-	e.indent--
-	e.line("}); err != nil { return err }")
-	return nil
-}
-
-func (e *goEmitter) attributeCode(attribute Attribute, scope map[string]valueType) (string, error) {
-	if attribute.Boolean {
-		return "true", nil
-	}
-	if len(attribute.Value) == 1 && attribute.Value[0].Expression != nil {
-		return e.expr(attribute.Value[0].Expression, scope)
-	}
-	var parts []string
-	for _, part := range attribute.Value {
-		if part.Expression == nil {
-			parts = append(parts, strconv.Quote(part.Text))
-		} else {
-			code, err := e.expr(part.Expression, scope)
-			if err != nil {
-				return "", err
-			}
-			parts = append(parts, code)
-		}
-	}
-	if len(parts) == 0 {
-		return `""`, nil
-	}
-	return strings.Join(parts, " + "), nil
-}
-
-func (e *goEmitter) emitExpressionWrite(expr Expr, context string, scope map[string]valueType) error {
-	t := e.c.exprTypes[expr]
-	code, err := e.expr(expr, scope)
-	if err != nil {
-		return err
-	}
-	if t.optional {
-		e.line("if " + code + " != nil {")
-		e.indent++
-		e.writeValue("*("+code+")", t.required(), context == "html:child" || context == "html:attribute")
-		e.indent--
-		e.line("}")
-		return nil
-	}
-	if t.kind == kindHTML {
-		e.line("if err := " + code + "(w); err != nil { return err }")
-		return nil
-	}
-	if context == "html:script" && t.kind == kindScriptJSON {
-		call := expr.(*CallExpr)
-		argument := call.Arguments[0]
-		argCode, err := e.expr(argument, scope)
-		if err != nil {
-			return err
-		}
-		e.writeCall("_tinybindJSON" + jsonTypeKey(e.c.exprTypes[argument]) + "(" + argCode + ")")
-		return nil
-	}
-	raw := t.kind == kindTrustedHTML || t.kind == kindTrustedCSS || t.kind == kindTrustedJS
-	e.writeValue(code, t, !raw)
-	return nil
-}
-
-func (e *goEmitter) writeValue(code string, t valueType, escaped bool) {
-	stringCode := valueString(code, t)
-	if escaped {
-		stringCode = "_tinybindEscape(" + stringCode + ")"
-	}
-	e.writeCall(stringCode)
-}
-
-func (e *goEmitter) writeCall(value string) {
-	e.line("if err := _tinybindWrite(w, " + value + "); err != nil { return err }")
-}
-func (e *goEmitter) writeStaticNow(value string) { e.writeCall(strconv.Quote(value)) }
-func (e *goEmitter) static(value string)         { e.pending.WriteString(value) }
-func (e *goEmitter) flushStatic() {
-	if e.pending.Len() == 0 {
-		return
-	}
-	value := e.pending.String()
-	e.pending.Reset()
-	e.writeStaticNow(value)
-}
-func (e *goEmitter) line(value string) {
-	e.b.WriteString(strings.Repeat("\t", e.indent))
-	e.b.WriteString(value)
-	e.b.WriteByte('\n')
-}
-
-func (e *goEmitter) expr(expr Expr, scope map[string]valueType) (string, error) {
-	switch expr := expr.(type) {
-	case *IdentifierExpr:
-		if t, ok := e.c.enumMembers[expr.Name]; ok {
-			return t.name + expr.Name, nil
-		}
-		return goLocalName(expr.Name), nil
-	case *LiteralExpr:
-		switch expr.ValueKind {
-		case "string":
-			return strconv.Quote(expr.Value.(string)), nil
-		case "bool":
-			return strconv.FormatBool(expr.Value.(bool)), nil
-		case "number":
-			return expr.Value.(string), nil
-		case "null":
-			return "nil", nil
-		}
-	case *MemberExpr:
-		object, err := e.expr(expr.Object, scope)
-		if err != nil {
-			return "", err
-		}
-		return object + "." + goPublicName(expr.Member), nil
-	case *IndexExpr:
-		object, err := e.expr(expr.Object, scope)
-		if err != nil {
-			return "", err
-		}
-		index, err := e.expr(expr.Index, scope)
-		if err != nil {
-			return "", err
-		}
-		return object + "[" + index + "]", nil
-	case *CallExpr:
-		callee := expr.Callee.(*IdentifierExpr)
-		var args []string
-		for _, argument := range expr.Arguments {
-			code, err := e.expr(argument, scope)
-			if err != nil {
-				return "", err
-			}
-			args = append(args, code)
-		}
-		if _, intrinsic := intrinsicResult(callee.Name); intrinsic {
-			return args[0], nil
-		}
-		return callee.Name + "(" + strings.Join(args, ", ") + ")", nil
-	case *UnaryExpr:
-		operand, err := e.expr(expr.Operand, scope)
-		if err != nil {
-			return "", err
-		}
-		operator := expr.Operator
-		if operator == "not" {
-			operator = "!"
-		}
-		return operator + "(" + operand + ")", nil
-	case *BinaryExpr:
-		left, err := e.expr(expr.Left, scope)
-		if err != nil {
-			return "", err
-		}
-		right, err := e.expr(expr.Right, scope)
-		if err != nil {
-			return "", err
-		}
-		operator := expr.Operator
-		if operator == "and" {
-			operator = "&&"
-		} else if operator == "or" {
-			operator = "||"
-		}
-		return "(" + left + " " + operator + " " + right + ")", nil
-	case *ConditionalExpr:
-		condition, err := e.expr(expr.Condition, scope)
-		if err != nil {
-			return "", err
-		}
-		thenCode, err := e.expr(expr.Then, scope)
-		if err != nil {
-			return "", err
-		}
-		elseCode, err := e.expr(expr.Else, scope)
-		if err != nil {
-			return "", err
-		}
-		t := e.c.exprTypes[expr]
-		return "(func() " + goType(t) + " { if " + condition + " { return " + thenCode + " }; return " + elseCode + " })()", nil
-	}
-	return "", fmt.Errorf("unsupported expression %T", expr)
-}
-
-func valueString(code string, t valueType) string {
-	switch t.kind {
-	case kindString, kindDecimal, kindTrustedHTML, kindTrustedCSS, kindTrustedJS, kindScriptJSON:
-		return code
-	case kindEnum:
-		return "string(" + code + ")"
-	case kindBool:
-		return "_tinybindBool(" + code + ")"
-	case kindInt:
-		return "_tinybindInt(" + code + ")"
-	case kindFloat:
-		return "_tinybindFloat(" + code + ")"
-	case kindBytes:
-		return "string(" + code + ")"
-	case kindURL:
-		return code + ".String()"
-	case kindDateTime, kindDate, kindTime:
-		return code + ".Format(time.RFC3339)"
-	}
-	return code
-}
-
-func goType(t valueType) string {
-	var base string
-	switch t.kind {
-	case kindString, kindDecimal:
-		base = "string"
-	case kindBool:
-		base = "bool"
-	case kindInt:
-		base = "int"
-	case kindFloat:
-		base = "float64"
-	case kindBytes:
-		base = "[]byte"
-	case kindDateTime, kindDate, kindTime:
-		base = "time.Time"
-	case kindURL:
-		base = "url.URL"
-	case kindRecord, kindEnum:
-		base = t.name
-	case kindHTML:
-		base = "HTML"
-	case kindTrustedHTML:
-		base = "TrustedHTML"
-	case kindTrustedCSS:
-		base = "TrustedCSS"
-	case kindTrustedJS:
-		base = "TrustedJavaScript"
-	case kindScriptJSON:
-		base = "ScriptJSON"
-	case kindArray:
-		if t.elem != nil {
-			base = "[]" + goType(*t.elem)
-		}
-	}
-	if t.optional {
-		return "*" + base
-	}
-	return base
-}
-
-func (c *compiler) componentGoName(name string) string {
-	if c.components[name].decl.Exported {
-		return name
-	}
-	return "render" + name
-}
-
-// paramsGoName is the generated parameter struct name for a component. It
-// follows the component's own exportedness so unexported components keep an
-// unexported parameter type.
-func (c *compiler) paramsGoName(name string) string { return c.componentGoName(name) + "Params" }
-func goIdentifier(value string) string {
-	var out strings.Builder
-	for i, r := range value {
-		if unicode.IsLetter(r) || r == '_' || (i > 0 && unicode.IsDigit(r)) {
-			out.WriteRune(r)
-		} else {
-			out.WriteRune('_')
-		}
-	}
-	if out.Len() == 0 {
-		return "templates"
-	}
-	return goLocalName(out.String())
-}
-
-func goLocalName(name string) string {
-	if goKeywords[name] {
-		return "_" + name
-	}
-	return name
-}
-
-var goKeywords = map[string]bool{
-	"break": true, "default": true, "func": true, "interface": true, "select": true,
-	"case": true, "defer": true, "go": true, "map": true, "struct": true,
-	"chan": true, "else": true, "goto": true, "package": true, "switch": true,
-	"const": true, "fallthrough": true, "if": true, "range": true, "type": true,
-	"continue": true, "for": true, "import": true, "return": true, "var": true,
+	return out.String()
 }
 
 func (c *compiler) usesKind(kind valueKind) bool {
-	for _, declaration := range c.module.Declarations {
-		switch declaration := declaration.(type) {
-		case *TypeDecl:
-			for _, f := range declaration.Fields {
-				t, _ := c.resolveType(f.Type)
-				if containsKind(t, kind) {
-					return true
-				}
-			}
-		case *ExternalDecl:
-			for _, p := range declaration.Parameters {
-				t, _ := c.resolveType(p.Type)
-				if containsKind(t, kind) {
-					return true
-				}
-			}
-			t, _ := c.resolveType(declaration.Result)
-			if containsKind(t, kind) {
+	for _, t := range c.exprTypes {
+		if t.required().kind == kind {
+			return true
+		}
+	}
+	for _, info := range c.components {
+		for _, t := range info.params {
+			if kindUses(t, kind) {
 				return true
 			}
-		case *TemplateDecl:
-			for _, p := range declaration.Parameters {
-				t, _ := c.resolveType(p.Type)
-				if containsKind(t, kind) {
-					return true
-				}
+		}
+	}
+	for _, record := range c.records {
+		for _, field := range record.Fields {
+			t, err := c.resolveType(field.Type)
+			if err == nil && kindUses(t, kind) {
+				return true
 			}
 		}
 	}
 	return false
 }
-func containsKind(t valueType, kind valueKind) bool {
-	if t.kind == kind {
+
+func kindUses(t valueType, kind valueKind) bool {
+	if t.required().kind == kind {
 		return true
 	}
-	return t.elem != nil && containsKind(*t.elem, kind)
+	return t.kind == kindArray && t.elem != nil && kindUses(*t.elem, kind)
 }
+
 func (c *compiler) usesQualified(alias string) bool {
-	prefix := alias + "."
-	for _, d := range c.module.Declarations {
-		switch d := d.(type) {
-		case *TypeDecl:
-			for _, f := range d.Fields {
-				if strings.HasPrefix(f.Type.Name, prefix) {
-					return true
-				}
-			}
-		case *ExternalDecl:
-			for _, p := range d.Parameters {
-				if strings.HasPrefix(p.Type.Name, prefix) {
-					return true
-				}
-			}
-			if strings.HasPrefix(d.Result.Name, prefix) {
-				return true
-			}
-		case *TemplateDecl:
-			for _, p := range d.Parameters {
-				if strings.HasPrefix(p.Type.Name, prefix) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return strings.Contains(c.source, alias+".")
 }
 
 func (e *goEmitter) emitJSONHelpers() {
 	types := map[string]valueType{}
-	for expr, t := range e.c.exprTypes {
+	for expr := range e.c.exprTypes {
 		call, ok := expr.(*CallExpr)
 		if !ok {
 			continue
@@ -757,9 +310,7 @@ func (e *goEmitter) emitJSONHelpers() {
 		if !ok || id.Name != "JsonForScript" {
 			continue
 		}
-		arg := e.c.exprTypes[call.Arguments[0]]
-		collectJSONTypes(types, arg, e.c)
-		_ = t
+		collectJSONTypes(types, e.c.exprTypes[call.Arguments[0]], e.c)
 	}
 	keys := make([]string, 0, len(types))
 	for key := range types {
@@ -788,6 +339,7 @@ func collectJSONTypes(out map[string]valueType, t valueType, c *compiler) {
 		}
 	}
 }
+
 func jsonTypeKey(t valueType) string {
 	prefix := ""
 	if t.optional {
@@ -836,4 +388,112 @@ func (e *goEmitter) emitJSONHelper(t valueType) {
 		e.b.WriteString("\tout.WriteByte('}')\n\treturn out.String()\n")
 	}
 	e.b.WriteString("}\n\n")
+}
+
+func valueString(code string, t valueType) string {
+	switch t.required().kind {
+	case kindString, kindDecimal:
+		return code
+	case kindTrustedHTML, kindTrustedCSS, kindTrustedJS, kindScriptJSON, kindEnum:
+		// These are generated named string types, so they need a conversion.
+		return "string(" + code + ")"
+	case kindBool:
+		return "_tinybindBool(" + code + ")"
+	case kindInt:
+		return "_tinybindInt(" + code + ")"
+	case kindFloat:
+		return "_tinybindFloat(" + code + ")"
+	case kindBytes:
+		return "string(" + code + ")"
+	case kindURL:
+		return code + ".String()"
+	case kindDateTime, kindDate, kindTime:
+		return code + ".Format(time.RFC3339)"
+	}
+	return code
+}
+
+func goType(t valueType) string {
+	var base string
+	switch t.kind {
+	case kindString, kindDecimal:
+		base = "string"
+	case kindBool:
+		base = "bool"
+	case kindInt:
+		base = "int"
+	case kindFloat:
+		base = "float64"
+	case kindBytes:
+		base = "[]byte"
+	case kindDateTime, kindDate, kindTime:
+		base = "time.Time"
+	case kindURL:
+		base = "url.URL"
+	case kindRecord, kindEnum:
+		base = t.name
+	case kindHTML:
+		// A fragment carries its own absence, so an optional slot needs no
+		// pointer indirection callers would have to satisfy.
+		return "htmlbind.Fragment"
+	case kindTrustedHTML:
+		base = "TrustedHTML"
+	case kindTrustedCSS:
+		base = "TrustedCSS"
+	case kindTrustedJS:
+		base = "TrustedJavaScript"
+	case kindScriptJSON:
+		base = "ScriptJSON"
+	case kindArray:
+		if t.elem != nil {
+			base = "[]" + goType(*t.elem)
+		}
+	}
+	if t.optional {
+		return "*" + base
+	}
+	return base
+}
+
+func (c *compiler) componentGoName(name string) string {
+	if c.components[name].decl.Exported {
+		return name
+	}
+	return "render" + name
+}
+
+// paramsGoName is the generated parameter struct name for a component. It
+// follows the component's own exportedness so unexported components keep an
+// unexported parameter type.
+func (c *compiler) paramsGoName(name string) string { return c.componentGoName(name) + "Params" }
+
+func goIdentifier(value string) string {
+	var out strings.Builder
+	for i, r := range value {
+		if unicode.IsLetter(r) || r == '_' || (i > 0 && unicode.IsDigit(r)) {
+			out.WriteRune(r)
+		} else {
+			out.WriteRune('_')
+		}
+	}
+	if out.Len() == 0 {
+		return "templates"
+	}
+	return goLocalName(out.String())
+}
+
+// goLocalName keeps a template name from colliding with a Go keyword.
+func goLocalName(name string) string {
+	if goKeywords[name] {
+		return "_" + name
+	}
+	return name
+}
+
+var goKeywords = map[string]bool{
+	"break": true, "default": true, "func": true, "interface": true, "select": true,
+	"case": true, "defer": true, "go": true, "map": true, "struct": true,
+	"chan": true, "else": true, "goto": true, "package": true, "switch": true,
+	"const": true, "fallthrough": true, "if": true, "range": true, "type": true,
+	"continue": true, "for": true, "import": true, "return": true, "var": true,
 }

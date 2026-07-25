@@ -26,7 +26,7 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func showPage(w http.ResponseWriter, r *http.Request) {
-	_ = pw.WriteHTML(w, r, UserPage, UserPageParams{User: User{Name: "Ada"}})
+	_ = pw.WriteHTML(w, r, UserPage(UserPageParams{User: User{Name: "Ada"}}))
 }
 
 // Register wires the fixture routes.

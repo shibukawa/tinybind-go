@@ -1,19 +1,23 @@
 # htmlbind 利用ガイド
 
-`htmlbind` は `.tb.html` に書いた型付き HTML テンプレートを、`io.Writer` へ書き出す Go 関数へ変換します。テンプレートは実行時に解析されず、値の型と HTML 上の挿入位置をコード生成時に検査します。
+`htmlbind` は `.tb.html` に書いた型付き HTML テンプレートを、Go のレンダープランへ変換します。テンプレートは実行時に解析されず、値の型と HTML 上の挿入位置をコード生成時に検査します。
+
+component ごとに、そのパラメータ構造体で型付けされた不変の命令列が生成され、共有ランタイム `htmlbind` がそれを実行します。生成コードが持つ責務はレンダリングだけで、`net/http` に依存せず、ヘッダも設定せず、コンテントエンコーディングの交渉も行いません。レスポンスはハンドラの責務です。
 
 ## 自動化されること
 
 - `.tb.html` ファイルの自動発見
 - テンプレート内の型、enum、公開 component の Go 宣言
-- component ごとの描画関数
+- component ごとのレンダープラン
 - text、attribute、URL、script、style の文脈検査
 - 通常の文字列の HTML escape
 - optional attribute の省略
 - component の組み合わせ、`if`、`for` の描画処理
+- 名前付き / 無名スロットの埋め込み
+- component ローカル style のスコープ化と、head 寄与のドキュメントへのマージ
 - 型エラーや危険な挿入位置のファイル名・行・列付き診断
 
-生成される実装の中身を理解する必要はありません。利用者が呼ぶのは、テンプレートの `export component` に対応する関数です。
+生成される実装の中身を理解する必要はありません。利用者は `export component` に対応する関数へパラメータを束縛し、その結果を描画します。
 
 ## ユーザーが用意するもの
 
@@ -65,42 +69,33 @@ export component Hello(name: string): html {
 }
 ```
 
-生成される公開関数シグネチャ:
+生成される公開 API:
 
 ```go
 type HelloParams struct {
 	Name string
 }
 
-func Hello(w io.Writer, params HelloParams) error
+func Hello(params HelloParams) htmlbind.Fragment
 ```
 
-生成された component が担うのは template 固有の責務、つまり escaping、typed field
-access、loop、JSON 出力だけです。`io.Writer` へバイト列を書くだけで、header 設定も
-content negotiation も圧縮も response commit も行いません。それらはすべて呼び出し側が
-決めます。
+component の引数は常に1つで、宣言順に1フィールドずつ持つ `{ComponentName}Params` 構造体です。引数が0個でも1個でも複数でも同じ形になります。private component には非公開の `render{Name}Params` が生成されます。
+
+`Hello` は何も書き込みません。プランとパラメータを束ねた `Fragment` を返すだけです。描画は別の手順なので、ステータス・ヘッダ・エラー処理はハンドラ側に残ります。
 
 ```go
+import "github.com/shibukawa/tinybind-go/htmlbind"
+
 func hello(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	params := HelloParams{Name: r.URL.Query().Get("name")}
-	if err := Hello(w, params); err != nil {
-		// response は書き始めているので、書き換えずにログに残す
-		log.Printf("render index: %v", err)
+	if err := htmlbind.Render(w, Hello(HelloParams{Name: r.URL.Query().Get("name")})); err != nil {
+		// 途中まで書き込み済みの可能性があるため、書き直さずログに残す
+		log.Printf("render failed: %v", err)
 	}
 }
 ```
 
-writer は単なる `io.Writer` なので、同じ component を buffer、file、メール本文へも
-HTTP の型なしで描画できます。
-
-```go
-var out strings.Builder
-err := Hello(&out, HelloParams{Name: "Ada"})
-```
-
-圧縮、キャッシュ、content negotiation は通常の HTTP middleware の担当です。
-tinybind はそれらを実行も設定もしません。
+`Fragment` は不変で共有しても安全なので、パラメータを持たないラッパーは起動時に1回だけ作って使い回せます。
 
 ## 型を宣言する
 
@@ -147,7 +142,7 @@ type ProfileParams struct {
 	Tone Tone
 }
 
-func Profile(w io.Writer, params ProfileParams) error
+func Profile(params ProfileParams) htmlbind.Fragment
 ```
 
 テンプレートで宣言した型は生成後の同じ Go パッケージに属します。Go 側ではその型を使って引数を組み立てます。
@@ -165,7 +160,7 @@ func Profile(w io.Writer, params ProfileParams) error
 | `url` | `url.URL` |
 | `T[]` | `[]T` |
 | `T?` | `*T` |
-| `html` | `HTML`（`func(io.Writer) error`）、component の children 用 |
+| `html` | `htmlbind.Fragment`（スロットが受け取る値） |
 
 ## 条件分岐
 
@@ -236,11 +231,7 @@ export component Card(user: User): html {
 アプリケーションから呼べるシグネチャは公開 component だけです。
 
 ```go
-type CardParams struct {
-	User User
-}
-
-func Card(w io.Writer, params CardParams) error
+func Card(params CardParams) htmlbind.Fragment
 ```
 
 `children: html` を持つ component は開始タグと終了タグの間の内容を受け取れます。children を取らない component は self-closing でも呼べます。
@@ -248,6 +239,102 @@ func Card(w io.Writer, params CardParams) error
 ```text
 <Avatar user={user} compact={true} />
 ```
+
+## スロット
+
+`<slot>` は、呼び出し側が渡した内容を挿入する位置を示します。slot 要素自体は出力されず、渡された内容か、宣言された既定値だけが出ます。
+
+```text
+component Panel(title: string, header: html?, children: html, footer: html?): html {
+<section class="panel">
+  <div class="head"><slot name="header"><b>{title}</b></slot></div>
+  <div class="body"><slot required /></div>
+  <slot name="footer" />
+</section>
+}
+```
+
+- `<slot />` は無名スロットで、予約名 `children` パラメータに束縛されます。
+- `<slot name="header" />` は `html` 型の `header` パラメータに束縛されます。
+- slot 要素の子は既定コンテンツで、引数が無いときに描画されます。
+- `required` は必須スロットの印で、宣言型と一致していなければなりません。`required` なら `html`、無ければ `html?` です。
+- 既定値のない任意スロットが未指定なら、要素も囲みもマーカーも残さず消えます。
+
+呼び出し側は、同じ `name` を持つ `template` 要素で名前付きスロットを埋め、残りの内容が無名スロットに入ります。
+
+```text
+export component Page(caption: string): html {
+<Panel title={caption}>
+  <template name="header"><em>Guide</em></template>
+  <p>body text</p>
+</Panel>
+}
+```
+
+埋め込みブロック間の空白は無名スロットの内容として数えません。`name` 属性を持たない `template` 要素は通常のマークアップとしてそのまま出力されます。
+
+スロットは `if` の中に置けるので、子要素を出さない分岐も書けます。`if` の両分岐に同じスロットを置くことも可能です（実行されるのは片方だけのため）。`for` の本体に置くことはできず、同一パスで2回描画することもできません。
+
+スロット引数は値ではありません。式の中でスロットパラメータを参照できないので、渡されたかどうかを判定したり、別 component へ転送したり、2箇所に挿入したりはできません。「渡されたか」を調べる代わりに既定コンテンツを使ってください。
+
+## ドキュメント全体を組み立てる
+
+ドキュメントシェル、任意個数のレイアウト、ページはそれぞれ別の component で、多くの場合別ファイルです。`RenderChain` が外側から順に、各要素の無名スロットへ次の要素を埋めながら合成します。
+
+```go
+wrappers := []htmlbind.Wrapper{
+	BindDocument(DocumentParams{Title: "Docs"}),
+	BindLayout(LayoutParams{}),
+}
+err := htmlbind.RenderChain(w, wrappers, Page(PageParams{Body: "hello"}))
+```
+
+ラッパーの数は可変です。空リストならページ単体の描画になり、それは `htmlbind.Render` と同じです。
+
+生成される形が2種類あることで誤用がコンパイルエラーになります。無名スロットを持つ component にだけ `Wrapper` を返す `Bind<Name>` が生成されるため、葉をラッパーとして渡すことはできません。組み立ての検証は1バイトも書く前に行われるので、葉の無いチェーンはステータスコードを変更できる段階で失敗します。
+
+## component の style と script
+
+component は、ドキュメントシェルの外側に `head` 要素を宣言できます。その内容は書いた位置ではなく、ドキュメントの head へ巻き上げられます。
+
+```text
+export component Card(label: string): html {
+<head>
+<link rel="stylesheet" href="/shared.css" />
+<style>
+.box { color: red; animation: fade 1s }
+.box .label { font-weight: bold }
+@keyframes fade { from { opacity: 0 } }
+</style>
+</head>
+<div class="box shadow"><span class="label">{label}</span></div>
+}
+```
+
+この `head` の中では `style` と `script` の中身が生テキストとして扱われるので、CSS や JavaScript の波括弧がテンプレート構文と衝突しません。寄与は静的なマークアップである必要があります。マージ済み head は body の最初の1バイトより前に書かれるため、リクエストデータに依存できないからです。
+
+描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。
+
+### スコープ付き style
+
+component の style ブロックは、宣言されたクラス名をリネームし、同じ component 内の該当する `class` 属性も書き換えることでスコープ化されます。
+
+```css
+.box_dwu687 { color: red; animation: fade_dwu687 1s }
+.box_dwu687 .label_dwu687 { font-weight: bold }
+@keyframes fade_dwu687 { from { opacity: 0 } }
+```
+
+- style ブロックが宣言していないクラスはそのまま通るので、外部フレームワークのユーティリティクラスはそのまま使えます。
+- `@keyframes` 名も、その `animation` / `animation-name` 参照ごとリネームされます。これらの名前は CSS の中からしか参照されないためです。
+- `font-family` 名と CSS カスタムプロパティはグローバルのままです。`@font-face` と、component をまたぐテーマ指定を壊さないためです。
+- `:global(...)` でセレクタをスコープ化の対象外にできます。
+- `p { ... }` のような裸の要素セレクタは生成時エラーです。リネームする名前が無く、全ページに漏れるとスコープ化の意味が無くなるためです。`.card p { ... }` のようにクラスで限定してください。
+- 式から与えられるクラスは書き換えられないため、生成時エラーになります。
+
+サフィックスはテンプレートのパスと component 名から導出されるので、無関係な編集で生成クラス名が変わることはありません。
+
+ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素がマージ済み寄与の出力先になります。
 
 ## attribute
 
@@ -365,7 +452,7 @@ func Decorate(value string, tone Tone) string {
 }
 ```
 
-## 作られる関数シグネチャ一覧
+## 生成される API の形
 
 ### 公開 component
 
@@ -375,7 +462,7 @@ func Decorate(value string, tone Tone) string {
 export component Name(p1: T1, p2: T2): html { ... }
 ```
 
-呼び出し API:
+公開 API:
 
 ```go
 type NameParams struct {
@@ -383,12 +470,8 @@ type NameParams struct {
 	P2 T2
 }
 
-func Name(w io.Writer, params NameParams) error
+func Name(params NameParams) htmlbind.Fragment
 ```
-
-component の引数は常に 2 つです。parameter 構造体は宣言順に、宣言した引数 1 つに
-つき 1 つの公開フィールドを持ちます。private component の parameter 型は
-`render{Name}Params` という非公開名になります。
 
 ### 引数なし
 
@@ -399,23 +482,18 @@ export component Layout(): html { ... }
 ```go
 type LayoutParams struct{}
 
-func Layout(w io.Writer, params LayoutParams) error
+func Layout(params LayoutParams) htmlbind.Fragment
 ```
 
-### HTTP response へ書き出す
+### 無名スロットを持つ公開 component
 
-生成される component は `http.ResponseWriter` も `*http.Request` も受け取らず、
-`Content-Type`、`Content-Encoding`、圧縮、response commit、エラー応答も扱いません。
-`http.ResponseWriter` は `io.Writer` なので、handler はそのまま渡し、これらの判断は
-handler 自身が持ちます。
+`children: html` を持つ component には、チェーン用のバインダも生成されます。
 
 ```go
-w.Header().Set("Content-Type", "text/html; charset=utf-8")
-err := Name(w, NameParams{P1: p1, P2: p2})
+func BindName(params NameParams) htmlbind.Wrapper
 ```
 
-すべての component が `func(io.Writer, P) error` という形なので、framework 側でも
-同じ形で受け取り、独自の response 方針を適用できます。
+children を自分で渡すときは `Name`、チェーンに渡させるときは `BindName` を使います。「ドキュメント全体を組み立てる」を参照してください。
 
 ### private component
 

@@ -3,23 +3,20 @@
 package pages
 
 import (
-	"html"
-	"io"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type HTML func(io.Writer) error
 type TrustedHTML string
 type TrustedCSS string
 type TrustedJavaScript string
 type ScriptJSON string
 
-func _tinybindWrite(w io.Writer, value string) error { _, err := io.WriteString(w, value); return err }
-func _tinybindEscape(value string) string            { return html.EscapeString(value) }
-func _tinybindBool(value bool) string                { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string                  { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string            { return strconv.FormatFloat(value, 'g', -1, 64) }
+func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
+func _tinybindInt(value int) string       { return strconv.Itoa(value) }
+func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
 
 func _tinybindJSONQuote(value string) string {
 	const hex = "0123456789abcdef"
@@ -77,19 +74,16 @@ type LabelParams struct {
 	Tone  Tone
 }
 
-func Label(w io.Writer, _tinybindParams LabelParams) error {
-	value := _tinybindParams.Value
-	_ = value
-	tone := _tinybindParams.Tone
-	_ = tone
-	if err := _tinybindWrite(w, "\n<span>"); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, _tinybindEscape(Decorate(value, tone))); err != nil {
-		return err
-	}
-	if err := _tinybindWrite(w, "</span>\n"); err != nil {
-		return err
-	}
-	return nil
+var planLabelOps = htmlbind.Builder[LabelParams]{}
+
+var planLabelPlan = &htmlbind.Plan[LabelParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[LabelParams]{
+		planLabelOps.Static("\n<span>"),
+		planLabelOps.Text(func(p LabelParams) string { return Decorate(p.Value, p.Tone) }),
+		planLabelOps.Static("</span>\n"),
+	},
 }
+
+// Label binds Label to its parameters, producing a renderable fragment.
+func Label(params LabelParams) htmlbind.Fragment { return htmlbind.Bind(planLabelPlan, params) }

@@ -8,14 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/sqlbind"
 
 	"tempmod/pw"
 )
 
-func TestHTMLComponentIsWriterShaped(t *testing.T) {
+func TestHTMLComponentIsFragmentShaped(t *testing.T) {
 	var out strings.Builder
-	if err := UserPage(&out, UserPageParams{User: User{Name: "a<b"}}); err != nil {
+	if err := htmlbind.Render(&out, UserPage(UserPageParams{User: User{Name: "a<b"}})); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "<p>a&lt;b</p>") {
@@ -26,7 +27,7 @@ func TestHTMLComponentIsWriterShaped(t *testing.T) {
 func TestWriteHTMLAcceptsGeneratedComponent(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/page", nil)
-	if err := pw.WriteHTML(recorder, request, UserPage, UserPageParams{User: User{Name: "Ada"}}); err != nil {
+	if err := pw.WriteHTML(recorder, request, UserPage(UserPageParams{User: User{Name: "Ada"}})); err != nil {
 		t.Fatal(err)
 	}
 	if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {

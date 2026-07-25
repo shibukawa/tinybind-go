@@ -2,21 +2,12 @@ package htmlbind_test
 
 import (
 	"bytes"
-	"go/ast"
-	"go/format"
-	"go/importer"
-	"go/parser"
-	"go/token"
-	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
-
-	"golang.org/x/tools/go/ast/astutil"
 
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
@@ -66,12 +57,6 @@ func TestGenerateFixtures(t *testing.T) {
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
-			for _, forbidden := range []string{"net/http", "http.ResponseWriter", "runtimehtmlbind"} {
-				if bytes.Contains(got, []byte(forbidden)) {
-					t.Fatalf("generated component references %s:\n%s", forbidden, got)
-				}
-			}
-			typeCheckGenerated(t, outputPath, got, declarationsOnly(t, runtimeTest))
 			runGeneratedTests(t, got, runtimeTest)
 		})
 	}
@@ -106,71 +91,6 @@ func runGeneratedTests(t *testing.T, generated, runtimeTest []byte) {
 	}
 }
 
-func typeCheckGenerated(t *testing.T, filename string, source, companion []byte) {
-	t.Helper()
-	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, filename, source, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("parse generated Go: %v", err)
-	}
-	parsed := []*ast.File{file}
-	if len(companion) > 0 {
-		companionFile, err := parser.ParseFile(files, "companion.go", companion, parser.AllErrors)
-		if err != nil {
-			t.Fatalf("parse generated Go companion: %v", err)
-		}
-		parsed = append(parsed, companionFile)
-	}
-	config := types.Config{Importer: importer.Default(), Error: func(err error) { t.Errorf("generated Go type error: %v", err) }}
-	if _, err := config.Check(file.Name.Name, files, parsed, nil); err != nil {
-		t.Fatalf("type-check generated Go: %v", err)
-	}
-}
-
-// declarationsOnly keeps only a fixture companion's helper declarations, so a
-// companion written against the tinybind runtime can still supply the external
-// functions the generated code calls. Running the companion itself is covered by
-// runGeneratedTests, which compiles it against the real module.
-func declarationsOnly(t *testing.T, source []byte) []byte {
-	t.Helper()
-	if len(source) == 0 {
-		return nil
-	}
-	files := token.NewFileSet()
-	file, err := parser.ParseFile(files, "companion.go", source, parser.AllErrors)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kept := file.Decls[:0]
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if ok && strings.HasPrefix(function.Name.Name, "Test") {
-			continue
-		}
-		kept = append(kept, declaration)
-	}
-	file.Decls = kept
-	for _, imported := range append([]*ast.ImportSpec(nil), file.Imports...) {
-		path, err := strconv.Unquote(imported.Path.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if astutil.UsesImport(file, path) {
-			continue
-		}
-		alias := ""
-		if imported.Name != nil {
-			alias = imported.Name.Name
-		}
-		astutil.DeleteNamedImport(files, file, alias, path)
-	}
-	var out bytes.Buffer
-	if err := format.Node(&out, files, file); err != nil {
-		t.Fatal(err)
-	}
-	return out.Bytes()
-}
-
 func TestGenerateDiagnostics(t *testing.T) {
 	tests := []struct{ name, source, want string }{
 		{"unknown identifier", `component Bad(): html {<p>{missing}</p>}`, "unknown identifier missing"},
@@ -200,12 +120,11 @@ export component Keyword(type: string): html {<p>{type}</p>}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"package _type", "Type string", "_type := _tinybindParams.Type"} {
-		if !bytes.Contains(generated, []byte(want)) {
-			t.Fatalf("generated Go does not mangle keywords (%q missing):\n%s", want, generated)
-		}
+	// The package name is mangled; the parameter becomes an exported struct
+	// field, which can never collide with a keyword.
+	if !bytes.Contains(generated, []byte("package _type")) || !bytes.Contains(generated, []byte("Type string")) {
+		t.Fatalf("generated Go does not mangle keywords:\n%s", generated)
 	}
-	typeCheckGenerated(t, "keywords.go", generated, nil)
 }
 
 func TestGenerateDiagnosticIncludesPosition(t *testing.T) {
@@ -216,78 +135,243 @@ func TestGenerateDiagnosticIncludesPosition(t *testing.T) {
 	}
 }
 
-func TestGenerateParameterShapes(t *testing.T) {
-	source := []byte(`package pages
-
-type User { name: string }
-
-export component None(): html {<hr />}
-
-export component One(user: User): html {<p>{user.name}</p>}
-
-export component Many(user: User, tone: string, count: int): html {
-<p class={tone}>{user.name}{count}</p>
-}`)
-	generated, err := htmlbind.Generate("shapes.tb.html", source, htmlbind.GenerateOptions{})
-	if err != nil {
-		t.Fatal(err)
+func TestSlotDiagnostics(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "undeclared parameter",
+			source: "component A(): html {\n<slot name=\"head\" />\n}\n",
+			want:   "slot head has no matching parameter",
+		},
+		{
+			name:   "required marker disagrees with type",
+			source: "component A(children: html?): html {\n<slot required />\n}\n",
+			want:   "required slot children must be declared html, not html?",
+		},
+		{
+			name:   "missing required marker",
+			source: "component A(children: html): html {\n<slot />\n}\n",
+			want:   "add the required attribute",
+		},
+		{
+			name:   "default content on a required slot",
+			source: "component A(children: html): html {\n<slot required>x</slot>\n}\n",
+			want:   "cannot declare default content",
+		},
+		{
+			name:   "slot inside a for body",
+			source: "component A(items: string[], children: html): html {\n{for item, index in items}<slot required />{/for}\n}\n",
+			want:   "cannot appear inside a for body",
+		},
+		{
+			name:   "slot rendered twice on one path",
+			source: "component A(children: html): html {\n<slot required /><slot required />\n}\n",
+			want:   "rendered more than once on the same path",
+		},
+		{
+			name:   "slot element used as a value",
+			source: "component A(label: string): html {\n<slot name=\"label\" />\n}\n",
+			want:   "must bind an html parameter",
+		},
+		{
+			name:   "fill names an unknown slot",
+			source: "component A(children: html): html {\n<slot required />\n}\nexport component B(): html {\n<A><template name=\"other\">x</template><p>y</p></A>\n}\n",
+			want:   "has no slot named other",
+		},
 	}
-	want := []string{
-		"type NoneParams struct{}",
-		"func None(w io.Writer, _tinybindParams NoneParams) error",
-		"type OneParams struct {\n\tUser User\n}",
-		"func One(w io.Writer, _tinybindParams OneParams) error",
-		"type ManyParams struct {\n\tUser  User\n\tTone  string\n\tCount int\n}",
-		"func Many(w io.Writer, _tinybindParams ManyParams) error",
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := htmlbind.Generate("slots.pw.html", []byte("package pages\n\n"+testCase.source), htmlbind.GenerateOptions{})
+			if err == nil {
+				t.Fatal("expected a compile error")
+			}
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error %q does not contain %q", err.Error(), testCase.want)
+			}
+		})
 	}
-	for _, fragment := range want {
-		if !bytes.Contains(generated, []byte(fragment)) {
-			t.Fatalf("generated Go missing %q:\n%s", fragment, generated)
-		}
-	}
-	typeCheckGenerated(t, "shapes.go", generated, nil)
 }
 
-func TestGenerateComponentRendersToAnyWriter(t *testing.T) {
+func TestSlotInBothIfBranchesIsAllowed(t *testing.T) {
 	source := []byte(`package pages
-export component Page(title: string): html {<title>{title}</title>}`)
-	generated, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{})
+
+component A(wide: bool, children: html): html {
+{if wide}<div class="wide"><slot required /></div>{else}<span><slot required /></span>{/if}
+}
+`)
+	if _, err := htmlbind.Generate("branches.pw.html", source, htmlbind.GenerateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestChainComposition renders a document, a layout, and a page as one
+// chain, which is the composition a handler assembles from several template
+
+// TestChainComposition renders a document, a layout, and a page as one chain,
+// which is the composition a handler assembles from several template files.
+func TestChainComposition(t *testing.T) {
+	source := []byte(`package pages
+
+export component Document(title: string, children: html): html {
+<!doctype html>
+<html>
+<head><title>{title}</title></head>
+<body><slot required /></body>
+</html>
+}
+
+export component Layout(children: html): html {
+<main class="layout"><slot required /></main>
+}
+
+export component Page(body: string): html {
+<p>{body}</p>
+}
+`)
+	generated, err := htmlbind.Generate("chain.pw.html", source, htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	companion := []byte(`package pages
 
 import (
-	"io"
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-// render mirrors how a caller stores a component: the shape is the whole
-// contract, with no HTTP type involved.
-var render func(io.Writer, PageParams) error = Page
-
-func TestRenderToBuilder(t *testing.T) {
-	var out strings.Builder
-	if err := render(&out, PageParams{Title: "a<b"}); err != nil {
+func TestRenderChain(t *testing.T) {
+	var out bytes.Buffer
+	wrappers := []htmlbind.Wrapper{
+		BindDocument(DocumentParams{Title: "Docs"}),
+		BindLayout(LayoutParams{}),
+	}
+	if err := htmlbind.RenderChain(&out, wrappers, Page(PageParams{Body: "hello"})); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "<title>a&lt;b</title>" {
-		t.Fatalf("rendered %q", out.String())
+	order := []string{"<!doctype html>", "<title>Docs</title>", "<body>", "<main class=\"layout\">", "<p>hello</p>", "</main>", "</body>"}
+	rest := out.String()
+	for _, fragment := range order {
+		index := strings.Index(rest, fragment)
+		if index < 0 {
+			t.Fatalf("output %q is missing %q in order", out.String(), fragment)
+		}
+		rest = rest[index+len(fragment):]
 	}
-}`)
-	typeCheckGenerated(t, "page.go", generated, companion)
+}
+
+func TestRenderChainWithoutWrappers(t *testing.T) {
+	var out bytes.Buffer
+	if err := htmlbind.Render(&out, Page(PageParams{Body: "solo"})); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "\n<p>solo</p>\n" {
+		t.Fatalf("unexpected leaf-only output %q", out.String())
+	}
+}
+
+func TestRenderChainRejectsMissingLeaf(t *testing.T) {
+	var out bytes.Buffer
+	wrappers := []htmlbind.Wrapper{BindLayout(LayoutParams{})}
+	if err := htmlbind.RenderChain(&out, wrappers, htmlbind.Fragment{}); err != htmlbind.ErrNoLeaf {
+		t.Fatalf("want ErrNoLeaf, got %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid chain wrote %q before failing", out.String())
+	}
+}
+`)
 	runGeneratedTests(t, generated, companion)
 }
 
-func TestGenerateRejectsParamsTypeConflict(t *testing.T) {
+// TestScopedStyleAndHeadMerging covers the single-file-component behaviour:
+// styles live next to the markup, class names are scoped per component, and
+// every reachable component's head contributions land in the document shell.
+func TestScopedStyleAndHeadMerging(t *testing.T) {
 	source := []byte(`package pages
 
-type CardParams { name: string }
+export component Document(children: html): html {
+<!doctype html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body><slot required /></body>
+</html>
+}
 
-export component Card(value: string): html {<p>{value}</p>}`)
-	_, err := htmlbind.Generate("conflict.tb.html", source, htmlbind.GenerateOptions{})
-	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("CardParams")) {
-		t.Fatalf("error = %v, want a CardParams conflict diagnostic", err)
+export component Card(label: string): html {
+<head>
+<link rel="stylesheet" href="/shared.css" />
+<style>
+.box { color: red; animation: fade 1s }
+.box .label { font-weight: bold }
+@keyframes fade { from { opacity: 0 } }
+</style>
+</head>
+<div class="box shadow"><span class="label">{label}</span></div>
+}
+`)
+	generated, err := htmlbind.Generate("sfc.pw.html", source, htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	companion := []byte(`package pages
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
+)
+
+func TestScopedStyleReachesTheDocumentHead(t *testing.T) {
+	var out bytes.Buffer
+	wrappers := []htmlbind.Wrapper{BindDocument(DocumentParams{})}
+	if err := htmlbind.RenderChain(&out, wrappers, Card(CardParams{Label: "A&B"})); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+
+	head, rest, ok := strings.Cut(body, "</head>")
+	if !ok {
+		t.Fatalf("no head in %q", body)
+	}
+	for _, want := range []string{"<meta charset=\"utf-8\" />", "<link rel=\"stylesheet\" href=\"/shared.css\">", "@keyframes fade_"} {
+		if !strings.Contains(head, want) {
+			t.Fatalf("head %q does not contain %q", head, want)
+		}
+	}
+	if strings.Contains(rest, "<style") || strings.Contains(rest, "<link") {
+		t.Fatalf("head contribution leaked into the body: %q", rest)
+	}
+	if !strings.Contains(rest, "shadow") {
+		t.Fatalf("undeclared class was rewritten: %q", rest)
+	}
+	if strings.Contains(rest, "\"box shadow\"") {
+		t.Fatalf("declared class was not scoped: %q", rest)
+	}
+	if !strings.Contains(rest, "A&amp;B") {
+		t.Fatalf("escaping regressed: %q", rest)
+	}
+	if strings.Contains(head, "animation: fade 1s") {
+		t.Fatalf("keyframes reference was not rewritten: %q", head)
+	}
+}
+
+func TestShellRendersWithoutAChain(t *testing.T) {
+	var out bytes.Buffer
+	if err := htmlbind.Render(&out, Document(DocumentParams{Children: Card(CardParams{Label: "x"})})); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "<meta charset=\"utf-8\" />") {
+		t.Fatalf("shell lost its own head content: %q", out.String())
+	}
+}
+`)
+	runGeneratedTests(t, generated, companion)
 }

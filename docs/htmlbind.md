@@ -1,19 +1,23 @@
 # htmlbind User Guide
 
-`htmlbind` compiles typed `.tb.html` templates into Go rendering functions that write to an `io.Writer`. Templates are not parsed at runtime; value types and HTML insertion contexts are checked during generation.
+`htmlbind` compiles typed `.tb.html` templates into Go render plans. Templates are not parsed at runtime; value types and HTML insertion contexts are checked during generation.
+
+Each component becomes an immutable instruction list typed by its parameter struct, and the shared `htmlbind` runtime walks it. Generated code owns rendering only: it never touches `net/http`, sets no headers, and negotiates no content encoding. Your handler owns the response.
 
 ## What is automated
 
 - Discovering `.tb.html` files
 - Generating Go declarations for template types, enums, and exported components
-- Generating one rendering function per component
+- Generating one render plan per component
 - Checking text, attribute, URL, script, and style contexts
 - Escaping ordinary strings for HTML
 - Omitting optional attributes
 - Rendering component composition, `if`, and `for`
+- Filling named and unnamed slots
+- Scoping component styles and merging head contributions into the document
 - Reporting type and unsafe-context errors with file, line, and column
 
-You do not need to understand generated implementation details. Application code calls the functions corresponding to `export component` declarations.
+You do not need to understand generated implementation details. Application code binds the `export component` declarations to their parameters and renders the result.
 
 ## What you provide
 
@@ -65,42 +69,39 @@ export component Hello(name: string): html {
 }
 ```
 
-Generated public signature:
+Generated public API:
 
 ```go
 type HelloParams struct {
 	Name string
 }
 
-func Hello(w io.Writer, params HelloParams) error
+func Hello(params HelloParams) htmlbind.Fragment
 ```
 
-Generated components own template concerns only: escaping, typed field access,
-loops, and JSON output. They write bytes to an `io.Writer` and nothing else — no
-header, no content negotiation, no compression, no response commit. The caller
-decides all of that:
+Every component takes exactly one argument, a generated `{ComponentName}Params`
+struct with one exported field per declared parameter, in declaration order.
+The rule is the same for zero, one, and many parameters. Private components get
+an unexported `render{Name}Params`.
+
+`Hello` does not write anything. It returns a `Fragment`: the plan paired with
+its parameters. Rendering is a separate step, so your handler keeps control of
+status, headers, and error handling:
 
 ```go
+import "github.com/shibukawa/tinybind-go/htmlbind"
+
 func hello(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	params := HelloParams{Name: r.URL.Query().Get("name")}
-	if err := Hello(w, params); err != nil {
-		// The response is already partly written; log rather than rewrite it.
-		log.Printf("render index: %v", err)
+	if err := htmlbind.Render(w, Hello(HelloParams{Name: r.URL.Query().Get("name")})); err != nil {
+		// The response may already be partly written; log rather than rewrite it.
+		log.Printf("render failed: %v", err)
 	}
 }
 ```
 
-Because the writer is an ordinary `io.Writer`, the same component renders to a
-buffer, a file, or an email body with no HTTP types involved:
-
-```go
-var out strings.Builder
-err := Hello(&out, HelloParams{Name: "Ada"})
-```
-
-Compression, caching, and content negotiation are ordinary HTTP middleware
-concerns. tinybind neither performs nor configures them.
+A `Fragment` is immutable and safe to share, so a parameterless wrapper can be
+built once at startup and reused across requests.
 
 ## Declaring types
 
@@ -147,7 +148,7 @@ type ProfileParams struct {
 	Tone Tone
 }
 
-func Profile(w io.Writer, params ProfileParams) error
+func Profile(params ProfileParams) htmlbind.Fragment
 ```
 
 Types declared in a template become types in the generated Go package. Application code constructs those generated types when calling components.
@@ -165,7 +166,7 @@ Types declared in a template become types in the generated Go package. Applicati
 | `url` | `url.URL` |
 | `T[]` | `[]T` |
 | `T?` | `*T` |
-| `html` | `HTML` (`func(io.Writer) error`), primarily for component children |
+| `html` | `htmlbind.Fragment`, the value a slot accepts |
 
 ## Conditions
 
@@ -233,14 +234,10 @@ export component Card(user: User): html {
 }
 ```
 
-The application-facing signature is only the exported component:
+The application-facing API is only the exported component:
 
 ```go
-type CardParams struct {
-	User User
-}
-
-func Card(w io.Writer, params CardParams) error
+func Card(params CardParams) htmlbind.Fragment
 ```
 
 A component with a `children: html` parameter receives the content between its start and end tags. Components without children can be called with self-closing syntax:
@@ -248,6 +245,136 @@ A component with a `children: html` parameter receives the content between its s
 ```text
 <Avatar user={user} compact={true} />
 ```
+
+## Slots
+
+`<slot>` marks where a component inserts content its caller supplies. The slot
+element itself is never emitted; only the supplied content or the declared
+default is.
+
+```text
+component Panel(title: string, header: html?, children: html, footer: html?): html {
+<section class="panel">
+  <div class="head"><slot name="header"><b>{title}</b></slot></div>
+  <div class="body"><slot required /></div>
+  <slot name="footer" />
+</section>
+}
+```
+
+- `<slot />` is the unnamed slot and binds the reserved `children` parameter.
+- `<slot name="header" />` binds the `header` parameter of type `html`.
+- Children of the slot element are the default content, rendered when the
+  argument is absent.
+- `required` marks a mandatory slot and must agree with the declared type:
+  `required` needs `html`, its absence needs `html?`.
+- An absent optional slot with no default leaves nothing behind: no element, no
+  wrapper, no marker.
+
+The caller fills a named slot with a `template` element carrying the same
+`name`, and the unnamed slot with the remaining content:
+
+```text
+export component Page(caption: string): html {
+<Panel title={caption}>
+  <template name="header"><em>Guide</em></template>
+  <p>body text</p>
+</Panel>
+}
+```
+
+Whitespace between fill blocks does not count as unnamed content. A `template`
+element without a `name` attribute is ordinary markup and is emitted as written.
+
+A slot may sit inside an `if`, so a component can legitimately drop its
+children. It may appear in both branches of an `if`, because only one branch
+runs. It may not appear inside a `for` body, and it may not render twice on the
+same path.
+
+Slot arguments are not values: a slot parameter cannot be read in an
+expression, so it cannot be tested for presence, forwarded, or inserted twice.
+Use default content instead of testing whether the caller supplied something.
+
+## Composing whole documents
+
+A document shell, any number of layouts, and a page are separate components,
+often in separate files. `RenderChain` composes them, outermost first, each
+filling the next into its unnamed slot:
+
+```go
+wrappers := []htmlbind.Wrapper{
+	BindDocument(DocumentParams{Title: "Docs"}),
+	BindLayout(LayoutParams{}),
+}
+err := htmlbind.RenderChain(w, wrappers, Page(PageParams{Body: "hello"}))
+```
+
+The wrapper list is variable length; an empty list renders the page alone,
+which is what `htmlbind.Render` does.
+
+The two generated shapes make misuse a compile error: only a component with an
+unnamed slot gets a `Bind<Name>` returning `Wrapper`, so a leaf cannot be used
+as a wrapper. Assembly is validated before anything is written, so a chain
+missing its leaf fails while the status code can still be changed.
+
+## Component styles and scripts
+
+A component may declare a `head` element outside the document shell. Its
+contents are hoisted into the document head instead of being emitted where they
+appear:
+
+```text
+export component Card(label: string): html {
+<head>
+<link rel="stylesheet" href="/shared.css" />
+<style>
+.box { color: red; animation: fade 1s }
+.box .label { font-weight: bold }
+@keyframes fade { from { opacity: 0 } }
+</style>
+</head>
+<div class="box shadow"><span class="label">{label}</span></div>
+}
+```
+
+Inside such a `head`, `style` and `script` bodies are raw text, so CSS and
+JavaScript braces are not template syntax. Contributions must be static markup;
+the merged head is written before the first body byte, so it cannot depend on
+request data.
+
+Every component reachable from the rendered chain contributes, including
+components called from a body, and identical tags are emitted once.
+
+### Scoped styles
+
+A component's style block is scoped by renaming the class names it declares and
+rewriting the matching `class` attributes in the same component:
+
+```css
+.box_dwu687 { color: red; animation: fade_dwu687 1s }
+.box_dwu687 .label_dwu687 { font-weight: bold }
+@keyframes fade_dwu687 { from { opacity: 0 } }
+```
+
+- Classes the style block does not declare pass through unchanged, so utility
+  classes from an external framework keep working.
+- `@keyframes` names are renamed too, along with their `animation` and
+  `animation-name` references, because those names are only referenced from
+  within CSS.
+- `font-family` names and CSS custom properties stay global, so `@font-face`
+  and theming still work across components.
+- `:global(...)` opts a selector out of scoping.
+- A bare element selector such as `p { ... }` is a generation error: it carries
+  no name to rename, and leaking it to every page would defeat scoping. Qualify
+  it with a class, as in `.card p { ... }`.
+- A class supplied through an expression cannot be rewritten and is a
+  generation error.
+
+The suffix is derived from the template path and component name, so unrelated
+edits do not change generated class names.
+
+The document shell is the component that owns `html`, `head`, and `body`. Its
+`head` element is where merged contributions land.
 
 ## Attributes
 
@@ -368,7 +495,7 @@ func Decorate(value string, tone Tone) string {
 }
 ```
 
-## Generated function signatures
+## Generated API shapes
 
 ### Exported component
 
@@ -386,11 +513,8 @@ type NameParams struct {
 	P2 T2
 }
 
-func Name(w io.Writer, params NameParams) error
+func Name(params NameParams) htmlbind.Fragment
 ```
-
-Every component takes exactly two arguments. The parameter struct has one
-exported field per declared parameter, in declaration order.
 
 ### No parameters
 
@@ -401,23 +525,19 @@ export component Layout(): html { ... }
 ```go
 type LayoutParams struct{}
 
-func Layout(w io.Writer, params LayoutParams) error
+func Layout(params LayoutParams) htmlbind.Fragment
 ```
 
-### Writing to an HTTP response
+### Exported component with an unnamed slot
 
-Generated components take no `http.ResponseWriter` and no `*http.Request`, and
-handle no `Content-Type`, `Content-Encoding`, compression, response commit, or
-error page. An `http.ResponseWriter` is an `io.Writer`, so a handler passes it
-straight in and owns those decisions itself:
+A component with a `children: html` parameter also gets a chain binder:
 
 ```go
-w.Header().Set("Content-Type", "text/html; charset=utf-8")
-err := Name(w, NameParams{P1: p1, P2: p2})
+func BindName(params NameParams) htmlbind.Wrapper
 ```
 
-Because every component has the shape `func(io.Writer, P) error`, a framework
-can accept one the same way and apply its own response policy.
+Use `Name` when you supply the children yourself, and `BindName` when the chain
+supplies them. See "Composing whole documents".
 
 ### Private component
 
@@ -453,5 +573,8 @@ Common causes include:
 - Passing a non-boolean expression to `if`
 - Referring to an undeclared field, function, or component
 - Using `RawHTML` or another trusted intrinsic in the wrong context
+- Declaring a slot whose `required` marker disagrees with its parameter type
+- Filling a slot the target component does not declare
+- Writing a bare element selector in a scoped style block
 
 Run `go generate ./...` after changing templates, before building and testing the application.
