@@ -9,6 +9,16 @@ Generator reads same-package handlers and Go types, then emits local runtime fun
 flow:
   trigger: developer defines Go types and calls recognized by data:generator-options and data:generator-call-pattern
   steps:
+    - id: check-input-hash
+      action: hash the run inputs and return the recorded artifact paths unchanged when the generated files already record that hash
+      refs:
+        - rule:generation-input-hash
+        - data:generation-stamp
+        - requirement:incremental-generation
+    - id: type-check-package
+      action: load the analyzed package once for every later phase, after template output is written
+      refs:
+        - decision:shared-package-load
     - id: discover-handlers
       action: run flow:handler-parse on configured same-package registrations
       refs:
@@ -70,9 +80,16 @@ flow:
         - requirement:openapi-fragment-aggregation
         - api:openapi-json
         - decision:openapi-31
-  invariant: all artifacts derive from the same IR
+    - id: stamp-outputs
+      action: record the input hash, the output set, and each file's own hash in every written file
+      refs:
+        - data:generation-stamp
+        - rule:generation-input-hash
+  invariant: all artifacts derive from the same IR, built from one package type check per run
   related:
     - decision:single-source-of-truth
+    - decision:shared-package-load
+    - requirement:incremental-generation
     - system:tinybind
     - concept:code-generation
     - flow:handler-parse
