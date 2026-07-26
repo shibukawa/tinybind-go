@@ -45,6 +45,9 @@ const (
 	FeatureStreaming      Feature = "streaming"
 	FeatureScanRows       Feature = "scan-rows"
 	FeatureMultipartFile  Feature = "multipart-file"
+	// FeatureHelpBackfill writes help tags derived from godoc into config
+	// structs. Disable it to keep hand-written sources untouched.
+	FeatureHelpBackfill Feature = "help-backfill"
 )
 
 // Options configures discovery identities and generated template APIs. A zero
@@ -100,6 +103,16 @@ type normalizedOptions struct {
 	parserConfig parser.Config
 	enabledUsage Usage
 	openAPI      bool
+}
+
+// featureDisabled reports whether one feature was turned off for this run.
+func (o Options) featureDisabled(feature Feature) bool {
+	for _, disabled := range o.DisableFeatures {
+		if disabled == feature {
+			return true
+		}
+	}
+	return false
 }
 
 func (o Options) normalized() (normalizedOptions, error) {

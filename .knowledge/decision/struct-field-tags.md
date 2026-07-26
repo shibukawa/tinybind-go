@@ -15,6 +15,7 @@ option_tags:
   help:
     form: 'help:"text"'
     meaning: human label for CLI usage/help and TOML scaffold comments
+    when_absent: seeded from the field godoc comment and backfilled into source via decision:godoc-help-precedence
   opt:
     form: 'opt:"long[,short]"'
     meaning: override CLI flag names; suppress default --prefix-key
@@ -51,6 +52,8 @@ rules:
   - SubCommand fields are CLI-only; no TOML or env mapping; may use opt and help
   - positional arg fields use arg tags on subcommand option structs only
   - help text seeds generated CLI --help and Bind TOML scaffold comments
+  - help tag wins over any godoc comment; see decision:godoc-help-precedence
+  - struct type godoc has no tag form and feeds the scaffold table comment only
   - enum allowlist is enforced after parse from every source that sets the field
   - default value must be in enum when both tags are present
   - secret tag affects log helpers only, not runtime stored values

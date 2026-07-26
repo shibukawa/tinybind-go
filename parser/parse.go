@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
 // ParsePackage analyzes Go sources in dir (same package only) and returns
@@ -54,13 +56,14 @@ func parseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
 	fset := fileSetFromPackage(pkg)
 	files := orderedSyntaxFiles(pkg)
 	p := &packageParser{
-		fset:   fset,
-		pkg:    pkg,
-		info:   pkg.TypesInfo,
-		files:  files,
-		config: config,
-		funcs:  map[string]*ast.FuncDecl{},
-		types:  map[string]*ast.TypeSpec{},
+		fset:     fset,
+		pkg:      pkg,
+		info:     pkg.TypesInfo,
+		files:    files,
+		config:   config,
+		funcs:    map[string]*ast.FuncDecl{},
+		types:    map[string]*ast.TypeSpec{},
+		typeDocs: map[string]string{},
 	}
 	p.indexDecls()
 	routes, diags := p.discoverRoutes()
@@ -85,14 +88,15 @@ func CheckPackageWithConfig(dir string, config Config) ([]Diagnostic, error) {
 }
 
 type packageParser struct {
-	fset   *token.FileSet
-	pkg    *packages.Package
-	info   *types.Info
-	files  []*ast.File
-	config Config
-	funcs  map[string]*ast.FuncDecl // name -> func (non-method)
-	types  map[string]*ast.TypeSpec
-	diags  []Diagnostic
+	fset     *token.FileSet
+	pkg      *packages.Package
+	info     *types.Info
+	files    []*ast.File
+	config   Config
+	funcs    map[string]*ast.FuncDecl // name -> func (non-method)
+	types    map[string]*ast.TypeSpec
+	typeDocs map[string]string // type name -> godoc text
+	diags    []Diagnostic
 }
 
 func (p *packageParser) indexDecls() {
@@ -115,6 +119,13 @@ func (p *packageParser) indexDecls() {
 				ts, ok := spec.(*ast.TypeSpec)
 				if ok && ts.Name != nil {
 					p.types[ts.Name.Name] = ts
+					// An ungrouped declaration carries its doc on the GenDecl;
+					// a group's own doc describes the group, not each spec.
+					var declDoc *ast.CommentGroup
+					if len(gd.Specs) == 1 {
+						declDoc = gd.Doc
+					}
+					p.typeDocs[ts.Name.Name] = godoc.Text(ts.Doc, declDoc)
 				}
 			}
 		}

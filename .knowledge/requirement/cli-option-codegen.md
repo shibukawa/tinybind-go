@@ -20,6 +20,7 @@ inputs:
   - subcommand types from api:configbind-subcommand
   - prefix string per Bind
   - decision:struct-field-tags including opt and help
+  - requirement:godoc-config-descriptions when help tags are absent
   - decision:cli-flag-naming
   - decision:configbind-supported-types only
   - nested struct fields and primitive array fields
@@ -66,6 +67,7 @@ acceptance:
   - default flag for Bind prefix webserver field port is --webserver-port
   - opt:"port,p" registers --port and -p and does not register --webserver-port
   - help tags appear in generated CLI usage
+  - godoc-derived help appears in usage in the same run that backfills the tag
   - regenerating after field rename updates default flag names
   - CLI layer can override TOML and env for the same config_key
   - primitive multi-value flags map to array fields

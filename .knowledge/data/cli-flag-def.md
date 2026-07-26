@@ -38,6 +38,7 @@ derivation:
   - default long flag from decision:cli-flag-naming when opt absent
   - opt tag populates long_flags and short_flags and sets uses_opt_override
   - help tag fills help for CLI and TOML scaffold comments
+  - absent help tag is seeded from the field godoc per decision:godoc-help-precedence
 used_by:
   - concept:cli-option-codegen
   - requirement:cli-option-codegen

@@ -163,7 +163,7 @@ func TestGeneratedBinder_HasValidateThenDefault_NoReflect(t *testing.T) {
 	}
 }
 
-func TestOpenAPI_YAMLRequiredIsListNotString(t *testing.T) {
+func TestOpenAPI_RequiredIsJSONArray(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("caller")
@@ -173,17 +173,23 @@ func TestOpenAPI_YAMLRequiredIsListNotString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildOpenAPI: %v", err)
 	}
-	yamlBytes, err := doc.YAML()
+	raw, err := doc.JSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	y := string(yamlBytes)
-	if strings.Contains(y, `required: "[`) || strings.Contains(y, `required: "[name]"`) {
-		t.Fatalf("required must be a YAML list, got scalar-like form:\n%s", y)
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
 	}
-	// list form under schema required
-	if !strings.Contains(y, "required:\n") || !strings.Contains(y, "- name\n") {
-		t.Fatalf("expected YAML list for required name:\n%s", y)
+	schemas := root["components"].(map[string]any)["schemas"].(map[string]any)
+	for name, schema := range schemas {
+		required, ok := schema.(map[string]any)["required"]
+		if !ok {
+			continue
+		}
+		if _, isList := required.([]any); !isList {
+			t.Fatalf("schema %s required must be a JSON array, got %#v", name, required)
+		}
 	}
 }
 

@@ -116,7 +116,81 @@ func TestBuildOpenAPI_FromFixtureGoSource(t *testing.T) {
 	}
 }
 
-func TestBuildOpenAPI_YAMLRequiredList(t *testing.T) {
+func TestBuildOpenAPI_GodocBecomesDocumentation(t *testing.T) {
+	dir := filepath.Join("..", "internal", "openapifixture")
+	doc, err := generator.BuildOpenAPI(dir)
+	if err != nil {
+		t.Fatalf("BuildOpenAPI: %v", err)
+	}
+	raw, err := doc.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	paths := root["paths"].(map[string]any)
+
+	// Handler godoc: first sentence is the summary, the rest the description.
+	post := paths["/orgs/{org_id}/users"].(map[string]any)["post"].(map[string]any)
+	if post["summary"] != "createUserHandler creates one organization user." {
+		t.Fatalf("operation summary: %#v", post["summary"])
+	}
+	description, _ := post["description"].(string)
+	if !strings.Contains(description, "Input is accepted from the JSON body") {
+		t.Fatalf("operation description: %#v", post["description"])
+	}
+	if strings.Contains(description, "creates one organization user") {
+		t.Fatalf("summary sentence must not repeat in description: %q", description)
+	}
+	if _, ok := post["deprecated"]; ok {
+		t.Fatalf("operation must not be deprecated: %#v", post["deprecated"])
+	}
+
+	// A "Deprecated:" paragraph marks the operation deprecated.
+	deprecated := paths["/users/{org_id}"].(map[string]any)["get"].(map[string]any)
+	if deprecated["deprecated"] != true {
+		t.Fatalf("deprecated operation: %#v", deprecated)
+	}
+
+	// Type godoc documents the schema, field godoc its properties.
+	schema := root["components"].(map[string]any)["schemas"].(map[string]any)["CreateUserRequest"].(map[string]any)
+	if schema["description"] != "CreateUserRequest exercises default input, path, and header for OpenAPI mapping." {
+		t.Fatalf("schema description: %#v", schema["description"])
+	}
+	props := schema["properties"].(map[string]any)
+	name := props["name"].(map[string]any)
+	if name["description"] != "Name is the display name of the new user." {
+		t.Fatalf("property description: %#v", name["description"])
+	}
+	// A line comment documents the field too.
+	orgID := props["org_id"].(map[string]any)
+	if orgID["description"] != "OrgID owns the created user." {
+		t.Fatalf("line-comment property description: %#v", orgID["description"])
+	}
+
+	// Parameters carry the doc on the parameter object, not inside its schema.
+	var found bool
+	for _, p := range post["parameters"].([]any) {
+		param := p.(map[string]any)
+		if param["name"] != "org_id" {
+			continue
+		}
+		found = true
+		if param["description"] != "OrgID owns the created user." {
+			t.Fatalf("parameter description: %#v", param["description"])
+		}
+		if _, ok := param["schema"].(map[string]any)["description"]; ok {
+			t.Fatalf("parameter schema must not duplicate the description: %#v", param["schema"])
+		}
+	}
+	if !found {
+		t.Fatalf("org_id parameter missing: %#v", post["parameters"])
+	}
+}
+
+func TestBuildOpenAPI_RequiredIsJSONArray(t *testing.T) {
 	dir := t.TempDir()
 	writeTempModule(t, dir)
 	src := `package sample
@@ -161,16 +235,18 @@ func init() {
 	if !ok || validation["description"] != "Validation" {
 		t.Fatalf("check validation response missing: %#v", responses)
 	}
-	y, err := doc.YAML()
+	raw, err := doc.JSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ys := string(y)
-	if strings.Contains(ys, `required: "[name]"`) || strings.Contains(ys, `required: "[`) {
-		t.Fatalf("invalid required YAML scalar:\n%s", ys)
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(ys, "required:\n") || !strings.Contains(ys, "- name\n") {
-		t.Fatalf("expected required YAML list:\n%s", ys)
+	schema := root["components"].(map[string]any)["schemas"].(map[string]any)["Req"].(map[string]any)
+	required, ok := schema["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "name" {
+		t.Fatalf("required must be a JSON array of names: %#v", schema["required"])
 	}
 }
 

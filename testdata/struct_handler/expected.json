@@ -5,7 +5,8 @@
       "path": "/users",
       "handler": {
         "form": "struct",
-        "name": "UserHandler"
+        "name": "UserHandler",
+        "doc": "UserHandler serves one user by name."
       },
       "request": "UserRequest",
       "response": "UserResponse",
