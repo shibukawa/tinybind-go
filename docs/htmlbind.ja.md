@@ -535,6 +535,20 @@ export component Profile(id: string): html {
 err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
 ```
 
+どちらを使うかを実行時に決めるには、その構成が境界を開き得るかを聞きます。
+`HasAwaitBlock` は `Fragment` と `Wrapper` にあり、メンバを合算するチェーン形も
+あります。
+
+```go
+if htmlbind.HasAwaitBlock(wrappers, page) {
+	// このレスポンスはストリームする
+}
+```
+
+フラグは推移的なので、async なコンポーネントを呼ぶだけのコンポーネントも `true`
+になります。読んでも何もレンダリングされません。パラメータ経由で渡した Fragment
+は数えられないので、自分で作った値と合算してください。
+
 `RenderAsync` は先に fallback を送り、確定した境界を順に yield します。返るのは
 シーケンスで、書き込むのはハンドラ側です。
 

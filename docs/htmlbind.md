@@ -580,6 +580,20 @@ JavaScript involved:
 err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
 ```
 
+To choose between them at runtime, ask whether anything in the composition can
+open a boundary. `HasAwaitBlock` is available on `Fragment` and `Wrapper`, and as
+a chain form that unions the members:
+
+```go
+if htmlbind.HasAwaitBlock(wrappers, page) {
+	// this response will stream
+}
+```
+
+The flag is transitive, so a component that only calls an async one reports
+`true`. Reading it renders nothing. A fragment you passed in through a parameter
+is not counted, so union it with the values you built yourself.
+
 `RenderAsync` sends the fallbacks first and yields each settled boundary after.
 It returns a sequence, and your handler writes each item:
 
