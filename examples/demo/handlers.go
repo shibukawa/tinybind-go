@@ -13,10 +13,15 @@ var users = map[string]UserGetResponse{
 	"user_123": {ID: "user_123", Name: "Alice"},
 }
 
+// healthHandler reports service liveness.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	_ = httpbind.Write[HealthResponse](w, r, HealthResponse{Status: "ok"})
 }
 
+// createUserHandler creates a user in one organization.
+//
+// The organization comes from the path, the caller from the Authorization
+// header, and the remaining fields from the query string or the JSON/form body.
 func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[CreateUserRequest](r)
 	if err != nil {
@@ -44,6 +49,7 @@ func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// searchHandler searches users by keyword.
 func searchHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[SearchRequest](r)
 	if err != nil {
@@ -61,6 +67,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// echoHandler echoes the request message back n times.
 func echoHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[EchoRequest](r)
 	if err != nil {
@@ -73,6 +80,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// sessionHandler reports the session carried by the session cookie.
 func sessionHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[SessionRequest](r)
 	if err != nil {
@@ -92,6 +100,7 @@ func sessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getUserHandler returns one user by id.
 func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[UserGetRequest](r)
 	if err != nil {
@@ -148,6 +157,7 @@ func chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// forbiddenDemoHandler always fails with a domain 403 error.
 func forbiddenDemoHandler(w http.ResponseWriter, r *http.Request) {
 	httpbind.WriteError(w, r, httpbind.Forbidden(httpbind.Problem{
 		Code:    "forbidden",
@@ -155,6 +165,7 @@ func forbiddenDemoHandler(w http.ResponseWriter, r *http.Request) {
 	}))
 }
 
+// indexHandler renders the demo index page from the typed HTML template.
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	// Generated templates own rendering only, so the handler owns the response
 	// headers.
@@ -179,7 +190,6 @@ func RegisterDemoRoutes(mux *httpmux.ServeMux) {
 	mux.HandleFunc("GET /forbidden", forbiddenDemoHandler)
 
 	mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)
-	mux.HandleFunc("GET /openapi.yaml", httpbind.OpenAPIYAML)
 	mux.Handle("GET /docs/{$}", httpbind.SwaggerUI("/openapi.json"))
 	mux.HandleFunc("GET /docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusFound)

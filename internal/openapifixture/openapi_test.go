@@ -14,7 +14,7 @@ import (
 	_ "github.com/shibukawa/tinybind-go/internal/openapifixture" // register generated OpenAPI
 )
 
-func TestOpenAPIServe_JSONAndYAML(t *testing.T) {
+func TestOpenAPIServe_JSON(t *testing.T) {
 	// Real serve path after package init registered generated document.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
@@ -36,25 +36,6 @@ func TestOpenAPIServe_JSONAndYAML(t *testing.T) {
 	if paths["/orgs/{org_id}/users"] == nil {
 		t.Fatalf("paths: %#v", paths)
 	}
-
-	recY := httptest.NewRecorder()
-	httpbind.OpenAPIYAML(recY, httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil))
-	if recY.Code != http.StatusOK {
-		t.Fatalf("yaml status %d", recY.Code)
-	}
-	if ct := recY.Header().Get("Content-Type"); !strings.Contains(ct, "yaml") {
-		t.Fatalf("yaml content-type %q", ct)
-	}
-	body := recY.Body.String()
-	if !strings.Contains(body, "openapi: 3.1.0") && !strings.Contains(body, "openapi: \"3.1.0\"") {
-		// our yaml writer emits: openapi: 3.1.0
-		if !strings.HasPrefix(strings.TrimSpace(body), "components:") && !strings.Contains(body, "openapi:") {
-			t.Fatalf("yaml body: %s", body[:min(200, len(body))])
-		}
-	}
-	if !strings.Contains(body, "/orgs/{org_id}/users") {
-		t.Fatalf("yaml missing path: %s", body[:min(400, len(body))])
-	}
 }
 
 func TestOpenAPI_SourceOfTruthIsGoGeneration(t *testing.T) {
@@ -73,7 +54,7 @@ func TestOpenAPI_SourceOfTruthIsGoGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, _, err := httpbind.AssembleOpenAPI()
+	reg, err := httpbind.AssembleOpenAPI()
 	if err != nil {
 		t.Fatal(err)
 	}

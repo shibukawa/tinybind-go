@@ -49,6 +49,7 @@ type Route struct {
 type Handler struct {
 	Form string `json:"form"`           // named | inline | struct
 	Name string `json:"name,omitempty"` // function or type name when known
+	Doc  string `json:"doc,omitempty"`  // godoc of the handler func or type
 }
 
 // WrapperMeta holds statically known stdlib wrapper metadata.

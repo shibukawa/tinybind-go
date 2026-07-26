@@ -3,7 +3,7 @@ id: api:openapi-json
 type: api
 title: OpenAPI JSON Handler
 ---
-Public handler serializes the document merged from every registered data:openapi-fragment as JSON.
+Public handler serializes the document merged from every registered data:openapi-fragment as JSON, the only serialization per decision:openapi-json-only.
 
 ```yaml
 signature: |
@@ -21,7 +21,6 @@ source: concept:openapi-embed
 aggregation: requirement:openapi-fragment-aggregation
 assembly: api:openapi-assembly
 related:
-  - api:openapi-yaml
   - concept:openapi-generation
   - concept:openapi-ui
 ```

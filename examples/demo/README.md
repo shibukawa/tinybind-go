@@ -14,7 +14,8 @@ Sample app that exercises the main library features end-to-end.
 | Generated `check` validation | request struct tags + `Bind` / `WriteError` |
 | Domain 4xx / 5xx helpers | handlers + `WriteError` |
 | Typed HTML template | `index.tb.html` → generated `IndexPage` |
-| OpenAPI 3.1 embed | `/openapi.json`, `/openapi.yaml` |
+| OpenAPI 3.1 embed | `/openapi.json` |
+| godoc as OpenAPI docs | handler / struct / field comments → `summary`, `description` |
 | Swagger UI | `/docs/` |
 | **Streaming ideal API** | `POST /chat` via `NewStream[T]` + multi `Write` |
 
