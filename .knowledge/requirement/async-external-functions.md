@@ -9,24 +9,44 @@ Allow an explicitly async external function to execute concurrently during gener
 source: concept:html-render-runtime-extensions
 baseline: typed external functions from requirement:template-language-core
 declaration:
-  activation: explicit async flag on an external declaration
-  signature: statically typed; exact source syntax and Go mapping unresolved
-execution:
-  - invoke generated adapter in a goroutine with request cancellation context
-  - start each invocation once and expose a typed pending result to its dependent subtree
-  - send completion to one response coordinator; goroutines never write the response directly
-  - wait for or cancel all request-owned work before the decision:async-component-signature sequence ends
+  shape: `external async LoadUser(id: string): User`
+  placement: `async` follows the `external` keyword instead of becoming a decision:template-annotation-syntax annotation, because it changes the required Go signature rather than annotating behavior
+  ambiguity: none, because an external name must be PascalCase
+go_signature:
+  async: func Name(args...) (Result, error)
+  sync: func Name(args...) Result, unchanged
+  shape: an ordinary blocking Go function; the only difference from a sync external is the error result a boundary can recover from
+  optional_context:
+    decision: an implementation declaring a leading context.Context receives the boundary context, approved 2026-07-26
+    detection: generation reads the package's Go sources and passes the context to the functions that accept one
+    syntactic: the check is on the parsed parameter list, because it runs before the package compiles; an unparsable file is skipped and a mismatched call shape stays an ordinary Go compile error
+    template_surface: unchanged either way, so the choice belongs to whoever writes the implementation, function by function
+    reason: application code stays a plain function and the runtime owns the concurrency, the way a caller promisifies a blocking call, while a call that can genuinely abort still gets what it needs
 usage:
-  - a component subtree that reads a pending value must be enclosed by a decision:async-boundary-syntax await clause
-  - use outside an await boundary is a generation error
+  - an async external may be called only in a decision:async-boundary-syntax await clause header
+  - any other call site is a generation error naming the function and the position
+  - the bound result is an ordinary typed value in the primary subtree
+execution:
+  - the runtime runs each binding of one await clause in its own goroutine and joins the results
+  - two slow bindings of one clause cost the slower one rather than their sum
+  - each invocation starts once per boundary instance
+  - each binding writes only its own field of the generated boundary scope, so bindings share no memory and need no lock
+  - completion goes to one response coordinator; adapter goroutines never write the response
+cancellation:
+  bounds: always the wait; the work only when the implementation took a context
+  request_cancelled: the runtime stops waiting and the boundary emits nothing
+  timeout: the same, except the boundary renders recover with the timeout code
+  context_taking: sees the cancellation and may return early
+  plain: cannot be interrupted, so it is abandoned; it finishes on its own and its result is discarded
+  scope_safety: an abandoned binding is still writing the boundary scope, so a failed or cancelled wait discards that scope instead of returning it
 failure:
   - normalize returned error, adapter panic, and configured timeout as data:async-render-error
-  - route failure to the nearest decision:async-boundary-syntax recover clause
-  - stop work on request cancellation when the Go implementation honors context
+  - the first failing binding in declaration order decides the boundary, so two failing bindings fail the same way on every run
+  - route failure to that clause's recover subtree, or leave the committed fallback when the clause omits recover
+  - stop work on request cancellation, which produces no recover output
   - never replace fallback with partial or context-unsafe HTML
 compatibility: synchronous external declarations retain existing behavior through requirement:html-rendering-compatibility
 open_questions:
-  - async flag placement and whether async externals require context.Context
-  - exact result and error signature mapping to data:async-render-error
-  - concurrency limit, timeout, and nested dependency scheduling
+  - per-boundary concurrency limit defaults
+  - whether a declared error classifier should replace the default data:async-render-error normalization
 ```

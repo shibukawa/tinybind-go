@@ -15,6 +15,8 @@ Each component becomes an immutable instruction list typed by its parameter stru
 - Rendering component composition, `if`, and `for`
 - Filling named and unnamed slots
 - Scoping component styles and merging head contributions into the document
+- Running `await` boundaries concurrently and streaming them as they settle
+- Reusing the output of `@cache` components through a store you supply
 - Reporting type and unsafe-context errors with file, line, and column
 
 You do not need to understand generated implementation details. Application code binds the `export component` declarations to their parameters and renders the result.
@@ -495,6 +497,247 @@ func Decorate(value string, tone Tone) string {
 }
 ```
 
+## Async components
+
+An `external async` function runs concurrently while the page renders. Your Go
+implementation stays an ordinary blocking function; it just gains an error
+result, because a boundary needs something to recover from:
+
+```text
+external async LoadUser(id: string): User
+external async LoadPosts(id: string): Post[]
+```
+
+```go
+func LoadUser(id string) (User, error)
+func LoadPosts(id string) ([]Post, error)
+```
+
+Nothing in that code knows about concurrency. The runtime runs each binding in
+its own goroutine and joins the results, so two slow calls in one `await` take
+as long as the slower one rather than their sum.
+
+### Taking a context
+
+Declare a leading `context.Context` and the boundary's context is passed to it:
+
+```go
+func LoadPosts(ctx context.Context, id string) ([]Post, error)
+```
+
+The template declaration does not change. Generation reads the Go sources in the
+package and passes the context to the functions that accept one, so the choice
+belongs to whoever writes the implementation, function by function. A function
+without the parameter is called plainly.
+
+Take the context when the call can genuinely abort — a database query or an
+outbound request. Leave it out when it cannot; the wait is bounded either way.
+
+An async result exists only inside the boundary that waits for it, so an async
+function can only be called in an `await` binding. Calling one anywhere else is
+a generation error.
+
+### await, fallback, recover
+
+An `await` block has three clauses:
+
+```text
+export component Profile(id: string): html {
+<section>
+{await user = LoadUser(id), posts = LoadPosts(id)}
+  <h1>{user.name}</h1>
+  <ul>{for post in posts}<li>{post.title}</li>{/for}</ul>
+{fallback}
+  <p class="pending">loading…</p>
+{recover err}
+  <p class="failed">{err.message}</p>
+{/await}
+</section>
+}
+```
+
+- The bindings after `await` start together. Each names one async call, and the
+  bound value is an ordinary typed identifier in the primary subtree.
+- `fallback` is required. It is what commits to the response first, so a slow
+  dependency does not delay the rest of the page.
+- `recover` is optional and binds a safe `error` value with the fields `code`,
+  `message`, `retryable`, and `timeout`. Omit it to keep the fallback in place
+  on failure.
+
+The bindings are visible only in the primary subtree, and the error name only in
+`recover`, so no clause can read a value that does not exist when it renders.
+
+A `<slot>` may not appear inside an `await` block: the fallback and the
+replacement would both render it.
+
+### Rendering an async component
+
+`Render` blocks on the bindings and writes the settled subtree in place, so a
+template with `await` still produces a correct, complete document with no client
+JavaScript involved:
+
+```go
+err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
+```
+
+`RenderAsync` sends the fallbacks first and yields each settled boundary after.
+It returns a sequence, and your handler writes each item:
+
+```go
+func profile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	page := Profile(ProfileParams{Id: r.PathValue("id")})
+	for content, err := range htmlbind.RenderAsync(r.Context(), w, page,
+		htmlbind.WithAsyncTimeout(3*time.Second),
+		htmlbind.WithErrorReporter(func(err error) { log.Printf("boundary failed: %v", err) }),
+	) {
+		if err != nil {
+			// The response is already committed; log rather than rewrite it.
+			log.Printf("render failed: %v", err)
+			break
+		}
+		if _, err := content.WriteTo(w); err != nil {
+			break
+		}
+		htmlbind.Flush(w)
+	}
+}
+```
+
+`RenderChainAsync` is the same for a wrapper chain. There is no variant that
+hides this loop: how many boundaries a render produces is not knowable up front,
+least of all for a chain assembled at request time, so a streaming handler has
+to be written against the sequence anyway.
+
+Only the ranging caller writes the response, and stopping the range early ends
+the render without waiting for the outstanding boundaries. The render flushes
+after the initial pass; `htmlbind.Flush` is how you do the same after each
+chunk, and it is a no-op for a writer that cannot flush.
+
+A progressive render writes each pending boundary as `<tb-boundary id="...">`
+holding the fallback. Each completion is then appended as an inert template
+followed by a marker:
+
+```html
+<template data-tb-boundary="tb-1">…</template><tb-apply for="tb-1"></tb-apply>
+```
+
+A small fixed script merged into the document head defines `tb-apply` and does
+the swap from its connected callback. It is the same code for every page, and no
+completion carries a script of its own, so nothing needs a CSP nonce or
+`unsafe-inline`.
+
+The marker is what makes the swap safe. An HTML parser inserts an element when
+it reads the *start* tag, so a runtime that reacted to the template's appearance
+could read one whose content had not arrived yet and replace the placeholder
+with nothing — losing the fallback along with the result. Because `<tb-apply>`
+comes after `</template>` in the byte stream, the template is complete by the
+time it exists, however a proxy, TLS record, or compressing encoder split the
+bytes. A completion whose marker never arrives is simply not applied, and the
+fallback stays.
+
+A document with no shell `head` element gets no script and simply keeps its
+fallbacks.
+
+### Cancellation bounds the wait
+
+A cancelled request or an expired `WithAsyncTimeout` makes the runtime stop
+waiting: the boundary produces no completion, or renders `recover` with
+`code: "timeout"`.
+
+Whether the work itself stops is up to the external. One that takes a context
+sees the cancellation and can return early. One that does not cannot be
+interrupted, so it is abandoned: it finishes on its own and its result is
+discarded.
+
+### Errors stay server-side
+
+A recover subtree never sees a raw Go error. By default a failure becomes
+`code: "internal"` with no message, and a timeout becomes `code: "timeout"`. To
+publish something more specific, give the error its own safe projection:
+
+```go
+type UpstreamError struct{ Service string }
+
+func (e UpstreamError) Error() string { return "upstream " + e.Service + " unreachable" }
+
+func (e UpstreamError) PublicError() htmlbind.AsyncError {
+	return htmlbind.AsyncError{Code: "upstream", Message: "Please try again.", Retryable: true}
+}
+```
+
+`WithErrorReporter` receives the original error either way, including when a
+`recover` clause handled it, so logging and metrics still see everything.
+
+## Cached components
+
+Annotate a component with `@cache` to reuse its rendered output for equal
+parameters:
+
+```text
+@cache(ttl: "5m")
+export component Sidebar(userId: string, tone: Tone): html {
+<aside>...</aside>
+}
+```
+
+The `ttl` argument is required and is parsed at generation time, so a malformed
+duration fails the build rather than a request.
+
+Caching is a deployment choice, not a template rewrite: nothing is stored until a
+caller supplies a store.
+
+```go
+var pageCache = htmlbind.NewMemoryCache(1024)
+
+err := htmlbind.Render(w, Page(params), htmlbind.WithCache(pageCache))
+```
+
+`WithCache` works on `RenderChain`, `RenderAsync`, and `RenderChainAsync` too. Without it,
+an annotated component renders exactly as it would without the annotation.
+
+### What the key covers
+
+A key holds the component's package and file, a fingerprint of its generated
+plan, and a canonical encoding of every declared parameter. Changing a
+parameter, editing the template, or editing anything the component renders all
+produce a different key, so regenerated code can never read stale output.
+
+Anything that is not a declared parameter is invisible to the key. Request
+identity, authorization, locale, and headers must be passed in as parameters, or
+the component must not be cached.
+
+### Supplying your own store
+
+`CacheStore` is a two-method interface, so a Redis or memcached adapter is
+ordinary application code:
+
+```go
+type CacheStore interface {
+	Get(ctx context.Context, key string) ([]byte, bool)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration)
+}
+```
+
+`Set` returns nothing, because a cache write failure must not fail a response
+that already rendered correctly; an implementation reports its own failures. A
+store is used from several goroutines during one render and must be safe for
+concurrent use. Keys are plain strings and may be long, so a store is free to
+hash them.
+
+### Restrictions
+
+Generation rejects a cached component that could not be replayed from stored
+bytes:
+
+- It cannot declare an `html` parameter, because a slot argument is a bound
+  continuation rather than a value that can enter the key.
+- It cannot reach an `await` boundary, directly or through a component it calls.
+  A boundary is emitted as a placeholder now and a replacement later, so it is
+  not one byte range that can be stored.
+- It cannot own the document `head`, because the merged head depends on the
+  chain rather than on its parameters.
+
 ## Generated API shapes
 
 ### Exported component
@@ -576,5 +819,9 @@ Common causes include:
 - Declaring a slot whose `required` marker disagrees with its parameter type
 - Filling a slot the target component does not declare
 - Writing a bare element selector in a scoped style block
+- Calling an `external async` function outside an `await` binding
+- Writing an `await` block with no `fallback` clause
+- Annotating a component with `@cache` when it declares an `html` parameter or
+  reaches an `await` boundary
 
 Run `go generate ./...` after changing templates, before building and testing the application.

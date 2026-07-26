@@ -2,6 +2,8 @@ package htmlbind
 
 import (
 	"fmt"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -103,8 +105,18 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if transitive := e.c.transitiveHead(component.Name); len(transitive) > 0 {
 		head = "[]string{" + strings.Join(transitive, ", ") + "}"
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n\tOps: %s,\n}\n\n",
-		prefix, params, head, indentBlock(plan.literal(), "\t"))
+	ops := plan.literal()
+	// The Cache field is written only for a cached component, so the generated
+	// output of every other component is unchanged.
+	cache := ""
+	if info.cache != nil {
+		cache = fmt.Sprintf("\tCache: &%sCache,\n", prefix)
+		if err := e.emitCachePolicy(component, prefix, params, head, ops); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s\tOps: %s,\n}\n\n",
+		prefix, params, head, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -119,6 +131,165 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			prefix, params)
 	}
 	return nil
+}
+
+// emitCachePolicy writes the cache configuration of one component: its identity
+// plus a fingerprint of the plan this run produced, and the generated function
+// encoding its parameters into a key.
+//
+// Fingerprinting the emitted instruction list is what makes regenerated code
+// unable to read entries written by the previous code, including changes that
+// came from a nested component rather than from this template.
+func (e *goEmitter) emitCachePolicy(component *TemplateDecl, prefix, params, head, ops string) error {
+	info := e.c.components[component.Name]
+	// Identity uses the package and the template's base name rather than the
+	// path the generator was invoked with, so the same source produces the same
+	// key on every machine. Template files of one package share a directory, so
+	// base names are unique within it.
+	identity := e.pkg + "/" + path.Base(e.c.filename) + ":" + component.Name
+	id := identity + ":" + fingerprint(head+"\x00"+ops)
+	var parts []string
+	for _, parameter := range component.Parameters {
+		t, err := e.c.resolveType(parameter.Type)
+		if err != nil {
+			return err
+		}
+		parts = append(parts, cacheKeyCall(t, receiverIdent+"."+goPublicName(parameter.Name)))
+	}
+	key := `""`
+	if len(parts) > 0 {
+		key = strings.Join(parts, " + ")
+	}
+	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n\tKey: func(%s %s) string { return %s },\n}\n\n",
+		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, receiverIdent, params, key)
+	return nil
+}
+
+// fingerprint is a stable 64-bit FNV-1a digest rendered as hex. It only has to
+// change when the generated code changes, so a non-cryptographic hash is enough.
+func fingerprint(value string) string {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	hash := uint64(offset64)
+	for _, b := range []byte(value) {
+		hash ^= uint64(b)
+		hash *= prime64
+	}
+	return strconv.FormatUint(hash, 16)
+}
+
+// cacheKeyCall encodes one value into its framed cache key contribution.
+func cacheKeyCall(t valueType, code string) string {
+	if t.optional {
+		return "htmlbind.KeyOptional(" + code + ", " + cacheKeyEncoder(t.required()) + ")"
+	}
+	if t.kind == kindArray && t.elem != nil {
+		return "htmlbind.KeyArray(" + code + ", " + cacheKeyEncoder(*t.elem) + ")"
+	}
+	return cacheKeyEncoder(t) + "(" + code + ")"
+}
+
+// cacheKeyEncoder returns a func value encoding one value of t, for the generic
+// runtime helpers that take an element encoder.
+func cacheKeyEncoder(t valueType) string {
+	if t.optional {
+		return "func(value " + goType(t) + ") string { return " + cacheKeyCall(t, "value") + " }"
+	}
+	switch t.kind {
+	case kindBool:
+		return "htmlbind.KeyBool"
+	case kindInt:
+		return "htmlbind.KeyInt"
+	case kindFloat:
+		return "htmlbind.KeyFloat"
+	case kindBytes:
+		return "htmlbind.KeyBytes"
+	case kindDateTime, kindDate, kindTime:
+		return "htmlbind.KeyTime"
+	case kindURL:
+		return "func(value url.URL) string { return htmlbind.KeyString(value.String()) }"
+	case kindRecord:
+		return cacheKeyRecordEncoder(t.name)
+	case kindArray:
+		return "func(value " + goType(t) + ") string { return " + cacheKeyCall(t, "value") + " }"
+	default:
+		// string, decimal, enums, and the trusted string types are all ~string.
+		return "htmlbind.KeyString[" + goType(t) + "]"
+	}
+}
+
+// cacheKeyRecordEncoder names the generated key encoder for a declared record.
+func cacheKeyRecordEncoder(name string) string { return "_tinybindKey" + name }
+
+// emitCacheKeyHelpers writes one encoder per record reachable from a cached
+// component's parameters.
+func (e *goEmitter) emitCacheKeyHelpers() error {
+	for _, record := range e.cacheRecords {
+		var parts []string
+		for _, field := range e.c.records[record.name].Fields {
+			t, err := e.c.resolveType(field.Type)
+			if err != nil {
+				return err
+			}
+			parts = append(parts, cacheKeyCall(t, "value."+goPublicName(field.Name)))
+		}
+		body := `""`
+		if len(parts) > 0 {
+			body = strings.Join(parts, " + ")
+		}
+		fmt.Fprintf(&e.b, "func %s(value %s) string { return %s }\n\n", cacheKeyRecordEncoder(record.name), goType(record), body)
+	}
+	return nil
+}
+
+// collectCacheRecords returns the records reachable from a cached component's
+// parameters, sorted by name so emission is deterministic.
+func (e *goEmitter) collectCacheRecords() []valueType {
+	found := map[string]valueType{}
+	var visit func(valueType)
+	visit = func(t valueType) {
+		base := t.required()
+		if base.kind == kindArray && base.elem != nil {
+			visit(*base.elem)
+			return
+		}
+		if base.kind != kindRecord {
+			return
+		}
+		if _, seen := found[base.name]; seen {
+			return
+		}
+		found[base.name] = base
+		for _, field := range e.c.records[base.name].Fields {
+			if fieldType, err := e.c.resolveType(field.Type); err == nil {
+				visit(fieldType)
+			}
+		}
+	}
+	for _, declaration := range e.c.module.Declarations {
+		component, ok := declaration.(*TemplateDecl)
+		if !ok {
+			continue
+		}
+		if info := e.c.components[component.Name]; info == nil || info.cache == nil {
+			continue
+		}
+		for _, parameter := range component.Parameters {
+			if t, err := e.c.resolveType(parameter.Type); err == nil {
+				visit(t)
+			}
+		}
+	}
+	names := make([]string, 0, len(found))
+	for name := range found {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]valueType, 0, len(names))
+	for _, name := range names {
+		out = append(out, found[name])
+	}
+	return out
 }
 
 // planPrefix derives the unexported variable prefix for a component's plan.
@@ -147,6 +318,10 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 			}
 		case *syntax.ForNode:
 			if err := e.emitForOp(p, node); err != nil {
+				return err
+			}
+		case *syntax.AwaitNode:
+			if err := e.emitAwaitOp(p, node); err != nil {
 				return err
 			}
 		case *SlotNode:
@@ -365,6 +540,87 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 	return nil
 }
 
+// emitAwaitOp writes one boundary. The primary and recover subtrees each get a
+// generated scope struct, so the bound results and the error stay statically
+// typed instead of becoming lookups.
+func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
+	e.scopeCount++
+	scopeType := fmt.Sprintf("%sAwait%d", p.scope.builder, e.scopeCount)
+	recoverType := scopeType + "Recover"
+	primary := p.scope.child(scopeType, scopeType+"Ops")
+	recovery := p.scope.child(recoverType, recoverType+"Ops")
+
+	// The bindings run concurrently and each assigns its own scope field, so
+	// they share no memory and need no lock.
+	var fields, tasks []string
+	for _, binding := range node.Bindings {
+		call := binding.Call.(*CallExpr)
+		t := e.c.exprTypes[binding.Call]
+		field := goPublicName(binding.Name)
+		primary.paths[binding.Name] = field
+		primary.types[binding.Name] = t
+		fields = append(fields, "\t"+field+" "+goType(t))
+		var args []string
+		for _, argument := range call.Arguments {
+			code, err := e.exprCode(argument, p.scope)
+			if err != nil {
+				return err
+			}
+			args = append(args, code)
+		}
+		// The external stays an ordinary blocking call; htmlbind.Concurrent owns
+		// running it in a goroutine and joining the results. An implementation
+		// that declared a leading context.Context receives the boundary's, so a
+		// call that can abort gets what it needs without a second declaration
+		// form in the template.
+		callee := call.Callee.(*IdentifierExpr).Name
+		if e.contextExternals[callee] {
+			args = append([]string{"ctx"}, args...)
+		}
+		tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s(%s); scope.%s = value; return err },",
+			callee, strings.Join(args, ", "), field))
+	}
+	fmt.Fprintf(&e.declarations, "type %s struct {\n\tOuter %s\n%s\n}\n\n", scopeType, p.scope.goType, strings.Join(fields, "\n"))
+	fmt.Fprintf(&e.declarations, "var %sOps = htmlbind.Builder[%s]{}\n\n", scopeType, scopeType)
+	fmt.Fprintf(&e.declarations, "type %s struct {\n\tOuter %s\n\tErr htmlbind.AsyncError\n}\n\n", recoverType, p.scope.goType)
+	fmt.Fprintf(&e.declarations, "var %sOps = htmlbind.Builder[%s]{}\n\n", recoverType, recoverType)
+
+	primaryOps := &planEmitter{e: e, scope: primary}
+	if err := e.emitOps(primaryOps, node.Primary); err != nil {
+		return err
+	}
+	fallbackOps := &planEmitter{e: e, scope: p.scope}
+	if err := e.emitOps(fallbackOps, node.Fallback); err != nil {
+		return err
+	}
+	handler := "nil"
+	if node.HasRecover {
+		if node.ErrorName != "" {
+			recovery.paths[node.ErrorName] = "Err"
+			recovery.types[node.ErrorName] = valueType{kind: kindError}
+		}
+		recoverOps := &planEmitter{e: e, scope: recovery}
+		if err := e.emitOps(recoverOps, node.Recover); err != nil {
+			return err
+		}
+		handler = recoverOps.literal()
+	}
+
+	// On failure the scope is discarded rather than returned: a cancelled wait
+	// leaves its abandoned tasks still writing those fields.
+	resolve := fmt.Sprintf("func(ctx context.Context, %s %s) (%s, error) {\n\tscope := %s{Outer: %s}\n\tif err := htmlbind.Concurrent(ctx,\n%s\n\t); err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n\treturn scope, nil\n}",
+		receiverIdent, p.scope.goType, scopeType, scopeType, receiverIdent, strings.Join(tasks, "\n"), scopeType)
+	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
+		receiverIdent, p.scope.goType, recoverType, recoverType, receiverIdent)
+	p.flush()
+	p.raw(fmt.Sprintf("htmlbind.Await(\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		indentBlock(resolve, "\t"), build,
+		indentBlock(primaryOps.literal(), "\t"),
+		indentBlock(fallbackOps.literal(), "\t"),
+		indentBlock(handler, "\t")))
+	return nil
+}
+
 func (e *goEmitter) emitSlotOp(p *planEmitter, node *SlotNode) error {
 	path := receiverIdent + "." + p.scope.paths[node.Parameter()]
 	fallback := &planEmitter{e: e, scope: p.scope}
@@ -393,8 +649,16 @@ func (e *goEmitter) emitComponentOp(p *planEmitter, node *ComponentNode) error {
 	}
 	// Each fill becomes its own plan over the caller's scope, so the callee
 	// never needs to know the caller's parameter type.
+	//
+	// Numbering follows the callee's parameter order rather than map iteration
+	// order, because generated code must be byte-identical between runs.
 	fills := map[string]string{}
-	for name, body := range bodies {
+	for _, parameter := range component.order {
+		body, filled := bodies[parameter.Name]
+		if !filled {
+			continue
+		}
+		name := parameter.Name
 		e.scopeCount++
 		fillPlan := fmt.Sprintf("%sFill%d", p.scope.builder, e.scopeCount)
 		fill := &planEmitter{e: e, scope: p.scope}
@@ -617,6 +881,10 @@ func (c *compiler) calledComponents(info *componentInfo) []string {
 				walk(node.Else)
 			case *syntax.ForNode:
 				walk(node.Body)
+			case *syntax.AwaitNode:
+				walk(node.Primary)
+				walk(node.Fallback)
+				walk(node.Recover)
 			}
 		}
 	}

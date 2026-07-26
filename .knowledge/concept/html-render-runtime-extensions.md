@@ -28,6 +28,11 @@ extensions:
   - requirement:component-delta-rendering
   - requirement:boundary-parameter-updates
 runtime_flow: flow:suspense-html-render
+declaration_syntax:
+  annotations: decision:template-annotation-syntax
+  cache: decision:cache-component-declaration
+  await: decision:async-boundary-syntax
+cache_store: api:cache-store
 partial_update_flow: flow:html-partial-update
 boundary_update_flow: flow:boundary-parameter-update
 component_analysis: decision:component-capability-lowering

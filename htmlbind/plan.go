@@ -10,7 +10,11 @@
 // concerns such as content type and content encoding belong to the caller.
 package htmlbind
 
-import "io"
+import (
+	"bytes"
+	"context"
+	"io"
+)
 
 // Op is one instruction of a render plan. P is the parameter struct of the
 // component the instruction belongs to, so every step stays statically typed
@@ -29,11 +33,42 @@ type Plan[P any] struct {
 	Head []string
 	// Ops is the instruction list executed in order.
 	Ops []Op[P]
+	// Cache is set for a component declared with the cache annotation. It is
+	// consulted only when the caller supplied a store through WithCache, so the
+	// same generated code runs cached or uncached.
+	Cache *CachePolicy[P]
 }
 
 // Exec runs the plan against params.
 func (p *Plan[P]) Exec(r *Renderer, params P) error {
-	return execOps(r, p.Ops, params)
+	if p.Cache == nil || r.opts == nil || r.opts.cache == nil {
+		return execOps(r, p.Ops, params)
+	}
+	return p.execCached(r, params)
+}
+
+// execCached writes a stored rendering when one is current, and otherwise
+// renders into an isolated buffer and publishes it. Publishing after the whole
+// subtree renders is what keeps a failed render from storing partial output.
+func (p *Plan[P]) execCached(r *Renderer, params P) error {
+	key := p.Cache.cacheKey(params)
+	ctx := r.context()
+	if cached, ok := r.opts.cache.Get(ctx, key); ok {
+		_, err := r.w.Write(cached)
+		return err
+	}
+	var buffer bytes.Buffer
+	// A cached subtree renders without the boundary coordinator. Generation
+	// rejects an await boundary inside a cached component, so this only makes
+	// the runtime's behavior match that rule instead of storing a placeholder.
+	sub := &Renderer{w: &buffer, head: r.head, opts: r.opts}
+	if err := execOps(sub, p.Ops, params); err != nil {
+		return err
+	}
+	rendered := buffer.Bytes()
+	r.opts.cache.Set(ctx, key, rendered, p.Cache.TTL)
+	_, err := r.w.Write(rendered)
+	return err
 }
 
 func execOps[P any](r *Renderer, ops []Op[P], params P) error {
@@ -77,6 +112,39 @@ func (f Fragment) Head() []string { return f.head }
 type Renderer struct {
 	w    io.Writer
 	head []string
+	// opts holds the caller-supplied render options. It is never nil.
+	opts *renderOptions
+	// async is set only by the streaming render entries. When it is nil an
+	// await boundary blocks and renders its settled subtree in place.
+	async *asyncCoordinator
+}
+
+// context returns the context this render runs under. The async entries take
+// one directly; the synchronous entries accept one through WithContext so a
+// shared cache store and a blocking await still see request cancellation.
+func (r *Renderer) context() context.Context {
+	if r.async != nil {
+		return r.async.ctx
+	}
+	if r.opts != nil && r.opts.ctx != nil {
+		return r.opts.ctx
+	}
+	return context.Background()
+}
+
+// buffered returns a renderer writing into w and sharing this render's merged
+// head, options, and boundary coordinator. A boundary opened while rendering a
+// completed boundary's subtree therefore streams like any other.
+func (r *Renderer) buffered(w io.Writer) *Renderer {
+	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async}
+}
+
+// reportError hands a failure to the caller's reporter. It is how a normalized
+// data:async-render-error stays observable even when a recover subtree renders.
+func (r *Renderer) reportError(err error) {
+	if r.opts != nil && r.opts.report != nil {
+		r.opts.report(err)
+	}
 }
 
 // Write emits raw bytes. Instructions call it after applying their own

@@ -15,6 +15,8 @@ component ごとに、そのパラメータ構造体で型付けされた不変�
 - component の組み合わせ、`if`、`for` の描画処理
 - 名前付き / 無名スロットの埋め込み
 - component ローカル style のスコープ化と、head 寄与のドキュメントへのマージ
+- `await` 境界の並行実行と、解決した順でのストリーミング
+- `@cache` を付けた component の出力を、渡されたストア経由で再利用すること
 - 型エラーや危険な挿入位置のファイル名・行・列付き診断
 
 生成される実装の中身を理解する必要はありません。利用者は `export component` に対応する関数へパラメータを束縛し、その結果を描画します。
@@ -452,6 +454,236 @@ func Decorate(value string, tone Tone) string {
 }
 ```
 
+## 非同期 component
+
+`external async` で宣言した関数は、ページの描画中に並行して実行されます。Go 側の
+実装は普通のブロッキング関数のままで構いません。通常の external との違いは error
+を返す点だけで、これは境界が recover する対象を必要とするためです。
+
+```text
+external async LoadUser(id: string): User
+external async LoadPosts(id: string): Post[]
+```
+
+```go
+func LoadUser(id string) (User, error)
+func LoadPosts(id string) ([]Post, error)
+```
+
+このコードは並行処理を何も知りません。goroutine 化と完了待ちはランタイム側が行う
+ので、1 つの `await` に遅い呼び出しが 2 つあっても、合計ではなく遅い方の時間で
+済みます。
+
+### context を受け取る
+
+第1引数に `context.Context` を宣言すると、その境界の context が渡されます。
+
+```go
+func LoadPosts(ctx context.Context, id string) ([]Post, error)
+```
+
+テンプレートの宣言は変わりません。コード生成時にパッケージ内の Go ソースを読み、
+context を受け取る関数にだけ渡します。関数ごとに、実装を書く側が決められます。
+パラメータを持たない関数は、そのまま呼ばれます。
+
+DB クエリや外部リクエストなど、本当に中断できる呼び出しでは受け取ってください。
+中断できない呼び出しでは省略して構いません。待ち時間はどちらでも制限されます。
+
+非同期の結果は、それを待っている境界の内側にしか存在しません。そのため async
+関数は `await` の束縛でのみ呼び出せます。それ以外の場所での呼び出しは生成時エラー
+になります。
+
+### await / fallback / recover
+
+`await` ブロックは 3 つの節から構成されます。
+
+```text
+export component Profile(id: string): html {
+<section>
+{await user = LoadUser(id), posts = LoadPosts(id)}
+  <h1>{user.name}</h1>
+  <ul>{for post in posts}<li>{post.title}</li>{/for}</ul>
+{fallback}
+  <p class="pending">読み込み中…</p>
+{recover err}
+  <p class="failed">{err.message}</p>
+{/await}
+</section>
+}
+```
+
+- `await` の後ろの束縛は同時に開始します。それぞれが 1 つの非同期呼び出しに名前を
+  付け、束縛された値は primary 側で普通の型付き識別子として扱えます。
+- `fallback` は必須です。最初にレスポンスへ確定するのがこの内容なので、遅い依存が
+  ページの残りを止めることはありません。
+- `recover` は任意で、安全な `error` 値を束縛します。読めるフィールドは `code`、
+  `message`、`retryable`、`timeout` です。省略すると、失敗時は fallback がその
+  まま残ります。
+
+束縛は primary 側だけ、エラー名は `recover` 側だけで見えます。そのため、描画時点
+で存在しない値をどの節からも読めません。
+
+`await` ブロックの中に `<slot>` は書けません。fallback と置き換え後の両方が同じ
+スロットを描画してしまうためです。
+
+### 非同期 component の描画
+
+`Render` は束縛の完了を待ち、確定した内容をその場に書き出します。`await` を含む
+テンプレートでも、クライアント側の JavaScript なしで完全な HTML が得られます。
+
+```go
+err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
+```
+
+`RenderAsync` は先に fallback を送り、確定した境界を順に yield します。返るのは
+シーケンスで、書き込むのはハンドラ側です。
+
+```go
+func profile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	page := Profile(ProfileParams{Id: r.PathValue("id")})
+	for content, err := range htmlbind.RenderAsync(r.Context(), w, page,
+		htmlbind.WithAsyncTimeout(3*time.Second),
+		htmlbind.WithErrorReporter(func(err error) { log.Printf("boundary failed: %v", err) }),
+	) {
+		if err != nil {
+			// レスポンスは確定済みなので、書き直さずログに残す
+			log.Printf("render failed: %v", err)
+			break
+		}
+		if _, err := content.WriteTo(w); err != nil {
+			break
+		}
+		htmlbind.Flush(w)
+	}
+}
+```
+
+ラッパーチェーンには `RenderChainAsync` を使います。このループを隠すエントリは
+用意していません。境界がいくつ出るかは事前に分からず、リクエスト時に組み立てる
+チェーンならなおさらなので、ストリーミングするハンドラは結局シーケンスに対して
+書くことになるためです。
+
+レスポンスへ書き込むのは range している呼び出し側だけで、途中で range を抜けると、
+残っている境界を待たずに描画が終わります。初回パス後の flush はランタイムが行い
+ます。各チャンクの後は `htmlbind.Flush` で同じことをします（flush できない writer
+では何もしません）。
+
+逐次描画では、未確定の境界は fallback を包んだ `<tb-boundary id="...">` として
+書き出されます。確定した内容は、inert な template とマーカーの組で追記されます。
+
+```html
+<template data-tb-boundary="tb-1">…</template><tb-apply for="tb-1"></tb-apply>
+```
+
+head にマージされる小さな固定スクリプトが `tb-apply` を定義し、その
+`connectedCallback` で置換します。どのページでも同じコードで、完了チャンク側には
+スクリプトが一切入らないため、CSP に nonce も `unsafe-inline` も不要です。
+
+このマーカーが置換の安全性を担保しています。HTML パーサは**開始タグの時点で**要素を
+挿入するので、template の出現に反応する実装では、中身がまだ届いていない template を
+読んでプレースホルダを空で置き換えてしまい、結果どころか fallback まで失う可能性が
+あります。`<tb-apply>` はバイト列上 `</template>` の後にあるため、プロキシ・TLS
+レコード・圧縮エンコーダがどう分割しても、存在する時点で template は完成しています。
+マーカーが届かなかった完了は適用されず、fallback が残ります。
+
+shell の `head` を持たないドキュメントにはスクリプトが入らず、fallback がそのまま
+残ります。
+
+### キャンセルが打ち切るのは「待ち」
+
+リクエストのキャンセルや `WithAsyncTimeout` の満了で、ランタイムは待つのをやめ
+ます。その境界は完了を出さないか、`code: "timeout"` で recover を描画します。
+
+処理そのものが止まるかどうかは external 次第です。context を受け取っていれば
+キャンセルを見て早く戻れます。受け取っていなければ中断できないので、放置されます
+（自然に終わり、結果は捨てられます）。
+
+### エラーはサーバ側に留まる
+
+recover 節から生の Go の error は見えません。既定では失敗は `code: "internal"`
+（message は空）に、タイムアウトは `code: "timeout"` になります。より具体的な情報を
+公開したい場合は、error 自身に安全な射影を持たせます。
+
+```go
+type UpstreamError struct{ Service string }
+
+func (e UpstreamError) Error() string { return "upstream " + e.Service + " unreachable" }
+
+func (e UpstreamError) PublicError() htmlbind.AsyncError {
+	return htmlbind.AsyncError{Code: "upstream", Message: "時間をおいて再試行してください。", Retryable: true}
+}
+```
+
+`WithErrorReporter` にはどちらの場合も元の error が渡ります。`recover` 節で処理した
+失敗も届くので、ログや計測から漏れることはありません。
+
+## キャッシュ component
+
+component に `@cache` を付けると、同じパラメータに対する描画結果を再利用できます。
+
+```text
+@cache(ttl: "5m")
+export component Sidebar(userId: string, tone: Tone): html {
+<aside>...</aside>
+}
+```
+
+`ttl` は必須で、生成時に解釈されます。不正な duration はリクエスト時ではなくビルド
+時に失敗します。
+
+キャッシュはテンプレートの書き換えではなく運用上の選択です。呼び出し側がストアを
+渡すまで、何も保存されません。
+
+```go
+var pageCache = htmlbind.NewMemoryCache(1024)
+
+err := htmlbind.Render(w, Page(params), htmlbind.WithCache(pageCache))
+```
+
+`WithCache` は `RenderChain`、`RenderAsync`、`RenderChainAsync` でも使えます。渡さなければ、
+注釈付き component も注釈がない場合とまったく同じように描画されます。
+
+### キーが表すもの
+
+キーには、component のパッケージとファイル、生成されたプランのフィンガープリント、
+宣言された全パラメータの正規化された表現が入ります。パラメータの変更、テンプレートの
+編集、その component が描画する内容の編集は、いずれも別のキーになります。再生成した
+コードが古い出力を読むことはありません。
+
+宣言されたパラメータでないものはキーから見えません。リクエスト識別子、認可、ロケール、
+ヘッダに依存する内容は、パラメータとして渡すか、その component をキャッシュしないで
+ください。
+
+### 独自ストアを渡す
+
+`CacheStore` はメソッド 2 つのインタフェースです。Redis や memcached のアダプタは
+普通のアプリケーションコードとして書けます。
+
+```go
+type CacheStore interface {
+	Get(ctx context.Context, key string) ([]byte, bool)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration)
+}
+```
+
+`Set` は何も返しません。すでに正しく描画できたレスポンスを、キャッシュ書き込みの失敗
+で壊さないためで、失敗の報告は実装側の責務です。ストアは 1 回の描画中に複数の
+goroutine から使われるため、並行安全である必要があります。キーは長くなりうる普通の
+文字列なので、ストア側でハッシュ化して構いません。
+
+### 制約
+
+保存されたバイト列で置き換えられない component は、生成時に拒否されます。
+
+- `html` パラメータを宣言できません。スロット引数は値ではなく束縛された継続であり、
+  キーに入れられないためです。
+- 直接でも呼び出し先経由でも、`await` 境界に到達できません。境界はプレースホルダと
+  置き換え内容の 2 回に分けて出力されるため、1 つの連続したバイト列にならないため
+  です。
+- ドキュメントの `head` を所有できません。マージ後の head はパラメータではなく
+  チェーンに依存するためです。
+
 ## 生成される API の形
 
 ### 公開 component
@@ -529,5 +761,9 @@ profile.tb.html:12:8: html:url requires url, got string
 - `if` に bool 以外を渡した
 - 宣言していない field / function / component を参照した
 - `RawHTML` などを許可されていない文脈で使った
+- `external async` の関数を `await` の束縛以外の場所で呼んだ
+- `await` ブロックに `fallback` 節を書かなかった
+- `html` パラメータを持つ component や、`await` 境界に到達する component に
+  `@cache` を付けた
 
 診断はコード生成時に出るため、テンプレートを変更したら `go generate ./...` を実行してからビルド・テストしてください。

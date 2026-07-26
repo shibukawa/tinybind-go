@@ -585,5 +585,11 @@ func isHTMLName(name string) bool {
 }
 
 func isControl(value string) bool {
-	return strings.HasPrefix(value, "if ") || strings.HasPrefix(value, "for ") || value == "else" || strings.HasPrefix(value, "else if ") || strings.HasPrefix(value, "/")
+	switch {
+	case strings.HasPrefix(value, "if "), strings.HasPrefix(value, "for "),
+		strings.HasPrefix(value, "await "), strings.HasPrefix(value, "else if "),
+		strings.HasPrefix(value, "recover "), strings.HasPrefix(value, "/"):
+		return true
+	}
+	return value == "else" || value == "fallback" || value == "recover"
 }

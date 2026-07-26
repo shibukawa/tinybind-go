@@ -55,23 +55,64 @@ type EnumMember struct {
 }
 
 type ExternalDecl struct {
-	Kind       string      `json:"kind"`
-	Pos        Position    `json:"pos"`
-	Name       string      `json:"name"`
+	Kind string   `json:"kind"`
+	Pos  Position `json:"pos"`
+	Name string   `json:"name"`
+	// Async marks a function that runs concurrently and may fail. It is a
+	// keyword rather than an annotation because it changes the Go signature the
+	// package must provide.
+	Async      bool        `json:"async,omitempty"`
 	Parameters []Parameter `json:"parameters,omitempty"`
 	Result     TypeRef     `json:"result"`
 }
 
 func (*ExternalDecl) declarationNode() {}
 
+// Annotation is one `@name(key: "value")` line attached to the declaration
+// below it. The shared parser owns the grammar; each output format decides
+// which names it accepts, so an unknown name is a generation error rather than
+// a silently ignored line.
+type Annotation struct {
+	Pos  Position        `json:"pos"`
+	Name string          `json:"name"`
+	Args []AnnotationArg `json:"args,omitempty"`
+}
+
+// Argument returns the value of a named annotation argument.
+func (a Annotation) Argument(name string) (AnnotationArg, bool) {
+	for _, arg := range a.Args {
+		if arg.Name == name {
+			return arg, true
+		}
+	}
+	return AnnotationArg{}, false
+}
+
+type AnnotationArg struct {
+	Pos   Position `json:"pos"`
+	Name  string   `json:"name"`
+	Value string   `json:"value"`
+}
+
 type TemplateDecl struct {
-	Kind       string      `json:"kind"`
-	Pos        Position    `json:"pos"`
-	Exported   bool        `json:"exported"`
-	Name       string      `json:"name"`
-	Parameters []Parameter `json:"parameters,omitempty"`
-	Output     TypeRef     `json:"output"`
-	Body       any         `json:"body"`
+	Kind        string       `json:"kind"`
+	Pos         Position     `json:"pos"`
+	Exported    bool         `json:"exported"`
+	Annotations []Annotation `json:"annotations,omitempty"`
+	Name        string       `json:"name"`
+	Parameters  []Parameter  `json:"parameters,omitempty"`
+	Output      TypeRef      `json:"output"`
+	Body        any          `json:"body"`
+}
+
+// Annotation returns the declaration's annotation with the given name.
+func (d *TemplateDecl) Annotation(name string) (Annotation, bool) {
+	for _, annotation := range d.Annotations {
+		if annotation.Name == name {
+			return annotation, true
+		}
+	}
+	return Annotation{}, false
 }
 
 func (*TemplateDecl) declarationNode() {}
@@ -113,6 +154,34 @@ type ForNode struct {
 }
 
 func (n *ForNode) NodeType() string { return n.Kind }
+
+// AwaitNode is one asynchronous boundary. Its bindings run concurrently; the
+// primary subtree reads them, the fallback subtree is emitted while they are
+// pending, and the optional recover subtree replaces the fallback on failure.
+type AwaitNode struct {
+	Kind     string         `json:"kind"`
+	Pos      Position       `json:"pos"`
+	Context  string         `json:"context"`
+	Bindings []AwaitBinding `json:"bindings"`
+	Primary  []Node         `json:"primary"`
+	Fallback []Node         `json:"fallback"`
+	// HasRecover distinguishes a declared but empty recover subtree from an
+	// omitted one, which keeps the committed fallback instead.
+	HasRecover bool     `json:"hasRecover,omitempty"`
+	Recover    []Node   `json:"recover,omitempty"`
+	ErrorName  string   `json:"errorName,omitempty"`
+	ErrorPos   Position `json:"errorPos,omitempty"`
+}
+
+func (n *AwaitNode) NodeType() string { return n.Kind }
+
+// AwaitBinding names one asynchronous call whose result the primary subtree
+// reads.
+type AwaitBinding struct {
+	Pos  Position `json:"pos"`
+	Name string   `json:"name"`
+	Call Expr     `json:"call"`
+}
 
 type Parameter struct {
 	Pos  Position `json:"pos"`

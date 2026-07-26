@@ -1,0 +1,39 @@
+package pages
+
+type User {
+  name: string
+  admin: bool
+}
+
+external async LoadUser(id: string): User
+external async LoadTags(id: string): string[]
+
+@cache(ttl: "5m")
+component Badge(user: User, tone: string): html {
+<span class="badge {tone}">{user.name}</span>
+}
+
+export component Profile(id: string): html {
+<section>
+{await user = LoadUser(id), tags = LoadTags(id)}
+  <Badge user={user} tone="solid" />
+  <ul>
+  {for tag in tags}
+    <li>{tag}</li>
+  {/for}
+  </ul>
+{fallback}
+  <p class="pending">loading…</p>
+{recover err}
+  <p class="failed">{err.code}: {err.message}</p>
+{/await}
+</section>
+}
+
+export component Silent(id: string): html {
+{await user = LoadUser(id)}
+  <p>{user.name}</p>
+{fallback}
+  <p>waiting</p>
+{/await}
+}

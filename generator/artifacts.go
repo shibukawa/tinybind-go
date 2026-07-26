@@ -136,13 +136,17 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	withContext, err := contextExternals(dir)
+	if err != nil {
+		return nil, err
+	}
 	generated := make([][]byte, len(files))
 	for i, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
 			return nil, err
 		}
-		if generated[i], err = g.generateTemplate(file, source, pkg); err != nil {
+		if generated[i], err = g.generateTemplate(file, source, pkg, withContext); err != nil {
 			return nil, err
 		}
 	}

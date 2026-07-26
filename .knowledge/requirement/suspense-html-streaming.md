@@ -53,10 +53,26 @@ acceptance:
   - success yields primary content the caller appends without rewriting earlier bytes
   - async failure replaces fallback with recover content without exposing internal error details
   - client disconnect or early consumer stop cancels pending request work
+markup:
+  placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
+  completion: an inert template element referencing the same boundary ID, written after the initial document
+  commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
+  runtime: the fixed update script prepended to the merged head by api:render-html-chain, which defines the marker element and applies a boundary from its connected callback
+  no_head: a document with no shell head gets no update script, so the fallback remains the final content
+commit_marker_rationale:
+  problem: an HTML parser inserts an element when it reads the start tag, so a runtime watching for the template could read one whose content had not arrived
+  observed: with the template start tag delivered in its own network chunk, a mutation-observer runtime replaced the placeholder with empty content and removed the template, losing the fallback as well as the result
+  invisible_in_development: a small completion arrives in one chunk and parses in one task, so the failure only appears once a proxy, TLS record, or compressing encoder splits the bytes
+  fix: drive the swap from a marker that follows the closing tag in the byte stream, so the template is complete however the bytes were chunked
+  promptness: the marker's connected callback runs during parsing, so the swap is as immediate as an inline script would be
+  csp: the completion chunk still carries no script, so no nonce and no unsafe-inline is required
+  truncated_stream: a completion whose marker never arrives is simply not applied, leaving the committed fallback
+no_javascript:
+  behavior: the committed fallback stays visible and completions are inert templates
+  alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients
+recover_omitted: decision:async-boundary-syntax keeps the committed fallback and reports through the render error hook
+multiple_dependencies: the first failing binding of one clause decides the boundary; siblings are cancelled and not aggregated
 open_questions:
-  - exact placeholder markup and update helper delivery
   - Content Security Policy nonce or external-script integration
-  - default behavior when recover clause is omitted
-  - multiple dependency failure selection and aggregation
-  - browser behavior without JavaScript
+  - serving the update runtime as a cacheable external module instead of an inline head script
 ```

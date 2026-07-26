@@ -375,3 +375,137 @@ func TestShellRendersWithoutAChain(t *testing.T) {
 `)
 	runGeneratedTests(t, generated, companion)
 }
+
+// TestAsyncAndCacheDiagnostics covers the rules that keep an await boundary and
+// a cached component from producing output the runtime cannot stand behind.
+func TestAsyncAndCacheDiagnostics(t *testing.T) {
+	cases := []struct{ name, source, want string }{
+		{
+			"async call outside await",
+			`external async Load(): string
+component Bad(): html {<p>{Load()}</p>}`,
+			"can only be called in an await binding",
+		},
+		{
+			"nested async call in a binding",
+			`external async Load(value: string): string
+component Bad(): html {{await v = Load(Load("x"))}<p>{v}</p>{fallback}p{/await}}`,
+			"can only be called in an await binding",
+		},
+		{
+			"awaiting a synchronous external",
+			`external Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}`,
+			"is not async; declare it as external async",
+		},
+		{
+			"missing fallback clause",
+			`external async Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{/await}}`,
+			"expected {fallback} inside {await}",
+		},
+		{
+			"slot inside an await clause",
+			`external async Load(): string
+component Bad(children: html): html {{await v = Load()}<slot required />{fallback}p{/await}}`,
+			"cannot appear inside an await block",
+		},
+		{
+			"binding shadows the generated scope field",
+			`external async Load(): string
+component Bad(): html {{await outer = Load()}<p>{outer}</p>{fallback}p{/await}}`,
+			"cannot be named outer",
+		},
+		{
+			"error field that does not exist",
+			`external async Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{recover err}{err.detail}{/await}}`,
+			"unknown field detail on error",
+		},
+		{
+			"unknown annotation",
+			`@memo(ttl: "5m")
+component Bad(): html {<p>x</p>}`,
+			"unknown annotation @memo",
+		},
+		{
+			"cache without a ttl",
+			`@cache()
+component Bad(): html {<p>x</p>}`,
+			"@cache requires a ttl argument",
+		},
+		{
+			"cache with an unparsable ttl",
+			`@cache(ttl: "soon")
+component Bad(): html {<p>x</p>}`,
+			"@cache ttl is not a duration",
+		},
+		{
+			"cache with a slot parameter",
+			`@cache(ttl: "5m")
+component Bad(children: html): html {<p><slot required /></p>}`,
+			"cannot declare the html parameter children",
+		},
+		{
+			"cached component owning an await boundary",
+			`external async Load(): string
+@cache(ttl: "5m")
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}`,
+			"cannot reach an await boundary",
+		},
+		{
+			"cached component reaching an await boundary through a call",
+			`external async Load(): string
+component Inner(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}
+@cache(ttl: "5m")
+component Bad(): html {<Inner />}`,
+			"cannot reach an await boundary; Inner declares one",
+		},
+		{
+			"annotation on a type declaration",
+			`@cache(ttl: "5m")
+type Bad { name: string }`,
+			"annotation cannot precede a type declaration",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := htmlbind.Generate("invalid.txt", []byte(test.source), htmlbind.GenerateOptions{Package: "invalid"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestAsyncExternalContextArgument covers the two shapes an async external's Go
+// implementation may take. The template declaration is the same either way; the
+// caller reports which functions accept a leading context.
+func TestAsyncExternalContextArgument(t *testing.T) {
+	source := []byte(`external async LoadUser(id: string): User
+external async LoadTags(id: string): string[]
+type User { name: string }
+component Page(id: string): html {{await user = LoadUser(id), tags = LoadTags(id)}<p>{user.name}</p>{fallback}p{/await}}`)
+
+	plain, err := htmlbind.Generate("page.txt", source, htmlbind.GenerateOptions{Package: "pages"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(plain, []byte("LoadUser(p.Id)")) || !bytes.Contains(plain, []byte("LoadTags(p.Id)")) {
+		t.Fatalf("externals were not called as plain functions:\n%s", plain)
+	}
+
+	mixed, err := htmlbind.Generate("page.txt", source, htmlbind.GenerateOptions{
+		Package:          "pages",
+		ContextExternals: map[string]bool{"LoadTags": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(mixed, []byte("LoadTags(ctx, p.Id)")) {
+		t.Fatalf("context-taking external did not receive ctx:\n%s", mixed)
+	}
+	if !bytes.Contains(mixed, []byte("LoadUser(p.Id)")) {
+		t.Fatalf("plain external gained a ctx argument:\n%s", mixed)
+	}
+}

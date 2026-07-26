@@ -1,6 +1,10 @@
 package htmlbind
 
-import "strings"
+import (
+	"bytes"
+	"context"
+	"strings"
+)
 
 // Builder constructs instructions for one component. Generated code declares
 // one per component so the parameter type is written once instead of on every
@@ -105,6 +109,93 @@ func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
 		}
 	}
 	return nil
+}
+
+// Await opens an await boundary. resolve runs the clause's bindings and builds
+// the primary subtree's scope; recovery builds the recover subtree's scope from
+// the outer parameters and the safe error. handler is nil when the clause
+// declared no recover subtree.
+//
+// It is a free function rather than a Builder method because the primary and
+// recover subtrees each read their own generated scope type.
+func Await[P, S, R any](
+	resolve func(context.Context, P) (S, error),
+	recovery func(P, AsyncError) R,
+	primary []Op[S],
+	fallback []Op[P],
+	handler []Op[R],
+) Op[P] {
+	return awaitOp[P, S, R]{resolve: resolve, recovery: recovery, primary: primary, fallback: fallback, handler: handler}
+}
+
+type awaitOp[P, S, R any] struct {
+	resolve  func(context.Context, P) (S, error)
+	recovery func(P, AsyncError) R
+	primary  []Op[S]
+	fallback []Op[P]
+	handler  []Op[R]
+}
+
+func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
+	if r.async == nil {
+		return o.execBlocking(r, params)
+	}
+	coordinator := r.async
+	id := coordinator.nextID()
+	// display:contents keeps the placeholder out of layout, so a boundary
+	// cannot change how its fallback or its replacement is positioned.
+	if err := r.Write(`<tb-boundary id="` + id + `" style="display:contents">`); err != nil {
+		return err
+	}
+	if err := execOps(r, o.fallback, params); err != nil {
+		return err
+	}
+	if err := r.Write(`</tb-boundary>`); err != nil {
+		return err
+	}
+	coordinator.start(func(ctx context.Context) (Content, bool, error) {
+		var buffer bytes.Buffer
+		// The subtree renders into its own buffer, so boundary work never
+		// touches the response writer. A boundary nested in this subtree
+		// registers with the same coordinator and streams like any other.
+		sub := r.buffered(&buffer)
+		value, err := o.resolve(ctx, params)
+		if err != nil {
+			if coordinator.ctx.Err() != nil {
+				// Expected request cancellation, including an early consumer
+				// stop. The committed fallback is the final content.
+				return Content{}, false, nil
+			}
+			r.reportError(err)
+			if o.handler == nil {
+				return Content{}, false, nil
+			}
+			if err := execOps(sub, o.handler, o.recovery(params, normalizeAsyncError(err))); err != nil {
+				return Content{}, false, err
+			}
+			return Content{BoundaryID: id, HTML: buffer.Bytes()}, true, nil
+		}
+		if err := execOps(sub, o.primary, value); err != nil {
+			return Content{}, false, err
+		}
+		return Content{BoundaryID: id, HTML: buffer.Bytes()}, true, nil
+	})
+	return nil
+}
+
+// execBlocking settles the boundary in place, which is what the synchronous
+// render entries do. The fallback subtree is never written, because the final
+// content is already known by the time anything is emitted.
+func (o awaitOp[P, S, R]) execBlocking(r *Renderer, params P) error {
+	value, err := o.resolve(r.context(), params)
+	if err != nil {
+		r.reportError(err)
+		if o.handler == nil {
+			return execOps(r, o.fallback, params)
+		}
+		return execOps(r, o.handler, o.recovery(params, normalizeAsyncError(err)))
+	}
+	return execOps(r, o.primary, value)
 }
 
 // Component renders another component. bind pairs the callee's plan with
