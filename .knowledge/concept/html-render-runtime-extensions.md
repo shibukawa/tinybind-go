@@ -27,6 +27,8 @@ extensions:
   - requirement:partial-update-boundaries
   - requirement:component-delta-rendering
   - requirement:boundary-parameter-updates
+  - requirement:fragment-capability-introspection
+  - requirement:client-managed-head
 runtime_flow: flow:suspense-html-render
 declaration_syntax:
   annotations: decision:template-annotation-syntax
@@ -36,6 +38,7 @@ cache_store: api:cache-store
 partial_update_flow: flow:html-partial-update
 boundary_update_flow: flow:boundary-parameter-update
 component_analysis: decision:component-capability-lowering
+client_runtime: decision:client-runtime-ownership
 route_generation: concept:filesystem-html-routing
 scope:
   - preserve generated, statically checked rendering

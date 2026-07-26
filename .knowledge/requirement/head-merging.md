@@ -21,6 +21,7 @@ static_requirement:
   rule: head contributions are statically known markup, not values computed from request data
   reason: the root head must be written before body streaming, so contributions cannot wait for render results
   dynamic_values: attribute expressions are allowed; which nodes exist is not conditional on request data
+  render_call_exception: requirement:render-time-script-contribution lets a render-call argument add a script contribution, which is available strictly before the head pass and therefore satisfies the reason above; nothing discovered during plan walking qualifies
 collection:
   static_composition: the generation-time call graph yields the contribution set for a fixed composition
   runtime_composition: a slot filled at runtime carries its contributions on its decision:generated-render-plan component value

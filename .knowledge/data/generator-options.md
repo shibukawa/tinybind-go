@@ -43,6 +43,9 @@ options:
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
   PublicDir: filesystem directory for requirement:static-asset-extraction output; empty uses 'public/generated'
   PublicURLBase: URL path or full URL prefixed to generated asset file names; empty uses '/public/generated'; independent of PublicDir and required together with an explicit PublicDir
+  BuiltinElements: proposed requirement:builtin-element-registration whitelist closing the decision:builtin-element-syntax hyphenated element space; holds data:builtin-element-definition builtin entries and passthrough names or patterns
+  ScriptContributions: proposed requirement:framework-script-contribution registration set; an always entry reaches every document, an on-demand entry only its builtin element, and each states a global or module load mode
+  HeadMarkerAttribute: proposed requirement:client-managed-head ownership marker written onto merged head contributions at generation time; empty uses the module default
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]

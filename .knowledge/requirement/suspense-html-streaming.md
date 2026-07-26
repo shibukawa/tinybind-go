@@ -38,6 +38,7 @@ ordering:
   - the returned sequence stays open until all request-owned boundaries finish or cancel
 safety:
   - generated IDs are unique, opaque, and safe for HTML and script use
+  - proposed requirement:client-managed-head raises that uniqueness to the document lifetime, because a navigation inserts boundaries into a document that may still hold earlier ones
   - resolved content is emitted as template content, never interpolated into script source
   - recover content receives only safe public error fields; raw Go errors remain server-side
   - update helper is fixed trusted runtime code loaded through requirement:html-runtime-bootstrap
@@ -57,7 +58,7 @@ markup:
   placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
   completion: an inert template element referencing the same boundary ID, written after the initial document
   commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
-  runtime: the fixed update script prepended to the merged head by api:render-html-chain, which defines the marker element and applies a boundary from its connected callback
+  runtime: a client script defining the marker element and applying a boundary from its connected callback; proposed decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
   no_head: a document with no shell head gets no update script, so the fallback remains the final content
 commit_marker_rationale:
   problem: an HTML parser inserts an element when it reads the start tag, so a runtime watching for the template could read one whose content had not arrived
