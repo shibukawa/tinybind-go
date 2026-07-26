@@ -14,7 +14,6 @@ includes:
 aggregation: requirement:openapi-fragment-aggregation
 handlers:
   - api:openapi-json
-  - api:openapi-yaml
 related:
   - concept:openapi-generation
   - decision:openapi-31

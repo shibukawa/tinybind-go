@@ -16,7 +16,7 @@ generation:
 aggregation:
   - api:openapi-assembly and public handlers merge every registered fragment
   - output targets decision:openapi-31
-  - JSON and YAML represent the same merged document
+  - JSON is the only serialization per decision:openapi-json-only
 application_info:
   - application may set final title and version through public httpbind API
   - generated package fragments do not compete for final info ownership
@@ -24,7 +24,6 @@ model: concept:openapi-generation
 embedding: concept:openapi-embed
 handlers:
   - api:openapi-json
-  - api:openapi-yaml
 assembly: api:openapi-assembly
 rules:
   - sort fragment identities, paths, methods, and component keys deterministically

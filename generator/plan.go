@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
 // FieldSource is where a request field is read from.
@@ -48,6 +50,7 @@ type FieldPlan struct {
 	ElemKind string      // for slice/map: string|int|int64|bool|float64|struct
 	DB       string      // SQL result column (db tag or snake_case field name)
 	GroupKey bool        // groupkey tag presence
+	Doc      string      // godoc of the field (doc or line comment)
 }
 
 // IsRest reports whether f is a payload rest map field.
@@ -99,6 +102,8 @@ type TypePlan struct {
 	// of every artifact generated for this type.
 	SourcePath string
 	Fields     []FieldPlan
+	// Doc is the godoc of the type declaration.
+	Doc string
 	// Usage records which generated entry points are referenced by source code.
 	// Zero means the type is unused and emits no mapping paths.
 	Usage Usage
@@ -230,7 +235,13 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 				if !ok || st.Fields == nil {
 					continue
 				}
-				tp, ok, err := analyzeStruct(ts.Name.Name, st, binderNames)
+				// An ungrouped declaration carries its doc on the GenDecl;
+				// a group's own doc describes the group, not each spec.
+				var declDoc *ast.CommentGroup
+				if len(gd.Specs) == 1 {
+					declDoc = gd.Doc
+				}
+				tp, ok, err := analyzeStruct(ts.Name.Name, godoc.Text(ts.Doc, declDoc), st, binderNames)
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", ts.Name.Name, err)
 				}
@@ -473,7 +484,7 @@ func genericTypeArgExprs(fun ast.Expr) []ast.Expr {
 	}
 }
 
-func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool) (TypePlan, bool, error) {
+func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]bool) (TypePlan, bool, error) {
 	var fields []FieldPlan
 	restCount := 0
 	for _, f := range st.Fields.List {
@@ -485,7 +496,7 @@ func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool)
 				continue
 			}
 			src, wire := parseFieldTag(id.Name, f.Tag)
-			fp, ok, err := analyzeField(id.Name, f.Type, f.Tag, src, wire, binderNames)
+			fp, ok, err := analyzeField(id.Name, godoc.Text(f.Doc, f.Comment), f.Type, f.Tag, src, wire, binderNames)
 			if err != nil {
 				return TypePlan{}, false, err
 			}
@@ -523,10 +534,10 @@ func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool)
 	if len(fields) == 0 {
 		return TypePlan{}, false, nil
 	}
-	return TypePlan{Name: name, Fields: fields}, true, nil
+	return TypePlan{Name: name, Doc: doc, Fields: fields}, true, nil
 }
 
-func analyzeField(fieldName string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool) (FieldPlan, bool, error) {
+func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool) (FieldPlan, bool, error) {
 	kind, typeName, elemKind, ok, err := fieldTypeKind(typ, binderNames, src, wire, fieldName)
 	if err != nil {
 		return FieldPlan{}, false, err
@@ -557,6 +568,7 @@ func analyzeField(fieldName string, typ ast.Expr, tag *ast.BasicLit, src FieldSo
 		ElemKind: elemKind,
 		DB:       dbColumn(fieldName, tag),
 		GroupKey: tagPresent(tag, "groupkey"),
+		Doc:      doc,
 	}, true, nil
 }
 

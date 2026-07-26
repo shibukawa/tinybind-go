@@ -51,7 +51,6 @@ related:
   - concept:openapi-generation
   - concept:openapi-embed
   - api:openapi-json
-  - api:openapi-yaml
   - api:decode-json
   - api:encode-json
   - api:write-status

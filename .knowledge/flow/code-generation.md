@@ -69,7 +69,6 @@ flow:
         - concept:openapi-embed
         - requirement:openapi-fragment-aggregation
         - api:openapi-json
-        - api:openapi-yaml
         - decision:openapi-31
   invariant: all artifacts derive from the same IR
   related:

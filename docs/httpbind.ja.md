@@ -383,16 +383,43 @@ err := httpbind.SetOpenAPIInfo(httpbind.OpenAPIInfo{
 	Title:   "My Service API",
 	Version: "1.0.0",
 })
-jsonDoc, yamlDoc, err := httpbind.AssembleOpenAPI()
+jsonDoc, err := httpbind.AssembleOpenAPI()
 ```
 
 ```go
 mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)
-mux.HandleFunc("GET /openapi.yaml", httpbind.OpenAPIYAML)
 mux.Handle("GET /docs/{$}", httpbind.SwaggerUI("/openapi.json"))
 ```
 
-Swagger UI のアセットは CDN から読み込まれます。オフライン環境では OpenAPI JSON / YAML の配信だけを使うか、別途 UI をホストしてください。
+配信形式は JSON のみです（シリアライズ形式は JSON に一本化しています）。
+
+Swagger UI のアセットは CDN から読み込まれます。オフライン環境では OpenAPI JSON の配信だけを使うか、別途 UI をホストしてください。
+
+### godoc をドキュメントとして取り込む
+
+doc comment はそのまま文書に取り込まれるため、説明文は Go のソースだけで管理できます。
+
+| Go の doc comment | OpenAPI |
+|-------------------|---------|
+| handler 関数（または handler 型 / `ServeHTTP`） | operation の `summary`（最初の1文）と `description`（残り） |
+| request / response 構造体 | schema の `description` |
+| 構造体フィールド（doc comment / 行末コメント） | property の `description`、parameter の `description` |
+| `Deprecated:` で始まる段落 | `deprecated: true` |
+
+```go
+// createUserHandler creates a user in one organization.
+//
+// The organization comes from the path and the caller from the Authorization header.
+func createUserHandler(w http.ResponseWriter, r *http.Request) { ... }
+
+type CreateUserRequest struct {
+	// Name is the display name of the new user.
+	Name  string
+	OrgID string `path:"org_id"` // OrgID owns the created user.
+}
+```
+
+テキストは加工せずそのまま転記するため、ドキュメントの編集場所は Go のソースだけになります。
 
 ## よくある生成漏れ
 

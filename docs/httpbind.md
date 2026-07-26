@@ -383,16 +383,43 @@ err := httpbind.SetOpenAPIInfo(httpbind.OpenAPIInfo{
 	Title:   "My Service API",
 	Version: "1.0.0",
 })
-jsonDoc, yamlDoc, err := httpbind.AssembleOpenAPI()
+jsonDoc, err := httpbind.AssembleOpenAPI()
 ```
 
 ```go
 mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)
-mux.HandleFunc("GET /openapi.yaml", httpbind.OpenAPIYAML)
 mux.Handle("GET /docs/{$}", httpbind.SwaggerUI("/openapi.json"))
 ```
 
-Swagger UI assets are loaded from a CDN. In offline environments, serve only the OpenAPI JSON/YAML or host a UI separately.
+The document is served as JSON only; JSON is the single serialization format.
+
+Swagger UI assets are loaded from a CDN. In offline environments, serve only the OpenAPI JSON or host a UI separately.
+
+### godoc as documentation
+
+Doc comments are carried into the document, so descriptions stay in the Go source:
+
+| Go doc comment | OpenAPI |
+|----------------|---------|
+| handler func (or handler type / `ServeHTTP`) | operation `summary` (first sentence) + `description` (rest) |
+| request/response struct | schema `description` |
+| struct field (doc or line comment) | property `description`, parameter `description` |
+| paragraph starting with `Deprecated:` | `deprecated: true` |
+
+```go
+// createUserHandler creates a user in one organization.
+//
+// The organization comes from the path and the caller from the Authorization header.
+func createUserHandler(w http.ResponseWriter, r *http.Request) { ... }
+
+type CreateUserRequest struct {
+	// Name is the display name of the new user.
+	Name  string
+	OrgID string `path:"org_id"` // OrgID owns the created user.
+}
+```
+
+Text is copied verbatim, so the Go source stays the only place to edit documentation.
 
 ## Missing generated bindings
 

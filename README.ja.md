@@ -6,7 +6,7 @@ TinyGo と通常 Go のための、リフレクション不要・コード生成
 
 利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md)
 
-リクエスト／レスポンスの構造体を一度定義するだけで、ジェネレータが型専用のバインダとライタを出力します。同じモデルで **JSON・form・multipart・query**（タグにより path / header / cookie も）を扱えます。レスポンスはクライアントの **`Accept`** に合わせて適応します（ストリーミング時は content negotiation も）。同じ解析結果から **OpenAPI 3.1 も生成**し、バインダ／ライタと常に同期します。ルート登録は別 DSL ではなく、実際の **`net/http` の書き方を静的解析**して発見します（`HandleFunc`、`Handle`、メソッド値、ラッパーなど）。
+リクエスト／レスポンスの構造体を一度定義するだけで、ジェネレータが型専用のバインダとライタを出力します。同じモデルで **JSON・form・multipart・query**（タグにより path / header / cookie も）を扱えます。レスポンスはクライアントの **`Accept`** に合わせて適応します（ストリーミング時は content negotiation も）。同じ解析結果から **OpenAPI 3.1（JSON）も生成**し、バインダ／ライタと常に同期します。godoc コメントは `summary` / `description` として取り込まれます。ルート登録は別 DSL ではなく、実際の **`net/http` の書き方を静的解析**して発見します（`HandleFunc`、`Handle`、メソッド値、ラッパーなど）。
 
 ```go
 type CreateUserRequest struct {

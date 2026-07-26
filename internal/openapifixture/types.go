@@ -2,9 +2,11 @@ package openapifixture
 
 // CreateUserRequest exercises default input, path, and header for OpenAPI mapping.
 type CreateUserRequest struct {
-	Name  string
+	// Name is the display name of the new user.
+	Name string
+	// Email is the contact address of the new user.
 	Email string
-	OrgID string `path:"org_id"`
+	OrgID string `path:"org_id"` // OrgID owns the created user.
 	Token string `header:"Authorization"`
 }
 
