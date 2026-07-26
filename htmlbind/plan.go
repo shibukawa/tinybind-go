@@ -31,6 +31,14 @@ type Plan[P any] struct {
 	// Head holds this component's document head contributions as ready to
 	// write HTML. They merge into the shell head before any body byte.
 	Head []string
+	// HasAwaitBlock reports whether this component, or any component it calls,
+	// owns an await boundary. Generation computes it over the call graph, so a
+	// component that only calls an async one still reports true.
+	//
+	// It exists so a caller can decide before rendering whether a response needs
+	// the client runtime that applies settled boundaries, instead of that
+	// decision being made for it inside the render entry points.
+	HasAwaitBlock bool
 	// Ops is the instruction list executed in order.
 	Ops []Op[P]
 	// Cache is set for a component declared with the cache annotation. It is
@@ -88,15 +96,17 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 // The zero Fragment is absent, which is how an optional slot with no argument
 // is represented.
 type Fragment struct {
-	head   []string
-	render func(*Renderer) error
+	head     []string
+	hasAwait bool
+	render   func(*Renderer) error
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func Bind[P any](plan *Plan[P], params P) Fragment {
 	return Fragment{
-		head:   plan.Head,
-		render: func(r *Renderer) error { return plan.Exec(r, params) },
+		head:     plan.Head,
+		hasAwait: plan.HasAwaitBlock,
+		render:   func(r *Renderer) error { return plan.Exec(r, params) },
 	}
 }
 
@@ -106,6 +116,17 @@ func (f Fragment) Present() bool { return f.render != nil }
 
 // Head returns the fragment's own head contributions.
 func (f Fragment) Head() []string { return f.head }
+
+// HasAwaitBlock reports whether rendering this fragment can open an await
+// boundary, so a caller knows whether a response will need the client runtime
+// that applies settled boundaries. Reading it renders nothing.
+//
+// A fragment passed in through a parameter is not counted, because the binder
+// cannot look inside a caller's parameter struct without reflection. That
+// fragment is in the caller's own hand, so a caller composing slots unions the
+// flag across the values it holds. HasAwaitBlock over a chain does that for the
+// ordinary document, layout, and page shape.
+func (f Fragment) HasAwaitBlock() bool { return f.hasAwait }
 
 // Renderer is the coordinator walking plans. It owns the output stream and the
 // merged head, so instructions never touch either directly.

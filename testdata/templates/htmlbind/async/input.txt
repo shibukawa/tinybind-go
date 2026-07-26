@@ -30,6 +30,14 @@ export component Profile(id: string): html {
 </section>
 }
 
+export component Page(id: string): html {
+<main><Profile id={id} /></main>
+}
+
+export component Shell(children: html): html {
+<div class="shell">{children}</div>
+}
+
 export component Silent(id: string): html {
 {await user = LoadUser(id)}
   <p>{user.name}</p>

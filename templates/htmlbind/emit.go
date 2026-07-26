@@ -106,6 +106,14 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		head = "[]string{" + strings.Join(transitive, ", ") + "}"
 	}
 	ops := plan.literal()
+	// The flag is written only when it is true, so a project with no await
+	// boundary anywhere keeps its previous generated output byte for byte. The
+	// walk is over the call graph, so a component that merely calls an async one
+	// carries the flag too.
+	await := ""
+	if e.c.reachesAwait(component.Name, map[string]bool{}) != "" {
+		await = "\tHasAwaitBlock: true,\n"
+	}
 	// The Cache field is written only for a cached component, so the generated
 	// output of every other component is unchanged.
 	cache := ""
@@ -115,8 +123,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s\tOps: %s,\n}\n\n",
-		prefix, params, head, cache, indentBlock(ops, "\t"))
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, await, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)

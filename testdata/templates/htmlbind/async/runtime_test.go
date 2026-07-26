@@ -235,3 +235,52 @@ func TestRenderWithoutStoreIgnoresCache(t *testing.T) {
 func renderBadgeFragment(tone string) htmlbind.Fragment {
 	return renderBadge(renderBadgeParams{User: User{Name: "ada", Admin: true}, Tone: tone})
 }
+
+// A caller decides before rendering whether a response will need the client
+// runtime that applies settled boundaries. Asking must not render anything.
+func TestHasAwaitBlockReportsOwnAndCalledBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fragment htmlbind.Fragment
+		want     bool
+	}{
+		{"owns a boundary", Profile(ProfileParams{Id: "1"}), true},
+		{"only calls a component that owns one", Page(PageParams{Id: "1"}), true},
+		{"no boundary anywhere", Shell(ShellParams{}), false},
+		{"private component with no boundary", renderBadgeFragment("solid"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.fragment.HasAwaitBlock(); got != tc.want {
+				t.Fatalf("HasAwaitBlock() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestChainHasAwaitBlockUnionsMembers(t *testing.T) {
+	shell := BindShell(ShellParams{})
+	if shell.HasAwaitBlock() {
+		t.Fatal("a wrapper with no boundary reported one")
+	}
+	// The wrapper is sync and the leaf awaits, so the chain still needs the
+	// runtime: the decision belongs to the chain, not to any one member.
+	if !htmlbind.HasAwaitBlock([]htmlbind.Wrapper{shell}, Page(PageParams{Id: "1"})) {
+		t.Fatal("chain with an awaiting leaf reported no boundary")
+	}
+	if htmlbind.HasAwaitBlock([]htmlbind.Wrapper{shell}, Shell(ShellParams{})) {
+		t.Fatal("chain with no boundary anywhere reported one")
+	}
+	if !htmlbind.HasAwaitBlock(nil, Silent(SilentParams{Id: "1"})) {
+		t.Fatal("wrapperless chain lost the leaf's boundary")
+	}
+}
+
+func TestHasAwaitBlockDoesNotRender(t *testing.T) {
+	reset()
+	userDelay = time.Hour
+	defer reset()
+	// A boundary would block for an hour if asking rendered anything.
+	if !Profile(ProfileParams{Id: "1"}).HasAwaitBlock() {
+		t.Fatal("Profile reported no boundary")
+	}
+}

@@ -22,6 +22,14 @@ type ProfileParams struct {
 	Id string
 }
 
+type PageParams struct {
+	Id string
+}
+
+type ShellParams struct {
+	Children htmlbind.Fragment
+}
+
 type SilentParams struct {
 	Id string
 }
@@ -95,7 +103,8 @@ func renderBadge(params renderBadgeParams) htmlbind.Fragment {
 var planProfileOps = htmlbind.Builder[ProfileParams]{}
 
 var planProfilePlan = &htmlbind.Plan[ProfileParams]{
-	Head: nil,
+	Head:          nil,
+	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[ProfileParams]{
 		planProfileOps.Static("\n<section>\n"),
 		htmlbind.Await(
@@ -148,10 +157,45 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 // Profile binds Profile to its parameters, producing a renderable fragment.
 func Profile(params ProfileParams) htmlbind.Fragment { return htmlbind.Bind(planProfilePlan, params) }
 
+var planPageOps = htmlbind.Builder[PageParams]{}
+
+var planPagePlan = &htmlbind.Plan[PageParams]{
+	Head:          nil,
+	HasAwaitBlock: true,
+	Ops: []htmlbind.Op[PageParams]{
+		planPageOps.Static("\n<main>"),
+		planPageOps.Component(func(p PageParams) htmlbind.Fragment { return Profile(ProfileParams{Id: p.Id}) }),
+		planPageOps.Static("</main>\n"),
+	},
+}
+
+// Page binds Page to its parameters, producing a renderable fragment.
+func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+
+var planShellOps = htmlbind.Builder[ShellParams]{}
+
+var planShellPlan = &htmlbind.Plan[ShellParams]{
+	Head: nil,
+	Ops: []htmlbind.Op[ShellParams]{
+		planShellOps.Static("\n<div class=\"shell\">"),
+		planShellOps.Slot(func(p ShellParams) htmlbind.Fragment { return p.Children }, nil),
+		planShellOps.Static("</div>\n"),
+	},
+}
+
+// Shell binds Shell to its parameters, producing a renderable fragment.
+func Shell(params ShellParams) htmlbind.Fragment { return htmlbind.Bind(planShellPlan, params) }
+
+// BindShell binds Shell as a chain wrapper filling its unnamed slot.
+func BindShell(params ShellParams) htmlbind.Wrapper {
+	return htmlbind.BindWrapper(planShellPlan, params, func(target *ShellParams, children htmlbind.Fragment) { target.Children = children })
+}
+
 var planSilentOps = htmlbind.Builder[SilentParams]{}
 
 var planSilentPlan = &htmlbind.Plan[SilentParams]{
-	Head: nil,
+	Head:          nil,
+	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[SilentParams]{
 		planSilentOps.Static("\n"),
 		htmlbind.Await(

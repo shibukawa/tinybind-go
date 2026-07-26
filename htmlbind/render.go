@@ -12,8 +12,9 @@ import (
 // Generated code returns one from Bind<Name> for a component with a children
 // parameter.
 type Wrapper struct {
-	head   []string
-	render func(*Renderer, Fragment) error
+	head     []string
+	hasAwait bool
+	render   func(*Renderer, Fragment) error
 }
 
 // BindWrapper pairs a plan with parameters and the setter that installs the
@@ -21,7 +22,8 @@ type Wrapper struct {
 // which field the unnamed slot binds to.
 func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment)) Wrapper {
 	return Wrapper{
-		head: plan.Head,
+		head:     plan.Head,
+		hasAwait: plan.HasAwaitBlock,
 		render: func(r *Renderer, children Fragment) error {
 			local := params
 			setChildren(&local, children)
@@ -29,6 +31,14 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 		},
 	}
 }
+
+// Head returns the wrapper's own head contributions.
+func (w Wrapper) Head() []string { return w.head }
+
+// HasAwaitBlock reports whether rendering this wrapper can open an await
+// boundary. The child it wraps is counted separately, because a wrapper is
+// bound before it is told what it wraps.
+func (w Wrapper) HasAwaitBlock() bool { return w.hasAwait }
 
 // ErrNoLeaf reports a chain assembled without an innermost component.
 var ErrNoLeaf = errors.New("htmlbind: chain needs a leaf component")
@@ -212,7 +222,10 @@ func assemble(wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []strin
 	next := leaf
 	for i := len(wrappers) - 1; i >= 0; i-- {
 		wrapper, inner := wrappers[i], next
-		next = Fragment{render: func(r *Renderer) error { return wrapper.render(r, inner) }}
+		next = Fragment{
+			hasAwait: wrapper.hasAwait || inner.hasAwait,
+			render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+		}
 	}
 	return next.render, head, nil
 }
@@ -257,4 +270,20 @@ func MergeHead(wrappers []Wrapper, leaf Fragment) []string {
 	}
 	add(leaf.head)
 	return merged
+}
+
+// HasAwaitBlock reports whether any member of a chain can open an await
+// boundary. It answers the one question a caller has to settle before
+// rendering: whether this response needs the client runtime that applies
+// settled boundaries.
+//
+// Ask once for the whole chain rather than per member, so a chain whose layout
+// and page both await still contributes one runtime script.
+func HasAwaitBlock(wrappers []Wrapper, leaf Fragment) bool {
+	for _, wrapper := range wrappers {
+		if wrapper.hasAwait {
+			return true
+		}
+	}
+	return leaf.hasAwait
 }
