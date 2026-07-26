@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -81,11 +82,12 @@ func collectFileDocs(index *docIndex, info *types.Info, file *ast.File, path str
 				if !ok {
 					continue
 				}
-				doc := typeSpec.Doc
-				if doc == nil && len(n.Specs) == 1 {
-					doc = n.Doc
+				// A grouped declaration's doc describes the group, not one spec.
+				var declDoc *ast.CommentGroup
+				if len(n.Specs) == 1 {
+					declDoc = n.Doc
 				}
-				if text := normalizeDocComment(doc); text != "" {
+				if text := normalizeDocComment(typeSpec.Doc, declDoc); text != "" {
 					index.typeDoc[typeSpec.Name.Name] = text
 				}
 			}
@@ -94,10 +96,7 @@ func collectFileDocs(index *docIndex, info *types.Info, file *ast.File, path str
 				return true
 			}
 			for _, field := range n.Fields.List {
-				text := normalizeDocComment(field.Doc)
-				if text == "" {
-					text = normalizeDocComment(field.Comment)
-				}
+				text := normalizeDocComment(field.Doc, field.Comment)
 				for _, name := range field.Names {
 					object, _ := info.Defs[name].(*types.Var)
 					if object == nil {
@@ -144,16 +143,17 @@ func hasGeneratedHeader(file *ast.File) bool {
 
 var ignoredDocPrefixes = []string{"go:", "nolint", "lint:", "revive:", "nosec", "+build"}
 
-// normalizeDocComment converts a doc comment into one single-line description:
-// markers and directives are dropped, only the first paragraph is kept, runs of
-// whitespace collapse, and one trailing period is removed. The leading Go
-// identifier is deliberately kept so the text is never turned into a fragment.
-func normalizeDocComment(group *ast.CommentGroup) string {
-	if group == nil {
-		return ""
-	}
+// normalizeDocComment reduces a doc comment to one single-line description. It
+// shares godoc.Text with OpenAPI extraction but diverges afterwards: a help tag
+// and a scaffold comment must fit on one line, so only the first paragraph is
+// kept, whitespace collapses, and one trailing period is removed. The leading Go
+// identifier stays so the text is never turned into a sentence fragment.
+//
+// Groups are tried in order, matching godoc.Text: pass field.Doc then
+// field.Comment to prefer a doc comment over a trailing line comment.
+func normalizeDocComment(groups ...*ast.CommentGroup) string {
 	var words []string
-	for _, line := range strings.Split(group.Text(), "\n") {
+	for _, line := range strings.Split(godoc.Text(groups...), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			if len(words) > 0 {

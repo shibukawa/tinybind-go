@@ -8,7 +8,12 @@ Convert a Go doc comment into one single-line description deterministically befo
 ```yaml
 input:
   field: ast.Field.Doc, else ast.Field.Comment
-  type: ast.TypeSpec.Doc, else ast.GenDecl.Doc
+  type: ast.TypeSpec.Doc, else ast.GenDecl.Doc when the declaration holds one spec
+  extraction: internal/godoc Text, shared with rule:openapi-godoc-descriptions
+divergence_from_openapi:
+  openapi: keeps text verbatim across paragraphs and splits summary from description
+  configbind: must fit one tag value and one comment line, so it reduces to a single line
+  shared: comment marker stripping and directive removal only
 steps:
   - strip // and /* */ markers from each line
   - drop directive lines matching //go:, //nolint, //lint:, //revive:, //nosec
@@ -39,6 +44,8 @@ applies_to:
   - requirement:godoc-config-descriptions
   - concept:scaffold-templates
 related:
+  - rule:openapi-godoc-descriptions
+  - decision:single-source-of-truth
   - decision:godoc-help-precedence
   - decision:struct-field-tags
   - data:cli-flag-def

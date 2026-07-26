@@ -24,6 +24,7 @@ consumers:
   - subcommand usage description from struct doc when the help argument is empty
 mechanism:
   - generator correlates go/types fields with AST fields to recover comments
+  - comment text is read through the internal/godoc helper shared with rule:openapi-godoc-descriptions
   - generator writes missing help tags back to the declaring source file
   - codegen reads only tags afterward; emitted code carries no comment lookup
   - configbind.Definition gains a Doc field carrying the struct doc text
