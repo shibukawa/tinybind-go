@@ -11,6 +11,7 @@ tags: decision:struct-field-tags
 behavior:
   - default tag seeds the default layer before TOML, env, and CLI
   - help tag provides CLI help labels and TOML scaffold comments
+  - missing help tag is seeded from godoc via requirement:godoc-config-descriptions
   - opt tag overrides CLI flag names via decision:cli-flag-naming
   - enum tag restricts accepted values via rule:enum-value-validation
   - secret tag controls provenance log disclosure via rule:secret-redaction
@@ -25,8 +26,11 @@ acceptance:
   - default plus enum requires default to be a listed value
   - secret:"hide|mask|show" affects log helper output only
   - SubCommand tags affect CLI only, not TOML or env scaffolds
+  - untagged field with a doc comment gains help:"..." in source after generation
 related:
   - decision:struct-field-tags
+  - decision:godoc-help-precedence
+  - requirement:godoc-config-descriptions
   - decision:cli-flag-naming
   - data:cli-flag-def
   - rule:enum-value-validation

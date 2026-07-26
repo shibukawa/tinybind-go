@@ -18,6 +18,7 @@ inputs:
   - api:configbind-bind registrations only
   - decision:struct-field-tags for default, help, enum
   - data:cli-flag-def help text for comments
+  - requirement:godoc-config-descriptions for struct and field doc text
   - decision:prefix-table-binding
   - decision:toml-shape-constraints
 excluded_inputs:
@@ -26,6 +27,7 @@ outputs:
   - combined TOML text with prefix tables, dotted nested keys, and primitive arrays
   - combined .env text using runtime environment naming and overrides
   - comments derived from help tags next to keys
+  - struct doc comment lines above each [prefix] table header in TOML only
   - example values derived from default tags when present
   - optional allowed-value notes from enum tags
 constraints:
@@ -59,6 +61,8 @@ acceptance:
   - application-owned code can call public configbind output functions
   - scaffold TOML contains [prefix] tables for each Bind
   - scaffold TOML lines include help as comments when help tag present
+  - scaffold TOML shows the struct doc comment above its [prefix] header
+  - scaffold env shows field help comments and no struct doc
   - default values appear as example values when default tag present
   - scaffold env uses runtime names including opt and env overrides and omits env:"-" fields
   - subcommand-only fields never appear in scaffolds

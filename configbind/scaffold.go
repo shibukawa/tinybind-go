@@ -33,7 +33,7 @@ type ScaffoldField struct {
 
 // ScaffoldTOML renders all registered definitions as one deterministic TOML scaffold.
 func ScaffoldTOML() (string, error) {
-	entries, err := scaffoldEntries()
+	entries, docs, err := scaffoldEntries()
 	if err != nil {
 		return "", err
 	}
@@ -45,6 +45,7 @@ func ScaffoldTOML() (string, error) {
 				b.WriteByte('\n')
 			}
 			currentPrefix = entry.definition.Prefix
+			writeScaffoldHelp(&b, docs[currentPrefix])
 			fmt.Fprintf(&b, "[%s]\n", currentPrefix)
 		}
 		writeScaffoldHelp(&b, entry.field.Help)
@@ -58,8 +59,10 @@ func ScaffoldTOML() (string, error) {
 }
 
 // ScaffoldEnv renders all registered Bind fragments as one deterministic .env scaffold.
+// Struct docs are omitted: env output is sorted globally by variable name, so a
+// per-definition comment has no stable position.
 func ScaffoldEnv() (string, error) {
-	entries, err := scaffoldEntries()
+	entries, _, err := scaffoldEntries()
 	if err != nil {
 		return "", err
 	}
@@ -133,7 +136,10 @@ type scaffoldEntry struct {
 	fullKey    string
 }
 
-func scaffoldEntries() ([]scaffoldEntry, error) {
+// scaffoldEntries returns the flattened leaf fields plus the doc text to render
+// above each prefix table. When several definitions share a prefix the doc comes
+// from the first one in (prefix, TypeName) order.
+func scaffoldEntries() ([]scaffoldEntry, map[string]string, error) {
 	definitionsMu.RLock()
 	registered := make([]Definition, 0, len(definitions))
 	for _, definition := range definitions {
@@ -149,18 +155,22 @@ func scaffoldEntries() ([]scaffoldEntry, error) {
 		return registered[i].TypeName < registered[j].TypeName
 	})
 	seenKeys := map[string]string{}
+	docs := map[string]string{}
 	var entries []scaffoldEntry
 	for _, definition := range registered {
 		if !validScaffoldKeyPath(definition.Prefix) {
-			return nil, fmt.Errorf("configbind: scaffold prefix %q is not a bare TOML key path", definition.Prefix)
+			return nil, nil, fmt.Errorf("configbind: scaffold prefix %q is not a bare TOML key path", definition.Prefix)
+		}
+		if _, ok := docs[definition.Prefix]; !ok && definition.Doc != "" {
+			docs[definition.Prefix] = definition.Doc
 		}
 		for _, field := range definition.Scaffold {
 			if !validScaffoldKeyPath(field.Key) {
-				return nil, fmt.Errorf("configbind: scaffold field key %q is not a bare TOML key path", field.Key)
+				return nil, nil, fmt.Errorf("configbind: scaffold field key %q is not a bare TOML key path", field.Key)
 			}
 			fullKey := definition.Prefix + "." + field.Key
 			if previous, ok := seenKeys[fullKey]; ok {
-				return nil, fmt.Errorf("configbind: duplicate scaffold key %q in definitions %q and %q", fullKey, previous, definition.TypeName)
+				return nil, nil, fmt.Errorf("configbind: duplicate scaffold key %q in definitions %q and %q", fullKey, previous, definition.TypeName)
 			}
 			seenKeys[fullKey] = definition.TypeName
 			entries = append(entries, scaffoldEntry{definition: definition, field: field, fullKey: fullKey})
@@ -172,7 +182,7 @@ func scaffoldEntries() ([]scaffoldEntry, error) {
 		}
 		return entries[i].field.Key < entries[j].field.Key
 	})
-	return entries, nil
+	return entries, docs, nil
 }
 
 func scaffoldValue(field ScaffoldField, toml bool) (string, error) {

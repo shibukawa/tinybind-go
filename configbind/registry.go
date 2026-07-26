@@ -16,6 +16,8 @@ type Definition struct {
 	TypeName string
 	// Prefix is the configuration key prefix passed to Bind.
 	Prefix string
+	// Doc is the config struct's godoc text, rendered above the scaffold table.
+	Doc string
 	// KnownKeys lists stable config keys for env and provenance.
 	KnownKeys []string
 	// FlagMetas builds cliparser defs for this type's fields.

@@ -107,6 +107,8 @@ func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, spec
 		}
 	}
 
+	docs := buildConfigDocIndex(pkg)
+
 	patterns, err := options.callPatterns()
 	if err != nil {
 		return "", nil, err
@@ -129,10 +131,7 @@ func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, spec
 			sourcePath = fset.File(f.Pos()).Name()
 			base = filepath.Base(sourcePath)
 		}
-		if strings.HasSuffix(base, "_test.go") ||
-			base == "configbind_gen.go" ||
-			base == "tinybind_gen.go" ||
-			base == "tinybind_openapi_gen.go" {
+		if skipConfigSourceFile(base) {
 			continue
 		}
 		discovered, err := discoverConfigBindCalls(f, pkg.TypesInfo, configPatterns)
@@ -147,6 +146,7 @@ func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, spec
 
 	// Deduplicate Bind by TypeName+Prefix and subcommands by TypeName+Name.
 	seen := map[string]bool{}
+	collector := &configFieldCollector{docs: docs, planned: map[*ast.Field]bool{}}
 	for _, b := range bindings {
 		key := b.TypeName + "\x00" + b.Prefix
 		if b.SubCommand {
@@ -160,7 +160,7 @@ func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, spec
 		if !ok {
 			return "", nil, fmt.Errorf("configbind: type %s not found in package", b.TypeName)
 		}
-		fields, err := configFieldsFromStruct(st, "")
+		fields, err := collector.fields(st, "")
 		if err != nil {
 			return "", nil, fmt.Errorf("configbind: %s: %w", b.TypeName, err)
 		}
@@ -173,9 +173,17 @@ func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, spec
 				SubCommand:  b.SubCommand,
 				Name:        b.Name,
 				Help:        b.Help,
+				Doc:         docs.typeDoc[b.TypeName],
 				Fields:      fields,
 			},
 		})
+	}
+	// Backfill runs before the caller builds IR; specs already carry the same
+	// help text, so a reload is unnecessary and a second run is a no-op.
+	if !options.featureDisabled(FeatureHelpBackfill) {
+		if _, err := applyHelpBackfills(pkg.Fset, collector.edits); err != nil {
+			return "", nil, err
+		}
 	}
 	return pkg.Name, specs, nil
 }
@@ -324,7 +332,33 @@ func callStringRole(info *types.Info, call *ast.CallExpr, source ValueSource) (s
 	return constant.StringVal(typed.Value), true
 }
 
-func configFieldsFromStruct(st *types.Struct, keyPrefix string) ([]cbcg.Field, error) {
+// configFieldCollector walks config structs and resolves each field's help text,
+// falling back to its godoc comment and planning a source backfill when the help
+// tag is absent.
+type configFieldCollector struct {
+	docs    *docIndex
+	planned map[*ast.Field]bool
+	edits   []helpBackfill
+}
+
+// help returns the description for one field. An existing help tag always wins,
+// even when its value is empty; only a missing key falls back to godoc.
+func (c *configFieldCollector) help(field *types.Var, tag string) string {
+	if value, ok := structTagLookup(tag, "help"); ok {
+		return value
+	}
+	doc := c.docs.fieldDoc[field]
+	if doc == "" {
+		return ""
+	}
+	if node := c.docs.fieldAST[field]; node != nil && !c.planned[node] {
+		c.planned[node] = true
+		c.edits = append(c.edits, helpBackfill{path: c.docs.fieldPath[field], field: node, help: doc})
+	}
+	return doc
+}
+
+func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbcg.Field, error) {
 	var fields []cbcg.Field
 	for i := 0; i < st.NumFields(); i++ {
 		f := st.Field(i)
@@ -340,13 +374,13 @@ func configFieldsFromStruct(st *types.Struct, keyPrefix string) ([]cbcg.Field, e
 		def := structTagGet(tag, "default")
 		opt := structTagGet(tag, "opt")
 		env := structTagGet(tag, "env")
-		help := structTagGet(tag, "help")
+		help := c.help(f, tag)
 		arg := structTagGet(tag, "arg")
 
 		ft := f.Type()
 		if named, ok := ft.(*types.Named); ok {
 			if underlying, ok := named.Underlying().(*types.Struct); ok {
-				nested, err := configFieldsFromStruct(underlying, joinConfigKey(keyPrefix, key))
+				nested, err := c.fields(underlying, joinConfigKey(keyPrefix, key))
 				if err != nil {
 					return nil, err
 				}
@@ -431,7 +465,13 @@ func fieldKeyFromName(name string) string {
 }
 
 func structTagGet(tag, key string) string {
-	// minimal parser for `key:"value"`
+	value, _ := structTagLookup(tag, key)
+	return value
+}
+
+// structTagLookup is a minimal parser for `key:"value"`. The bool distinguishes
+// an absent key from one explicitly set to the empty string.
+func structTagLookup(tag, key string) (string, bool) {
 	tag = strings.TrimSpace(tag)
 	for tag != "" {
 		i := strings.IndexByte(tag, ':')
@@ -445,28 +485,33 @@ func structTagGet(tag, key string) string {
 		}
 		// scan quoted
 		j := 1
+		closed := false
 		for j < len(tag) {
 			if tag[j] == '\\' {
 				j += 2
 				continue
 			}
 			if tag[j] == '"' {
-				val := tag[1:j]
-				if name == key {
-					// unquote simple escapes
-					s, err := strconv.Unquote(`"` + val + `"`)
-					if err != nil {
-						return val
-					}
-					return s
-				}
-				tag = strings.TrimSpace(tag[j+1:])
+				closed = true
 				break
 			}
 			j++
 		}
+		if !closed {
+			break
+		}
+		val := tag[1:j]
+		if name == key {
+			// unquote simple escapes
+			s, err := strconv.Unquote(`"` + val + `"`)
+			if err != nil {
+				return val, true
+			}
+			return s, true
+		}
+		tag = strings.TrimSpace(tag[j+1:])
 	}
-	return ""
+	return "", false
 }
 
 func joinConfigKey(prefix, key string) string {

@@ -18,6 +18,7 @@ func registerServerConfigDefinition0() {
 	configbind.Register[ServerConfig](configbind.Definition{
 		TypeName: "github.com/shibukawa/tinybind-go/examples/demo.ServerConfig",
 		Prefix:   "server",
+		Doc:      "ServerConfig is process config loaded via configbind (TOML / env / CLI). With opt:\"port,p\", the environment variable is PORT (CLI long name based)",
 		KnownKeys: []string{
 			"server.port",
 		},

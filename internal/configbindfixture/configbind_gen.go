@@ -19,6 +19,7 @@ func registerWebServerConfigDefinition0() {
 	configbind.Register[WebServerConfig](configbind.Definition{
 		TypeName: "github.com/shibukawa/tinybind-go/internal/configbindfixture.WebServerConfig",
 		Prefix:   "webserver",
+		Doc:      "WebServerConfig is a Bind-style config used by generator and load tests",
 		KnownKeys: []string{
 			"webserver.port",
 			"webserver.host",

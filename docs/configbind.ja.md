@@ -69,6 +69,7 @@ TOML 出力は対応 subset 内の文法を使います。どちらの形式も 
 たとえば次の定義がある場合:
 
 ```go
+// ServerConfig は公開 listener の設定です。
 type ServerConfig struct {
 	Port     int    `default:"8080" opt:"port,p" help:"HTTP listen port"`
 	Host     string `default:"localhost" help:"listen host"`
@@ -83,6 +84,7 @@ func serverConfig() *ServerConfig {
 統合後の出力には、次と同等の内容が含まれます。
 
 ```toml
+# ServerConfig は公開 listener の設定です。
 [server]
 # HTTP listen port
 port = 8080
@@ -90,6 +92,8 @@ port = 8080
 host = "localhost"
 internal = ""
 ```
+
+構造体の godoc は table の comment になります。`.env` の雛形は変数名で全体を sort するため、field の comment だけが付きます。
 
 ```dotenv
 # HTTP listen port
@@ -181,6 +185,37 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | 環境変数名を正確な名前で上書き | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
+
+### godoc を説明の source にする
+
+`help` tag のない field は godoc comment を説明として使い、generator がその内容を struct tag に書き戻します。
+
+```go
+type ServerConfig struct {
+	// Port is the HTTP listen port.
+	Port int `default:"8080"`
+}
+```
+
+generator を1回実行すると source は次のようになります。
+
+```go
+type ServerConfig struct {
+	// Port is the HTTP listen port.
+	Port int `default:"8080" help:"Port is the HTTP listen port"`
+}
+```
+
+以降は tag が唯一の source of truth です。既存の `help` tag は常に comment より優先され、再実行しても内容は変わりません。使われるのは最初の段落だけで、`//go:` や lint directive は除去され、末尾の句点も1つ削られます。行末 comment（`Host string // listen address`）も同様に使えます。
+
+同じ text は生成された CLI の usage にも渡ります。help 文字列を空にして登録した `SubCommand` は、struct の godoc に fallback します。
+
+手書きの source を generator に書き換えさせたくない場合は feature を無効化してください。生成結果には godoc 由来の help が入ったままになります。
+
+```go
+options := generator.DefaultOptions()
+options.DisableFeatures = append(options.DisableFeatures, generator.FeatureHelpBackfill)
+```
 
 ```go
 type ServerConfig struct {

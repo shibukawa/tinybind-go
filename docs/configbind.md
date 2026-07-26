@@ -69,6 +69,7 @@ The TOML output uses the supported restricted subset. Both formats use `default`
 For example, this definition:
 
 ```go
+// ServerConfig configures the public listener.
 type ServerConfig struct {
 	Port     int    `default:"8080" opt:"port,p" help:"HTTP listen port"`
 	Host     string `default:"localhost" help:"listen host"`
@@ -83,6 +84,7 @@ func serverConfig() *ServerConfig {
 contributes text equivalent to the following in the combined output:
 
 ```toml
+# ServerConfig configures the public listener.
 [server]
 # HTTP listen port
 port = 8080
@@ -90,6 +92,8 @@ port = 8080
 host = "localhost"
 internal = ""
 ```
+
+The struct's godoc becomes the table comment. The `.env` scaffold is sorted globally by variable name, so it carries field comments only.
 
 ```dotenv
 # HTTP listen port
@@ -181,6 +185,37 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | Override the environment variable with an exact name | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
+
+### Godoc as the help source
+
+A field without a `help` tag takes its description from its godoc comment, and the generator writes that text back into the struct tag:
+
+```go
+type ServerConfig struct {
+	// Port is the HTTP listen port.
+	Port int `default:"8080"`
+}
+```
+
+After one generator run the source reads:
+
+```go
+type ServerConfig struct {
+	// Port is the HTTP listen port.
+	Port int `default:"8080" help:"Port is the HTTP listen port"`
+}
+```
+
+The tag is the single source of truth from then on: an existing `help` tag always wins over the comment, and re-running the generator changes nothing. Only the first paragraph is used, `//go:` and lint directives are dropped, and one trailing period is removed. A trailing line comment (`Host string // listen address`) works too.
+
+The same text feeds generated CLI usage. A `SubCommand` registered with an empty help string falls back to its struct godoc.
+
+To keep the generator from editing hand-written sources, disable the feature — godoc still seeds help in the generated output:
+
+```go
+options := generator.DefaultOptions()
+options.DisableFeatures = append(options.DisableFeatures, generator.FeatureHelpBackfill)
+```
 
 ```go
 type ServerConfig struct {

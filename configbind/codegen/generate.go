@@ -20,7 +20,10 @@ type Spec struct {
 	SubCommand  bool
 	Name        string
 	Help        string
-	Fields      []Field
+	// Doc is the struct's godoc text. Bind specs render it above the scaffold
+	// table; subcommand specs fall back to it when Help is empty.
+	Doc    string
+	Fields []Field
 }
 
 // Field and FieldKind re-export for callers.
@@ -137,6 +140,9 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 	b.WriteString("](configbind.Definition{\n")
 	fmt.Fprintf(b, "\t\tTypeName: %s,\n", strconv.Quote(typeIdentity))
 	fmt.Fprintf(b, "\t\tPrefix: %s,\n", strconv.Quote(s.Prefix))
+	if s.Doc != "" {
+		fmt.Fprintf(b, "\t\tDoc: %s,\n", strconv.Quote(s.Doc))
+	}
 	b.WriteString("\t\tKnownKeys: []string{\n")
 	for _, k := range keys {
 		fmt.Fprintf(b, "\t\t\t%s,\n", strconv.Quote(k))
@@ -211,6 +217,9 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 }
 
 func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
+	if s.Help == "" {
+		s.Help = s.Doc
+	}
 	if s.TypeName == "" || s.Name == "" || s.Help == "" {
 		return fmt.Errorf("configbind/codegen: subcommand TypeName, Name, and Help required")
 	}

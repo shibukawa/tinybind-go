@@ -17,6 +17,7 @@ func TestScaffoldsCombineRegisteredFragmentsDeterministically(t *testing.T) {
 	server := configbind.Definition{
 		TypeName: "example/app.ServerConfig",
 		Prefix:   "webserver",
+		Doc:      "ServerConfig configures the public HTTP listener",
 		Apply:    noopApply,
 		Scaffold: []configbind.ScaffoldField{
 			{Key: "port", Kind: configbind.ScaffoldInt, Default: "8080", Opt: "port,p", Help: "HTTP listen port"},
@@ -30,6 +31,7 @@ func TestScaffoldsCombineRegisteredFragmentsDeterministically(t *testing.T) {
 	configbind.Register[cacheScaffold](configbind.Definition{
 		TypeName: "example/framework.CacheConfig",
 		Prefix:   "middleware.cache",
+		Doc:      "CacheConfig configures the response cache",
 		Apply:    noopApply,
 		Scaffold: []configbind.ScaffoldField{
 			{Key: "service_name", Kind: configbind.ScaffoldString, Env: "OTEL_SERVICE_NAME"},
@@ -39,9 +41,11 @@ func TestScaffoldsCombineRegisteredFragmentsDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantTOML := `[middleware.cache]
+	wantTOML := `# CacheConfig configures the response cache
+[middleware.cache]
 service_name = ""
 
+# ServerConfig configures the public HTTP listener
 [webserver]
 # listen host
 host = "localhost"
