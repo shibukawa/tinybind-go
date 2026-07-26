@@ -25,7 +25,13 @@ func (g *Generator) Analyze(dir string) (*PackagePlan, error) {
 
 // Generate analyzes dir and writes generated source.
 func (g *Generator) Generate(dir, outDir, outName string) (string, error) {
-	plan, err := g.Analyze(dir)
+	return g.generate(newPackageLoad(dir), outDir, outName)
+}
+
+// generate is Generate over a package the run already loaded.
+func (g *Generator) generate(load *packageLoad, outDir, outName string) (string, error) {
+	dir := load.dir
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return "", err
 	}

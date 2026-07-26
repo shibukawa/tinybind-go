@@ -27,7 +27,11 @@ type GenerateRequest struct {
 	ConfigBindName      string
 	Check               bool
 	GenerateAll         bool
-	SQLContextAPI       bool
+	// Force regenerates even when the generated files record the current input
+	// hash. Use it after a change the hash does not cover, such as an edit in
+	// another package of the module.
+	Force         bool
+	SQLContextAPI bool
 	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
 	// turn the option on, never off.
 	SQLContextOnlyAPI bool
@@ -40,6 +44,9 @@ type GenerateResult struct {
 	OpenAPIPath    string
 	TemplatesPath  string
 	Diagnostics    []parser.Diagnostic
+	// Cached reports that the paths were left untouched because the generated
+	// files already record the current input hash.
+	Cached bool
 }
 
 // Paths returns non-empty artifact paths in generation order.
@@ -87,6 +94,19 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 		return GenerateResult{Diagnostics: diagnostics}, err
 	}
 
+	outDir := request.Out
+	if outDir == "" {
+		outDir = request.Dir
+	}
+	// A fingerprint that cannot be computed only disables the cache; generation
+	// itself reports the underlying problem with better context.
+	fingerprint, fingerprintErr := generationFingerprint(request.Dir, outDir, request, options)
+	if fingerprintErr == nil && !request.Force {
+		if cached, ok := cachedGeneration(outDir, fingerprint, request); ok {
+			return cached, nil
+		}
+	}
+
 	runner := New(options)
 	result := GenerateResult{}
 	if result.TemplatesPath, err = runner.GenerateTemplates(request.Dir, request.Out, request.TemplatesName); err != nil {
@@ -95,7 +115,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
-	result.BinderPath, err = runner.Generate(request.Dir, request.Out, request.Name)
+	// Generated templates join the package, so the remaining phases share one
+	// type check taken after they are written.
+	load := newPackageLoad(request.Dir)
+	result.BinderPath, err = runner.generate(load, request.Out, request.Name)
 	if err != nil {
 		if !strings.Contains(err.Error(), "no generatable structs") {
 			return GenerateResult{}, fmt.Errorf("generate mapping: %w", err)
@@ -105,7 +128,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
-	result.ConfigBindPath, err = runner.GenerateConfigBind(request.Dir, request.Out, request.ConfigBindName)
+	result.ConfigBindPath, err = runner.generateConfigBind(load, request.Out, request.ConfigBindName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate configbind: %w", err)
 	}
@@ -113,7 +136,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 		return GenerateResult{}, err
 	}
 	if request.OpenAPI && normalized.openAPI {
-		result.OpenAPIPath, err = runner.GenerateOpenAPI(request.Dir, request.Out, request.OpenAPIName)
+		result.OpenAPIPath, err = runner.generateOpenAPI(load, request.Out, request.OpenAPIName)
 		if err != nil {
 			if result.BinderPath == "" && result.ConfigBindPath != "" && strings.Contains(err.Error(), "no") {
 				result.OpenAPIPath = ""
@@ -126,6 +149,11 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if len(result.Paths()) == 0 {
 		return result, fmt.Errorf("%w in %s", ErrNothingToGenerate, request.Dir)
+	}
+	if fingerprintErr == nil {
+		if err := stampGeneration(fingerprint, result); err != nil {
+			return GenerateResult{}, fmt.Errorf("stamp generated files: %w", err)
+		}
 	}
 	return result, nil
 }

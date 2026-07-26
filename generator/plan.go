@@ -149,37 +149,14 @@ func AnalyzePackage(dir string) (*PackagePlan, error) {
 
 // AnalyzePackageWithOptions is AnalyzePackage with customizable call targets.
 func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
-	abs, err := filepath.Abs(dir)
+	return analyzeLoadedPackage(newPackageLoad(dir), opts)
+}
+
+// analyzeLoadedPackage builds the plan from a package the run already loaded.
+func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error) {
+	pkg, err := load.get()
 	if err != nil {
 		return nil, err
-	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName |
-			packages.NeedFiles |
-			packages.NeedSyntax |
-			packages.NeedTypes |
-			packages.NeedTypesInfo |
-			packages.NeedImports |
-			packages.NeedModule |
-			packages.NeedDeps,
-		Dir: abs,
-	}
-	pkgs, err := packages.Load(cfg, ".")
-	if err != nil {
-		return nil, fmt.Errorf("packages.Load %s: %w", abs, err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package in %s", abs)
-	}
-	pkg := pkgs[0]
-	for _, p := range pkgs {
-		if p.Name != "" && !strings.HasSuffix(p.ID, ".test") {
-			pkg = p
-			break
-		}
-	}
-	if pkg.TypesInfo == nil {
-		return nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
 	}
 
 	plan := &PackagePlan{Package: pkg.Name, PackagePath: pkg.PkgPath}

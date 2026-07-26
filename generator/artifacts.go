@@ -73,7 +73,9 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	binding, err := runner.bindingArtifacts(request.Dir)
+	// Every remaining phase reads the same type-checked package.
+	load := newPackageLoad(request.Dir)
+	binding, err := runner.bindingArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate mapping: %w", err)
 	}
@@ -81,7 +83,7 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	config, err := runner.configBindArtifacts(request.Dir)
+	config, err := runner.configBindArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate configbind: %w", err)
 	}
@@ -90,7 +92,7 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, err
 	}
 	if request.OpenAPI && normalized.openAPI {
-		openAPI, err := runner.openAPIArtifact(request.Dir)
+		openAPI, err := runner.openAPIArtifact(load)
 		if err != nil {
 			return nil, fmt.Errorf("generate OpenAPI: %w", err)
 		}
@@ -273,8 +275,8 @@ func dropUnusedImports(source []byte) ([]byte, error) {
 	return formatted, nil
 }
 
-func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
-	plan, err := g.Analyze(dir)
+func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +314,8 @@ func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
 	return artifacts, nil
 }
 
-func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
-	pkgName, specs, err := AnalyzeConfigBindSources(dir, g.Options)
+func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {
+	pkgName, specs, err := configBindSources(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -348,12 +350,12 @@ func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
 	return artifacts, nil
 }
 
-func (g *Generator) openAPIArtifact(dir string) ([]Artifact, error) {
-	doc, err := g.BuildOpenAPI(dir)
+func (g *Generator) openAPIArtifact(load *packageLoad) ([]Artifact, error) {
+	doc, err := g.buildOpenAPI(load)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := g.Analyze(dir)
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -25,6 +26,16 @@ func ParsePackageWithConfig(dir string, config Config) (*Result, error) {
 	pkg, err := loadPackage(dir)
 	if err != nil {
 		return nil, err
+	}
+	return parseLoadedPackage(pkg, config)
+}
+
+// ParseLoadedPackage analyzes a package that the caller already type-checked.
+// Loading dominates the cost of analysis, so a generator run that needs both
+// routes and type plans loads the package once and shares it.
+func ParseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
+	if pkg == nil {
+		return nil, fmt.Errorf("parser: no loaded package")
 	}
 	return parseLoadedPackage(pkg, config)
 }

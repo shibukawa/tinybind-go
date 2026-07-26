@@ -31,6 +31,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
+	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -52,7 +53,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		TemplatesName:       *templatesName,
 		HTMLTemplatePattern: *htmlTemplatePattern,
 		SQLTemplatePattern:  *sqlTemplatePattern,
-		Check:               *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
+		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
 		SQLContextOnlyAPI: *sqlContextOnlyAPI,
 	})
 	if err != nil {
@@ -69,6 +70,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		}
 		fmt.Fprintln(stdout, "ok")
 		return 0
+	}
+	if result.Cached {
+		fmt.Fprintf(stderr, "generate: %s is up to date\n", *dir)
 	}
 	for _, path := range result.Paths() {
 		fmt.Fprintln(stdout, path)

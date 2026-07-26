@@ -23,6 +23,12 @@ func BuildOpenAPI(dir string) (Document, error) {
 
 // BuildOpenAPI builds a document using this generator's discovery identities.
 func (g *Generator) BuildOpenAPI(dir string) (Document, error) {
+	return g.buildOpenAPI(newPackageLoad(dir))
+}
+
+// buildOpenAPI is BuildOpenAPI over a package the run already loaded. Routes and
+// type plans are two readings of the same type-checked package.
+func (g *Generator) buildOpenAPI(load *packageLoad) (Document, error) {
 	normalized, err := g.Options.normalized()
 	if err != nil {
 		return nil, err
@@ -30,11 +36,15 @@ func (g *Generator) BuildOpenAPI(dir string) (Document, error) {
 	if !normalized.openAPI {
 		return nil, fmt.Errorf("%w: %s", ErrFeatureDisabled, FeatureOpenAPI)
 	}
-	routes, err := parser.ParsePackageWithConfig(dir, normalized.parserConfig)
+	pkg, err := load.get()
 	if err != nil {
 		return nil, fmt.Errorf("parse routes: %w", err)
 	}
-	plan, err := g.Analyze(dir)
+	routes, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse routes: %w", err)
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, fmt.Errorf("analyze types: %w", err)
 	}

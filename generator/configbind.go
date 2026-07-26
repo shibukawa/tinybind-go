@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	cbcg "github.com/shibukawa/tinybind-go/configbind/codegen"
-	"golang.org/x/tools/go/packages"
 )
 
 const (
@@ -60,37 +59,15 @@ func AnalyzeConfigBindWithOptions(dir string, options Options) (pkgName string, 
 // AnalyzeConfigBindSources is AnalyzeConfigBindWithOptions with the owning
 // source file retained for every discovered definition.
 func AnalyzeConfigBindSources(dir string, options Options) (pkgName string, specs []ConfigBindSpec, err error) {
-	abs, err := filepath.Abs(dir)
+	return configBindSources(newPackageLoad(dir), options)
+}
+
+// configBindSources discovers config-bind definitions in a package the run
+// already loaded.
+func configBindSources(load *packageLoad, options Options) (pkgName string, specs []ConfigBindSpec, err error) {
+	pkg, err := load.get()
 	if err != nil {
 		return "", nil, err
-	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName |
-			packages.NeedFiles |
-			packages.NeedSyntax |
-			packages.NeedTypes |
-			packages.NeedTypesInfo |
-			packages.NeedImports |
-			packages.NeedModule |
-			packages.NeedDeps,
-		Dir: abs,
-	}
-	pkgs, err := packages.Load(cfg, ".")
-	if err != nil {
-		return "", nil, fmt.Errorf("packages.Load %s: %w", abs, err)
-	}
-	if len(pkgs) == 0 {
-		return "", nil, fmt.Errorf("no package in %s", abs)
-	}
-	pkg := pkgs[0]
-	for _, p := range pkgs {
-		if p.Name != "" && !strings.HasSuffix(p.ID, ".test") {
-			pkg = p
-			break
-		}
-	}
-	if pkg.TypesInfo == nil {
-		return "", nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
 	}
 
 	// Map type name -> *types.Struct
@@ -482,9 +459,19 @@ func joinConfigKey(prefix, key string) string {
 // GenerateConfigBind analyzes dir for configbind.Bind usage and writes configbind_gen.go.
 // Returns the absolute path written, or "" if no Bind calls found.
 func (g *Generator) GenerateConfigBind(dir, outDir, outName string) (string, error) {
-	pkgName, specs, err := AnalyzeConfigBindWithOptions(dir, g.Options)
+	return g.generateConfigBind(newPackageLoad(dir), outDir, outName)
+}
+
+// generateConfigBind is GenerateConfigBind over a package the run already loaded.
+func (g *Generator) generateConfigBind(load *packageLoad, outDir, outName string) (string, error) {
+	dir := load.dir
+	pkgName, sourced, err := configBindSources(load, g.Options)
 	if err != nil {
 		return "", err
+	}
+	specs := make([]cbcg.Spec, 0, len(sourced))
+	for _, spec := range sourced {
+		specs = append(specs, spec.Spec)
 	}
 	if len(specs) == 0 {
 		return "", nil

@@ -126,6 +126,12 @@ _ = stream.Write(ChatEvent{Type: "done"})
 go run ./cmd/tinybind-gen generate -dir ./path/to/package
 ```
 
+Every generated file records a `// tinybind:generated` comment holding the
+SHA-256 of the inputs that produced it, so a run whose package sources,
+templates, `go.mod`, options, and generator binary all hash to the recorded
+value exits without regenerating. `-force` regenerates regardless. See
+[docs/httpbind.md](docs/httpbind.md#skipping-unchanged-packages).
+
 The CLI automatically discovers `.tb.html` and `.tb.sql` files in the target
 package and writes `tinybind_templates_gen.go`. SQL value expressions become
 driver arguments; PostgreSQL-style `$1`, `$2`, … placeholders are generated in
