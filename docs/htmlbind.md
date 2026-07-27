@@ -153,7 +153,7 @@ type ProfileParams struct {
 func Profile(params ProfileParams) htmlbind.Fragment
 ```
 
-Types declared in a template become types in the generated Go package. Application code constructs those generated types when calling components.
+A type declared in a template becomes a type in the generated Go package, and the caller constructs that generated type to call the component. Nothing converts between a hand-written struct and a template type, so a shape that drifts out of agreement is a Go compile error.
 
 ### Type mapping
 
@@ -347,6 +347,9 @@ request data.
 Every component reachable from the rendered chain contributes, including
 components called from a body, and identical tags are emitted once.
 
+Those contributions need somewhere to land. The document shell is the component
+that owns `html`, `head`, and `body`, and its `head` element is the destination.
+
 ### Scoped styles
 
 A component's style block is scoped by renaming the class names it declares and
@@ -374,9 +377,6 @@ rewriting the matching `class` attributes in the same component:
 
 The suffix is derived from the template path and component name, so unrelated
 edits do not change generated class names.
-
-The document shell is the component that owns `html`, `head`, and `body`. Its
-`head` element is where merged contributions land.
 
 ## Attributes
 
@@ -638,9 +638,10 @@ JavaScript involved:
 err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
 ```
 
-To choose between them at runtime, ask whether anything in the composition can
-open a boundary. `HasAwaitBlock` is available on `Fragment` and `Wrapper`, and as
-a chain form that unions the members:
+Streaming the fallbacks first is the alternative, and picking it means knowing
+beforehand whether anything in the composition can open a boundary at all.
+`HasAwaitBlock` answers that on `Fragment` and `Wrapper`, and as a chain form
+that unions the members:
 
 ```go
 if htmlbind.HasAwaitBlock(wrappers, page) {
@@ -870,7 +871,7 @@ Templates in one directory are combined into one Go file.
 - Do not duplicate exported component, type, enum, or external names
 - Give private components distinct names as well, because their generated declarations share a package
 
-A package declaration can be omitted in some cases, but explicitly using the matching declaration, such as `package pages`, makes the intent clear.
+The `package` declaration may be omitted in some cases. Write it anyway: `package pages` states which Go package the generated file joins, and leaves nothing for a reader to infer from the directory name.
 
 ## Reading diagnostics
 
@@ -896,4 +897,4 @@ Common causes include:
 - Annotating a component with `@cache` when it declares an `html` parameter or
   reaches an `await` boundary
 
-Run `go generate ./...` after changing templates, before building and testing the application.
+Run `go generate ./...` after every template change, before building or testing. Until you do, the Go build still sees the previous plan — including the diagnostic you may have already fixed in the template.

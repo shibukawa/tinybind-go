@@ -1,6 +1,6 @@
 # jsonbind User Guide
 
-`jsonbind` converts between Go structs and JSON documents without depending on HTTP. Its API uses only `io.Reader` and `io.Writer`, making it suitable for CLIs, files, message queues, and WASM applications.
+`jsonbind` converts Go structs to JSON documents and back without touching `net/http`. The entire API is `io.Reader` and `io.Writer`, which is what makes it usable in a CLI, a file loader, a message-queue consumer, or a WASM build where an HTTP dependency would be dead weight.
 
 ## What is automated
 
@@ -11,7 +11,7 @@
 - Enforcing a JSON document size limit
 - Generating only the decoder or encoder actually used by `DecodeJSON[T]` and `EncodeJSON[T]`
 
-`jsonbind` does not select HTTP statuses or set HTTP headers. Use [httpbind](httpbind.md) for HTTP request and response handling.
+Choosing an HTTP status and setting headers stay outside that boundary. Those belong to [httpbind](httpbind.md), which handles request and response concerns on top of the same codecs.
 
 ## What you provide
 
@@ -32,7 +32,7 @@ package document
 go generate ./...
 ```
 
-The generator inspects generic type arguments. A type used only with decode gets only a decoder; a type used only with encode gets only an encoder.
+The generator inspects generic type arguments, so the output tracks how you actually call it. A type used only with decode gets only a decoder; a type used only with encode gets only an encoder. A codec you never call is never generated.
 
 ## Basic example
 
@@ -117,9 +117,9 @@ func use(r io.Reader, w io.Writer) error {
 }
 ```
 
-Without an explicit wire name, a field becomes lower camel case. `DecodeJSON` ignores fields tagged for the HTTP-only `query`, `path`, `header`, or `cookie` sources. `EncodeJSON`, however, emits struct fields, so a JSON-only model is clearest when it uses only standard `json` names.
+Without an explicit wire name, a field becomes lower camel case. `DecodeJSON` ignores fields tagged for the HTTP-only `query`, `path`, `header`, and `cookie` sources; `EncodeJSON` does not make that distinction and emits struct fields as it finds them. A JSON-only model is therefore clearest when it carries nothing but standard `json` names.
 
-The generated codec currently uses only the name portion of a `json` tag. It does not apply `omitempty` or exclusion via `json:"-"`; design models assuming that fields are emitted.
+One habit carried over from `encoding/json` needs unlearning here. The generated codec reads only the name portion of a `json` tag: `omitempty` has no effect, and `json:"-"` excludes nothing. Design models on the assumption that every declared field is written out.
 
 ## Retaining unknown fields
 
@@ -161,11 +161,11 @@ Override it for one call:
 doc, err := jsonbind.DecodeJSONLimit[Document](reader, 64<<10) // 64 KiB
 ```
 
-A non-positive `DecodeJSONLimit` value uses the process-wide limit.
+A non-positive `DecodeJSONLimit` value falls back to the process-wide limit.
 
 ## Error handling
 
-`jsonbind` errors are transport-neutral and do not imply an HTTP status.
+`jsonbind` errors are transport-neutral and do not imply an HTTP status. Each failure carries a code, and a field-specific failure also names the field that caused it:
 
 ```go
 doc, err := jsonbind.DecodeJSON[Document](reader)
@@ -191,7 +191,7 @@ Common error codes:
 | `body_read` | Reading from the reader failed |
 | `internal` | A caller error such as a nil writer |
 
-When JSON decoding happens through `httpbind.Bind`, these errors are converted to HTTP validation, bad-request, or payload-too-large errors.
+The status decision is deferred, not skipped. When JSON decoding happens through `httpbind.Bind`, these same errors become HTTP validation, bad-request, or payload-too-large errors.
 
 ## Reading and writing files
 
@@ -217,11 +217,11 @@ func save(path string, value Config) error {
 
 ## Keeping generation HTTP-free
 
-In a JSON-only package, import `jsonbind` directly and call `DecodeJSON` / `EncodeJSON` instead of the root HTTP package. The generated output then depends only on `jsonbind`, not `net/http`. This separation is particularly useful for TinyGo and WASM builds.
+The import path decides the dependency. In a JSON-only package, call `jsonbind.DecodeJSON` / `EncodeJSON` directly instead of going through the root HTTP package; the generated output then references `jsonbind` alone and never pulls in `net/http`. For TinyGo and WASM builds, where every transitive dependency costs binary size, that separation is worth enforcing deliberately.
 
 ## Missing generated codecs
 
-The generator may not find a concrete type when it is passed dynamically through a generic wrapper. Put a concrete call in the analyzed package:
+Generation runs without complaint, and then runtime reports that no generated decoder or encoder exists. The usual cause is a type that reaches `DecodeJSON` only through a generic wrapper, because the generator then sees a type parameter rather than a concrete type. Give it a concrete call inside the analyzed package:
 
 ```go
 func DecodeUser(r io.Reader) (User, error) {
@@ -229,4 +229,4 @@ func DecodeUser(r io.Reader) (User, error) {
 }
 ```
 
-If runtime reports that no generated decoder or encoder exists, verify that the concrete call is in the same package and that the generated file is included in the build.
+If the error survives that, check two things: that the concrete call lives in the package the generator analyzed, and that the generated file is part of the build.

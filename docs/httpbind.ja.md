@@ -1,6 +1,6 @@
 # httpbind 利用ガイド
 
-`httpbind` は `net/http` のハンドラーで、HTTP リクエストを Go の構造体へ変換し、構造体を JSON 応答として書き出すためのパッケージです。同じ解析結果から OpenAPI 3.1 文書も生成します。
+`httpbind` は、ふつうの `net/http` ハンドラーの中で、HTTP リクエストを Go の構造体に束ね、構造体を JSON 応答として書き戻します。そのバインディングを作るのと同じ静的解析が OpenAPI 3.1 文書も作るため、コードとスキーマがずれることはありません。出どころが同じだからです。
 
 ## 自動化されること
 
@@ -13,7 +13,7 @@
 - ルート、入力、出力、エラーを反映した OpenAPI 3.1 文書の生成
 - SSE、NDJSON、JSON array のストリーミング形式選択
 
-別のルート DSL やスキーマ定義は不要です。通常の Go の型、`net/http` の登録コード、ハンドラー内の `Bind` / `Write` 呼び出しが入力になります。
+これらのどれにも、ルート DSL やスキーマ定義ファイルは要りません。生成の入力になるのは、通常の Go の型、`net/http` のルート登録、そしてどのみち書くことになる `Bind` / `Write` の呼び出しです。
 
 ## ユーザーが用意するもの
 
@@ -25,7 +25,7 @@
 
 ## 導入とコード生成
 
-対象パッケージに生成指示を置く例です。
+生成指示は対象パッケージに置きます。
 
 ```go
 package api
@@ -41,7 +41,7 @@ go generate ./...
 
 - `tinybind_gen.go` — 利用されている型の HTTP / JSON バインディング
 - `tinybind_openapi_gen.go` — package-local な OpenAPI fragment の登録
-- `tinybind_templates_gen.go` — 同じディレクトリにテンプレートがある場合
+- `tinybind_templates_gen.go` — パッケージにテンプレートがある場合、その生成結果
 
 ### 変更のないパッケージのスキップ
 
@@ -59,21 +59,22 @@ go generate ./...
 記録された生成ファイルがすべて未編集のまま残っていれば、何も書かずに終了します。
 `go generate ./...` は変更のあったパッケージの分だけを処理することになります。
 
-ハッシュの対象は、1回の実行が1つのパッケージを解析するのに合わせて、対象
-ディレクトリです。別パッケージの変更が生成結果に及ぶ場合は検出できないため、
-そのようなときは無条件に再生成してください。
+この近道には、知っておくべき境界があります。ハッシュの対象は、1回の実行が
+1つのパッケージを解析するのに合わせて、対象ディレクトリだけです。
+別パッケージの変更がこのパッケージの生成結果に及んでも、それは検出されません。
+現実にその恐れがあるときは、強制的に実行してください。
 
 ```bash
 go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -force
 ```
 
-CI では、静的解析できないルート候補も失敗として扱う `-check` が便利です。
+解析できないルート候補を見逃したくない CI では、それを失敗として扱う `-check` を使います。
 
 ```bash
 go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -check
 ```
 
-ジェネレーターは対象ディレクトリの1つの Go パッケージを解析します。別パッケージにあるハンドラーの中までは追跡しないため、ルート登録と解析対象ハンドラーは同じパッケージに置くのが基本です。
+「1回に1パッケージ」という原則が効くのは、キャッシュだけではありません。1回の実行が別パッケージにあるハンドラーの実装まで追いかけない以上、ルート登録とその指すハンドラーは同じパッケージに置くのが基本になります。
 
 ## 最小の API
 
@@ -121,7 +122,7 @@ curl 'http://localhost:8080/hello?name=Ada'
 
 ## リクエストフィールドの入力元
 
-タグを省略したフィールドは `input` として扱われます。ワイヤ上の名前は、タグがなければ lower camel case です。たとえば `DisplayName` は `displayName` になります。
+タグを省略したフィールドは `input` として扱われます。ワイヤ上の名前を明示しなければ、フィールド名がそのまま lower camel case になります。`DisplayName` なら `displayName` です。
 
 | タグ | 入力元 | 用途 |
 | --- | --- | --- |
@@ -133,7 +134,7 @@ curl 'http://localhost:8080/hello?name=Ada'
 | `cookie:"session"` | cookie | セッション ID など |
 | `method:"method"` | HTTP method | `GET`、`POST` などを文字列で受ける |
 
-`input` のスカラー値は query を先に調べ、存在しないときだけ body を読みます。ネストした構造体、slice、map は body から読みます。入力元を曖昧にしたくない API では `query` と `payload` を明示してください。
+`input` のスカラー値は query を先に調べ、存在しないときだけ body を読みます。ネストした構造体、slice、map は常に body から読みます。入力元の曖昧さが利便性ではなくバグになりうるなら、その時点で `query` と `payload` を明示してください。
 
 ```go
 type SearchRequest struct {
@@ -162,7 +163,7 @@ type CreateUserRequest struct {
 }
 ```
 
-同じ型を JSON または form で送れます。
+1つのモデルで3種類すべてを受けられます。同じ構造体が、二重の宣言なしに JSON でも form でも受け取ります。
 
 ```bash
 curl http://localhost:8080/users \
@@ -222,7 +223,7 @@ curl http://localhost:8080/uploads \
   -F 'image=@avatar.png'
 ```
 
-multipart body の既定上限は 1 MiB です。アプリ起動時に必要量へ変更できます。
+multipart body の既定上限は 1 MiB です。それ以上のアップロードを受けるなら、アプリ起動時に引き上げます。
 
 ```go
 httpbind.SetMaxMultipartBodyBytes(8 << 20) // 8 MiB
@@ -250,7 +251,7 @@ type EventRequest struct {
 
 ## 入力チェック
 
-`check` はコード生成時に解釈され、実行時には生成済みの検証処理が動きます。
+`check` タグが解釈されるのはコード生成時です。そのため実行中のアプリは、リクエストごとにタグを解析するのではなく、生成済みの検証コードを実行します。
 
 | ルール | 対象 | 例 |
 | --- | --- | --- |
@@ -266,7 +267,7 @@ type EventRequest struct {
 | `time` | string | `HH:MM:SS` |
 | `datetime` | string | RFC 3339 |
 
-`pattern` はカンマを含む正規表現を区切れないため、タグ内の最後に置きます。
+ルールの区切りはカンマです。したがってカンマを含む `pattern` は、タグ内の最後に置くしかありません。
 
 ```go
 type CreateAccountRequest struct {
@@ -278,9 +279,9 @@ type CreateAccountRequest struct {
 }
 ```
 
-デフォルト値は「値が送られなかったとき」に検証後に適用されます。このため `check:"min=1,default=-1"` は、未指定なら `-1`、明示的に `-1` を送れば検証エラー、という sentinel 用途にも使えます。
+デフォルト値が適用されるのは検証の後、しかも値が送られてこなかったときだけです。この順序のおかげで `check:"min=1,default=-1"` が sentinel として使えます。未指定なら `-1` が届き、明示的に送られた `-1` は弾かれます。
 
-非 pointer の数値や bool は、Go のゼロ値だけから「未指定」と「明示的な 0 / false」を区別できない場面があります。存在自体を必須にする設計では、この制約を考慮してください。
+やっかいなのは「送られてきたかどうか」そのものです。非 pointer の数値や bool では、Go のゼロ値だけから「未指定」と「明示的な 0 / false」を区別できない場面があります。どちらだったかを知ることが契約の一部なら、この制約を織り込んだ設計が必要です。
 
 ## レスポンス
 
@@ -297,7 +298,7 @@ err := httpbind.Write(w, r, UserResponse{ID: "u_1", Name: "Ada"})
 
 `Write` は `200 OK` と `application/json` を書きます。
 
-`json` タグの名前部分は利用できますが、現在の生成 encoder は `omitempty` と `json:"-"` による省略を適用しません。レスポンス型の field はすべて出力される前提で設計してください。
+生成された encoder が読むのは `json` タグの名前部分だけで、いまのところそれ以外は読みません。`omitempty` は効かず、`json:"-"` も何も除外しません。レスポンス型の field はすべて出力される前提で設計してください。
 
 ### 200 以外の成功
 
@@ -349,7 +350,7 @@ err := httpbind.Validation(
 httpbind.WriteError(w, r, err)
 ```
 
-クライアントには `application/problem+json` が返ります。5xx では内部原因や内部メッセージはレスポンスに公開されません。
+クライアントには `application/problem+json` が返ります。5xx の body は内部原因や実装の詳細の手前で止まるため、DB のエラーを `Internal` で包んでもそれが漏れることはありません。
 
 ## ストリーミング
 
@@ -374,7 +375,7 @@ func chat(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-形式は `NewStream` の時点で一度だけ決まります。
+ハンドラーはワイヤ形式を一度も名指ししていません。形式を選ぶのは `NewStream` で、次の順に一度だけ決まります。
 
 1. `?stream=`
 2. `Accept` ヘッダー
@@ -392,13 +393,13 @@ curl -N -H 'Accept: application/x-ndjson' http://localhost:8080/chat
 curl -H 'Accept: application/json' http://localhost:8080/chat
 ```
 
-JSON array は閉じ `]` を `Close` が書くため、必ず `defer stream.Close()` を設定してください。
+必ず `defer stream.Close()` を書いてください。JSON array 形式では、閉じ `]` を書くのが `Close` だからです。
 
 ## OpenAPI と Swagger UI
 
 ジェネレーターは、発見したルート、`Bind` の型、`Write` / `WriteStatus` / `NewStream` の型、HTTP エラーを OpenAPI に反映します。
 
-生成は package 単位です。framework package では health check などの組み込み route を一度生成し、モジュラモノリスの各 package はそれぞれの route を生成できます。それらの package を import すると fragment が登録され、`httpbind` が deterministic に1つの文書へ統合します。同じ path/method の競合は error になり、package が異なる同名 schema には package-qualified な component 名が割り当てられます。
+生成が package 単位であることが、この仕組みを組み立て可能にしています。framework package では health check などの組み込み route を一度だけ生成し、モジュラモノリスの各 package はそれぞれの route を生成する。それらの package を import すると fragment が登録され、`httpbind` が deterministic に1つの文書へ統合します。同じ path/method の競合は error です。名前は同じでも形の違う schema には、代わりに package-qualified な component 名が割り当てられます。
 
 統合済み bytes と merge error を明示的に扱う場合は `AssembleOpenAPI` を使います。
 
@@ -415,13 +416,13 @@ mux.HandleFunc("GET /openapi.json", httpbind.OpenAPIJSON)
 mux.Handle("GET /docs/{$}", httpbind.SwaggerUI("/openapi.json"))
 ```
 
-配信形式は JSON のみです（シリアライズ形式は JSON に一本化しています）。
+配信形式は JSON だけです。シリアライズ形式は JSON に一本化しています。
 
 Swagger UI のアセットは CDN から読み込まれます。オフライン環境では OpenAPI JSON の配信だけを使うか、別途 UI をホストしてください。
 
 ### godoc をドキュメントとして取り込む
 
-doc comment はそのまま文書に取り込まれるため、説明文は Go のソースだけで管理できます。
+説明文にもう1つの置き場所は要りません。doc comment はそのまま生成文書に取り込まれます。
 
 | Go の doc comment | OpenAPI |
 |-------------------|---------|
@@ -443,15 +444,15 @@ type CreateUserRequest struct {
 }
 ```
 
-テキストは加工せずそのまま転記するため、ドキュメントの編集場所は Go のソースだけになります。
+テキストは加工せずそのまま転記されます。結果としてドキュメントを編集する場所は Go のソースだけになり、そこが次の生成でも編集が消えない唯一の場所になります。
 
 ## よくある生成漏れ
 
-ジェネレーターは通常、ソース中の具体的な generic 呼び出しから対象型を発見します。
+ジェネレーターが対象型を見つけるのは、ソース中の具体的な generic 呼び出しからです。
 
 ```go
 httpbind.Bind[CreateUserRequest](r)
 httpbind.Write[CreateUserResponse](w, r, out)
 ```
 
-呼び出しが別パッケージに隠れている、独自 wrapper 経由でしか使わない、静的に型を特定できない場合は発見できません。まず `-check` の診断を確認してください。全構造体の全マッピングを生成する必要がある場合は `-generate-all` を使えますが、通常は利用箇所を直接記述する方法が小さな生成物になります。
+呼び出しが別パッケージに隠れている、独自 wrapper 経由でしか使われない、そもそも静的に型を特定できない。このいずれかなら発見は失敗します。まず `-check` の診断を読んでください。解析できなかったルート候補が名指しされます。逃げ道として `-generate-all` は全構造体の全マッピングを生成しますが、具体的な呼び出しを直接書くほうが生成物は小さく収まります。

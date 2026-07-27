@@ -1,6 +1,6 @@
 # httpbind User Guide
 
-`httpbind` maps HTTP requests to Go structs and writes structs as JSON responses in `net/http` handlers. It also generates an OpenAPI 3.1 document from the same analysis.
+`httpbind` binds HTTP requests to Go structs and writes structs back as JSON, inside ordinary `net/http` handlers. The same static analysis that produces those bindings also produces an OpenAPI 3.1 document, so the code and the schema cannot drift apart — they are read from the same source.
 
 ## What is automated
 
@@ -13,7 +13,7 @@
 - Generating an OpenAPI 3.1 document from routes, inputs, outputs, and errors
 - Selecting SSE, NDJSON, or JSON array for streaming responses
 
-You do not need a separate routing DSL or schema file. Ordinary Go types, `net/http` registrations, and calls to `Bind` and `Write` are the inputs to generation.
+None of that requires a routing DSL or a schema file. The inputs to generation are ordinary Go types, `net/http` route registrations, and the `Bind` and `Write` calls you would write anyway.
 
 ## What you provide
 
@@ -59,9 +59,10 @@ binary itself. A later run hashes the same inputs first and, when they match and
 every recorded output is still present and unmodified, exits without writing
 anything. `go generate ./...` therefore only pays for the packages that changed.
 
-The hash covers the target directory, in line with one invocation analyzing one
-package. A change in another package that still reaches this one's generated
-output is not detected, so regenerate unconditionally when that is a concern:
+That shortcut has a boundary worth knowing. The hash covers the target
+directory, in line with one invocation analyzing one package, so a change in
+another package that nonetheless reaches this one's generated output goes
+unnoticed. Force the run when that is a real risk:
 
 ```bash
 go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -force
@@ -73,7 +74,7 @@ Use `-check` in CI to fail when route candidates cannot be analyzed:
 go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -check
 ```
 
-One invocation analyzes one Go package. It does not follow handler implementations into another package, so route registration and the analyzed handler should normally live in the same package.
+The one-package rule shapes more than caching. Because a single invocation never follows a handler implementation into another package, route registration and the handler it points at should normally live together.
 
 ## Minimal API
 
@@ -133,7 +134,7 @@ An untagged field uses the `input` source. Without an explicit wire name, the fi
 | `cookie:"session"` | cookie | Session identifiers |
 | `method:"method"` | HTTP method | `GET`, `POST`, and so on |
 
-For scalar `input` fields, binding checks the query first and reads the body only when the query value is absent. Nested structs, slices, and maps are read from the body. Use explicit `query` and `payload` tags when the source must not be ambiguous.
+For scalar `input` fields, binding checks the query first and reads the body only when the query value is absent. Nested structs, slices, and maps always come from the body. Reach for explicit `query` and `payload` tags as soon as an ambiguous source would be a bug rather than a convenience.
 
 ```go
 type SearchRequest struct {
@@ -162,7 +163,7 @@ type CreateUserRequest struct {
 }
 ```
 
-The same model accepts JSON or form data:
+One model covers all three. The same struct accepts JSON or form data without a second declaration:
 
 ```bash
 curl http://localhost:8080/users \
@@ -222,7 +223,7 @@ curl http://localhost:8080/uploads \
   -F 'image=@avatar.png'
 ```
 
-The default multipart body limit is 1 MiB. Change it during application startup when needed:
+The default multipart body limit is 1 MiB. Raise it during application startup when uploads need more:
 
 ```go
 httpbind.SetMaxMultipartBodyBytes(8 << 20) // 8 MiB
@@ -250,7 +251,7 @@ type EventRequest struct {
 
 ## Input validation
 
-`check` tags are interpreted during generation. The application runs generated validation code rather than parsing tags at runtime.
+`check` tags are interpreted during generation, so the running application executes generated validation code instead of parsing tags on every request.
 
 | Rule | Applies to | Example |
 | --- | --- | --- |
@@ -266,7 +267,7 @@ type EventRequest struct {
 | `time` | Strings | `HH:MM:SS` |
 | `datetime` | Strings | RFC 3339 |
 
-Put `pattern` last when it contains commas, because commas otherwise separate rules.
+Commas separate rules, so a `pattern` containing a comma has to come last.
 
 ```go
 type CreateAccountRequest struct {
@@ -278,9 +279,9 @@ type CreateAccountRequest struct {
 }
 ```
 
-Defaults are applied after validation when a value was absent. This makes `check:"min=1,default=-1"` useful as a sentinel: an absent value becomes `-1`, while an explicitly supplied `-1` fails validation.
+Defaults are applied after validation, and only when a value was absent. That ordering makes `check:"min=1,default=-1"` usable as a sentinel: an absent value arrives as `-1`, while an explicitly supplied `-1` is rejected.
 
-For non-pointer numbers and booleans, Go's zero value can make an omitted value indistinguishable from an explicit `0` or `false` in some situations. Account for that limitation when presence itself is part of the API contract.
+Presence itself is harder. For non-pointer numbers and booleans, Go's zero value can make an omitted value indistinguishable from an explicit `0` or `false`, so a contract that depends on knowing which one happened needs to account for that limit.
 
 ## Responses
 
@@ -297,7 +298,7 @@ err := httpbind.Write(w, r, UserResponse{ID: "u_1", Name: "Ada"})
 
 `Write` writes `200 OK` with `application/json`.
 
-The generated encoder uses the name portion of `json` tags, but currently does not apply `omitempty` or exclusion via `json:"-"`. Design response models assuming every field is emitted.
+The generated encoder reads the name portion of `json` tags and currently nothing else: `omitempty` has no effect, and `json:"-"` excludes nothing. Design response models assuming every field is emitted.
 
 ### Other success statuses
 
@@ -349,7 +350,7 @@ err := httpbind.Validation(
 httpbind.WriteError(w, r, err)
 ```
 
-Clients receive `application/problem+json`. For 5xx responses, internal causes and implementation details are not exposed in the body.
+Clients receive `application/problem+json`. For 5xx responses the body stops short of internal causes and implementation details, so wrapping a database error in `Internal` does not leak it.
 
 ## Streaming
 
@@ -374,7 +375,7 @@ func chat(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The format is selected once by `NewStream`, in this order:
+The handler never names a wire format. `NewStream` selects one, once, in this order:
 
 1. `?stream=`
 2. `Accept`
@@ -392,13 +393,13 @@ curl -N -H 'Accept: application/x-ndjson' http://localhost:8080/chat
 curl -H 'Accept: application/json' http://localhost:8080/chat
 ```
 
-Always use `defer stream.Close()`: for the JSON array format, `Close` writes the closing `]`.
+Always use `defer stream.Close()`. For the JSON array format, `Close` is what writes the closing `]`.
 
 ## OpenAPI and Swagger UI
 
 The generator reflects discovered routes, `Bind` types, `Write` / `WriteStatus` / `NewStream` types, and HTTP errors in OpenAPI.
 
-Generation is package-local. A framework package can generate built-in routes such as health checks once, while each modular-monolith package generates its own routes. Importing those packages registers their fragments; `httpbind` merges them deterministically into one document. Conflicting path/method operations are errors, and same-named but different schemas receive package-qualified component names.
+Generation is package-local, which is what makes it composable. A framework package can generate built-in routes such as health checks once, while each modular-monolith package generates its own; importing those packages registers their fragments, and `httpbind` merges them deterministically into one document. Conflicting path/method operations are errors. Schemas that share a name but not a shape receive package-qualified component names instead.
 
 Use `AssembleOpenAPI` when the application needs the merged bytes and explicit merge errors:
 
@@ -421,7 +422,7 @@ Swagger UI assets are loaded from a CDN. In offline environments, serve only the
 
 ### godoc as documentation
 
-Doc comments are carried into the document, so descriptions stay in the Go source:
+Descriptions need no second home. Doc comments are carried into the generated document:
 
 | Go doc comment | OpenAPI |
 |----------------|---------|
@@ -443,15 +444,15 @@ type CreateUserRequest struct {
 }
 ```
 
-Text is copied verbatim, so the Go source stays the only place to edit documentation.
+Text is copied verbatim, which leaves the Go source as the one place to edit documentation — and the only place where an edit survives the next generation run.
 
 ## Missing generated bindings
 
-The generator normally discovers concrete types from generic calls in source code:
+The generator discovers concrete types from generic calls in the source:
 
 ```go
 httpbind.Bind[CreateUserRequest](r)
 httpbind.Write[CreateUserResponse](w, r, out)
 ```
 
-Discovery may fail when the call is hidden in another package, exists only behind a custom wrapper, or does not statically identify a type. Check `-check` diagnostics first. `-generate-all` can generate every enabled mapping for every struct, but direct concrete calls normally produce smaller output.
+Discovery fails when the call is hidden in another package, exists only behind a custom wrapper, or never statically identifies a type at all. Read the `-check` diagnostics first; they name the route candidates that could not be analyzed. `-generate-all` will emit every enabled mapping for every struct as a fallback, though direct concrete calls keep the output smaller.

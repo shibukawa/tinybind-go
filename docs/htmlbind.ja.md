@@ -49,7 +49,7 @@ go generate ./...
 `-html-template-pattern` と `-sql-template-pattern` で指定します。
 
 ```go
-//go:generate go run github.com/shibukaway/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -html-template-pattern "*.page.html" -sql-template-pattern "*.query.sql"
 ```
 
 既定値は引き続き `*.tb.html` と `*.tb.sql` です。
@@ -147,7 +147,7 @@ type ProfileParams struct {
 func Profile(params ProfileParams) htmlbind.Fragment
 ```
 
-テンプレートで宣言した型は生成後の同じ Go パッケージに属します。Go 側ではその型を使って引数を組み立てます。
+テンプレートで宣言した型は生成後の同じ Go パッケージに属し、呼び出し側はその生成された型で引数を組み立てます。手書きの構造体をテンプレートの型へ変換する仕組みはないので、形が食い違えばそれは Go のコンパイルエラーになります。
 
 ### 型対応
 
@@ -188,7 +188,7 @@ export component Status(active: bool): html {
 {/if}
 ```
 
-condition は `bool` である必要があります。
+条件式は `bool` 型でなければなりません。
 
 ## 繰り返し
 
@@ -214,7 +214,7 @@ index が不要なら省略できます。
 
 ## component を組み合わせる
 
-`export` のない component は同じテンプレートモジュール内だけで使う private component です。
+`export` のない component は、テンプレートの組み立ての中だけで使う private component です。
 
 ```text
 type User { name: string }
@@ -317,6 +317,8 @@ export component Card(label: string): html {
 
 描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。
 
+その寄与には行き先が必要です。ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素が出力先になります。
+
 ### スコープ付き style
 
 component の style ブロックは、宣言されたクラス名をリネームし、同じ component 内の該当する `class` 属性も書き換えることでスコープ化されます。
@@ -335,8 +337,6 @@ component の style ブロックは、宣言されたクラス名をリネーム
 - 式から与えられるクラスは書き換えられないため、生成時エラーになります。
 
 サフィックスはテンプレートのパスと component 名から導出されるので、無関係な編集で生成クラス名が変わることはありません。
-
-ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素がマージ済み寄与の出力先になります。
 
 ## attribute
 
@@ -377,7 +377,10 @@ optional 値を固定文字列と混ぜることはできません。
 `href` や `src` には `string` ではなく `url` を要求します。
 
 ```text
-type Link { label: string, destination: url }
+type Link {
+  label: string
+  destination: url
+}
 
 export component LinkView(link: Link): html {
 <a href={link.destination}>{link.label}</a>
@@ -436,7 +439,7 @@ export component Card(): html {
 
 空白だけの連続を完全に削除するのは、HTML パーサ自身がそれを捨てる位置に限ります。
 `<html>`・`<head>`・table 系要素の直下と、ドキュメント全体を描画する
-コンポーネントの doctype 周辺です。
+component の doctype 周辺です。
 
 実行全体で元の空白をバイト単位で保ちたい場合 — 既存の golden ファイルと生成
 マークアップを突き合わせる場合など — はジェネレータオプションの
@@ -591,8 +594,9 @@ export component Profile(id: string): html {
 err := htmlbind.Render(w, Profile(ProfileParams{Id: id}))
 ```
 
-どちらを使うかを実行時に決めるには、その構成が境界を開き得るかを聞きます。
-`HasAwaitBlock` は `Fragment` と `Wrapper` にあり、メンバを合算するチェーン形も
+もう一方の選択肢は fallback を先に流すことです。そちらを選ぶには、その構成が
+そもそも境界を開き得るのかを事前に知る必要があります。答えるのが
+`HasAwaitBlock` で、`Fragment` と `Wrapper` にあり、メンバを合算するチェーン形も
 あります。
 
 ```go
@@ -601,8 +605,8 @@ if htmlbind.HasAwaitBlock(wrappers, page) {
 }
 ```
 
-フラグは推移的なので、async なコンポーネントを呼ぶだけのコンポーネントも `true`
-になります。読んでも何もレンダリングされません。パラメータ経由で渡した Fragment
+フラグは推移的なので、async な component を呼ぶだけの component も `true` に
+なります。読んでも何もレンダリングされません。パラメータ経由で渡した Fragment
 は数えられないので、自分で作った値と合算してください。
 
 `RenderAsync` は先に fallback を送り、確定した境界を順に yield します。返るのは
@@ -813,7 +817,7 @@ children を自分で渡すときは `Name`、チェーンに渡させるとき�
 - 公開 component、type、enum、external の名前を重複させない
 - private component も生成後の宣言名が衝突しないよう、分かりやすい固有名にする
 
-package 宣言を省略できる場合もありますが、Go パッケージと一致する `package pages` のような宣言を各ファイルに置くと意図が明確です。
+`package` 宣言を省略できる場合もありますが、各ファイルに書いてください。`package pages` は生成ファイルがどの Go パッケージに属するかを明言し、読む側にディレクトリ名からの推測を残しません。
 
 ## 診断の読み方
 
@@ -831,9 +835,12 @@ profile.tb.html:12:8: html:url requires url, got string
 - `if` に bool 以外を渡した
 - 宣言していない field / function / component を参照した
 - `RawHTML` などを許可されていない文脈で使った
+- スロットの `required` の有無が、パラメータの宣言型と食い違っている
+- 対象 component が宣言していないスロットを埋めようとした
+- スコープ付き style ブロックに裸の要素セレクタを書いた
 - `external async` の関数を `await` の束縛以外の場所で呼んだ
 - `await` ブロックに `fallback` 節を書かなかった
 - `html` パラメータを持つ component や、`await` 境界に到達する component に
   `@cache` を付けた
 
-診断はコード生成時に出るため、テンプレートを変更したら `go generate ./...` を実行してからビルド・テストしてください。
+診断が出るのはコード生成時です。テンプレートを変更したら、ビルドやテストの前に必ず `go generate ./...` を実行してください。実行するまで Go のビルドが見ているのは以前のプランで、そこにはテンプレート側で既に直した診断も含まれています。

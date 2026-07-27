@@ -2,7 +2,7 @@
 
 `configbind` は、アプリケーション設定を Go の構造体へ読み込むパッケージです。構造体を一度定義すると、default、TOML、環境変数、CLI option を同じ field へ重ね合わせます。
 
-設定値の優先順位は常に次の順です。右側ほど優先されます。
+この重ね合わせ方は設定で変えられません。優先順位は固定で、右側ほど優先されます。
 
 ```text
 default < TOML file < environment variable < CLI option
@@ -21,7 +21,7 @@ default < TOML file < environment variable < CLI option
 - string、bool、int、`[]string` への型変換
 - 各設定値が最終的にどの入力元から来たかの記録
 
-生成コードの内部を利用者が実装する必要はありません。アプリケーションでは `Bind` で設定 pointer を取得し、起動時に一度 `Load` を呼びます。
+生成コードの内部を利用者が実装することは一切ありません。アプリケーションがすることは、`Bind` で設定 pointer を取得し、起動時に一度 `Load` を呼ぶことだけです。
 
 ## ユーザーが用意するもの
 
@@ -51,7 +51,7 @@ func registerConfig() *ServerConfig {
 go generate ./...
 ```
 
-configbind の対象がある場合、既定では `configbind_gen.go` が生成されます。`Bind` の type parameter と prefix は静的に発見できる必要があるため、prefix には文字列 literal を使ってください。
+configbind の対象がある場合、既定では `configbind_gen.go` が生成されます。生成は `Bind` の type parameter と prefix を静的に読み取ります。だからこそ prefix は計算結果ではなく文字列 literal でなければなりません。
 
 ## 設定 file の雛形生成
 
@@ -132,7 +132,7 @@ file が必要なときは redirect します。
 ./myserver scaffold-config env > .env
 ```
 
-`configbind.Load` が読むのは process の環境変数であり、`.env` file 自体を parse するわけではありません。`.env` の雛形を使う場合は、`Load` より前に任意の dotenv loader や shell の仕組みで環境変数へ取り込んでください。
+ひとつ見落としやすい隙間があります。`configbind.Load` が読むのは process の環境変数だけで、`.env` file を parse することはありません。雛形から作った `.env` は、任意の dotenv loader や shell の仕組みで、`Load` より前に process へ届けておく必要があります。
 
 ## 最小例
 
@@ -217,13 +217,15 @@ options := generator.DefaultOptions()
 options.DisableFeatures = append(options.DisableFeatures, generator.FeatureHelpBackfill)
 ```
 
+tag は組み合わせて使えます。そしてその組み合わせが、すべての表層での名前を一度に決めます。
+
 ```go
 type ServerConfig struct {
 	Port int `key:"listen_port" default:"8080" opt:"port,p" help:"HTTP listen port"`
 }
 ```
 
-この field の名前は次のようになります。
+prefix が `server` のとき、この1つの field は4つの名前で現れます。
 
 | 種類 | 名前 |
 | --- | --- |
@@ -258,7 +260,7 @@ type TLSConfig struct {
 | `TLS.Enabled` | `webserver.tls.enabled` | `--webserver-tls-enabled` | `WEBSERVER_TLS_ENABLED` |
 | `TLS.CertPath` | `webserver.tls.cert_path` | `--webserver-tls-cert_path` | `WEBSERVER_TLS_CERT_PATH` |
 
-Go field 名は snake case の key になります。CLI では nested key の `.` が `-` へ変わります。環境変数では `-` と `.` が `_` になり、全体が大文字になります。
+Go field 名は snake case の key になります。CLI では nested key の `.` が `-` へ変わり、環境変数はさらに踏み込んで `-` と `.` の両方を `_` にし、全体を大文字にします。
 
 prefix 自体に `.` を含めることもできます。prefix と field key の階層は設定 key と TOML では `.` のまま保持され、CLI ではすべて `-` へ正規化されます。
 
@@ -301,7 +303,7 @@ configbind が読む TOML は意図的に限定された subset です。
 - primitive scalar の array
 - comment
 
-quoted key、inline table、array of tables、nested array は利用できません。設定構造体へ適用できる型はさらに限定されるため、float の TOML 値を float field へ直接 bind することはできません。
+quoted key、inline table、array of tables、nested array は利用できません。ここにある制限は1つではなく2つです。parser が受け付ける範囲と、struct field が受け取れる範囲。狭いのは後者です。float の TOML 値は parse できても、float field へ直接 bind することはできません。
 
 ## 設定 file の探索
 
@@ -313,18 +315,18 @@ result, err := configbind.Load(configbind.LoadOptions{
 })
 ```
 
-`FileName` の既定は `config.toml` です。configbindは次の順で読み取り可能な
-fileを探し、最初に見つかった1つだけを読みます。
+`FileName` の既定は `config.toml` です。configbind は次の順で読み取り可能な
+file を探し、最初に見つかった1つだけを読みます。
 
-1. `ExplicitConfigPath`。fieldが空なら `--config-path`
+1. `ExplicitConfigPath`。field が空なら `--config-path`
 2. `ExtraConfigReadPaths` の配列順
-3. `Vendor` / `Tool` 配下のOS user config directory
-4. `Vendor` / `Tool` 配下のOS system config directory
+3. `Vendor` / `Tool` 配下の OS user config directory
+4. `Vendor` / `Tool` 配下の OS system config directory
 
-複数fileはマージしません。そのため、local test用設定が存在するときは、
-production用system設定と混ぜずにlocal設定だけを使えます。
-`ExtraConfigReadPaths` の存在しない、または読めない項目はskipします。
-どの候補も見つからなければ、default、env、CLIだけでloadします。
+複数 file はマージしません。だからこそ local test 用の設定は、production の
+system 設定に混ざるのではなく、それを置き換えられます。
+`ExtraConfigReadPaths` の存在しない、または読めない項目は skip します。
+どの候補も見つからなければ、default、env、CLI だけで load します。
 
 実行時に file を明示するには `--config-path` を使います。
 
@@ -346,7 +348,7 @@ result, err := configbind.Load(configbind.LoadOptions{
 
 `ExplicitConfigPath` は `--config-path` より優先されます。本番では通常、`Args` から `--config-path` を受ける方法を使います。
 
-任意のlocal fileやdeployment固有fileには `ExtraConfigReadPaths` を使います。
+任意の local file や deployment 固有 file には `ExtraConfigReadPaths` を使います。
 
 ```go
 result, err := configbind.Load(configbind.LoadOptions{
@@ -356,22 +358,22 @@ result, err := configbind.Load(configbind.LoadOptions{
 })
 ```
 
-`./config.test.toml` があれば、そのTOMLだけを読みます。なければ
-`/run/secrets/app.toml`、user config、system configの順に探索します。
+`./config.test.toml` があれば、読むのはその TOML だけです。なければ
+`/run/secrets/app.toml`、user config、system config の順に探索します。
 
 ### `LoadOptions` 一覧
 
 | Field | 意味 | 既定 |
 | --- | --- | --- |
-| `Vendor` | OS config directory 内の vendor 名 | configdir探索まで進む場合は必須 |
-| `Tool` | application / tool 名 | configdir探索まで進む場合は必須 |
+| `Vendor` | OS config directory 内の vendor 名 | configdir 探索まで進む場合は必須 |
+| `Tool` | application / tool 名 | configdir 探索まで進む場合は必須 |
 | `FileName` | 探索する TOML basename | `config.toml` |
 | `Args` | program 名を除いた CLI arguments | `nil` なら `os.Args[1:]` |
 | `Environ` | `KEY=value` 形式の環境 | `nil` なら `os.Environ()` |
 | `ExplicitConfigPath` | 強制的に使う file path | 空なら `--config-path`、extras、directory 探索 |
-| `ExtraConfigReadPaths` | 配列順に探索する任意のfile path | 存在しない項目はskip |
+| `ExtraConfigReadPaths` | 配列順に探索する任意の file path | 存在しない項目は skip |
 
-test で CLI や環境を完全に無効にする場合は、`nil` ではなく空 slice を渡します。
+`nil` と空 slice の違いは test で効いてきます。`nil` は「process にフォールバックする」という意味だからです。CLI や環境の入力を完全に止めたいときは空 slice を渡します。
 
 ```go
 Args:    []string{},
@@ -421,9 +423,9 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 ## CLI subcommand
 
-`SubCommand[T]` は、生成されるCLI専用のcommand branchを宣言します。fieldは
-TOMLや環境変数を一切読みません。`arg` のないfieldはoptionになり、position
-fieldには `arg:"required"`、`arg:"optional"`、`arg:"*"` を指定します。
+`SubCommand[T]` は、生成される CLI 専用の command branch を宣言します。その
+field は TOML も環境変数も一切読みません。`arg` のない field は option になり、
+position field には `arg:"required"`、`arg:"optional"`、`arg:"*"` を指定します。
 
 ```go
 type MigrateOptions struct {
@@ -457,12 +459,15 @@ runServer(*server)
 ./myserver migrate ./migrations --dry_run release extra-a extra-b
 ```
 
-選択された `SubCommand` だけがnon-nilを返します。必須positionの不足、未知の
-commandやoption、`--help` では、生成usageを含む `*configbind.UsageError` が
-返ります。optionはposition引数の前後どちらにも置けます。本番では
-`LoadOptions.Args` をnilのままにし、選択とparseの両方で `os.Args[1:]` を
-使います。testで `Args` を上書きする場合は、`SubCommand` を呼ぶ前に同じ内容を
-`os.Args` に設定してください。
+選択された `SubCommand` だけが non-nil を返します。必須 position の不足、未知の
+command や option、`--help` では、生成された usage を含む
+`*configbind.UsageError` が返ります。option は position 引数の前後どちらにも
+置けます。
+
+選択と parse は同じ引数列を読みます。これは test で覚えておく価値があります。
+本番では `LoadOptions.Args` を nil のままにして両方に `os.Args[1:]` を使わせ、
+`Args` を上書きする test では、`SubCommand` を呼ぶ前に同じ内容を `os.Args` に
+設定してください。
 
 ## CLI option
 
@@ -490,7 +495,7 @@ bool field は値を省略すると true です。明示的な false も指定�
 
 未定義の option、値が必要な option の値不足、不正な bool は `Load` error になります。
 
-TOML 内の未知の key は CLI の未知 option と異なり parse error にはならず、対応する struct field がないため適用されません。typo を厳密に拒否したい場合は、起動時に `LoadResult.Overlay.Keys()` と期待する key を検査してください。
+非対称なのは TOML です。未知の key は parse を通り、対応する struct field がないまま黙って適用されません。つまり CLI の option を打ち間違えれば派手に失敗するのに、設定 file の key の打ち間違いは静かに失敗します。typo を厳密に拒否したい場合は、起動時に `LoadResult.Overlay.Keys()` と期待する key を照合してください。
 
 ## nested 設定と `[]string`
 
@@ -568,7 +573,7 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file が見つかったかを示します。secret を自動的に mask する機能はないため、overlay の raw value をまとめて log しないでください。
+`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file がそもそも見つかったかを示します。overlay の値は何も自動 mask されないため、raw value をまとめて log すれば credential も一緒に log されます。
 
 ## 利用する API
 
@@ -620,7 +625,7 @@ go generate ./...
 
 ### `--config-path` を指定したら起動できない
 
-明示 path は排他的です。存在しない場合に user/system config directory へ fallback しません。path、権限、file であることを確認してください。
+明示 path は排他的で、user / system config directory へ fallback しません。その path が存在するか、読めるか、そして directory ではなく file を指しているかを確認してください。
 
 ### test ごとに target が増える
 
