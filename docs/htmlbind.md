@@ -630,10 +630,10 @@ replacement would both render it.
 
 ### Values the caller starts
 
-An `external async` call starts when the boundary reaches it. When you want the
-work running earlier — while the request is still being parsed, or while the
-layout renders — declare the parameter `async` instead and hand the pending
-value in:
+An `external async` call starts when the boundary reaches it, so it cannot
+overlap anything that ran earlier: not request parsing, not the layout above it.
+Declare the parameter `async` instead and the work starts wherever you start it,
+leaving the template only the wait:
 
 ```text
 type Customer {
@@ -662,15 +662,17 @@ err := htmlbind.Render(w, Profile(ProfileParams{Customer: customer}))
 ```
 
 `async T` is a prefix modifier on any parameter or record field, and it becomes
-`htmlbind.Pending[T]` in Go. It is not a function and not callable: the only
-place it may be read is an `await` binding, which may mix it with async calls in
-one clause. The modifier covers the whole type, so `async Order[]` is one
-pending slice; for a per-row wait, give each row its own `async` field and await
-it inside the `for` body.
+`htmlbind.Pending[T]` in Go. It is not a function and not callable. The one
+place it may be read is an `await` binding, where it sits beside async calls in
+the same clause and settles with them.
 
-A record can carry settled and pending members side by side, which is why the
-example renders `customer.name` in the `fallback` while the orders are still on
-their way.
+The modifier covers the whole type, so `async Order[]` is a single pending slice
+rather than a slice of pending values. When each row has to arrive on its own,
+give the row type its own `async` field and await it inside the `for` body.
+
+A record may carry settled and pending members together. That is what lets the
+example above render `customer.name` in the `fallback`, while the orders it is
+still waiting for stay behind the boundary.
 
 Three constructors produce a handle:
 
@@ -681,18 +683,28 @@ Three constructors produce a handle:
 | `htmlbind.Failed(err)` | a failure you already know about |
 
 There is no channel-taking constructor. A service that already returns a channel
-is adopted by receiving from it inside the `Go` closure, which keeps every
-handle one this package started — and therefore one whose panics it recovers.
+is adopted by receiving from it inside the `Go` closure, so every handle belongs
+to a goroutine this package started — and a panic in one of those becomes the
+handle's error instead of the process's exit.
 
-A handle settles once and stays readable, so a layout and the page inside it may
-hold the same value: both boundaries see the same result and the work runs once.
-The context you pass to `Go` bounds the work, which stays yours to cancel; a
-render only bounds how long it waits.
+A handle settles once and stays readable. A layout and the page inside it may
+therefore hold the same value: both boundaries see the same result, and the work
+behind it runs once. A channel would have delivered it to whichever boundary
+received first.
 
-Where the awaited type is optional, an unset handle is a legal value: it settles
+The context you pass to `Go` bounds the work, and that work stays yours to
+cancel. A render bounds only how long it waits.
+
+Where the awaited type is optional, an unset handle is a legal value. It settles
 immediately as absent, opens no boundary, and never reaches `recover`, because
-absence is data rather than failure. Leaving a required one unset is a caller
-bug, reported before anything is written:
+absence is data rather than failure.
+
+Leaving a required one unset is a caller bug instead, and it surfaces as an
+error rather than as a wait that never ends. A value reachable from a chain
+member's own parameters is checked before any byte is written, so that response
+can still carry an error status; a value reached through a loop item is checked
+when the loop arrives at it. Either way the error names the value as the
+template declared it:
 
 ```go
 var unset *htmlbind.UnsetPendingError
@@ -701,8 +713,8 @@ if errors.As(err, &unset) {
 }
 ```
 
-A cached component cannot declare an `async` parameter, or a record reaching an
-`async` field: stored bytes stand in for a fresh render, and a pending value
+A cached component cannot declare an `async` parameter, or a record that reaches
+an `async` field. Stored bytes stand in for a fresh render, and a pending value
 belongs to the one request that started it.
 
 ### Rendering an async component
