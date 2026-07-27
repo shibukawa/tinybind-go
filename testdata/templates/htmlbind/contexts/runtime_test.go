@@ -18,9 +18,10 @@ func TestRenderedOutput(t *testing.T) {
 	if err := htmlbind.Render(&output, fragment); err != nil {
 		t.Fatal(err)
 	}
-	want := "\n<b>raw</b>\n<style>body > p { color: red; }</style>\n" +
-		"<script>window.ready = true;</script>\n" +
-		`<script>window.payload = {"message":"\u003cunsafe\u003e\u0026","count":2,"enabled":true};</script>` + "\n"
+	// Markup whitespace collapses; the script and style bodies stay verbatim.
+	want := " <b>raw</b> <style>body > p { color: red; }</style> " +
+		"<script>window.ready = true;</script> " +
+		`<script>window.payload = {"message":"\u003cunsafe\u003e\u0026","count":2,"enabled":true};</script>` + " "
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}

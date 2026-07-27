@@ -13,7 +13,7 @@ var planHelloOps = htmlbind.Builder[HelloParams]{}
 var planHelloPlan = &htmlbind.Plan[HelloParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[HelloParams]{
-		planHelloOps.Static("\n<!DOCTYPE html>\n<h1>Hello &amp; welcome</h1>\n"),
+		planHelloOps.Static("<!DOCTYPE html><h1>Hello &amp; welcome</h1>"),
 	},
 }
 

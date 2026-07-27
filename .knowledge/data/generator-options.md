@@ -41,6 +41,7 @@ options:
   SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
+  PreserveTemplateWhitespace: bool; turns off requirement:static-whitespace-normalization so HTML static output keeps authoring indentation byte for byte
   PublicDir: filesystem directory for requirement:static-asset-extraction output; empty uses 'public/generated'
   PublicURLBase: URL path or full URL prefixed to generated asset file names; empty uses '/public/generated'; independent of PublicDir and required together with an explicit PublicDir
   BuiltinElements: proposed requirement:builtin-element-registration whitelist closing the decision:builtin-element-syntax hyphenated element space; holds data:builtin-element-definition builtin entries and passthrough names or patterns

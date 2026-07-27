@@ -66,7 +66,7 @@ constraints_preserved:
   no_runtime_parsing: the plan is compiled data, not template text
   no_reflection: every step is statically typed; decision:reflection-free is unchanged
   no_virtual_dom: nothing materializes a whole document; only head metadata is collected before streaming
-  static_coalescing: adjacent static output stays merged in the plan
+  static_coalescing: adjacent static output stays merged in the plan, after requirement:static-whitespace-normalization has rewritten it
   streaming: body bytes leave as the coordinator walks, not after a build step
 tradeoff:
   cost: one indirection per step versus straight-line generated writes

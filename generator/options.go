@@ -74,6 +74,11 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// PreserveTemplateWhitespace keeps the authoring indentation and newlines of
+	// HTML templates in generated static output instead of collapsing each run
+	// to one space. The default collapses, which renders identically and drops
+	// every indentation byte from the generated source and the binary.
+	PreserveTemplateWhitespace bool
 
 	DisableFeatures []Feature
 	GenerateAll     bool

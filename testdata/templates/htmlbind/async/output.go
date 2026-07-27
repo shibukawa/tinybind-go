@@ -78,7 +78,7 @@ var planSilentOpsAwait3RecoverOps = htmlbind.Builder[planSilentOpsAwait3Recover]
 var planBadgeOps = htmlbind.Builder[renderBadgeParams]{}
 
 var planBadgeCache = htmlbind.CachePolicy[renderBadgeParams]{
-	ID:  "pages/input.txt:Badge:677d1877b8045862",
+	ID:  "pages/input.txt:Badge:4b86c256396c2d7a",
 	TTL: 300000000000, // 5m0s
 	Key: func(p renderBadgeParams) string { return _tinybindKeyUser(p.User) + htmlbind.KeyString[string](p.Tone) },
 }
@@ -87,11 +87,11 @@ var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
 	Head:  nil,
 	Cache: &planBadgeCache,
 	Ops: []htmlbind.Op[renderBadgeParams]{
-		planBadgeOps.Static("\n<span"),
+		planBadgeOps.Static(" <span"),
 		planBadgeOps.Attr("class", func(p renderBadgeParams) (string, bool) { return "badge " + htmlbind.Escape(p.Tone), true }),
 		planBadgeOps.Static(">"),
 		planBadgeOps.Text(func(p renderBadgeParams) string { return p.User.Name }),
-		planBadgeOps.Static("</span>\n"),
+		planBadgeOps.Static("</span> "),
 	},
 }
 
@@ -106,7 +106,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 	Head:          nil,
 	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[ProfileParams]{
-		planProfileOps.Static("\n<section>\n"),
+		planProfileOps.Static(" <section> "),
 		htmlbind.Await(
 			func(ctx context.Context, p ProfileParams) (planProfileOpsAwait1, error) {
 				scope := planProfileOpsAwait1{Outer: p}
@@ -123,34 +123,34 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 				return planProfileOpsAwait1Recover{Outer: p, Err: err}
 			},
 			[]htmlbind.Op[planProfileOpsAwait1]{
-				planProfileOpsAwait1Ops.Static("\n  "),
+				planProfileOpsAwait1Ops.Static(" "),
 				planProfileOpsAwait1Ops.Component(func(p planProfileOpsAwait1) htmlbind.Fragment {
 					return renderBadge(renderBadgeParams{User: p.User, Tone: "solid"})
 				}),
-				planProfileOpsAwait1Ops.Static("\n  <ul>\n  "),
+				planProfileOpsAwait1Ops.Static(" <ul> "),
 				htmlbind.For(
 					func(p planProfileOpsAwait1) []string { return p.Tags },
 					func(p planProfileOpsAwait1, item string, index int) planProfileOpsAwait1OpsScope2 {
 						return planProfileOpsAwait1OpsScope2{Outer: p, Item: item, Index: index}
 					},
 					[]htmlbind.Op[planProfileOpsAwait1OpsScope2]{
-						planProfileOpsAwait1OpsScope2Ops.Static("\n    <li>"),
+						planProfileOpsAwait1OpsScope2Ops.Static(" <li>"),
 						planProfileOpsAwait1OpsScope2Ops.Text(func(p planProfileOpsAwait1OpsScope2) string { return p.Item }),
-						planProfileOpsAwait1OpsScope2Ops.Static("</li>\n  "),
+						planProfileOpsAwait1OpsScope2Ops.Static("</li> "),
 					}),
-				planProfileOpsAwait1Ops.Static("\n  </ul>\n"),
+				planProfileOpsAwait1Ops.Static(" </ul> "),
 			},
 			[]htmlbind.Op[ProfileParams]{
-				planProfileOps.Static("\n  <p class=\"pending\">loading…</p>\n"),
+				planProfileOps.Static(" <p class=\"pending\">loading…</p> "),
 			},
 			[]htmlbind.Op[planProfileOpsAwait1Recover]{
-				planProfileOpsAwait1RecoverOps.Static("\n  <p class=\"failed\">"),
+				planProfileOpsAwait1RecoverOps.Static(" <p class=\"failed\">"),
 				planProfileOpsAwait1RecoverOps.Text(func(p planProfileOpsAwait1Recover) string { return p.Err.Code }),
 				planProfileOpsAwait1RecoverOps.Static(": "),
 				planProfileOpsAwait1RecoverOps.Text(func(p planProfileOpsAwait1Recover) string { return p.Err.Message }),
-				planProfileOpsAwait1RecoverOps.Static("</p>\n"),
+				planProfileOpsAwait1RecoverOps.Static("</p> "),
 			}),
-		planProfileOps.Static("\n</section>\n"),
+		planProfileOps.Static(" </section> "),
 	},
 }
 
@@ -163,9 +163,9 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head:          nil,
 	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static("\n<main>"),
+		planPageOps.Static(" <main>"),
 		planPageOps.Component(func(p PageParams) htmlbind.Fragment { return Profile(ProfileParams{Id: p.Id}) }),
-		planPageOps.Static("</main>\n"),
+		planPageOps.Static("</main> "),
 	},
 }
 
@@ -177,9 +177,9 @@ var planShellOps = htmlbind.Builder[ShellParams]{}
 var planShellPlan = &htmlbind.Plan[ShellParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[ShellParams]{
-		planShellOps.Static("\n<div class=\"shell\">"),
+		planShellOps.Static(" <div class=\"shell\">"),
 		planShellOps.Slot(func(p ShellParams) htmlbind.Fragment { return p.Children }, nil),
-		planShellOps.Static("</div>\n"),
+		planShellOps.Static("</div> "),
 	},
 }
 
@@ -197,7 +197,7 @@ var planSilentPlan = &htmlbind.Plan[SilentParams]{
 	Head:          nil,
 	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[SilentParams]{
-		planSilentOps.Static("\n"),
+		planSilentOps.Static(" "),
 		htmlbind.Await(
 			func(ctx context.Context, p SilentParams) (planSilentOpsAwait3, error) {
 				scope := planSilentOpsAwait3{Outer: p}
@@ -213,15 +213,15 @@ var planSilentPlan = &htmlbind.Plan[SilentParams]{
 				return planSilentOpsAwait3Recover{Outer: p, Err: err}
 			},
 			[]htmlbind.Op[planSilentOpsAwait3]{
-				planSilentOpsAwait3Ops.Static("\n  <p>"),
+				planSilentOpsAwait3Ops.Static(" <p>"),
 				planSilentOpsAwait3Ops.Text(func(p planSilentOpsAwait3) string { return p.User.Name }),
-				planSilentOpsAwait3Ops.Static("</p>\n"),
+				planSilentOpsAwait3Ops.Static("</p> "),
 			},
 			[]htmlbind.Op[SilentParams]{
-				planSilentOps.Static("\n  <p>waiting</p>\n"),
+				planSilentOps.Static(" <p>waiting</p> "),
 			},
 			nil),
-		planSilentOps.Static("\n"),
+		planSilentOps.Static(" "),
 	},
 }
 

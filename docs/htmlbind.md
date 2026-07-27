@@ -429,6 +429,64 @@ export component LinkView(link: Link): html {
 
 The Go caller supplies a `url.URL`.
 
+## Whitespace
+
+The generator does not ship your indentation. At generation time every run of
+whitespace in static markup collapses to a single space, which is exactly what a
+browser renders it as, so the page is unchanged while the generated Go, the
+binary, and every response lose one run per authored line.
+
+```text
+export component Card(): html {
+<div class="card">
+    <h1>Title</h1>
+</div>
+}
+```
+
+emits `" <div class=\"card\"> <h1>Title</h1> </div> "`, not the source with its
+newlines and four-space indents.
+
+A run is collapsed to one space rather than deleted, because whitespace between
+two inline boxes is visible:
+
+```text
+<span>a</span>
+<span>b</span>
+```
+
+still renders `a b`. Deleting the newline would render `ab`, and whether an
+element is inline is a CSS question the generator cannot answer.
+
+These keep their bytes exactly as written:
+
+- `<pre>` and `<textarea>`, including everything nested inside them
+- `<script>` and `<style>` bodies, where a newline ends a line comment and drives
+  automatic semicolon insertion
+- any subtree marked `preserve-whitespace`
+
+Reach for the marker when a stylesheet — not the markup — made an element
+whitespace-significant, which the generator cannot see:
+
+```text
+<div id="log" preserve-whitespace>
+  first line
+  second line
+</div>
+```
+
+The attribute is reserved and never appears in the output. It is a bare
+attribute; `preserve-whitespace="false"` is a generation error rather than a
+silent no-op.
+
+Whitespace-only runs are removed outright only where the HTML parser itself
+discards them: directly inside `<html>`, `<head>`, and the table elements, and
+around the doctype of a component that renders a whole document.
+
+To keep the authoring whitespace byte for byte across a whole run — when
+comparing generated markup against pre-existing golden files, for instance —
+pass `PreserveTemplateWhitespace` in the generator options.
+
 ## Escaping and trusted content
 
 Ordinary strings are automatically escaped in HTML text and attribute contexts:

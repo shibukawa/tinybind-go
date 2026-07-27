@@ -41,15 +41,15 @@ var planDocumentOps = htmlbind.Builder[DocumentParams]{}
 var planDocumentPlan = &htmlbind.Plan[DocumentParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[DocumentParams]{
-		planDocumentOps.Static("\n"),
+		planDocumentOps.Static(" "),
 		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Markup) }),
-		planDocumentOps.Static("\n<style>"),
+		planDocumentOps.Static(" <style>"),
 		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Css) }),
-		planDocumentOps.Static("</style>\n<script>"),
+		planDocumentOps.Static("</style> <script>"),
 		planDocumentOps.Raw(func(p DocumentParams) string { return string(p.Javascript) }),
-		planDocumentOps.Static("</script>\n<script>window.payload = "),
+		planDocumentOps.Static("</script> <script>window.payload = "),
 		planDocumentOps.Raw(func(p DocumentParams) string { return _tinybindJSONPayload(p.Payload) }),
-		planDocumentOps.Static(";</script>\n"),
+		planDocumentOps.Static(";</script> "),
 	},
 }
 

@@ -23,9 +23,9 @@ var planLabelOps = htmlbind.Builder[LabelParams]{}
 var planLabelPlan = &htmlbind.Plan[LabelParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[LabelParams]{
-		planLabelOps.Static("\n<span>"),
+		planLabelOps.Static(" <span>"),
 		planLabelOps.Text(func(p LabelParams) string { return Decorate(p.Value, p.Tone) }),
-		planLabelOps.Static("</span>\n"),
+		planLabelOps.Static("</span> "),
 	},
 }
 

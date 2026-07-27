@@ -270,7 +270,7 @@ func TestRenderChainWithoutWrappers(t *testing.T) {
 	if err := htmlbind.Render(&out, Page(PageParams{Body: "solo"})); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "\n<p>solo</p>\n" {
+	if out.String() != " <p>solo</p> " {
 		t.Fatalf("unexpected leaf-only output %q", out.String())
 	}
 }

@@ -23,6 +23,11 @@ type GenerateOptions struct {
 	// template declaration stays the same either way and the choice belongs to
 	// whoever writes the implementation.
 	ContextExternals map[string]bool
+	// PreserveWhitespace turns off requirement:static-whitespace-normalization,
+	// so static output keeps the authoring indentation and newlines byte for
+	// byte. It exists for a project comparing generated markup against
+	// pre-existing golden files.
+	PreserveWhitespace bool
 }
 
 // Generate parses, validates, and compiles an HTML template module to Go.
@@ -36,7 +41,7 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	compiler := newCompiler(filename, string(source), module)
+	compiler := newCompiler(filename, string(source), module, !options.PreserveWhitespace)
 	if err := compiler.analyze(); err != nil {
 		return nil, err
 	}

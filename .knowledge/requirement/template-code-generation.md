@@ -27,6 +27,7 @@ compiler_pipeline:
   - resolve requirement:template-file-scope exports and external declarations against their targets
   - hoist requirement:head-merging contributions and validate their singleton conflicts
   - generate context-checked raw output and typed JsonForScript serialization from requirement:explicit-output-control
+  - normalize static whitespace per requirement:static-whitespace-normalization outside rule:whitespace-preserving-contexts contexts
   - coalesce static output and emit decision:generated-render-plan values plus typed entry functions
 html_api:
   shape: requirement:html-component-api

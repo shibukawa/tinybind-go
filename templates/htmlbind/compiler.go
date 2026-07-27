@@ -113,6 +113,10 @@ type compiler struct {
 	components  map[string]*componentInfo
 	exprTypes   map[Expr]valueType
 
+	// collapseWhitespace enables requirement:static-whitespace-normalization.
+	// It is on unless the run asked for byte-identical output.
+	collapseWhitespace bool
+
 	// current tracks the component being analyzed so slot elements can bind to
 	// its parameters.
 	current *componentInfo
@@ -145,12 +149,13 @@ func (e *CompileError) Error() string {
 	return fmt.Sprintf("%s:%d:%d: %s", name, e.Pos.Line, e.Pos.Col, e.Message)
 }
 
-func newCompiler(filename, source string, module *Module) *compiler {
+func newCompiler(filename, source string, module *Module, collapseWhitespace bool) *compiler {
 	return &compiler{
 		filename: filename, source: source, module: module,
 		records: map[string]*TypeDecl{}, enums: map[string]*EnumDecl{},
 		enumMembers: map[string]valueType{}, externals: map[string]functionSig{},
 		components: map[string]*componentInfo{}, exprTypes: map[Expr]valueType{},
+		collapseWhitespace: collapseWhitespace,
 	}
 }
 
@@ -242,6 +247,13 @@ func (c *compiler) analyze() error {
 		if !ok {
 			return c.error(component.Pos, "invalid HTML component body")
 		}
+		// Whitespace is normalized before the head is collected, so the
+		// contributions collectHead captures are the rewritten nodes.
+		body, err := normalizeWhitespace(c.filename, body, c.collapseWhitespace)
+		if err != nil {
+			return err
+		}
+		component.Body = body
 		c.current = info
 		c.slotUsed = map[string]bool{}
 		c.loopDepth = 0
