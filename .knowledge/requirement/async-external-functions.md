@@ -26,6 +26,7 @@ usage:
   - an async external may be called only in a decision:async-boundary-syntax await clause header
   - any other call site is a generation error naming the function and the position
   - the bound result is an ordinary typed value in the primary subtree
+  - proposed requirement:awaitable-parameters adds a second source for the same binding form, where the caller starts the work and passes the pending result in
 execution:
   - the runtime runs each binding of one await clause in its own goroutine and joins the results
   - two slow bindings of one clause cost the slower one rather than their sum

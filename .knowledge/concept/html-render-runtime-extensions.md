@@ -18,6 +18,7 @@ extensions:
   - requirement:nested-layout-composition
   - requirement:component-output-cache
   - requirement:async-external-functions
+  - requirement:awaitable-parameters
   - requirement:suspense-html-streaming
   - requirement:chain-render-pipeline
   - requirement:head-merging
