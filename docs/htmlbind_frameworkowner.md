@@ -23,9 +23,9 @@ dependency, writes no headers, serves no files, and makes no routing decision.
 | Navigation, history, and any SPA behavior | you |
 | Transport framing of a completion in a non-HTML response | you |
 
-The last row is the one that surprises people. `htmlbind.Content` carries a
-boundary id and rendered HTML and nothing else — deliberately, so a framework can
-put it in a streamed document, a JSON payload, or anything else.
+That last row is narrower than it looks. `htmlbind.Content` carries a boundary id
+and rendered HTML, and nothing else — deliberately, so that a framework can put it
+in a streamed document, a JSON payload, or anything else it invents.
 
 ## Deciding whether a response needs a client runtime
 
@@ -53,7 +53,7 @@ if htmlbind.HasAwaitBlock([]htmlbind.Wrapper{document, layout}, page) {
 }
 ```
 
-Three properties matter when you build on it.
+Three properties of the flag decide how far you can lean on it.
 
 **It is transitive.** Generation walks the component call graph, so a component
 that merely calls an async one reports `true` without declaring `await` itself.
@@ -94,7 +94,8 @@ Each settled boundary is then appended as an inert template followed by a marker
 The contract a conforming client script must honor:
 
 - **Trigger on the marker, never on the template.** This is the one rule that is
-  not a style preference; see below.
+  not a style preference; [Why the marker exists](#why-the-marker-exists) gives
+  the failure it prevents.
 - Read the boundary id from the marker's `for` attribute.
 - Replace the element whose `id` matches with the template's content.
 - Remove both the marker and the template afterward.

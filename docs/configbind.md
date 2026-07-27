@@ -2,7 +2,7 @@
 
 `configbind` loads application configuration into Go structs. Define the struct once, then overlay defaults, TOML, environment variables, and CLI options onto the same fields.
 
-The precedence is fixed; sources farther to the right win:
+Nothing about that layering is configurable. The precedence is fixed, and sources farther to the right win:
 
 ```text
 default < TOML file < environment variable < CLI option
@@ -21,7 +21,7 @@ default < TOML file < environment variable < CLI option
 - Converting values to string, bool, int, and `[]string`
 - Recording the winning source for every merged setting
 
-Application code does not implement generated internals. It obtains a pointer with `Bind` and calls `Load` once during startup.
+Application code never implements any of the generated internals. It obtains a pointer with `Bind` and calls `Load` once during startup.
 
 ## What you provide
 
@@ -51,7 +51,7 @@ func registerConfig() *ServerConfig {
 go generate ./...
 ```
 
-When config targets are present, the default output is `configbind_gen.go`. The type argument and prefix must be statically discoverable, so use a string literal for the prefix.
+When config targets are present, the default output is `configbind_gen.go`. Generation reads the type argument and prefix statically, which is why the prefix has to be a string literal rather than a computed value.
 
 ## Generating configuration scaffolds
 
@@ -132,7 +132,7 @@ Redirect it when you want a file:
 ./myserver scaffold-config env > .env
 ```
 
-`configbind.Load` reads process environment variables; it does not parse `.env` files. Use your preferred dotenv loader or shell mechanism before calling `Load` if you use the `.env` scaffold.
+One gap is easy to miss. `configbind.Load` reads process environment variables and does not parse `.env` files at all, so a scaffolded `.env` needs your preferred dotenv loader or shell mechanism to reach the process before `Load` runs.
 
 ## Minimal example
 
@@ -217,13 +217,15 @@ options := generator.DefaultOptions()
 options.DisableFeatures = append(options.DisableFeatures, generator.FeatureHelpBackfill)
 ```
 
+Tags combine, and the combination is what fixes a field's name on every surface at once:
+
 ```go
 type ServerConfig struct {
 	Port int `key:"listen_port" default:"8080" opt:"port,p" help:"HTTP listen port"`
 }
 ```
 
-For the `server` prefix, this field has these names:
+For the `server` prefix, this one field appears under four names:
 
 | Surface | Name |
 | --- | --- |
@@ -258,7 +260,7 @@ type TLSConfig struct {
 | `TLS.Enabled` | `webserver.tls.enabled` | `--webserver-tls-enabled` | `WEBSERVER_TLS_ENABLED` |
 | `TLS.CertPath` | `webserver.tls.cert_path` | `--webserver-tls-cert_path` | `WEBSERVER_TLS_CERT_PATH` |
 
-Go field names become snake-case keys. Nested dots become hyphens in CLI names. Environment names replace hyphens and dots with underscores and uppercase the result.
+Go field names become snake-case keys. In CLI names, nested dots turn into hyphens; environment names go further still, replacing both hyphens and dots with underscores and uppercasing the result.
 
 The prefix itself may contain dots. Prefix and field hierarchy retain dots in stable keys and TOML, while every dot is normalized to a hyphen for CLI options.
 
@@ -301,7 +303,7 @@ configbind intentionally reads a restricted TOML subset:
 - Arrays of primitive scalars
 - Comments
 
-Quoted keys, inline tables, arrays of tables, and nested arrays are not supported. Bindable struct types are more restricted than parsed TOML values; for example, a TOML float cannot be bound directly to a float field.
+Quoted keys, inline tables, arrays of tables, and nested arrays are not supported. There are really two limits here rather than one — what the parser accepts, and what a struct field can receive — and the second is the narrower of the two. A TOML float parses, yet it cannot be bound directly to a float field.
 
 ## Configuration file discovery
 
@@ -371,7 +373,7 @@ If `./config.test.toml` exists, it is the only TOML file read. Otherwise
 | `ExplicitConfigPath` | File path that must be used | Empty uses `--config-path`, extras, or directory discovery |
 | `ExtraConfigReadPaths` | Optional file paths searched in slice order | Missing entries are skipped |
 
-Pass an empty slice rather than nil to disable CLI or environment input in tests:
+The distinction between nil and empty matters in tests, because nil means "fall back to the process." Pass an empty slice to shut CLI or environment input off entirely:
 
 ```go
 Args:    []string{},
@@ -459,10 +461,13 @@ After running `go generate`, these forms select and fill `MigrateOptions`:
 
 Only the selected `SubCommand` call returns non-nil. A missing required
 argument, an unknown command or option, or `--help` returns
-`*configbind.UsageError` containing generated usage. Options may appear before
-or after positional arguments. In production, leave `LoadOptions.Args` nil so
-both selection and parsing use `os.Args[1:]`; tests that override `Args` must
-set the matching `os.Args` before calling `SubCommand`.
+`*configbind.UsageError` carrying generated usage text, and options may appear
+before or after positional arguments.
+
+Selection and parsing read the same argument list, which is worth remembering in
+tests. Leave `LoadOptions.Args` nil in production so both use `os.Args[1:]`; a
+test that overrides `Args` must set the matching `os.Args` before calling
+`SubCommand`.
 
 ## CLI options
 
@@ -490,7 +495,7 @@ Repeat a `[]string` option to accumulate values:
 
 Unknown options, missing values, and invalid booleans cause `Load` to return an error.
 
-Unlike an unknown CLI option, an unknown TOML key is accepted by the parser but has no matching struct field and is not applied. Applications that must reject configuration typos can compare `LoadResult.Overlay.Keys()` with their expected keys during startup.
+TOML is the asymmetric case. An unknown key parses, matches no struct field, and is silently not applied — so a misspelled key in a config file fails quietly where a misspelled CLI option fails loudly. Applications that must reject configuration typos can compare `LoadResult.Overlay.Keys()` against their expected keys during startup.
 
 ## Nested settings and `[]string`
 
@@ -568,7 +573,7 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found. There is no automatic secret masking, so do not log all raw overlay values.
+`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found at all. Nothing in the overlay is masked automatically, so logging raw overlay values wholesale will log your credentials with them.
 
 ## Public APIs
 
