@@ -37,7 +37,7 @@ context_argument:
   reason: the params struct mirrors declared template parameters, and a synthesized ctx field would collide with the naming rule
   sync_entry: a render option may still supply a context, because api:cache-store and blocking await both want one
 sync_of_async:
-  behavior: the sync entry renders an await boundary by blocking on its bindings and emitting the settled primary or recover subtree in place
+  behavior: the sync entry renders an await boundary by blocking on its bindings and emitting the settled primary or recover subtree in place; bindings that fail with no recover subtree return the unrecovered failure and write nothing, so a caller rendering into a buffer can still answer with an error status
   reason: one template then renders correctly with or without progressive delivery, which also serves clients without JavaScript
   cost: no fallback is streamed and total latency is the slowest binding
 selection:

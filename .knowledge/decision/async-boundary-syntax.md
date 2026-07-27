@@ -46,8 +46,11 @@ compiler:
   - expected request cancellation and stale partial-update completion bypass recover
   - each boundary yields at most one data:async-boundary-content item after the initial document write
 omitted_recover:
-  behavior: the committed fallback stays in place and no completion is emitted for that boundary
-  reporting: the normalized failure goes to the render error hook, so it stays observable server-side
+  decision: the failure leaves the boundary and reaches the caller instead of being absorbed, approved 2026-07-28
+  sync_entry: returns the failure without writing the fallback, because a finished document holding a loading state is a completed lie and nothing is committed yet
+  async_entry: yields the failure with the committed placeholder's boundary ID and ends the sequence, because the alternative is a fallback nothing will ever replace
+  screen: the committed fallback stays until the caller replaces it; a caller that streams is expected to swap the whole document for an error
+  reporting: the original failure still goes to the render error hook, so it stays observable server-side
 naming:
   benefit: await marks the wait site; async stays the external declaration modifier; fallback preserves the pending term; recover describes error UI replacement
   rejected: async clause keyword; it collided with the async external modifier and read as a declaration rather than a wait site

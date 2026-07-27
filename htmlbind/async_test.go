@@ -42,6 +42,18 @@ func staticPlan(parts ...string) *Plan[struct{}] {
 
 // awaitPlan builds a plan holding one boundary whose binding calls load.
 func awaitPlan(load func() (string, error)) *Plan[struct{}] {
+	return awaitPlanWith(load, []Op[AsyncError]{
+		Builder[AsyncError]{}.Text(func(err AsyncError) string { return err.Code }),
+	})
+}
+
+// silentAwaitPlan builds the same boundary with no recover subtree, which is
+// what a clause that declared none compiles to.
+func silentAwaitPlan(load func() (string, error)) *Plan[struct{}] {
+	return awaitPlanWith(load, nil)
+}
+
+func awaitPlanWith(load func() (string, error), handler []Op[AsyncError]) *Plan[struct{}] {
 	builder := Builder[struct{}]{}
 	return &Plan[struct{}]{Ops: []Op[struct{}]{
 		Await(
@@ -59,7 +71,7 @@ func awaitPlan(load func() (string, error)) *Plan[struct{}] {
 			func(_ struct{}, err AsyncError) AsyncError { return err },
 			[]Op[string]{Builder[string]{}.Text(func(value string) string { return value })},
 			[]Op[struct{}]{builder.Static("pending")},
-			[]Op[AsyncError]{Builder[AsyncError]{}.Text(func(err AsyncError) string { return err.Code })},
+			handler,
 		),
 	}}
 }
@@ -285,6 +297,47 @@ func TestEarlyStopDoesNotWaitForPendingWork(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("stopping the range blocked on the pending boundary")
+	}
+}
+
+func TestUnrecoveredBoundaryEndsTheSequence(t *testing.T) {
+	boom := errors.New("boom")
+	plan := silentAwaitPlan(func() (string, error) { return "", boom })
+	var output bytes.Buffer
+	err := consume(&output, RenderAsync(context.Background(), &output, Bind(plan, struct{}{})))
+	var unrecovered *UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	// The id is what ties the failure back to the placeholder still on screen,
+	// which is the one thing a caller needs to replace it.
+	if unrecovered.BoundaryID != "tb-1" {
+		t.Fatalf("BoundaryID = %q, want the placeholder left behind", unrecovered.BoundaryID)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the original failure underneath", err)
+	}
+	if !strings.Contains(output.String(), "pending") {
+		t.Fatalf("committed fallback is missing: %q", output.String())
+	}
+}
+
+func TestUnrecoveredBoundaryFailsTheSynchronousRender(t *testing.T) {
+	boom := errors.New("boom")
+	plan := silentAwaitPlan(func() (string, error) { return "", boom })
+	var output bytes.Buffer
+	err := Render(&output, Bind(plan, struct{}{}))
+	var unrecovered *UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	if unrecovered.BoundaryID != "" {
+		t.Fatalf("BoundaryID = %q, want none where no placeholder is written", unrecovered.BoundaryID)
+	}
+	// Writing the fallback here would finish a document promising content that
+	// will never arrive, and this path has committed no status to take back.
+	if strings.Contains(output.String(), "pending") {
+		t.Fatalf("synchronous render committed the fallback: %q", output.String())
 	}
 }
 

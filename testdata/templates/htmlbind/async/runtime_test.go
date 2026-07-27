@@ -144,16 +144,29 @@ func TestRenderAsyncRecoversWithSafeErrorOnly(t *testing.T) {
 	}
 }
 
-func TestBoundaryWithoutRecoverKeepsFallback(t *testing.T) {
+func TestBoundaryWithoutRecoverEndsTheSequence(t *testing.T) {
 	reset()
-	userError = errors.New("boom")
+	boom := errors.New("boom")
+	userError = boom
 	var reported error
 	var output bytes.Buffer
-	if err := stream(&output, htmlbind.RenderAsync(context.Background(), &output, Silent(SilentParams{Id: "1"}),
-		htmlbind.WithErrorReporter(func(err error) { reported = err }))); err != nil {
-		t.Fatal(err)
+	err := stream(&output, htmlbind.RenderAsync(context.Background(), &output, Silent(SilentParams{Id: "1"}),
+		htmlbind.WithErrorReporter(func(err error) { reported = err })))
+	// The template declared nowhere to put this failure, so it leaves the
+	// boundary: a dropped failure would leave "waiting" on screen forever.
+	var unrecovered *htmlbind.UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	if unrecovered.BoundaryID != "tb-1" {
+		t.Fatalf("BoundaryID = %q, want the placeholder left behind", unrecovered.BoundaryID)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the original failure underneath", err)
 	}
 	got := output.String()
+	// What replaces the committed fallback is the caller's to write; the module
+	// emits nothing more of its own.
 	if !strings.Contains(got, "waiting") {
 		t.Fatalf("fallback was not committed:\n%s", got)
 	}
@@ -162,6 +175,25 @@ func TestBoundaryWithoutRecoverKeepsFallback(t *testing.T) {
 	}
 	if reported == nil {
 		t.Fatal("failure without a recover clause was not reported")
+	}
+}
+
+func TestSyncBoundaryWithoutRecoverFailsInsteadOfWritingFallback(t *testing.T) {
+	reset()
+	userError = errors.New("boom")
+	var output bytes.Buffer
+	err := htmlbind.Render(&output, Silent(SilentParams{Id: "1"}))
+	var unrecovered *htmlbind.UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	if unrecovered.BoundaryID != "" {
+		t.Fatalf("BoundaryID = %q, want none on the path that writes no placeholder", unrecovered.BoundaryID)
+	}
+	// A finished document holding a loading state is worse than no document: a
+	// caller rendering into a buffer can drop this one and send an error status.
+	if strings.Contains(output.String(), "waiting") {
+		t.Fatalf("sync render committed the fallback:\n%s", output.String())
 	}
 }
 

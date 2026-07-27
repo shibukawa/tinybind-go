@@ -576,8 +576,14 @@ export component Profile(id: string): html {
 - `fallback` は必須です。最初にレスポンスへ確定するのがこの内容なので、遅い依存が
   ページの残りを止めることはありません。
 - `recover` は任意で、安全な `error` 値を束縛します。読めるフィールドは `code`、
-  `message`、`retryable`、`timeout` です。省略すると、失敗時は fallback がその
-  まま残ります。
+  `message`、`retryable`、`timeout` です。
+
+`recover` を省略したブロックが失敗すると、その失敗はテンプレートの外に出て、ページ
+全体の失敗になります。`Render` は fallback を描かずに `*htmlbind.UnrecoveredError`
+を返し、`RenderAsync` はそれを yield してシーケンスを終えます。逐次描画では
+fallback が既にレスポンスへ乗っているので、画面を差し替えるのは呼び出し側 — 多くは
+上に載っているフレームワーク — の仕事です。ページの一部だけを失敗として見せたいなら
+`recover` を書いてください。永久に終わらないローディング表示が残ることはありません。
 
 束縛は primary 側だけ、エラー名は `recover` 側だけで見えます。そのため、描画時点
 で存在しない値をどの節からも読めません。
@@ -707,7 +713,8 @@ func profile(w http.ResponseWriter, r *http.Request) {
 		htmlbind.WithErrorReporter(func(err error) { log.Printf("boundary failed: %v", err) }),
 	) {
 		if err != nil {
-			// レスポンスは確定済みなので、書き直さずログに残す
+			// レスポンスは確定済みなので、書き直さずログに残す。recover を持た
+			// ない境界の失敗も *htmlbind.UnrecoveredError としてここに届く
 			log.Printf("render failed: %v", err)
 			break
 		}
@@ -801,7 +808,9 @@ JavaScript を切ったクライアントに見えるものと同じです。`Re
 ### キャンセルが打ち切るのは「待ち」
 
 リクエストのキャンセルや `WithAsyncTimeout` の満了で、ランタイムは待つのをやめ
-ます。その境界は完了を出さないか、`code: "timeout"` で recover を描画します。
+ます。キャンセルされた境界は完了を出しません。読む相手がもういないからです。
+タイムアウトは他と同じ失敗なので、`code: "timeout"` で recover を描画するか、
+`recover` を持たないブロックならページ全体の失敗になります。
 
 処理そのものが止まるかどうかは external 次第です。context を受け取っていれば
 キャンセルを見て早く戻れます。受け取っていなければ中断できないので、放置されます
