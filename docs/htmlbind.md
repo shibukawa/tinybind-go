@@ -758,13 +758,15 @@ func profile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("render failed: %v", err)
 			break
 		}
-		if _, err := content.WriteTo(w); err != nil {
+		if err := writeCompletion(w, content); err != nil {
 			break
 		}
 		htmlbind.Flush(w)
 	}
 }
 ```
+
+`writeCompletion` is yours, not the module's; the next section writes one.
 
 `RenderChainAsync` is the same for a wrapper chain. There is no variant that
 hides this loop: how many boundaries a render produces is not knowable up front,
@@ -776,18 +778,60 @@ the render without waiting for the outstanding boundaries. The render flushes
 after the initial pass; `htmlbind.Flush` is how you do the same after each
 chunk, and it is a no-op for a writer that cannot flush.
 
+### Framing a completion
+
 A progressive render writes each pending boundary as `<tb-boundary id="...">`
-holding the fallback. Each completion is then appended as an inert template
-followed by a marker:
+holding the fallback. That is the module's half. The other half is yours: a
+yielded `Content` is the settled fragment plus the id of the placeholder it
+belongs to, and `WriteTo` emits that fragment and nothing else — no wrapper, no
+marker, no script. htmlbind injects nothing into the head either, on either
+entry point.
+
+The split is deliberate. How a completion travels and the client code that acts
+on it are one design, so they belong to one owner: the framework you are
+building, or the handler itself.
+
+The recipe below is a good default. Wrap each fragment in an inert template and
+follow it with a marker element:
+
+```go
+func writeCompletion(w io.Writer, content htmlbind.Content) error {
+	if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+		return err
+	}
+	if _, err := content.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`)
+	return err
+}
+```
+
+which puts this on the wire:
 
 ```html
 <template data-tb-boundary="tb-1">…</template><tb-apply for="tb-1"></tb-apply>
 ```
 
-A small fixed script merged into the document head defines `tb-apply` and does
-the swap from its connected callback. It is the same code for every page, and no
-completion carries a script of its own, so nothing needs a CSP nonce or
-`unsafe-inline`.
+Define `tb-apply` once, in the runtime script your pages already load, and do
+the swap from its connected callback:
+
+```js
+customElements.define("tb-apply", class extends HTMLElement {
+	connectedCallback() {
+		const id = this.getAttribute("for");
+		this.remove();
+		const template = document.querySelector(`template[data-tb-boundary="${id}"]`);
+		if (!template) return;
+		const placeholder = document.getElementById(id);
+		if (placeholder) placeholder.replaceWith(template.content);
+		template.remove();
+	}
+});
+```
+
+Because it lives in a file you already serve, no completion carries a script of
+its own, and the page needs neither a CSP nonce nor `unsafe-inline`.
 
 The marker is what makes the swap safe. An HTML parser inserts an element when
 it reads the *start* tag, so a runtime that reacted to the template's appearance
@@ -796,10 +840,12 @@ with nothing — losing the fallback along with the result. Because `<tb-apply>`
 comes after `</template>` in the byte stream, the template is complete by the
 time it exists, however a proxy, TLS record, or compressing encoder split the
 bytes. A completion whose marker never arrives is simply not applied, and the
-fallback stays.
+fallback stays. Trigger on the marker, never on the template.
 
-A document with no shell `head` element gets no script and simply keeps its
-fallbacks.
+A response no script ever applies keeps its fallbacks, which is also what a
+client with JavaScript disabled sees. `Render` settles every boundary in place
+instead, so a route that must work without a runtime has an entry that needs
+none.
 
 ### Cancellation bounds the wait
 

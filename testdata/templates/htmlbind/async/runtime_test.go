@@ -52,12 +52,22 @@ func (e publicFailure) PublicError() htmlbind.AsyncError {
 // stream runs a render sequence to the end, writing each settled boundary. It
 // is the loop a handler writes; there is deliberately no entry that hides it,
 // because how many boundaries a render produces is not known up front.
+//
+// The runtime yields a fragment and the id of the placeholder it replaces, and
+// nothing else. Framing that pair — here as an inert template plus the marker
+// element a client script reacts to — belongs to whoever ships that script.
 func stream(w io.Writer, sequence iter.Seq2[htmlbind.Content, error]) error {
 	for content, err := range sequence {
 		if err != nil {
 			return err
 		}
+		if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+			return err
+		}
 		if _, err := content.WriteTo(w); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`); err != nil {
 			return err
 		}
 		htmlbind.Flush(w)

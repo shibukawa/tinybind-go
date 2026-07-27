@@ -21,12 +21,14 @@
 | リクエストスコープの値を context に入れる | 実装者 |
 | レスポンスのステータス、Content-Type、エンコーディング、フラッシュ方針 | 実装者 |
 | ナビゲーション、履歴、SPA 的な挙動全般 | 実装者 |
-| HTML 以外のレスポンスにおける完了の transport framing | 実装者 |
+| 完了の framing 全般と、それを適用するクライアントスクリプト | 実装者 |
 
-最後の行は見た目より狭い範囲です。`htmlbind.Content` が持つのは境界 ID とレンダ
+最後の行は見た目より広い範囲です。`htmlbind.Content` が持つのは境界 ID とレンダ
 リング済み HTML だけで、それ以外は何もありません。これは意図的で、ストリーミング
 中のドキュメントにも、JSON ペイロードにも、フレームワークが考えた任意の形にも載せ
-られるようにするためです。
+られるようにするためです。モジュールはどの経路でも `<script>` を書かず、マージ済み
+head にも何も差し込みません。完了がワイヤ上でどう見えるかは、配信するランタイムと
+セットで一度だけ決める設計判断です。
 
 ## クライアントランタイムが必要かの判定
 
@@ -87,10 +89,31 @@ document - layout - page という通常の構成については、チェーン�
 <tb-boundary id="tb-1" style="display:contents">…fallback…</tb-boundary>
 ```
 
-確定した境界は、不活性な template とマーカーの組として追記されます。
+この要素と ID まではモジュールの担当です。その先は実装者の担当で、確定した境界は
+レンダリング済みフラグメントと、それが置き換わるプレースホルダの ID を持つ
+`Content` として届きます。`Content.WriteTo` が書くのはフラグメント本体だけです。
+
+したがって以下はモジュールが強制するものではなく推奨です。ただしモジュールはこの
+形を前提に設計されており、後述のマーカーの規則は本質的です。確定した境界は、不活
+性な template とマーカーの組として追記します。
 
 ```html
 <template data-tb-boundary="tb-1">…resolved…</template><tb-apply for="tb-1"></tb-apply>
+```
+
+Go 側はこうなります。
+
+```go
+func writeCompletion(w io.Writer, content htmlbind.Content) error {
+	if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+		return err
+	}
+	if _, err := content.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`)
+	return err
+}
 ```
 
 適合するクライアントスクリプトが守るべき契約は次のとおりです。
@@ -104,9 +127,9 @@ document - layout - page という通常の構成については、チェーン�
 - template やプレースホルダが見つからない場合は何もしない。切断されたレスポンス
   では、コミット済みの fallback が残らなければならない
 
-`Content.WriteTo` は上記の markup をそのまま出力します。ナビゲーションレスポンス
-の JSON に載せるなど自前で framing したい場合のために、`Content` は ID と HTML を
-分けて持っています。
+transport が違うなら形を変えて構いません（ナビゲーションレスポンスの JSON に載せる
+場合、マーカーを起動するパーサがそもそも走りません）。ただし「フラグメントを運ぶ
+バイト列が完成する前に何も適用しない」という規則だけは持ち込んでください。
 
 ### なぜマーカーが必要か
 
@@ -132,7 +155,7 @@ HTML パーサは**開始タグ**を読んだ時点で要素を挿入します�
 
 ### 適合するクライアントスクリプト
 
-現在モジュールが同梱しているランタイムを展開したものです。
+上記の形に対するリファレンス実装です。
 
 ```js
 customElements.define("tb-apply", class extends HTMLElement {
@@ -148,24 +171,27 @@ customElements.define("tb-apply", class extends HTMLElement {
 });
 ```
 
-完了チャンクはスクリプトを一切運びません。そのため nonce も `unsafe-inline` も無
-しに、インラインスクリプトを禁止するポリシー下で動かせます。
+完了チャンクにインライン化せず、すでに配信しているバンドルに入れてください。そう
+すれば完了チャンクはスクリプトを一切運ばず、nonce も `unsafe-inline` も無しに、
+インラインスクリプトを禁止するポリシー下で動かせます。
 
-### 現状の制約
+### スクリプトをページに載せる
 
-現在は `RenderChainAsync` がこのランタイムをマージ済み head に自分で差し込むので、
-フレームワークが自前のものに差し替えることはまだできません。`HasAwaitBlock` はそ
-れを変えるための前半です — 注入より先に、判断が呼び出し側に移りました。差し替えが
-入るまでは、上記プロトコルは固定として扱ってください。
+これも実装者の担当です。以前は `RenderChainAsync` がこのランタイムをマージ済み
+head に自分で差し込んでいましたが、現在は差し込みません。判断と注入が同じ場所に
+揃ったということです。判断は `HasAwaitBlock` で行い、注入は document シェルが出す
+`script` タグ — シェル component の head 寄与、あるいはそのテンプレートのリテラル
+markup — で行います。
 
-なおスクリプトは*マージ済み head* に載るので、document シェルを持たないチェーン
-（`head` 要素を出すものが無いチェーン）には届きません。その場合 fallback がそのま
-ま最終的な内容になります。
+スクリプトが読まれなかったレスポンスは壊れているのではなく、改善されないだけです。
+どのプレースホルダもコミット済みの fallback を保ったままで、これは JavaScript 無し
+のクライアントに見えるものと同じです。
 
 ## 初回ロード
 
-特別な処理は要りません。シェルがマージ済み head を書き、初期パスが全ての fallback
-を伴ってドキュメントをコミットし、完了が後からストリームされます。
+特別な処理は要りません。シェルがマージ済み head と自前のランタイムタグを書き、初期
+パスが全ての fallback を伴ってドキュメントをコミットし、完了が後からストリームされ
+ます。
 
 ```go
 for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
@@ -173,7 +199,7 @@ for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
 		log.Printf("boundary failed: %v", err)
 		break
 	}
-	if _, err := content.WriteTo(w); err != nil {
+	if err := writeCompletion(w, content); err != nil {
 		break
 	}
 	htmlbind.Flush(w)

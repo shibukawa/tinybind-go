@@ -10,9 +10,10 @@ source:
   - requirement:suspense-html-streaming
   - api:render-html-chain
   - user lifecycle discussion 2026-07-27
-review_gate: proposed; requires user approval
+review_gate: approved 2026-07-27
+status: shipped for the module half; the async entries prepend no script and data:async-boundary-content writes its fragment alone, while the reference runtime is documentation rather than a registered contribution
 problem:
-  hardcoded: api:render-html-chain async entries prepend a fixed update runtime, so every async response carries the module's own script
+  hardcoded: api:render-html-chain async entries prepended a fixed update runtime until 2026-07-27, so every async response carried the module's own script
   mismatch: that script serves the initial streaming completion only; a page navigation replaces existing content through requirement:component-delta-rendering, which is a different mechanism
   extensibility: a framework wanting its own navigation behavior cannot replace a script the entry point injects
 split:
@@ -27,7 +28,7 @@ split:
     - the choice of when to include it, using requirement:fragment-capability-introspection
     - injection, through requirement:render-time-script-contribution rather than an entry-point prepend
     - any navigation or history behavior layered on top
-  already_true: data:async-boundary-content already excludes transport framing, so the caller already wraps id and html into the template element and update record
+  now_true: data:async-boundary-content excludes transport framing in the Go surface too; its writer emits the rendered fragment alone, so the caller wraps id and html into the template element and update record
 protocol_modes:
   streaming_completion:
     when: the initial response, while the document is still parsing
@@ -47,8 +48,9 @@ protocol_modes:
     head: requirement:client-managed-head makes retiring and installing head tags part of this mode, which the streaming mode never has to do because the shell wrote the head
   consequence: one script cannot be assumed to cover both, which is the concrete reason the module stops shipping the runtime automatically
 reference_runtime:
-  provided: the module still ships a conforming streaming client as an opt-in requirement:framework-script-contribution registration
-  not_automatic: it is registered and selected like any other contribution, never prepended by an entry point
+  today: a conforming streaming client is published in the htmlbind guides as reference code the caller copies or reimplements; the module ships no script
+  planned: register it as an opt-in requirement:framework-script-contribution so a project using the module directly need not write protocol code
+  not_automatic: whichever form it takes, it is selected like any other contribution and never prepended by an entry point
   reason: a project using the module directly should not have to write protocol code, while a framework must be able to replace it
   versioning: the protocol contract carries a version so a mismatched script fails loudly rather than silently misapplying
 migration:
