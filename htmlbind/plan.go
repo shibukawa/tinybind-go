@@ -39,6 +39,13 @@ type Plan[P any] struct {
 	// the client runtime that applies settled boundaries, instead of that
 	// decision being made for it inside the render entry points.
 	HasAwaitBlock bool
+	// Check rejects parameters this component cannot render, before it writes
+	// anything. Generation emits it for a required async parameter, whose
+	// absence has to be reported while the response can still carry an error
+	// status rather than a half written document.
+	//
+	// It is nil for a component with nothing to check, which is most of them.
+	Check func(P) error
 	// Ops is the instruction list executed in order.
 	Ops []Op[P]
 	// Cache is set for a component declared with the cache annotation. It is
@@ -49,6 +56,15 @@ type Plan[P any] struct {
 
 // Exec runs the plan against params.
 func (p *Plan[P]) Exec(r *Renderer, params P) error {
+	// Checked before the first byte of this component. A chain member is also
+	// checked earlier still, when the chain is assembled, so the common page
+	// and layout shape fails with nothing written at all; running the same pure
+	// predicate twice is cheaper than tracking which values were already seen.
+	if p.Check != nil {
+		if err := p.Check(params); err != nil {
+			return err
+		}
+	}
 	if p.Cache == nil || r.opts == nil || r.opts.cache == nil {
 		return execOps(r, p.Ops, params)
 	}
@@ -98,16 +114,31 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 type Fragment struct {
 	head     []string
 	hasAwait bool
+	validate func() error
 	render   func(*Renderer) error
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func Bind[P any](plan *Plan[P], params P) Fragment {
-	return Fragment{
+	fragment := Fragment{
 		head:     plan.Head,
 		hasAwait: plan.HasAwaitBlock,
 		render:   func(r *Renderer) error { return plan.Exec(r, params) },
 	}
+	if plan.Check != nil {
+		fragment.validate = func() error { return plan.Check(params) }
+	}
+	return fragment
+}
+
+// Validate runs the fragment's parameter check without rendering. Chain
+// assembly calls it so a chain built from unrenderable parameters fails before
+// any member writes.
+func (f Fragment) Validate() error {
+	if f.validate == nil {
+		return nil
+	}
+	return f.validate()
 }
 
 // Present reports whether the fragment carries content. An absent optional

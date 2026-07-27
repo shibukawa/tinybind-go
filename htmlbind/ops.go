@@ -111,6 +111,22 @@ func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
 	return nil
 }
 
+// Require fails the render when check rejects the parameters. Generation emits
+// it ahead of an await boundary that binds a required async parameter, so a
+// caller who left one unset gets an error before the boundary commits its
+// fallback and fixes the response status.
+//
+// It writes nothing, which is the point: the check has to run on the initial
+// pass, where a failure can still become an error response, rather than in the
+// boundary goroutine that runs after the response is already committed.
+func Require[P any](check func(P) error) Op[P] { return requireOp[P]{check: check} }
+
+type requireOp[P any] struct {
+	check func(P) error
+}
+
+func (o requireOp[P]) Exec(_ *Renderer, params P) error { return o.check(params) }
+
 // Await opens an await boundary. resolve runs the clause's bindings and builds
 // the primary subtree's scope; recovery builds the recover subtree's scope from
 // the outer parameters and the safe error. handler is nil when the clause

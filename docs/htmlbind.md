@@ -628,6 +628,83 @@ The bindings are visible only in the primary subtree, and the error name only in
 A `<slot>` may not appear inside an `await` block: the fallback and the
 replacement would both render it.
 
+### Values the caller starts
+
+An `external async` call starts when the boundary reaches it. When you want the
+work running earlier — while the request is still being parsed, or while the
+layout renders — declare the parameter `async` instead and hand the pending
+value in:
+
+```text
+type Customer {
+  name: string
+  orders: async Order[]
+}
+
+export component Profile(customer: Customer, headline: async string?): html {
+<h1>{customer.name}</h1>
+{await orders = customer.orders}
+  <ul>{for order in orders}<li>{order.id}</li>{/for}</ul>
+{fallback}
+  <p>loading {customer.name}…</p>
+{/await}
+}
+```
+
+```go
+customer := Customer{
+	Name:   "ada",
+	Orders: htmlbind.Go(ctx, func(ctx context.Context) ([]Order, error) {
+		return store.Orders(ctx, id)
+	}),
+}
+err := htmlbind.Render(w, Profile(ProfileParams{Customer: customer}))
+```
+
+`async T` is a prefix modifier on any parameter or record field, and it becomes
+`htmlbind.Pending[T]` in Go. It is not a function and not callable: the only
+place it may be read is an `await` binding, which may mix it with async calls in
+one clause. The modifier covers the whole type, so `async Order[]` is one
+pending slice; for a per-row wait, give each row its own `async` field and await
+it inside the `for` body.
+
+A record can carry settled and pending members side by side, which is why the
+example renders `customer.name` in the `fallback` while the orders are still on
+their way.
+
+Three constructors produce a handle:
+
+| Constructor | Use |
+| --- | --- |
+| `htmlbind.Go(ctx, work)` | start the work in its own goroutine |
+| `htmlbind.Resolved(v)` | a value you already have, and tests |
+| `htmlbind.Failed(err)` | a failure you already know about |
+
+There is no channel-taking constructor. A service that already returns a channel
+is adopted by receiving from it inside the `Go` closure, which keeps every
+handle one this package started — and therefore one whose panics it recovers.
+
+A handle settles once and stays readable, so a layout and the page inside it may
+hold the same value: both boundaries see the same result and the work runs once.
+The context you pass to `Go` bounds the work, which stays yours to cancel; a
+render only bounds how long it waits.
+
+Where the awaited type is optional, an unset handle is a legal value: it settles
+immediately as absent, opens no boundary, and never reaches `recover`, because
+absence is data rather than failure. Leaving a required one unset is a caller
+bug, reported before anything is written:
+
+```go
+var unset *htmlbind.UnsetPendingError
+if errors.As(err, &unset) {
+	log.Printf("%s was never set", unset.Path)
+}
+```
+
+A cached component cannot declare an `async` parameter, or a record reaching an
+`async` field: stored bytes stand in for a fresh render, and a pending value
+belongs to the one request that started it.
+
 ### Rendering an async component
 
 `Render` blocks on the bindings and writes the settled subtree in place, so a
@@ -892,8 +969,9 @@ Common causes include:
 - Filling a slot the target component does not declare
 - Writing a bare element selector in a scoped style block
 - Calling an `external async` function outside an `await` binding
+- Reading an `async` parameter or field anywhere but an `await` binding
 - Writing an `await` block with no `fallback` clause
-- Annotating a component with `@cache` when it declares an `html` parameter or
-  reaches an `await` boundary
+- Annotating a component with `@cache` when it declares an `html` or `async`
+  parameter, or reaches an `await` boundary
 
 Run `go generate ./...` after changing templates, before building and testing the application.

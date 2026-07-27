@@ -582,6 +582,80 @@ export component Profile(id: string): html {
 `await` ブロックの中に `<slot>` は書けません。fallback と置き換え後の両方が同じ
 スロットを描画してしまうためです。
 
+### 呼び出し側が始める値
+
+`external async` の呼び出しが始まるのは、境界がそこに到達した時点です。もっと
+早く — リクエストを解析している間や、レイアウトを描画している間に — 走らせたい
+なら、パラメータ側を `async` と宣言して、未完了の値を渡します。
+
+```text
+type Customer {
+  name: string
+  orders: async Order[]
+}
+
+export component Profile(customer: Customer, headline: async string?): html {
+<h1>{customer.name}</h1>
+{await orders = customer.orders}
+  <ul>{for order in orders}<li>{order.id}</li>{/for}</ul>
+{fallback}
+  <p>{customer.name} の注文を読み込み中…</p>
+{/await}
+}
+```
+
+```go
+customer := Customer{
+	Name:   "ada",
+	Orders: htmlbind.Go(ctx, func(ctx context.Context) ([]Order, error) {
+		return store.Orders(ctx, id)
+	}),
+}
+err := htmlbind.Render(w, Profile(ProfileParams{Customer: customer}))
+```
+
+`async T` は任意のパラメータと record フィールドに付く前置修飾子で、Go では
+`htmlbind.Pending[T]` になります。関数ではなく、呼び出すこともできません。読める
+のは `await` の束縛だけで、同じ節の中で async な呼び出しと混ぜられます。修飾子は
+型全体にかかるので `async Order[]` は「1 つの未完了なスライス」です。行ごとに
+待ちたいなら、各行に `async` フィールドを持たせて `for` の中で await します。
+
+record は確定済みのメンバと未完了のメンバを同時に持てます。上の例が fallback の
+中で `customer.name` を描画できるのはそのためです。
+
+ハンドルを作るコンストラクタは 3 つです。
+
+| コンストラクタ | 用途 |
+| --- | --- |
+| `htmlbind.Go(ctx, work)` | 専用の goroutine で処理を開始する |
+| `htmlbind.Resolved(v)` | 既に手元にある値、およびテスト |
+| `htmlbind.Failed(err)` | 既に分かっている失敗 |
+
+チャネルを受け取るコンストラクタはありません。既にチャネルを返すサービスは、
+`Go` のクロージャの中で受け取れば取り込めます。こうしておくと、すべてのハンドル
+がこのパッケージ自身が起こした goroutine のものになり、panic も確実に回収でき
+ます。
+
+ハンドルは一度だけ確定し、その後も読めます。レイアウトとその中のページが同じ値
+を持ってよく、両方の境界が同じ結果を見て、処理は 1 回しか走りません。`Go` に渡す
+context が縛るのは処理そのもので、キャンセルの責任は呼び出し側にあります。描画側
+が縛るのは待ち時間だけです。
+
+待つ型が optional なら、未設定のハンドルは正当な値です。即座に「不在」として確定
+し、境界を開かず、`recover` にも行きません。不在は失敗ではなくデータだからです。
+必須の側を未設定のまま渡すのは呼び出し側のバグで、何も書き出す前に報告されます。
+
+```go
+var unset *htmlbind.UnsetPendingError
+if errors.As(err, &unset) {
+	log.Printf("%s が設定されていません", unset.Path)
+}
+```
+
+キャッシュ component は `async` パラメータも、`async` フィールドに到達する record
+も宣言できません。保存されたバイト列は再描画の代わりを務めるものですが、未完了の
+値はそれを開始した 1 リクエストのものだからです。
+
 ### 非同期 component の描画
 
 `Render` は束縛の完了を待ち、確定した内容をその場に書き出します。`await` を含む
@@ -832,8 +906,9 @@ profile.tb.html:12:8: html:url requires url, got string
 - 宣言していない field / function / component を参照した
 - `RawHTML` などを許可されていない文脈で使った
 - `external async` の関数を `await` の束縛以外の場所で呼んだ
+- `async` なパラメータ／フィールドを `await` の束縛以外の場所で読んだ
 - `await` ブロックに `fallback` 節を書かなかった
-- `html` パラメータを持つ component や、`await` 境界に到達する component に
-  `@cache` を付けた
+- `html` または `async` パラメータを持つ component や、`await` 境界に到達する
+  component に `@cache` を付けた
 
 診断はコード生成時に出るため、テンプレートを変更したら `go generate ./...` を実行してからビルド・テストしてください。

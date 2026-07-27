@@ -95,6 +95,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		scope.types[name] = t
 	}
 	plan := &planEmitter{e: e, scope: scope}
+	e.rootScope, e.checks = scope, nil
+	defer func() { e.rootScope, e.checks = nil, nil }()
 	if err := e.emitOps(plan, component.Body.([]Node)); err != nil {
 		return err
 	}
@@ -114,6 +116,13 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if e.c.reachesAwait(component.Name, map[string]bool{}) != "" {
 		await = "\tHasAwaitBlock: true,\n"
 	}
+	// The Check field is written only for a component with a required async
+	// parameter, so every other component keeps its previous output.
+	check := ""
+	if len(e.checks) > 0 {
+		check = fmt.Sprintf("\tCheck: func(%s %s) error {\n%s\n\t\treturn nil\n\t},\n",
+			receiverIdent, params, indentBlock(strings.Join(e.checks, "\n"), "\t"))
+	}
 	// The Cache field is written only for a cached component, so the generated
 	// output of every other component is unchanged.
 	cache := ""
@@ -123,8 +132,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s\tOps: %s,\n}\n\n",
-		prefix, params, head, await, cache, indentBlock(ops, "\t"))
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, await, check, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -548,6 +557,29 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 	return nil
 }
 
+// awaitSourceName renders a binding's source the way the template wrote it, so
+// an unset value is reported by the name the caller knows it by rather than by
+// its generated field path. It falls back to the bound name for a source that
+// is not a plain path.
+func awaitSourceName(source Expr, bound string) string {
+	var path func(Expr) string
+	path = func(expr Expr) string {
+		switch expr := expr.(type) {
+		case *IdentifierExpr:
+			return expr.Name
+		case *MemberExpr:
+			if object := path(expr.Object); object != "" {
+				return object + "." + expr.Member
+			}
+		}
+		return ""
+	}
+	if name := path(source); name != "" {
+		return name
+	}
+	return bound
+}
+
 // emitAwaitOp writes one boundary. The primary and recover subtrees each get a
 // generated scope struct, so the bound results and the error stay statically
 // typed instead of becoming lookups.
@@ -560,14 +592,42 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 
 	// The bindings run concurrently and each assigns its own scope field, so
 	// they share no memory and need no lock.
-	var fields, tasks []string
+	var fields, tasks, checks []string
 	for _, binding := range node.Bindings {
-		call := binding.Call.(*CallExpr)
-		t := e.c.exprTypes[binding.Call]
+		t := e.c.exprTypes[binding.Call].awaited()
 		field := goPublicName(binding.Name)
 		primary.paths[binding.Name] = field
 		primary.types[binding.Name] = t
 		fields = append(fields, "\t"+field+" "+goType(t))
+		call, isCall := binding.Call.(*CallExpr)
+		if !isCall {
+			// A value the caller started. Waiting for it is the same join as a
+			// call, so it settles beside one in the same clause and the first
+			// failure in declaration order still decides the boundary.
+			code, err := e.exprCode(binding.Call, p.scope)
+			if err != nil {
+				return err
+			}
+			tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s.Wait(ctx); scope.%s = value; return err },", code, field))
+			if !t.optional {
+				// Absence is legal only where the template declared the
+				// settled type optional. Everywhere else an unset handle is a
+				// caller bug, and it has to be reported while the response can
+				// still carry an error status.
+				line := fmt.Sprintf("\tif !%s.IsSet() {\n\t\treturn htmlbind.ErrUnsetPending(%s)\n\t}", code, strconv.Quote(awaitSourceName(binding.Call, binding.Name)))
+				if p.scope == e.rootScope {
+					// Reachable from the parameters alone, so it becomes the
+					// plan's own check and runs before this component writes
+					// its first byte.
+					e.checks = append(e.checks, line)
+				} else {
+					// Rooted in a loop item or an enclosing boundary's scope,
+					// which exist only once rendering reaches them.
+					checks = append(checks, line)
+				}
+			}
+			continue
+		}
 		var args []string
 		for _, argument := range call.Arguments {
 			code, err := e.exprCode(argument, p.scope)
@@ -621,6 +681,10 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
 		receiverIdent, p.scope.goType, recoverType, recoverType, receiverIdent)
 	p.flush()
+	if len(checks) > 0 {
+		p.raw(fmt.Sprintf("htmlbind.Require(func(%s %s) error {\n%s\n\treturn nil\n})",
+			receiverIdent, p.scope.goType, strings.Join(checks, "\n")))
+	}
 	p.raw(fmt.Sprintf("htmlbind.Await(\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
 		indentBlock(resolve, "\t"), build,
 		indentBlock(primaryOps.literal(), "\t"),

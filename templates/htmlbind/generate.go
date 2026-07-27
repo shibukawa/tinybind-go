@@ -81,6 +81,14 @@ type goEmitter struct {
 	pkg string
 	// contextExternals mirrors GenerateOptions.ContextExternals.
 	contextExternals map[string]bool
+	// rootScope is the parameter scope of the component being emitted. A check
+	// written against it can be hoisted to the plan, where it runs before the
+	// component writes anything; a check on a loop item cannot, because the
+	// item does not exist yet.
+	rootScope *emitScope
+	// checks collects the hoisted parameter checks of the component being
+	// emitted.
+	checks []string
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
@@ -472,6 +480,12 @@ func valueString(code string, t valueType) string {
 }
 
 func goType(t valueType) string {
+	// The handle wraps the whole settled type, so an optional async value is
+	// one Pending of a pointer rather than a pointer to a Pending. A caller
+	// then leaves it at its zero value to mean absent.
+	if t.async {
+		return "htmlbind.Pending[" + goType(t.awaited()) + "]"
+	}
 	var base string
 	switch t.kind {
 	case kindString, kindDecimal:

@@ -388,6 +388,24 @@ func (p *moduleParser) parseParameters() ([]Parameter, error) {
 func (p *moduleParser) parseTypeRef() (TypeRef, error) {
 	p.skipSpaceAndComments()
 	start := p.pos
+	// A type name is PascalCase or one of the primitives, so a lowercase
+	// `async` here can only be the modifier, exactly as it is on an external
+	// declaration.
+	if p.peekIdentifier() == "async" {
+		if _, err := p.identifier(); err != nil {
+			return TypeRef{}, err
+		}
+		inner, err := p.parseTypeRef()
+		if err != nil {
+			return TypeRef{}, err
+		}
+		if inner.Async {
+			return TypeRef{}, p.errAt(start, "async cannot modify another async type")
+		}
+		inner.Async = true
+		inner.Pos = positionAt(p.source, start)
+		return inner, nil
+	}
 	if p.accept('[') {
 		inner, err := p.parseTypeRef()
 		if err != nil {
@@ -395,6 +413,12 @@ func (p *moduleParser) parseTypeRef() (TypeRef, error) {
 		}
 		if err := p.expect(']'); err != nil {
 			return TypeRef{}, err
+		}
+		if inner.Async {
+			// The modifier covers the whole type expression, so there is no
+			// array-of-pending form; a per-item wait is an array of records
+			// each holding an async field.
+			return TypeRef{}, p.errAt(start, "async applies to the whole type; write async [T] rather than [async T]")
 		}
 		inner.Array = true
 		if p.accept('?') {

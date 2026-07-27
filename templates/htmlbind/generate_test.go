@@ -467,6 +467,73 @@ component Bad(): html {<Inner />}`,
 type Bad { name: string }`,
 			"annotation cannot precede a type declaration",
 		},
+		{
+			"reading an async parameter outside an await clause",
+			`component Bad(name: async string): html {<p>{name}</p>}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"reading a field of an async record",
+			`type User { name: string }
+component Bad(user: async User): html {{await v = user.name}<p>{v}</p>{fallback}p{/await}}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"comparing an async value",
+			`component Bad(count: async int): html {{if count == 1}<p>x</p>{/if}}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"awaiting a value that is not async",
+			`component Bad(name: string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"only an async value or an async external call can be awaited",
+		},
+		{
+			"async modifying another async",
+			`component Bad(name: async async string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"async cannot modify another async",
+		},
+		{
+			"array of async values",
+			`component Bad(names: [async string]): html {<p>x</p>}`,
+			"async applies to the whole type",
+		},
+		{
+			"async external parameter",
+			`external Load(value: async string): string
+component Bad(): html {<p>{Load("x")}</p>}`,
+			"cannot be async; declare the function external async instead",
+		},
+		{
+			"async external result",
+			`external Load(): async string
+component Bad(): html {<p>x</p>}`,
+			"cannot return an async type",
+		},
+		{
+			"async slot parameter",
+			`component Bad(children: async html): html {<p><slot required /></p>}`,
+			"html parameter children cannot be async",
+		},
+		{
+			"cached component with an async parameter",
+			`@cache(ttl: "5m")
+component Bad(name: async string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"cannot declare the async parameter name",
+		},
+		{
+			"cached component with a record reaching an async field",
+			`type User { pending: async string }
+@cache(ttl: "5m")
+component Bad(user: User): html {<p>x</p>}`,
+			"cannot declare the async parameter user",
+		},
+		{
+			"serializing an async value into a script",
+			`type User { pending: async string }
+component Bad(user: User): html {<script type="application/json">{JsonForScript(user)}</script>}`,
+			"not statically serializable",
+		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

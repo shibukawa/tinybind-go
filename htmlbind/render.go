@@ -14,14 +14,23 @@ import (
 type Wrapper struct {
 	head     []string
 	hasAwait bool
+	validate func() error
 	render   func(*Renderer, Fragment) error
+}
+
+// Validate runs the wrapper's parameter check without rendering.
+func (w Wrapper) Validate() error {
+	if w.validate == nil {
+		return nil
+	}
+	return w.validate()
 }
 
 // BindWrapper pairs a plan with parameters and the setter that installs the
 // child fragment. Generated code supplies the setter because only it knows
 // which field the unnamed slot binds to.
 func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment)) Wrapper {
-	return Wrapper{
+	wrapper := Wrapper{
 		head:     plan.Head,
 		hasAwait: plan.HasAwaitBlock,
 		render: func(r *Renderer, children Fragment) error {
@@ -30,6 +39,13 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 			return plan.Exec(r, local)
 		},
 	}
+	if plan.Check != nil {
+		// The children field is still unset here, and a check never reads it:
+		// a slot is a continuation the wrapper renders, not a value it waits
+		// for.
+		wrapper.validate = func() error { return plan.Check(params) }
+	}
+	return wrapper
 }
 
 // Head returns the wrapper's own head contributions.
@@ -216,6 +232,16 @@ func assemble(wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []strin
 	for _, wrapper := range wrappers {
 		if wrapper.render == nil {
 			return nil, nil, ErrNilWrapper
+		}
+	}
+	// Parameter checks run here, with nothing written yet, so a caller that
+	// left a required async value unset can still send an error response.
+	if err := leaf.Validate(); err != nil {
+		return nil, nil, err
+	}
+	for _, wrapper := range wrappers {
+		if err := wrapper.Validate(); err != nil {
+			return nil, nil, err
 		}
 	}
 	head := MergeHead(wrappers, leaf)

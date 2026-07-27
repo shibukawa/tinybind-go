@@ -189,14 +189,18 @@ type Parameter struct {
 	Type TypeRef  `json:"type"`
 }
 
-// TypeRef represents named, generic, array, and optional types without binding
-// them to Go types during parsing.
+// TypeRef represents named, generic, array, optional, and asynchronous types
+// without binding them to Go types during parsing.
 type TypeRef struct {
 	Pos       Position  `json:"pos"`
 	Name      string    `json:"name"`
 	Arguments []TypeRef `json:"arguments,omitempty"`
 	Array     bool      `json:"array,omitempty"`
 	Optional  bool      `json:"optional,omitempty"`
+	// Async marks a value the caller starts and the template waits for in an
+	// await clause. It modifies the whole type expression, so `async Order[]`
+	// is one pending array rather than an array of pending values.
+	Async bool `json:"async,omitempty"`
 }
 
 // Expr is the shared expression AST embedded by every output format.

@@ -49,6 +49,10 @@ type valueType struct {
 	name     string
 	elem     *valueType
 	optional bool
+	// async marks a value the caller started and the template must bind in an
+	// await clause before reading. It wraps the whole type, so it survives
+	// neither required() nor awaited().
+	async bool
 }
 
 func (t valueType) String() string {
@@ -62,10 +66,16 @@ func (t valueType) String() string {
 	if t.optional {
 		base += "?"
 	}
+	if t.async {
+		base = "async " + base
+	}
 	return base
 }
 
 func (t valueType) required() valueType { t.optional = false; return t }
+
+// awaited is the type an await binding sees once the value settles.
+func (t valueType) awaited() valueType { t.async = false; return t }
 
 type functionSig struct {
 	params []valueType
@@ -133,6 +143,10 @@ type compiler struct {
 	// awaitCall is the one call expression currently allowed to name an async
 	// external, so a nested async call inside an await header is still rejected.
 	awaitCall Expr
+	// awaitSource is the one expression currently allowed to evaluate to an
+	// async type. It is the binding source of the await clause being analyzed,
+	// so an async value read anywhere else is a local error with a position.
+	awaitSource Expr
 }
 
 type CompileError struct {
@@ -203,11 +217,20 @@ func (c *compiler) analyze() error {
 				if err != nil {
 					return err
 				}
+				// An external is an ordinary blocking Go function, so a pending
+				// handle has no meaning in its signature; asynchrony there is
+				// the `external async` modifier instead.
+				if t.async {
+					return c.error(parameter.Pos, "external parameter "+parameter.Name+" cannot be async; declare the function external async instead")
+				}
 				sig.params = append(sig.params, t)
 			}
 			result, err := c.resolveType(declaration.Result)
 			if err != nil {
 				return err
+			}
+			if result.async {
+				return c.error(declaration.Pos, "external "+declaration.Name+" cannot return an async type; declare the function external async instead")
 			}
 			sig.result = result
 			sig.async = declaration.Async
@@ -215,6 +238,9 @@ func (c *compiler) analyze() error {
 		case *TemplateDecl:
 			if declaration.Kind != "html:component" || declaration.Output.Name != "html" {
 				return c.error(declaration.Pos, "HTML generator only accepts html:component declarations")
+			}
+			if declaration.Output.Async {
+				return c.error(declaration.Pos, "component output cannot be async; a component waits inside an await clause instead")
 			}
 			if c.nameExists(declaration.Name) {
 				return c.error(declaration.Pos, "duplicate declaration "+declaration.Name)
@@ -227,6 +253,11 @@ func (c *compiler) analyze() error {
 				t, err := c.resolveType(parameter.Type)
 				if err != nil {
 					return err
+				}
+				// A slot parameter is a bound continuation rather than a value,
+				// so there is nothing for a caller to have started.
+				if t.async && t.kind == kindHTML {
+					return c.error(parameter.Pos, "html parameter "+parameter.Name+" cannot be async")
 				}
 				info.params[parameter.Name] = t
 			}
@@ -318,6 +349,12 @@ func (c *compiler) cacheAnnotation(declaration *TemplateDecl, annotation Annotat
 		}
 		if t.kind == kindHTML {
 			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the html parameter "+parameter.Name)
+		}
+		// Stored bytes stand in for a fresh render, and a pending value belongs
+		// to the one request that started it, so it can be neither part of the
+		// key nor part of what the key stands for.
+		if c.containsAsync(t, map[string]bool{}) {
+			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the async parameter "+parameter.Name+"; a pending value belongs to one request")
 		}
 	}
 	return &cachePolicy{ttl: ttl}, nil
@@ -428,7 +465,37 @@ func (c *compiler) resolveType(ref TypeRef) (valueType, error) {
 		result = valueType{kind: kindArray, elem: &elem}
 	}
 	result.optional = ref.Optional
+	// The modifier is applied last because it wraps the whole type expression:
+	// `async User?` is a pending optional, not an optional pending.
+	result.async = ref.Async
 	return result, nil
+}
+
+// containsAsync reports whether t is async or reaches an async field. It is
+// what keeps a pending value out of the places that must be able to stand in
+// for a value they already have, such as a cache key.
+func (c *compiler) containsAsync(t valueType, visiting map[string]bool) bool {
+	if t.async {
+		return true
+	}
+	switch t.kind {
+	case kindArray:
+		return t.elem != nil && c.containsAsync(*t.elem, visiting)
+	case kindRecord:
+		record, ok := c.records[t.name]
+		if !ok || visiting[t.name] {
+			return false
+		}
+		visiting[t.name] = true
+		defer delete(visiting, t.name)
+		for _, field := range record.Fields {
+			fieldType, err := c.resolveType(field.Type)
+			if err == nil && c.containsAsync(fieldType, visiting) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType) error {
@@ -641,6 +708,17 @@ func scopeSuffix(filename, component string) string {
 	return string(out)
 }
 
+// awaitedType infers a binding source that is not a call, with the async read
+// rule lifted for that one expression. Everything inside it is still checked
+// normally, so awaiting a field of a pending record stays an error naming the
+// value that has to be awaited first.
+func (c *compiler) awaitedType(expr Expr, scope map[string]valueType) (valueType, error) {
+	outer := c.awaitSource
+	c.awaitSource = expr
+	defer func() { c.awaitSource = outer }()
+	return c.infer(expr, scope)
+}
+
 // analyzeAwait types one boundary. The bindings are visible only in the primary
 // subtree, and the error name only in the recover subtree, so no clause can
 // read a value that does not exist when it renders.
@@ -653,9 +731,20 @@ func (c *compiler) analyzeAwait(node *syntax.AwaitNode, scope map[string]valueTy
 		if binding.Name == "outer" {
 			return c.error(binding.Pos, "await binding cannot be named outer; the generated scope reserves that name")
 		}
-		call, ok := binding.Call.(*CallExpr)
-		if !ok {
-			return c.error(binding.Pos, "await binding "+binding.Name+" must call an async external function")
+		call, isCall := binding.Call.(*CallExpr)
+		if !isCall {
+			// The other source is a value the caller already started, read
+			// through a parameter or a record field. It settles beside any
+			// call in the same clause.
+			t, err := c.awaitedType(binding.Call, scope)
+			if err != nil {
+				return err
+			}
+			if !t.async {
+				return c.error(binding.Pos, "await binding "+binding.Name+" reads "+t.String()+"; only an async value or an async external call can be awaited")
+			}
+			primaryScope[binding.Name] = t.awaited()
+			continue
 		}
 		identifier, ok := call.Callee.(*IdentifierExpr)
 		if !ok {
@@ -1097,6 +1186,13 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 	if err != nil {
 		return valueType{}, err
 	}
+	// A pending value has no rendering, no fields, and no operators until it
+	// settles, so the one place it may be read is the await binding that waits
+	// for it. Checking here covers every expression form at once, including the
+	// object of a member access and the operand of a comparison.
+	if result.async && c.awaitSource != expr {
+		return valueType{}, c.error(exprPos(expr), "async value "+result.String()+" must be bound by an await clause before it is read")
+	}
 	c.exprTypes[expr] = result
 	return result, nil
 }
@@ -1224,6 +1320,11 @@ func numeric(t valueType) bool {
 	return !t.optional && (t.kind == kindInt || t.kind == kindFloat)
 }
 func (c *compiler) jsonSerializable(t valueType, visiting map[string]bool) bool {
+	// A pending value has no serialization until it settles, and a record
+	// carrying one cannot be written into a script as a whole.
+	if t.async {
+		return false
+	}
 	if t.optional {
 		t.optional = false
 	}
@@ -1254,6 +1355,9 @@ func (c *compiler) jsonSerializable(t valueType, visiting map[string]bool) bool 
 }
 
 func (c *compiler) comparable(t valueType, visiting map[string]bool) bool {
+	if t.async {
+		return false
+	}
 	if t.optional {
 		return true
 	}
