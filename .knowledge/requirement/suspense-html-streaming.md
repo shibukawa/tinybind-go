@@ -46,7 +46,7 @@ safety:
   - flushing remains correct when the caller wraps the writer in a compressing encoder
 failure:
   before_commit: yield zero data:async-boundary-content with the error and end the sequence
-  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy
+  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy; a clause with no recover subtree yields the unrecovered failure and ends the sequence
   http_status: once fallback commits the response, failure cannot change the already-sent status; report through recover UI and server observability
   cancellation: do not yield recover content for expected request cancellation or superseded boundary revision
 acceptance:
@@ -71,7 +71,7 @@ commit_marker_rationale:
 no_javascript:
   behavior: the committed fallback stays visible and completions are inert templates
   alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients
-recover_omitted: decision:async-boundary-syntax keeps the committed fallback and reports through the render error hook
+recover_omitted: decision:async-boundary-syntax ends the sequence with the unrecovered failure carrying the committed placeholder's boundary ID; the fallback stays on screen until the caller's runtime replaces the document, and the render error hook still sees the original error
 multiple_dependencies: the first failing binding of one clause decides the boundary; siblings are cancelled and not aggregated
 open_questions:
   - Content Security Policy nonce or external-script integration

@@ -619,8 +619,15 @@ export component Profile(id: string): html {
 - `fallback` is required. It is what commits to the response first, so a slow
   dependency does not delay the rest of the page.
 - `recover` is optional and binds a safe `error` value with the fields `code`,
-  `message`, `retryable`, and `timeout`. Omit it to keep the fallback in place
-  on failure.
+  `message`, `retryable`, and `timeout`.
+
+When a block that omitted `recover` fails, the failure leaves the template and
+becomes the whole page's. `Render` returns a `*htmlbind.UnrecoveredError` and
+writes no fallback in its place; `RenderAsync` yields it and ends the sequence.
+On the streaming path the fallback is already in the response, so replacing what
+is on screen is the caller's job — usually the framework above you. Write a
+`recover` clause when you want one part of the page to fail on its own. Either
+way, no loading state is left to sit there forever.
 
 The bindings are visible only in the primary subtree, and the error name only in
 `recover`, so no clause can read a value that does not exist when it renders.
@@ -754,7 +761,9 @@ func profile(w http.ResponseWriter, r *http.Request) {
 		htmlbind.WithErrorReporter(func(err error) { log.Printf("boundary failed: %v", err) }),
 	) {
 		if err != nil {
-			// The response is already committed; log rather than rewrite it.
+			// The response is already committed; log rather than rewrite it. A
+			// boundary that failed with no recover clause arrives here too, as
+			// an *htmlbind.UnrecoveredError.
 			log.Printf("render failed: %v", err)
 			break
 		}
@@ -850,8 +859,10 @@ none.
 ### Cancellation bounds the wait
 
 A cancelled request or an expired `WithAsyncTimeout` makes the runtime stop
-waiting: the boundary produces no completion, or renders `recover` with
-`code: "timeout"`.
+waiting. A cancelled boundary produces no completion at all, because nobody is
+left to read one. An expired deadline is a failure like any other: it renders
+`recover` with `code: "timeout"`, or fails the page when the clause declared no
+`recover`.
 
 Whether the work itself stops is up to the external. One that takes a context
 sees the cancellation and can return early. One that does not cannot be

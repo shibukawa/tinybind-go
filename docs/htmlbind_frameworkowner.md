@@ -216,6 +216,81 @@ sequence anyway.
 Once the initial pass flushes, the status code is committed. A later failure is
 for logging, not for rewriting the response.
 
+## When a boundary without recover fails
+
+When the bindings of an `await` block that declared no `recover` clause fail, the
+sequence yields a `*htmlbind.UnrecoveredError` and ends. It carries the
+`BoundaryID` of the committed placeholder and the original Go error.
+
+The template has nowhere to put that failure, so the failure leaves the boundary
+and arrives here instead. What is on screen is a "Loading…" placeholder, and
+nothing is coming to replace it. **Replace the whole document and show an error.**
+A template that wants one part of the page to fail visibly writes a `recover`
+clause; for a block that did not, returning the single fact that the page failed
+beats patching up a screen whose author never considered what is missing from it,
+and letting someone go on using it. All the more so because the sequence ends
+here: any other outstanding boundary keeps its fallback forever too.
+
+```go
+for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
+	if err != nil {
+		var unrecovered *htmlbind.UnrecoveredError
+		if errors.As(err, &unrecovered) {
+			log.Printf("boundary %s failed: %v", unrecovered.BoundaryID, unrecovered.Err)
+		} else {
+			log.Printf("render failed: %v", err)
+		}
+		writeFailureScreen(w) // the initial pass is committed: replace, do not rewrite
+		htmlbind.Flush(w)
+		break
+	}
+	if err := writeCompletion(w, content); err != nil {
+		break
+	}
+	htmlbind.Flush(w)
+}
+```
+
+What `writeFailureScreen` writes is a shape you choose, like the completion
+framing. One marker is enough:
+
+```html
+<tb-failed></tb-failed>
+```
+
+```js
+customElements.define("tb-failed", class extends HTMLElement {
+	connectedCallback() {
+		this.remove();
+		document.body.replaceChildren(failureScreen());
+	}
+});
+```
+
+The status code was committed when the initial pass flushed, so this replaces the
+screen rather than rewriting the response. A truncated response carries no such
+marker either, so nothing happens there and the committed fallbacks stay — the
+existing rule.
+
+Do not build the error screen's text from the server's error.
+`UnrecoveredError.Err`, like what `WithErrorReporter` receives, is the raw Go
+error, and putting it on the page leaks the server's insides. To show a code or a
+message, put only a `PublicError` projection on the marker's attributes — and note
+that the reporter is called concurrently from each boundary's goroutine, so
+aggregating several failures needs a lock of your own.
+
+### The synchronous entries
+
+`Render` and `RenderChain` return the same `*UnrecoveredError`. They write no
+fallback in its place, so no finished-looking document holding a loading state
+that will never resolve comes out of them.
+
+What you get for that is a response that has committed nothing yet. Render into a
+buffer and you can drop the buffer and answer with an error status; write straight
+to an `http.ResponseWriter` and the bytes before the failing boundary are already
+out. Buffer any render you might want to turn into an error response — a
+navigation response, or a page you do not stream.
+
 ## SPA-style navigation
 
 This is the least finished area. Read this section as a description of the

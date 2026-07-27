@@ -43,6 +43,32 @@ type PublicError interface {
 	PublicError() AsyncError
 }
 
+// UnrecoveredError reports an await boundary whose bindings failed in a clause
+// that declared no recover subtree. The template said nothing about what to
+// show, so the failure leaves the boundary instead of stopping there: the
+// synchronous entries return it, and the streaming sequence yields it and ends.
+//
+// It carries the original Go error rather than the safe AsyncError projection,
+// because it reaches the caller's Go code and never a template. What a caller
+// puts on the page in response is its own to write, and must not be this text.
+type UnrecoveredError struct {
+	// BoundaryID is the placeholder whose fallback is committed to the response.
+	// It is empty on the synchronous path, which writes no placeholder.
+	BoundaryID string
+	// Err is the failure the bindings reported.
+	Err error
+}
+
+func (e *UnrecoveredError) Error() string {
+	where := "await boundary"
+	if e.BoundaryID != "" {
+		where += " " + e.BoundaryID
+	}
+	return "htmlbind: " + where + " failed with no recover clause: " + e.Err.Error()
+}
+
+func (e *UnrecoveredError) Unwrap() error { return e.Err }
+
 // normalizeAsyncError maps a Go error to the value a recover clause sees.
 func normalizeAsyncError(err error) AsyncError {
 	var public PublicError
@@ -159,8 +185,9 @@ type asyncCoordinator struct {
 	sem chan struct{}
 }
 
-// boundaryResult is one settled boundary, or a render failure that ends the
-// sequence. A boundary whose clause omits recover reports neither.
+// boundaryResult is one settled boundary, or a failure that ends the sequence:
+// a subtree that would not render, or bindings that failed in a clause with no
+// recover subtree.
 type boundaryResult struct {
 	content Content
 	present bool
@@ -192,8 +219,9 @@ func (c *asyncCoordinator) nextID() string {
 }
 
 // start launches one boundary. run settles the boundary and renders its
-// replacement; it reports present=false when the clause omitted recover and the
-// bindings failed, which leaves the committed fallback in place.
+// replacement; it reports present=false without an error only for a cancelled
+// request, where the committed fallback is the final content and nobody is left
+// to read anything else.
 func (c *asyncCoordinator) start(run func(ctx context.Context) (Content, bool, error)) {
 	c.wg.Add(1)
 	go func() {

@@ -214,6 +214,80 @@ for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
 初期パスがフラッシュした時点でステータスコードは確定します。それ以降の失敗はログ
 のためのものであり、レスポンスを書き換えるためのものではありません。
 
+## recover を持たない境界が失敗したとき
+
+`recover` 節を宣言していない `await` ブロックの束縛が失敗すると、シーケンスは
+`*htmlbind.UnrecoveredError` を yield して終わります。この error はコミット済み
+プレースホルダの `BoundaryID` と、元の Go error を持ちます。
+
+テンプレート側にこの失敗を置く場所がないので、失敗は境界を抜けてこちらに来ます。
+画面に残っているのは「読み込み中…」のプレースホルダで、それを置き換えるものはもう
+来ません。**ドキュメント全体を差し替えてエラーを表示してください。** ページの一部
+だけを失敗として見せたいなら、テンプレートが `recover` を書きます。書かなかった
+ブロックについては、どこがどれだけ欠けたか作者が想定していない画面を取り繕って操作
+させるより、このページは失敗したという1つの事実を返す方が正しい。シーケンスが終わ
+る以上、他に未確定の境界が残っていればそれも永久に fallback のままなので、なおさら
+です。
+
+```go
+for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
+	if err != nil {
+		var unrecovered *htmlbind.UnrecoveredError
+		if errors.As(err, &unrecovered) {
+			log.Printf("boundary %s failed: %v", unrecovered.BoundaryID, unrecovered.Err)
+		} else {
+			log.Printf("render failed: %v", err)
+		}
+		writeFailureScreen(w) // 初期パスはコミット済み。書き換えではなく差し替え
+		htmlbind.Flush(w)
+		break
+	}
+	if err := writeCompletion(w, content); err != nil {
+		break
+	}
+	htmlbind.Flush(w)
+}
+```
+
+`writeFailureScreen` が書くのは、完了の framing と同じくフレームワークが決めた形で
+す。マーカー1つで足ります。
+
+```html
+<tb-failed></tb-failed>
+```
+
+```js
+customElements.define("tb-failed", class extends HTMLElement {
+	connectedCallback() {
+		this.remove();
+		document.body.replaceChildren(failureScreen());
+	}
+});
+```
+
+初期パスがフラッシュした時点でステータスコードは確定しているので、これはレスポンス
+の書き換えではなく、画面の差し替えです。切断されたレスポンスにはこのマーカーも届か
+ないので、そのときは何も起きず、コミット済みの fallback が残ります。既存の規則どお
+りです。
+
+エラー画面の文言はサーバの error から作らないでください。`UnrecoveredError.Err`
+も `WithErrorReporter` が受け取るのも生の Go error で、そのままページに載せれば
+サーバ内部が漏れます。コードやメッセージを見せたいなら `PublicError` の投影だけを
+マーカーの属性に載せてください。なおレポータは境界ごとの goroutine から並行に呼ば
+れるので、複数の失敗を集約するなら自分でロックが要ります。
+
+### 同期エントリ
+
+`Render` と `RenderChain` も同じ失敗で `*UnrecoveredError` を返します。こちらは
+fallback を書かずに返るので、完成したように見えて永久に解決しないローディング表示
+を含んだドキュメントは出来上がりません。
+
+見返りは、まだ何もステータスを確定していないことです。バッファに描いていれば、その
+バッファを捨ててエラーステータスを返せます。`http.ResponseWriter` に直接描いている
+と、失敗した境界より前のバイトは既に出ています。エラーレスポンスに切り替えたい
+レンダリング — ナビゲーションレスポンスや、ストリームしないページ — はバッファ経由
+にしてください。
+
 ## SPA 的なナビゲーション
 
 ここが最も未完成な領域です。サポート済みの機能の説明ではなく、**利用できる部品の

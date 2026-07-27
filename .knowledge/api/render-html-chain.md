@@ -31,7 +31,7 @@ options:
   members:
     cache: api:cache-store used by decision:cache-component-declaration components
     context: request context for the sync entry, where no ctx parameter exists
-    error_hook: receives normalized data:async-render-error failures that produced no recover output
+    error_hook: receives the original Go error behind every boundary failure, including ones a recover subtree rendered; called from each boundary goroutine, so an accumulating hook guards its own state
     timeout: per-boundary deadline applied to requirement:async-external-functions work
     concurrency: upper bound on simultaneously running boundary work
     scripts: proposed requirement:render-time-script-contribution head script selected for this response alone
