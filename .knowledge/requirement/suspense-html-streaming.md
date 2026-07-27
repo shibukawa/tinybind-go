@@ -56,10 +56,10 @@ acceptance:
   - client disconnect or early consumer stop cancels pending request work
 markup:
   placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
-  completion: an inert template element referencing the same boundary ID, written after the initial document
+  completion: an inert template element referencing the same boundary ID, written after the initial document; the caller writes this framing around the fragment the module yields
   commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
-  runtime: a client script defining the marker element and applying a boundary from its connected callback; proposed decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
-  no_head: a document with no shell head gets no update script, so the fallback remains the final content
+  runtime: a client script defining the marker element and applying a boundary from its connected callback; decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
+  no_runtime: a response whose client never loads that script keeps its committed fallback as the final content
 commit_marker_rationale:
   problem: an HTML parser inserts an element when it reads the start tag, so a runtime watching for the template could read one whose content had not arrived
   observed: with the template start tag delivered in its own network chunk, a mutation-observer runtime replaced the placeholder with empty content and removed the template, losing the fallback as well as the result

@@ -167,11 +167,17 @@ func RenderAsync(ctx context.Context, w io.Writer, leaf Fragment, options ...Opt
 //			log.Printf("render failed: %v", err)
 //			break
 //		}
-//		if _, err := content.WriteTo(w); err != nil {
+//		if err := writeCompletion(w, content); err != nil {
 //			break
 //		}
 //		htmlbind.Flush(w)
 //	}
+//
+// A yielded item is the bare fragment plus the id of the placeholder it belongs
+// to. How that pair travels — an inert template and a marker element, a JSON
+// record, anything else — is the caller's choice, because it has to match the
+// client runtime the caller ships. Nothing on this path writes script, and the
+// merged head carries component contributions only.
 //
 // There is no variant that hides this loop. How many boundaries a render
 // produces is not knowable up front, least of all for a chain assembled at
@@ -192,11 +198,10 @@ func RenderChainAsync(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf
 		}
 		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
 		defer coordinator.stop()
-		// The update runtime is fixed trusted code belonging to the render mode
-		// rather than to any component, so it joins the merged head here. A
-		// document with no shell head simply keeps its fallbacks.
-		merged := append([]string{boundaryRuntime}, head...)
-		renderer := &Renderer{w: w, head: merged, opts: coordinator.opts, async: coordinator}
+		// The head carries component contributions only. Nothing is injected on
+		// this path: the script that applies a completion belongs with the framing
+		// the caller writes around it, so both are the framework's to ship.
+		renderer := &Renderer{w: w, head: head, opts: coordinator.opts, async: coordinator}
 		if err := composed(renderer); err != nil {
 			yield(Content{}, err)
 			return

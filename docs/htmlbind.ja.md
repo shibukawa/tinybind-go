@@ -711,13 +711,15 @@ func profile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("render failed: %v", err)
 			break
 		}
-		if _, err := content.WriteTo(w); err != nil {
+		if err := writeCompletion(w, content); err != nil {
 			break
 		}
 		htmlbind.Flush(w)
 	}
 }
 ```
+
+`writeCompletion` はモジュール側ではなく利用側のコードです。次節で書きます。
 
 ラッパーチェーンには `RenderChainAsync` を使います。このループを隠すエントリは
 用意していません。境界がいくつ出るかは事前に分からず、リクエスト時に組み立てる
@@ -729,26 +731,72 @@ func profile(w http.ResponseWriter, r *http.Request) {
 ます。各チャンクの後は `htmlbind.Flush` で同じことをします（flush できない writer
 では何もしません）。
 
+### 完了チャンクの framing
+
 逐次描画では、未確定の境界は fallback を包んだ `<tb-boundary id="...">` として
-書き出されます。確定した内容は、inert な template とマーカーの組で追記されます。
+書き出されます。モジュールが担うのはここまでです。残りの半分は利用側の担当で、
+yield される `Content` は確定したフラグメントと、それが埋まるプレースホルダの ID
+だけを持ちます。`WriteTo` が書くのはフラグメント本体だけで、囲みもマーカーも
+スクリプトもありません。head へ何かを差し込むこともありません（同期・非同期の
+どちらの入口でも）。
+
+これは意図的な分割です。完了をどう運ぶかと、それを適用するクライアントコードは
+一つの設計なので、持ち主も一つ — 上に載せるフレームワーク、あるいはハンドラ自身
+— であるべきだからです。
+
+既定として妥当なのは次のレシピです。フラグメントを inert な template で包み、
+後ろにマーカー要素を続けます。
+
+```go
+func writeCompletion(w io.Writer, content htmlbind.Content) error {
+	if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+		return err
+	}
+	if _, err := content.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`)
+	return err
+}
+```
+
+ワイヤ上はこうなります。
 
 ```html
 <template data-tb-boundary="tb-1">…</template><tb-apply for="tb-1"></tb-apply>
 ```
 
-head にマージされる小さな固定スクリプトが `tb-apply` を定義し、その
-`connectedCallback` で置換します。どのページでも同じコードで、完了チャンク側には
-スクリプトが一切入らないため、CSP に nonce も `unsafe-inline` も不要です。
+`tb-apply` の定義は、すでに配信しているランタイムスクリプトに一度だけ置き、
+`connectedCallback` で置換します。
+
+```js
+customElements.define("tb-apply", class extends HTMLElement {
+	connectedCallback() {
+		const id = this.getAttribute("for");
+		this.remove();
+		const template = document.querySelector(`template[data-tb-boundary="${id}"]`);
+		if (!template) return;
+		const placeholder = document.getElementById(id);
+		if (placeholder) placeholder.replaceWith(template.content);
+		template.remove();
+	}
+});
+```
+
+配信済みのファイルに入っているので、完了チャンク側にはスクリプトが一切乗らず、
+CSP に nonce も `unsafe-inline` も不要です。
 
 このマーカーが置換の安全性を担保しています。HTML パーサは**開始タグの時点で**要素を
 挿入するので、template の出現に反応する実装では、中身がまだ届いていない template を
 読んでプレースホルダを空で置き換えてしまい、結果どころか fallback まで失う可能性が
 あります。`<tb-apply>` はバイト列上 `</template>` の後にあるため、プロキシ・TLS
 レコード・圧縮エンコーダがどう分割しても、存在する時点で template は完成しています。
-マーカーが届かなかった完了は適用されず、fallback が残ります。
+マーカーが届かなかった完了は適用されず、fallback が残ります。トリガにするのは
+マーカーであって template ではありません。
 
-shell の `head` を持たないドキュメントにはスクリプトが入らず、fallback がそのまま
-残ります。
+どのスクリプトにも適用されなかったレスポンスは fallback がそのまま残ります。
+JavaScript を切ったクライアントに見えるものと同じです。`Render` なら境界はその場で
+確定するので、ランタイム無しで動く必要があるルートにはそちらの入口があります。
 
 ### キャンセルが打ち切るのは「待ち」
 

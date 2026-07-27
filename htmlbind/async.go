@@ -129,54 +129,18 @@ type Content struct {
 	HTML []byte
 }
 
-// WriteTo writes the content as an inert template element followed by the
-// marker that commits it. It never emits script, so a completion needs no CSP
-// nonce.
+// WriteTo writes the settled fragment and nothing else: no wrapper element, no
+// marker, no script.
 //
-// The trailing marker is what makes the swap safe. An HTML parser inserts an
-// element when it reads the start tag, so a runtime that reacted to the
-// template's insertion could read a template whose content had not arrived yet
-// and replace the placeholder with nothing. The marker comes after the closing
-// tag in the byte stream, so by the time it exists the template is complete,
-// however the bytes were chunked.
+// htmlbind does not pick a wire format for completions. The framing that carries
+// a fragment and the client code that acts on it are one design, and it belongs
+// to whoever ships the runtime — a framework built on htmlbind, or the handler
+// itself. BoundaryID is what ties this fragment back to its placeholder, so the
+// caller has both halves and writes the framing around this call.
 func (c Content) WriteTo(w io.Writer) (int64, error) {
-	counter := &countingWriter{w: w}
-	_, err := io.WriteString(counter, `<template data-tb-boundary="`+c.BoundaryID+`">`)
-	if err == nil {
-		_, err = counter.Write(c.HTML)
-	}
-	if err == nil {
-		_, err = io.WriteString(counter, `</template><tb-apply for="`+c.BoundaryID+`"></tb-apply>`)
-	}
-	return counter.n, err
+	written, err := w.Write(c.HTML)
+	return int64(written), err
 }
-
-type countingWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	written, err := c.w.Write(p)
-	c.n += int64(written)
-	return written, err
-}
-
-// boundaryRuntime is the fixed update script the async render entries prepend to
-// the merged head. It is trusted runtime code, not generated per component, so a
-// completion never has to carry inline script of its own and one head script
-// covers a whole document.
-//
-// It is driven by the tb-apply marker Content.WriteTo emits rather than by
-// watching for templates, so a swap can only happen once the template it reads
-// is closed. The marker's connected callback runs while the document is still
-// parsing, so the swap is as prompt as an inline script would be.
-const boundaryRuntime = `<script>(function(){` +
-	`customElements.define("tb-apply",class extends HTMLElement{connectedCallback(){` +
-	`var id=this.getAttribute("for");this.remove();` +
-	`var t=document.querySelector('template[data-tb-boundary="'+id+'"]');if(!t)return;` +
-	`var h=document.getElementById(id);if(h){h.replaceWith(t.content);}t.remove();` +
-	`}});})();</script>`
 
 // asyncCoordinator owns every boundary opened during one render. Boundary work
 // runs in its own goroutine and renders into its own buffer; only the ranging

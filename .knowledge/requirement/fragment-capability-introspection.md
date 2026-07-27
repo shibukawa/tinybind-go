@@ -14,7 +14,7 @@ review_gate: approved 2026-07-27
 status: shipped; the await-block flag, its two accessors, and the chain helper are implemented
 problem:
   hidden_classification: requirement:chain-render-pipeline already classifies a chain as async, but only the runtime sees the result
-  hardcoded_consequence: because the caller cannot ask, api:render-html-chain injects the update runtime itself, which decision:client-runtime-ownership removes
+  hardcoded_consequence: because the caller could not ask, api:render-html-chain injected the update runtime itself; decision:client-runtime-ownership removed that prepend on 2026-07-27
   duplication: a chain whose layout and page both open await boundaries must still produce exactly one runtime script, so the decision belongs to one aggregate rather than to each member
 surface:
   value: the decision:async-component-signature bound component value, both Fragment and Wrapper forms
