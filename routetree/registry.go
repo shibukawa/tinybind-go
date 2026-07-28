@@ -1,0 +1,244 @@
+package routetree
+
+import (
+	"bytes"
+	"fmt"
+	"go/format"
+	"strings"
+)
+
+// TemplateRegistry is the name of the template that renders the integrated
+// ServeMux. Pass it to [Emitter.Parse] to replace the emitted shape.
+const TemplateRegistry = "registry"
+
+// Default names of the registry's generated declarations.
+const (
+	RegisterFunc = "Register"
+	MuxFunc      = "NewServeMux"
+	TableVar     = "Routes"
+)
+
+// RegistryRoute is one route lowered to what the registry template writes.
+type RegistryRoute struct {
+	Pattern string
+	Path    string
+	RelDir  string
+	// ParamNames are the dynamic segment names, in route order.
+	ParamNames []string
+	// Selector qualifies symbols of the route's package, such as "id_." It is
+	// empty for a route in the root package itself.
+	Selector string
+	// Raw registers the route's own handler directly and generates no body.
+	Raw bool
+	// Call is set when a typed func Page must run before rendering.
+	Call bool
+	// CallResults is the assignment prefix for that call, such as "u, err :=".
+	CallResults string
+	// CallArgs is the argument list for that call, read from the decoded route.
+	CallArgs string
+	// PageFields fills the page component parameter struct.
+	PageFields []ComposerArg
+	// Layouts are the ancestor wrappers, outermost first.
+	Layouts []ComposerLayout
+}
+
+// RegistryModel is the data the registry template renders.
+type RegistryModel struct {
+	Header       string
+	Package      string
+	Imports      []Import
+	RegisterFunc string
+	MuxFunc      string
+	TableVar     string
+	DecodeFunc   string
+	Routes       []RegistryRoute
+	Symbols      Symbols
+}
+
+// Registry renders the integrated ServeMux for a whole tree, into the route
+// root package.
+//
+// Putting it in the root is what makes every generated import point down the
+// tree: the registry reaches route and layout packages below it, and none of
+// them reaches back up. A per-route composer in a leaf package would have to
+// import its ancestors, which with a registry in the root is a cycle.
+//
+// analyses must hold one entry per route of the tree, and layouts maps a
+// layout's RelDir to its signature.
+func (e *Emitter) Registry(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature) ([]byte, error) {
+	model, err := e.registryModel(tree, rootPackage, analyses, layouts)
+	if err != nil {
+		return nil, err
+	}
+	var raw bytes.Buffer
+	if err := e.tmpl.ExecuteTemplate(&raw, TemplateRegistry, model); err != nil {
+		return nil, fmt.Errorf("routetree: rendering %s: %w", TemplateRegistry, err)
+	}
+	source, err := format.Source(raw.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("routetree: template %q produced unparsable Go: %w\n%s",
+			TemplateRegistry, err, raw.String())
+	}
+	return source, nil
+}
+
+func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature) (RegistryModel, error) {
+	if len(analyses) != len(tree.Routes) {
+		return RegistryModel{}, fmt.Errorf("routetree: tree has %d route(s) but %d analysis result(s) were supplied",
+			len(tree.Routes), len(analyses))
+	}
+
+	model := RegistryModel{
+		Header:       GeneratedHeader,
+		Package:      rootPackage,
+		RegisterFunc: e.RegisterFunc,
+		MuxFunc:      e.MuxFunc,
+		TableVar:     e.TableVar,
+		DecodeFunc:   e.DecodeFunc,
+		Symbols:      e.Symbols,
+	}
+
+	aliases := newAliasSet(rootPackage)
+	imports := []Import{{Path: e.Symbols.HTTPImport, Alias: aliasFor(e.Symbols.HTTPImport, e.Symbols.HTTPAlias)}}
+	runtimeGroup := true
+	addImport := func(path, preferred string) string {
+		if path == "" {
+			// Without an ImportBase there is nothing to import; the symbol is
+			// assumed to be reachable unqualified, which is only true in the
+			// root package itself.
+			return ""
+		}
+		alias := aliases.add(preferred, path)
+		if alias == rootPackage && preferred == rootPackage {
+			return ""
+		}
+		for _, existing := range imports {
+			if existing.Path == path {
+				return alias + "."
+			}
+		}
+		imports = append(imports, Import{Path: path, Alias: aliasFor(path, alias), Group: runtimeGroup})
+		runtimeGroup = false
+		return alias + "."
+	}
+
+	var errs []error
+	for i, route := range tree.Routes {
+		analysis := analyses[i]
+		entry := RegistryRoute{
+			Pattern: route.Pattern(),
+			Path:    route.Path,
+			RelDir:  route.RelDir,
+		}
+		for _, segment := range route.Params {
+			entry.ParamNames = append(entry.ParamNames, segment.Name)
+		}
+		if route.RelDir != "" {
+			entry.Selector = addImport(route.ImportPath, route.Package)
+		}
+
+		if analysis.Page != nil && analysis.Page.Rung == RungHandlerPage {
+			// The handler owns the whole response, so the registry contributes
+			// nothing but the registration.
+			entry.Raw = true
+			model.Routes = append(model.Routes, entry)
+			continue
+		}
+
+		fields, callArgs, callResults, err := pageBinding(route, analysis)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		entry.PageFields = fields
+		if analysis.Page != nil && analysis.Page.Rung == RungTypedPage {
+			entry.Call = true
+			entry.CallArgs = callArgs
+			entry.CallResults = callResults
+		}
+
+		for _, layout := range route.Layouts {
+			signature, ok := layouts[layout.RelDir]
+			if !ok {
+				errs = append(errs, &Error{
+					Path:    layout.File,
+					Message: fmt.Sprintf("no signature supplied for the layout of %s", route.Path),
+				})
+				continue
+			}
+			if !hasSlot(signature) {
+				errs = append(errs, &Error{
+					Path: layout.File,
+					Message: fmt.Sprintf("component %s must declare `%s: html` to wrap a page; "+
+						"the template compiler emits a wrapper binder only for that shape",
+						signature.Name, SlotParamName),
+				})
+				continue
+			}
+			args, argErrs := composerArgs(layout, signature)
+			errs = append(errs, argErrs...)
+			selector := ""
+			if layout.RelDir != "" {
+				selector = addImport(layout.ImportPath, layout.Package)
+			}
+			entry.Layouts = append(entry.Layouts, ComposerLayout{
+				Selector:   selector,
+				Binder:     "Bind" + signature.Name,
+				ParamsType: signature.Name + "Params",
+				Args:       args,
+			})
+		}
+		model.Routes = append(model.Routes, entry)
+	}
+	if len(errs) > 0 {
+		return RegistryModel{}, joinErrors(errs)
+	}
+
+	if e.Symbols.ErrorImport != "" {
+		imports = append(imports, Import{Path: e.Symbols.ErrorImport, Alias: aliasFor(e.Symbols.ErrorImport, e.Symbols.ErrorAlias), Group: runtimeGroup})
+		runtimeGroup = false
+	}
+	if e.Symbols.RuntimeImport != "" {
+		imports = append(imports, Import{Path: e.Symbols.RuntimeImport, Alias: aliasFor(e.Symbols.RuntimeImport, e.Symbols.RuntimeAlias), Group: runtimeGroup})
+	}
+	model.Imports = imports
+	return model, nil
+}
+
+// pageBinding works out how the page component's parameter struct is filled.
+//
+// At RungTemplateOnly every field comes from the decoded route. At
+// RungTypedPage the function's results supply them, and the decoded route
+// supplies the function's arguments instead.
+func pageBinding(route Route, analysis Analysis) (fields []ComposerArg, callArgs, callResults string, err error) {
+	component := analysis.Component
+	if analysis.Page == nil || analysis.Page.Rung != RungTypedPage {
+		for _, input := range component.Inputs {
+			name := ExportedName(input.Name)
+			fields = append(fields, ComposerArg{Field: name, From: "route." + name})
+		}
+		return fields, "", "", nil
+	}
+
+	if len(analysis.Page.Results) != len(component.Inputs) {
+		return nil, "", "", &Error{
+			Path: analysis.Page.File,
+			Message: fmt.Sprintf("func %s returns %d value(s) before the error, but component %s declares %d parameter(s)",
+				PageFuncName, len(analysis.Page.Results), component.Name, len(component.Inputs)),
+		}
+	}
+
+	args := make([]string, len(analysis.Page.Params))
+	for i, param := range analysis.Page.Params {
+		args[i] = "route." + ExportedName(param.Name)
+	}
+	names := make([]string, 0, len(component.Inputs)+1)
+	for _, input := range component.Inputs {
+		names = append(names, "page"+ExportedName(input.Name))
+	}
+	names = append(names, "err")
+	for i, input := range component.Inputs {
+		fields = append(fields, ComposerArg{Field: ExportedName(input.Name), From: names[i]})
+	}
+	return fields, strings.Join(args, ", "), strings.Join(names, ", ") + " := ", nil
+}

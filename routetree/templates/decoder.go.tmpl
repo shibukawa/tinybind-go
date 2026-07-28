@@ -1,0 +1,95 @@
+{{- /*
+decoder emits the typed route decoder for one route. Override it with
+Emitter.Parse to change the shape of the generated file; every identity the
+body calls arrives through .Symbols, so repointing the runtime needs no
+override at all.
+*/ -}}
+{{ .Header }}
+
+package {{ .Package }}
+
+{{ template "imports" . }}
+// {{ .ParamsType }} holds the URL inputs of {{ .Pattern }}.
+type {{ .ParamsType }} struct {
+{{- range .Fields }}
+	{{ .Go }} {{ .Type }}
+{{- end }}
+}
+
+// {{ .DecodeFunc }} reads the path and query values of {{ .Pattern }}.
+// An unparsable value produces an error rather than a zero value.
+func {{ .DecodeFunc }}(r *{{ .Symbols.HTTPAlias }}.Request) ({{ .ParamsType }}, error) {
+	var out {{ .ParamsType }}
+{{- if .HasQuery }}
+	query := r.URL.Query()
+{{- end }}
+{{- range .Fields }}
+{{- if .IsQuery }}
+	if raw := query.Get({{ .Key | quote }}); raw != "" {
+{{- template "convert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
+	}
+{{- else }}
+{{- if and (eq .Type "string") (not .Required) }}
+	out.{{ .Go }} = r.PathValue({{ .Key | quote }})
+{{- else }}
+	raw{{ .Go }} := r.PathValue({{ .Key | quote }})
+{{- if .Required }}
+	if raw{{ .Go }} == "" {
+		return out, {{ template "error" dict "Symbols" $.Symbols "Code" $.MissingCode "Message" .MissingMessage "Cause" "" }}
+	}
+{{- end }}
+{{- if eq .Type "string" }}
+	out.{{ .Go }} = raw{{ .Go }}
+{{- else }}
+	{
+		raw := raw{{ .Go }}
+{{- template "convert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
+	}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+	return out, nil
+}
+
+{{- define "imports" }}
+{{- if eq (len .Imports) 1 }}
+import {{ (index .Imports 0).Path | quote }}
+{{ else }}
+import (
+{{- range .Imports }}
+{{- if .Group }}
+{{ end }}
+	{{ if .Alias }}{{ .Alias }} {{ end }}{{ .Path | quote }}
+{{- end }}
+)
+{{ end }}
+{{- end }}
+
+{{- /*
+convert reads one already-bound raw string into its field. A string needs no
+call at all, which is why the parse step is data rather than a branch here.
+*/ -}}
+{{- define "convert" }}
+{{- if eq .Field.Type "string" }}
+{{ .Indent }}out.{{ .Field.Go }} = raw
+{{- else }}
+{{ .Indent }}v, err := {{ .Field.Parse }}
+{{ .Indent }}if err != nil {
+{{ .Indent }}	return out, {{ template "error" dict "Symbols" .Symbols "Code" .Field.ErrCode "Message" .Field.ErrMessage "Cause" "err" }}
+{{ .Indent }}}
+{{- if .Field.Convert }}
+{{ .Indent }}out.{{ .Field.Go }} = {{ .Field.Convert }}(v)
+{{- else }}
+{{ .Indent }}out.{{ .Field.Go }} = v
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /*
+error builds one error value. A framework replacing only this template changes
+every error the decoder can produce.
+*/ -}}
+{{- define "error" -}}
+{{ .Symbols.ErrorAlias }}.{{ .Symbols.BadRequest }}({{ .Symbols.ErrorAlias }}.{{ .Symbols.Problem }}{Code: {{ .Code | quote }}, Message: {{ .Message | quote }}}{{ if .Cause }}, {{ .Cause }}{{ end }})
+{{- end }}

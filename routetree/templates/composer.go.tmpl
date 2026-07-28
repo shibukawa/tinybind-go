@@ -1,0 +1,46 @@
+{{- /*
+composer emits the per-route Render that wraps the page fragment in its
+ancestor layout chain. It lives in the route's own package, so a hand-written
+handler can call it without importing the registry and without a cycle.
+*/ -}}
+{{ .Header }}
+
+package {{ .Package }}
+
+{{ template "imports" . }}
+// {{ .RenderFunc }} composes {{ .Component }} inside the {{ len .Layouts }} ancestor layout(s) of {{ .Pattern }}.
+//
+// route supplies the values scoped layouts declare; params supplies the page's
+// own inputs. Options are passed through to the runtime unchanged.
+func {{ .RenderFunc }}(w io.Writer, route {{ .ParamsType }}, params {{ .Component }}Params, options ...{{ .Symbols.RuntimeAlias }}.Option) error {
+{{- if .Layouts }}
+	wrappers := []{{ .Symbols.RuntimeAlias }}.Wrapper{
+{{- range .Layouts }}
+		{{ .Selector }}{{ .Binder }}({{ .Selector }}{{ .ParamsType }}{
+{{- range .Args }}
+			{{ .Field }}: route.{{ .From }},
+{{- end }}
+		}),
+{{- end }}
+	}
+	return {{ .Symbols.RuntimeAlias }}.RenderChain(w, wrappers, {{ .Component }}(params), options...)
+{{- else }}
+	// No ancestor layout declares a wrapper, so the page renders on its own.
+	_ = route
+	return {{ .Symbols.RuntimeAlias }}.Render(w, {{ .Component }}(params), options...)
+{{- end }}
+}
+
+{{- define "imports" }}
+{{- if eq (len .Imports) 1 }}
+import {{ (index .Imports 0).Path | quote }}
+{{ else }}
+import (
+{{- range .Imports }}
+{{- if .Group }}
+{{ end }}
+	{{ if .Alias }}{{ .Alias }} {{ end }}{{ .Path | quote }}
+{{- end }}
+)
+{{ end }}
+{{- end }}
