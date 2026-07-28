@@ -3,7 +3,7 @@ id: decision:html-document-shell
 type: decision
 title: HTML Document Shell
 ---
-Keep the root index as the `/` page and give full-document bootstrap ownership to a distinct root shell.
+Keep the root page template as the `/` page and give full-document bootstrap ownership to a distinct root shell.
 
 ```yaml
 source:
@@ -11,7 +11,7 @@ source:
   - user bootstrap discussion 2026-07-23
 review_gate: proposed document convention requires user approval
 roles:
-  index.tb.html: ordinary page for the exact route-root URL
+  page.tb.html: ordinary page for the exact route-root URL, named by decision:html-route-file-conventions
   layout.tb.html: reusable UI wrapper inside the document body
   document.tb.html: optional route-root-only owner of html, head, body, and generated bootstrap insertion points
 fallback: generator supplies a minimal safe document shell when document.tb.html is absent
@@ -29,6 +29,6 @@ injection:
     - exactly one generated bootstrap per complete document
     - injection uses parsed HTML positions rather than textual closing-tag replacement
 rationale:
-  - every route needs the shell, while root index represents only one URL
+  - every route needs the shell, while the root page represents only one URL
   - separating roles avoids bootstrap duplication and keeps root-page behavior ordinary
 ```

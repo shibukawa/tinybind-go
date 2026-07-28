@@ -6,7 +6,7 @@ title: Render External Query Semantics
 Treat external functions called during HTML rendering as repeatable data queries rather than state-changing commands.
 
 ```yaml
-source: requirement:generated-html-route-handlers
+source: requirement:generated-route-registration
 rationale:
   - full render, partial navigation, cache miss, retry, and direct boundary update may execute the same component more than once
   - requirement:async-external-functions scheduling may overlap or cancel calls

@@ -50,7 +50,7 @@ execution:
   stop: early consumer stop cancels remaining request-owned work through ctx
   end: sequence ends when all request-owned boundaries settle or ctx cancels
 caller:
-  route_handler: requirement:generated-html-route-handlers ranges the merged sequence, writes each item, and flushes
+  route_handler: requirement:generated-route-registration ranges the merged sequence, writes each item, and flushes
   loop: the caller ranges, writes each item, and flushes; nothing in the runtime does it on the caller's behalf
 constraints:
   - goroutines never touch w; only the ranging caller and the initial pass write
