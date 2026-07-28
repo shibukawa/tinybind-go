@@ -277,4 +277,28 @@ Note that component styles and scripts are merged into the document head as
 inline markup today. There is no extraction to files under a public directory, so
 there is nothing for you to serve yet and no asset URL to configure. If your
 framework needs external stylesheets for caching or for a policy that forbids
-inline style, that is on you for now.
+
+### Reading a component's signature
+
+If you generate code around templates rather than replacing tinybind's, you need
+component parameters in **Go** terms. Reimplementing that mapping would put you
+one release behind the compiler, so it is exported:
+
+```go
+sigs, err := htmlbind.Signatures("page.tb.html", source)
+page, ok := htmlbind.Lookup(sigs, "Page")
+// page.Parameters[0] == {Name: "orders", GoType: "htmlbind.Pending[[]Order]", Async: true}
+```
+
+It runs the same analysis `Generate` does, so a module that would not compile
+fails here with the same diagnostic instead of yielding a partial answer. That is
+what the filesystem router in
+[httpbind_frameworkowner.md](httpbind_frameworkowner.md) reads to decide what a
+generated handler must decode.
+
+## Routing
+
+Routing is not an `htmlbind` concern. The module writes a response body and stops
+there, so neither router lives in it. Both — the one that reads your
+registrations and the one that generates them from a directory of templates — are
+described in [httpbind_frameworkowner.md](httpbind_frameworkowner.md).

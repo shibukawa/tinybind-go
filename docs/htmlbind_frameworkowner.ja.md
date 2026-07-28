@@ -274,3 +274,26 @@ options, err := calls.Options(generator.DefaultOptions())
 ないので、配信すべきものも設定すべきアセット URL もまだありません。キャッシュのた
 めや、インラインスタイルを禁止するポリシーのために外部スタイルシートが必要なら、
 現状ではフレームワーク側の担当になります。
+
+### コンポーネントの署名を読む
+
+tinybind のものを置き換えるのではなく、テンプレートの周りにコードを生成する場合、
+コンポーネントの引数を **Go** の型で知る必要がある。そのマッピングを再実装すると
+コンパイラより常に1リリース遅れることになるので、公開されている。
+
+```go
+sigs, err := htmlbind.Signatures("page.tb.html", source)
+page, ok := htmlbind.Lookup(sigs, "Page")
+// page.Parameters[0] == {Name: "orders", GoType: "htmlbind.Pending[[]Order]", Async: true}
+```
+
+`Generate` と同じ解析を通すので、コンパイルできないモジュールは部分的な答えを
+返さず同じ診断で失敗する。[httpbind_frameworkowner.ja.md](httpbind_frameworkowner.ja.md)
+のファイルシステムルータが、生成ハンドラの復号対象を決めるために読むのもこれである。
+
+## ルーティング
+
+ルーティングは `htmlbind` の責務ではない。このモジュールはレスポンスボディを書いて
+そこで止まるので、どちらのルータもここには無い。登録を読む側と、テンプレートの
+ディレクトリから登録を生成する側の両方が
+[httpbind_frameworkowner.ja.md](httpbind_frameworkowner.ja.md) にある。
