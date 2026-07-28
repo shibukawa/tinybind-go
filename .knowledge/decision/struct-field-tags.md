@@ -12,6 +12,7 @@ option_tags:
     form: 'default:"value"'
     meaning: default value string parsed into the field type
     layer: default in rule:source-precedence for Bind fields
+    shared_form: request models use the same tag per decision:default-tag-form
   help:
     form: 'help:"text"'
     meaning: human label for CLI usage/help and TOML scaffold comments
@@ -25,6 +26,7 @@ option_tags:
     form: 'enum:"a,b,c"'
     meaning: comma-separated allowlist of accepted string values
     validation: rule:enum-value-validation
+    shared_form: request models use the same tag per decision:enum-tag-form
     applies_to:
       - string scalar fields primarily
       - other scalar string-like encodings TBD if needed

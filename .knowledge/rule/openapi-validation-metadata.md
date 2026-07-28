@@ -7,6 +7,8 @@ Validation and documentation metadata for OpenAPI schemas is generated from stru
 
 ```yaml
 primary_source: concept:check-validation
+default_source: default tag per rule:default-tag-semantics
+enum_source: enum tag per rule:enum-tag-semantics
 supported_metadata:
   - required
   - default
@@ -29,5 +31,9 @@ related:
   - concept:request-binding
   - concept:check-validation
   - rule:check-format-validators
+  - rule:default-tag-semantics
+  - rule:enum-tag-semantics
   - decision:check-tag-validation
+  - decision:default-tag-form
+  - decision:enum-tag-form
 ```

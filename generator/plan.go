@@ -46,11 +46,26 @@ type FieldPlan struct {
 	Kind     string      // string|int|int64|bool|float64|file|rest_*|struct|slice|map
 	JSON     string      // json name for encode/document keys
 	Check    CheckRules  // from check:"" tag; empty if absent
+	Enum     EnumRule    // from enum:"" tag; unset if absent
+	Default  DefaultRule // from default:"" tag; unset if absent
 	TypeName string      // KindStruct name, or element struct name for slice/map of struct
 	ElemKind string      // for slice/map: string|int|int64|bool|float64|struct
 	DB       string      // SQL result column (db tag or snake_case field name)
 	GroupKey bool        // groupkey tag presence
 	Doc      string      // godoc of the field (doc or line comment)
+}
+
+// HasValidation reports whether anything about the field can reject a bound
+// value, across every tag that carries a constraint.
+func (f FieldPlan) HasValidation() bool {
+	return f.Check.HasValidation() || f.Enum.Set
+}
+
+// NeedsPresence is true when codegen must track whether the field was present:
+// validation has to skip absent optional values, and a default only applies to
+// a field nobody supplied.
+func (f FieldPlan) NeedsPresence() bool {
+	return f.HasValidation() || f.Default.Set
 }
 
 // IsRest reports whether f is a payload rest map field.
@@ -534,6 +549,22 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 	if err != nil {
 		return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
 	}
+	var enum EnumRule
+	if enumRaw, ok := tagLookup(tag, "enum"); ok {
+		enum, err = ParseEnumTag(enumRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
+	// Looked up rather than read, so that default:"" is an empty-string default
+	// and not the same thing as carrying no default tag at all.
+	var def DefaultRule
+	if defRaw, ok := tagLookup(tag, "default"); ok {
+		def, err = ParseDefaultTag(defRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
 	return FieldPlan{
 		Name:     fieldName,
 		Wire:     wire,
@@ -541,6 +572,8 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		Kind:     kind,
 		JSON:     jsonName,
 		Check:    check,
+		Enum:     enum,
+		Default:  def,
 		TypeName: typeName,
 		ElemKind: elemKind,
 		DB:       dbColumn(fieldName, tag),
@@ -716,6 +749,30 @@ func tagValue(tag *ast.BasicLit, key string) string {
 		return ""
 	}
 	return lookupTag(raw, key)
+}
+
+// tagLookup reports the value of key and whether the tag carried it at all,
+// which tagValue cannot express for tags whose empty value is meaningful.
+func tagLookup(tag *ast.BasicLit, key string) (string, bool) {
+	if tag == nil {
+		return "", false
+	}
+	raw, err := strconv.Unquote(tag.Value)
+	if err != nil {
+		return "", false
+	}
+	for _, part := range strings.Fields(raw) {
+		k, v, ok := strings.Cut(part, ":")
+		if !ok || k != key {
+			continue
+		}
+		val, err := strconv.Unquote(v)
+		if err != nil {
+			return strings.Trim(v, `"`), true
+		}
+		return val, true
+	}
+	return "", false
 }
 
 func lookupTag(raw, key string) string {
