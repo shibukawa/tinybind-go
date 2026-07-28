@@ -18,13 +18,22 @@ import (
 // started value, so one boundary settles both kinds of source together.
 func LoadBadge(name string) (string, error) { return "badge-" + name, nil }
 
-// stream runs a render sequence to the end, writing each settled boundary.
+// stream runs a render sequence to the end, writing each settled boundary. The
+// runtime yields the fragment and its boundary id; the framing that carries them
+// to the browser belongs to the layer that ships the client script, which here
+// is this helper.
 func stream(w io.Writer, sequence iter.Seq2[htmlbind.Content, error]) error {
 	for content, err := range sequence {
 		if err != nil {
 			return err
 		}
+		if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+			return err
+		}
 		if _, err := content.WriteTo(w); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`); err != nil {
 			return err
 		}
 		htmlbind.Flush(w)

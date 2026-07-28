@@ -31,7 +31,7 @@ options:
   members:
     cache: api:cache-store used by decision:cache-component-declaration components
     context: request context for the sync entry, where no ctx parameter exists
-    error_hook: receives normalized data:async-render-error failures that produced no recover output
+    error_hook: receives the original Go error behind every boundary failure, including ones a recover subtree rendered; called from each boundary goroutine, so an accumulating hook guards its own state
     timeout: per-boundary deadline applied to requirement:async-external-functions work
     concurrency: upper bound on simultaneously running boundary work
     scripts: proposed requirement:render-time-script-contribution head script selected for this response alone
@@ -59,11 +59,11 @@ flushing:
   points: the runtime flushes after the initial pass; the caller calls the exported helper after writing each data:async-boundary-content
   fallback: a writer without Flush still produces correct output, only without progressive delivery
 bootstrap:
-  superseded_by: proposed decision:client-runtime-ownership moves the script itself to the caller; the entries stop prepending it and the caller selects it through requirement:render-time-script-contribution after asking requirement:fragment-capability-introspection
-  rule: the async entries prepend the fixed boundary update runtime to the merged head, so requirement:html-runtime-bootstrap needs no per-update inline script
-  driver: the runtime defines the commit marker element in requirement:suspense-html-streaming and applies each boundary from its connected callback, never by watching for templates
-  omission: the sync entries add nothing, because a settled document needs no client runtime
-  generalization: proposed requirement:render-time-script-contribution treats this async-only prepend as one instance of a general per-render head script channel, rather than a behavior unique to the entry point
+  rule: no entry injects script; per decision:client-runtime-ownership the caller supplies the boundary update runtime after asking requirement:fragment-capability-introspection, and the merged head carries component contributions only
+  history: the async entries prepended a fixed update runtime until 2026-07-27
+  driver: the caller's script defines the commit marker element in requirement:suspense-html-streaming and applies each boundary from its connected callback, never by watching for templates
+  omission: the sync entries never needed one either, because a settled document needs no client runtime
+  generalization: proposed requirement:render-time-script-contribution is the channel that carries such a script, replacing the removed entry-point prepend
 acceptance:
   - a handler renders document plus page by passing two bound values
   - inserting a layout between them changes only the argument list

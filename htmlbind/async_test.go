@@ -13,8 +13,9 @@ import (
 )
 
 // consume runs a render sequence to the end, writing and flushing each settled
-// boundary. It is the loop a handler writes; the tests that do not care about
-// individual chunks share it.
+// boundary. A real handler frames each fragment for the client runtime it
+// ships; these tests look at what the module itself produces, so they write the
+// fragments bare.
 func consume(w io.Writer, sequence iter.Seq2[Content, error]) error {
 	for content, err := range sequence {
 		if err != nil {
@@ -41,6 +42,18 @@ func staticPlan(parts ...string) *Plan[struct{}] {
 
 // awaitPlan builds a plan holding one boundary whose binding calls load.
 func awaitPlan(load func() (string, error)) *Plan[struct{}] {
+	return awaitPlanWith(load, []Op[AsyncError]{
+		Builder[AsyncError]{}.Text(func(err AsyncError) string { return err.Code }),
+	})
+}
+
+// silentAwaitPlan builds the same boundary with no recover subtree, which is
+// what a clause that declared none compiles to.
+func silentAwaitPlan(load func() (string, error)) *Plan[struct{}] {
+	return awaitPlanWith(load, nil)
+}
+
+func awaitPlanWith(load func() (string, error), handler []Op[AsyncError]) *Plan[struct{}] {
 	builder := Builder[struct{}]{}
 	return &Plan[struct{}]{Ops: []Op[struct{}]{
 		Await(
@@ -58,7 +71,7 @@ func awaitPlan(load func() (string, error)) *Plan[struct{}] {
 			func(_ struct{}, err AsyncError) AsyncError { return err },
 			[]Op[string]{Builder[string]{}.Text(func(value string) string { return value })},
 			[]Op[struct{}]{builder.Static("pending")},
-			[]Op[AsyncError]{Builder[AsyncError]{}.Text(func(err AsyncError) string { return err.Code })},
+			handler,
 		),
 	}}
 }
@@ -199,7 +212,7 @@ func TestRenderAsyncFlushesAfterTheInitialPass(t *testing.T) {
 	}
 }
 
-func TestAsyncRenderPrependsTheUpdateRuntimeToTheHead(t *testing.T) {
+func TestAsyncRenderInjectsNoRuntimeOfItsOwn(t *testing.T) {
 	shell := &Plan[Fragment]{Ops: []Op[Fragment]{
 		Builder[Fragment]{}.Static("<head>"),
 		Builder[Fragment]{}.MergedHead(),
@@ -215,30 +228,33 @@ func TestAsyncRenderPrependsTheUpdateRuntimeToTheHead(t *testing.T) {
 	if err := consume(&streamed, RenderChainAsync(context.Background(), &streamed, wrappers, Bind(page, struct{}{}))); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(streamed.String(), "data-tb-boundary") {
-		t.Fatalf("streaming render did not inject the update runtime: %q", streamed.String())
+	// Applying a completion is the framework's job, so the render contributes no
+	// script of its own on either path.
+	if strings.Contains(streamed.String(), "<script") {
+		t.Fatalf("streaming render injected a client runtime: %q", streamed.String())
 	}
 	if !strings.Contains(streamed.String(), "<title>t</title>") {
 		t.Fatalf("component head contributions were dropped: %q", streamed.String())
 	}
 
-	// A settled document needs no client runtime, so the sync entry adds none.
 	var settled bytes.Buffer
 	if err := RenderChain(&settled, wrappers, Bind(page, struct{}{})); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(settled.String(), "<script>") {
+	if strings.Contains(settled.String(), "<script") {
 		t.Fatalf("synchronous render injected a client runtime: %q", settled.String())
 	}
 }
 
-func TestContentWriteToEmitsAnInertTemplateAndMarker(t *testing.T) {
+func TestContentWriteToEmitsTheFragmentAlone(t *testing.T) {
 	var output bytes.Buffer
 	written, err := Content{BoundaryID: "tb-4", HTML: []byte("<p>hi</p>")}.WriteTo(&output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `<template data-tb-boundary="tb-4"><p>hi</p></template><tb-apply for="tb-4"></tb-apply>`
+	// No template, no marker, no script: the caller frames the fragment to match
+	// whatever client runtime it ships.
+	want := `<p>hi</p>`
 	if output.String() != want {
 		t.Fatalf("content = %q, want %q", output.String(), want)
 	}
@@ -281,6 +297,47 @@ func TestEarlyStopDoesNotWaitForPendingWork(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("stopping the range blocked on the pending boundary")
+	}
+}
+
+func TestUnrecoveredBoundaryEndsTheSequence(t *testing.T) {
+	boom := errors.New("boom")
+	plan := silentAwaitPlan(func() (string, error) { return "", boom })
+	var output bytes.Buffer
+	err := consume(&output, RenderAsync(context.Background(), &output, Bind(plan, struct{}{})))
+	var unrecovered *UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	// The id is what ties the failure back to the placeholder still on screen,
+	// which is the one thing a caller needs to replace it.
+	if unrecovered.BoundaryID != "tb-1" {
+		t.Fatalf("BoundaryID = %q, want the placeholder left behind", unrecovered.BoundaryID)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the original failure underneath", err)
+	}
+	if !strings.Contains(output.String(), "pending") {
+		t.Fatalf("committed fallback is missing: %q", output.String())
+	}
+}
+
+func TestUnrecoveredBoundaryFailsTheSynchronousRender(t *testing.T) {
+	boom := errors.New("boom")
+	plan := silentAwaitPlan(func() (string, error) { return "", boom })
+	var output bytes.Buffer
+	err := Render(&output, Bind(plan, struct{}{}))
+	var unrecovered *UnrecoveredError
+	if !errors.As(err, &unrecovered) {
+		t.Fatalf("err = %v, want an UnrecoveredError", err)
+	}
+	if unrecovered.BoundaryID != "" {
+		t.Fatalf("BoundaryID = %q, want none where no placeholder is written", unrecovered.BoundaryID)
+	}
+	// Writing the fallback here would finish a document promising content that
+	// will never arrive, and this path has committed no status to take back.
+	if strings.Contains(output.String(), "pending") {
+		t.Fatalf("synchronous render committed the fallback: %q", output.String())
 	}
 }
 

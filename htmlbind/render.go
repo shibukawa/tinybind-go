@@ -93,9 +93,12 @@ func WithContext(ctx context.Context) Option {
 }
 
 // WithErrorReporter receives the original Go error behind every await boundary
-// failure, including failures a recover clause handled and failures a clause
-// without recover left as a committed fallback. Recover subtrees see only the
-// safe AsyncError, so this is where logging and metrics attach.
+// failure, including failures a recover clause handled and therefore never
+// surfaced to the caller. Recover subtrees see only the safe AsyncError, so this
+// is where logging and metrics attach.
+//
+// It is called from each boundary's own goroutine, so a reporter that
+// accumulates rather than logs has to guard its own state.
 func WithErrorReporter(report func(error)) Option {
 	return func(o *renderOptions) { o.report = report }
 }
@@ -139,6 +142,11 @@ func Render(w io.Writer, leaf Fragment, options ...Option) error {
 // An await boundary reached on this path blocks and emits its settled subtree
 // in place, so one template renders correctly with or without progressive
 // delivery. Use RenderChainAsync to send fallbacks first instead.
+//
+// Bindings that fail in a clause with no recover subtree return an
+// UnrecoveredError rather than writing the fallback, because a finished document
+// holding a loading state is a document that lies. This path writes as it goes,
+// so render into a buffer when you want that failure to become an error status.
 func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) error {
 	composed, head, err := assemble(wrappers, leaf)
 	if err != nil {
@@ -167,11 +175,17 @@ func RenderAsync(ctx context.Context, w io.Writer, leaf Fragment, options ...Opt
 //			log.Printf("render failed: %v", err)
 //			break
 //		}
-//		if _, err := content.WriteTo(w); err != nil {
+//		if err := writeCompletion(w, content); err != nil {
 //			break
 //		}
 //		htmlbind.Flush(w)
 //	}
+//
+// A yielded item is the bare fragment plus the id of the placeholder it belongs
+// to. How that pair travels — an inert template and a marker element, a JSON
+// record, anything else — is the caller's choice, because it has to match the
+// client runtime the caller ships. Nothing on this path writes script, and the
+// merged head carries component contributions only.
 //
 // There is no variant that hides this loop. How many boundaries a render
 // produces is not knowable up front, least of all for a chain assembled at
@@ -180,6 +194,12 @@ func RenderAsync(ctx context.Context, w io.Writer, leaf Fragment, options ...Opt
 //
 // Once the initial pass commits, the response status can no longer change, so a
 // later error is for logging rather than for rewriting the response.
+//
+// One of those errors is UnrecoveredError: a boundary's bindings failed in a
+// clause with no recover subtree. Ending the sequence there is the point, since
+// the alternative is a page left showing a fallback that will never be replaced.
+// The caller still owns the response, and what it writes next — an error screen
+// replacing the document, whatever its runtime applies — is its own to frame.
 //
 // The sequence is single-use and single-consumer. Stopping the range early ends
 // the render without waiting for the outstanding boundaries.
@@ -192,11 +212,10 @@ func RenderChainAsync(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf
 		}
 		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
 		defer coordinator.stop()
-		// The update runtime is fixed trusted code belonging to the render mode
-		// rather than to any component, so it joins the merged head here. A
-		// document with no shell head simply keeps its fallbacks.
-		merged := append([]string{boundaryRuntime}, head...)
-		renderer := &Renderer{w: w, head: merged, opts: coordinator.opts, async: coordinator}
+		// The head carries component contributions only. Nothing is injected on
+		// this path: the script that applies a completion belongs with the framing
+		// the caller writes around it, so both are the framework's to ship.
+		renderer := &Renderer{w: w, head: head, opts: coordinator.opts, async: coordinator}
 		if err := composed(renderer); err != nil {
 			yield(Content{}, err)
 			return

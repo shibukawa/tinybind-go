@@ -36,14 +36,14 @@ execution:
 cancellation:
   bounds: always the wait; the work only when the implementation took a context
   request_cancelled: the runtime stops waiting and the boundary emits nothing
-  timeout: the same, except the boundary renders recover with the timeout code
+  timeout: failure rather than cancellation, so the boundary renders recover with the timeout code, or surfaces the unrecovered failure when the clause omits recover
   context_taking: sees the cancellation and may return early
   plain: cannot be interrupted, so it is abandoned; it finishes on its own and its result is discarded
   scope_safety: an abandoned binding is still writing the boundary scope, so a failed or cancelled wait discards that scope instead of returning it
 failure:
   - normalize returned error, adapter panic, and configured timeout as data:async-render-error
   - the first failing binding in declaration order decides the boundary, so two failing bindings fail the same way on every run
-  - route failure to that clause's recover subtree, or leave the committed fallback when the clause omits recover
+  - route failure to that clause's recover subtree, or out of the boundary to the caller when the clause omits recover, per decision:async-boundary-syntax omitted_recover
   - stop work on request cancellation, which produces no recover output
   - never replace fallback with partial or context-unsafe HTML
 compatibility: synchronous external declarations retain existing behavior through requirement:html-rendering-compatibility

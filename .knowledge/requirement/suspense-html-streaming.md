@@ -46,7 +46,7 @@ safety:
   - flushing remains correct when the caller wraps the writer in a compressing encoder
 failure:
   before_commit: yield zero data:async-boundary-content with the error and end the sequence
-  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy
+  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy; a clause with no recover subtree yields the unrecovered failure and ends the sequence
   http_status: once fallback commits the response, failure cannot change the already-sent status; report through recover UI and server observability
   cancellation: do not yield recover content for expected request cancellation or superseded boundary revision
 acceptance:
@@ -56,10 +56,10 @@ acceptance:
   - client disconnect or early consumer stop cancels pending request work
 markup:
   placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
-  completion: an inert template element referencing the same boundary ID, written after the initial document
+  completion: an inert template element referencing the same boundary ID, written after the initial document; the caller writes this framing around the fragment the module yields
   commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
-  runtime: a client script defining the marker element and applying a boundary from its connected callback; proposed decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
-  no_head: a document with no shell head gets no update script, so the fallback remains the final content
+  runtime: a client script defining the marker element and applying a boundary from its connected callback; decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
+  no_runtime: a response whose client never loads that script keeps its committed fallback as the final content
 commit_marker_rationale:
   problem: an HTML parser inserts an element when it reads the start tag, so a runtime watching for the template could read one whose content had not arrived
   observed: with the template start tag delivered in its own network chunk, a mutation-observer runtime replaced the placeholder with empty content and removed the template, losing the fallback as well as the result
@@ -71,7 +71,7 @@ commit_marker_rationale:
 no_javascript:
   behavior: the committed fallback stays visible and completions are inert templates
   alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients
-recover_omitted: decision:async-boundary-syntax keeps the committed fallback and reports through the render error hook
+recover_omitted: decision:async-boundary-syntax ends the sequence with the unrecovered failure carrying the committed placeholder's boundary ID; the fallback stays on screen until the caller's runtime replaces the document, and the render error hook still sees the original error
 multiple_dependencies: the first failing binding of one clause decides the boundary; siblings are cancelled and not aggregated
 open_questions:
   - Content Security Policy nonce or external-script integration

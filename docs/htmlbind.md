@@ -619,8 +619,15 @@ export component Profile(id: string): html {
 - `fallback` is required. It is what commits to the response first, so a slow
   dependency does not delay the rest of the page.
 - `recover` is optional and binds a safe `error` value with the fields `code`,
-  `message`, `retryable`, and `timeout`. Omit it to keep the fallback in place
-  on failure.
+  `message`, `retryable`, and `timeout`.
+
+When a block that omitted `recover` fails, the failure leaves the template and
+becomes the whole page's. `Render` returns a `*htmlbind.UnrecoveredError` and
+writes no fallback in its place; `RenderAsync` yields it and ends the sequence.
+On the streaming path the fallback is already in the response, so replacing what
+is on screen is the caller's job — usually the framework above you. Write a
+`recover` clause when you want one part of the page to fail on its own. Either
+way, no loading state is left to sit there forever.
 
 The bindings are visible only in the primary subtree, and the error name only in
 `recover`, so no clause can read a value that does not exist when it renders.
@@ -754,17 +761,21 @@ func profile(w http.ResponseWriter, r *http.Request) {
 		htmlbind.WithErrorReporter(func(err error) { log.Printf("boundary failed: %v", err) }),
 	) {
 		if err != nil {
-			// The response is already committed; log rather than rewrite it.
+			// The response is already committed; log rather than rewrite it. A
+			// boundary that failed with no recover clause arrives here too, as
+			// an *htmlbind.UnrecoveredError.
 			log.Printf("render failed: %v", err)
 			break
 		}
-		if _, err := content.WriteTo(w); err != nil {
+		if err := writeCompletion(w, content); err != nil {
 			break
 		}
 		htmlbind.Flush(w)
 	}
 }
 ```
+
+`writeCompletion` is yours, not the module's; the next section writes one.
 
 `RenderChainAsync` is the same for a wrapper chain. There is no variant that
 hides this loop: how many boundaries a render produces is not knowable up front,
@@ -776,18 +787,60 @@ the render without waiting for the outstanding boundaries. The render flushes
 after the initial pass; `htmlbind.Flush` is how you do the same after each
 chunk, and it is a no-op for a writer that cannot flush.
 
+### Framing a completion
+
 A progressive render writes each pending boundary as `<tb-boundary id="...">`
-holding the fallback. Each completion is then appended as an inert template
-followed by a marker:
+holding the fallback. That is the module's half. The other half is yours: a
+yielded `Content` is the settled fragment plus the id of the placeholder it
+belongs to, and `WriteTo` emits that fragment and nothing else — no wrapper, no
+marker, no script. htmlbind injects nothing into the head either, on either
+entry point.
+
+The split is deliberate. How a completion travels and the client code that acts
+on it are one design, so they belong to one owner: the framework you are
+building, or the handler itself.
+
+The recipe below is a good default. Wrap each fragment in an inert template and
+follow it with a marker element:
+
+```go
+func writeCompletion(w io.Writer, content htmlbind.Content) error {
+	if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+		return err
+	}
+	if _, err := content.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`)
+	return err
+}
+```
+
+which puts this on the wire:
 
 ```html
 <template data-tb-boundary="tb-1">…</template><tb-apply for="tb-1"></tb-apply>
 ```
 
-A small fixed script merged into the document head defines `tb-apply` and does
-the swap from its connected callback. It is the same code for every page, and no
-completion carries a script of its own, so nothing needs a CSP nonce or
-`unsafe-inline`.
+Define `tb-apply` once, in the runtime script your pages already load, and do
+the swap from its connected callback:
+
+```js
+customElements.define("tb-apply", class extends HTMLElement {
+	connectedCallback() {
+		const id = this.getAttribute("for");
+		this.remove();
+		const template = document.querySelector(`template[data-tb-boundary="${id}"]`);
+		if (!template) return;
+		const placeholder = document.getElementById(id);
+		if (placeholder) placeholder.replaceWith(template.content);
+		template.remove();
+	}
+});
+```
+
+Because it lives in a file you already serve, no completion carries a script of
+its own, and the page needs neither a CSP nonce nor `unsafe-inline`.
 
 The marker is what makes the swap safe. An HTML parser inserts an element when
 it reads the *start* tag, so a runtime that reacted to the template's appearance
@@ -796,16 +849,20 @@ with nothing — losing the fallback along with the result. Because `<tb-apply>`
 comes after `</template>` in the byte stream, the template is complete by the
 time it exists, however a proxy, TLS record, or compressing encoder split the
 bytes. A completion whose marker never arrives is simply not applied, and the
-fallback stays.
+fallback stays. Trigger on the marker, never on the template.
 
-A document with no shell `head` element gets no script and simply keeps its
-fallbacks.
+A response no script ever applies keeps its fallbacks, which is also what a
+client with JavaScript disabled sees. `Render` settles every boundary in place
+instead, so a route that must work without a runtime has an entry that needs
+none.
 
 ### Cancellation bounds the wait
 
 A cancelled request or an expired `WithAsyncTimeout` makes the runtime stop
-waiting: the boundary produces no completion, or renders `recover` with
-`code: "timeout"`.
+waiting. A cancelled boundary produces no completion at all, because nobody is
+left to read one. An expired deadline is a failure like any other: it renders
+`recover` with `code: "timeout"`, or fails the page when the clause declared no
+`recover`.
 
 Whether the work itself stops is up to the external. One that takes a context
 sees the cancellation and can return early. One that does not cannot be

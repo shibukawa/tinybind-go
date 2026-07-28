@@ -21,11 +21,14 @@ dependency, writes no headers, serves no files, and makes no routing decision.
 | Putting request-scoped values into the context | you |
 | Response status, content type, encoding, flushing policy | you |
 | Navigation, history, and any SPA behavior | you |
-| Transport framing of a completion in a non-HTML response | you |
+| Framing of every completion, and the client script that applies it | you |
 
-That last row is narrower than it looks. `htmlbind.Content` carries a boundary id
-and rendered HTML, and nothing else — deliberately, so that a framework can put it
-in a streamed document, a JSON payload, or anything else it invents.
+That last row is broader than it may look. `htmlbind.Content` carries a boundary
+id and rendered HTML, and nothing else — deliberately, so that a framework can
+put it in a streamed document, a JSON payload, or anything else it invents. The
+module writes no `<script>` on any path and injects nothing into the merged head,
+so what a completion looks like on the wire is a decision you make once and pair
+with the runtime you ship.
 
 ## Deciding whether a response needs a client runtime
 
@@ -85,10 +88,31 @@ fallback:
 <tb-boundary id="tb-1" style="display:contents">…fallback…</tb-boundary>
 ```
 
-Each settled boundary is then appended as an inert template followed by a marker:
+That element and its id are the module's. Everything after it is yours: a
+settled boundary arrives as a `Content` holding the rendered fragment and the id
+of the placeholder it replaces, and `Content.WriteTo` writes that fragment alone.
+
+So what follows is a recommendation the module does not enforce — but it is the
+shape the module was designed around, and the marker rule below is load-bearing.
+Append each completion as an inert template followed by a marker:
 
 ```html
 <template data-tb-boundary="tb-1">…resolved…</template><tb-apply for="tb-1"></tb-apply>
+```
+
+which on the Go side is:
+
+```go
+func writeCompletion(w io.Writer, content htmlbind.Content) error {
+	if _, err := io.WriteString(w, `<template data-tb-boundary="`+content.BoundaryID+`">`); err != nil {
+		return err
+	}
+	if _, err := content.WriteTo(w); err != nil {
+		return err
+	}
+	_, err := io.WriteString(w, `</template><tb-apply for="`+content.BoundaryID+`"></tb-apply>`)
+	return err
+}
 ```
 
 The contract a conforming client script must honor:
@@ -104,9 +128,9 @@ The contract a conforming client script must honor:
 - Tolerate a missing template or placeholder by doing nothing. A truncated
   response must leave the committed fallback visible.
 
-`Content.WriteTo` produces exactly the markup above. If you frame completions
-yourself — for example as JSON in a navigation response — you are free to, and
-`Content` gives you the id and HTML separately for that reason.
+Depart from this shape when the transport differs — a navigation response
+carrying completions as JSON has no parser to trigger a marker — but keep the
+rule that nothing acts on a fragment before the bytes that carry it are complete.
 
 ### Why the marker exists
 
@@ -133,7 +157,7 @@ but one microtask later.
 
 ### A conforming client script
 
-This is the runtime the module ships today, expanded:
+This is the reference runtime for the shape above:
 
 ```js
 customElements.define("tb-apply", class extends HTMLElement {
@@ -149,24 +173,27 @@ customElements.define("tb-apply", class extends HTMLElement {
 });
 ```
 
-No completion carries a script of its own, so a page can run under a policy that
-forbids inline script, with no nonce and no `unsafe-inline`.
+Put it in the bundle your pages already load rather than inline in a completion.
+Then no completion carries a script of its own, and a page can run under a policy
+that forbids inline script, with no nonce and no `unsafe-inline`.
 
-### Current limitation
+### Getting the script onto the page
 
-Today `RenderChainAsync` prepends this runtime to the merged head itself, so a
-framework cannot yet substitute its own. `HasAwaitBlock` is the first half of
-changing that: the decision moves to the caller before the injection does. Until
-it lands, treat the protocol above as fixed.
+That part is yours too. The module used to prepend this runtime to the merged
+head itself; it no longer does, so the decision and the injection now sit in the
+same place. `HasAwaitBlock` is how you make the decision, and a `script` tag your
+document shell emits — as a head contribution on the shell component, or as
+literal markup in its template — is how you act on it.
 
-Note that the script joins the *merged head*, so a chain with no document shell —
-nothing that emits a `head` element — never receives it, and its fallbacks stay
-as the final content.
+A response that never loads the script is not broken, only unimproved: every
+placeholder keeps the fallback it committed, which is also what a client without
+JavaScript sees.
 
 ## Initial load
 
-Nothing special is required. The shell writes the merged head, the initial pass
-commits the document with every fallback in place, and completions stream after:
+Nothing special is required. The shell writes the merged head and your runtime
+tag, the initial pass commits the document with every fallback in place, and
+completions stream after:
 
 ```go
 for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
@@ -174,7 +201,7 @@ for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
 		log.Printf("boundary failed: %v", err)
 		break
 	}
-	if _, err := content.WriteTo(w); err != nil {
+	if err := writeCompletion(w, content); err != nil {
 		break
 	}
 	htmlbind.Flush(w)
@@ -188,6 +215,81 @@ sequence anyway.
 
 Once the initial pass flushes, the status code is committed. A later failure is
 for logging, not for rewriting the response.
+
+## When a boundary without recover fails
+
+When the bindings of an `await` block that declared no `recover` clause fail, the
+sequence yields a `*htmlbind.UnrecoveredError` and ends. It carries the
+`BoundaryID` of the committed placeholder and the original Go error.
+
+The template has nowhere to put that failure, so the failure leaves the boundary
+and arrives here instead. What is on screen is a "Loading…" placeholder, and
+nothing is coming to replace it. **Replace the whole document and show an error.**
+A template that wants one part of the page to fail visibly writes a `recover`
+clause; for a block that did not, returning the single fact that the page failed
+beats patching up a screen whose author never considered what is missing from it,
+and letting someone go on using it. All the more so because the sequence ends
+here: any other outstanding boundary keeps its fallback forever too.
+
+```go
+for content, err := range htmlbind.RenderChainAsync(ctx, w, wrappers, page) {
+	if err != nil {
+		var unrecovered *htmlbind.UnrecoveredError
+		if errors.As(err, &unrecovered) {
+			log.Printf("boundary %s failed: %v", unrecovered.BoundaryID, unrecovered.Err)
+		} else {
+			log.Printf("render failed: %v", err)
+		}
+		writeFailureScreen(w) // the initial pass is committed: replace, do not rewrite
+		htmlbind.Flush(w)
+		break
+	}
+	if err := writeCompletion(w, content); err != nil {
+		break
+	}
+	htmlbind.Flush(w)
+}
+```
+
+What `writeFailureScreen` writes is a shape you choose, like the completion
+framing. One marker is enough:
+
+```html
+<tb-failed></tb-failed>
+```
+
+```js
+customElements.define("tb-failed", class extends HTMLElement {
+	connectedCallback() {
+		this.remove();
+		document.body.replaceChildren(failureScreen());
+	}
+});
+```
+
+The status code was committed when the initial pass flushed, so this replaces the
+screen rather than rewriting the response. A truncated response carries no such
+marker either, so nothing happens there and the committed fallbacks stay — the
+existing rule.
+
+Do not build the error screen's text from the server's error.
+`UnrecoveredError.Err`, like what `WithErrorReporter` receives, is the raw Go
+error, and putting it on the page leaks the server's insides. To show a code or a
+message, put only a `PublicError` projection on the marker's attributes — and note
+that the reporter is called concurrently from each boundary's goroutine, so
+aggregating several failures needs a lock of your own.
+
+### The synchronous entries
+
+`Render` and `RenderChain` return the same `*UnrecoveredError`. They write no
+fallback in its place, so no finished-looking document holding a loading state
+that will never resolve comes out of them.
+
+What you get for that is a response that has committed nothing yet. Render into a
+buffer and you can drop the buffer and answer with an error status; write straight
+to an `http.ResponseWriter` and the bytes before the failing boundary are already
+out. Buffer any render you might want to turn into an error response — a
+navigation response, or a page you do not stream.
 
 ## SPA-style navigation
 

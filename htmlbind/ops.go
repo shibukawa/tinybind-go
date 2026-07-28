@@ -130,7 +130,8 @@ func (o requireOp[P]) Exec(_ *Renderer, params P) error { return o.check(params)
 // Await opens an await boundary. resolve runs the clause's bindings and builds
 // the primary subtree's scope; recovery builds the recover subtree's scope from
 // the outer parameters and the safe error. handler is nil when the clause
-// declared no recover subtree.
+// declared no recover subtree, and then a failure becomes an UnrecoveredError
+// for the caller instead of anything on the page.
 //
 // It is a free function rather than a Builder method because the primary and
 // recover subtrees each read their own generated scope type.
@@ -184,7 +185,11 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 			}
 			r.reportError(err)
 			if o.handler == nil {
-				return Content{}, false, nil
+				// Nothing in this template can render the failure, so it ends
+				// the sequence instead of being dropped. Leaving it out would
+				// leave the committed fallback as the final content, and that
+				// fallback says the value is still coming.
+				return Content{}, false, &UnrecoveredError{BoundaryID: id, Err: err}
 			}
 			if err := execOps(sub, o.handler, o.recovery(params, normalizeAsyncError(err))); err != nil {
 				return Content{}, false, err
@@ -207,7 +212,11 @@ func (o awaitOp[P, S, R]) execBlocking(r *Renderer, params P) error {
 	if err != nil {
 		r.reportError(err)
 		if o.handler == nil {
-			return execOps(r, o.fallback, params)
+			// Writing the fallback here would finish a document that promises
+			// content nothing will ever deliver. This path commits no status of
+			// its own, so returning the failure is what lets a caller rendering
+			// into a buffer drop it and answer with an error instead.
+			return &UnrecoveredError{Err: err}
 		}
 		return execOps(r, o.handler, o.recovery(params, normalizeAsyncError(err)))
 	}

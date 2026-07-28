@@ -14,7 +14,7 @@ input:
   state: data:html-client-bootstrap
 selection:
   no_client_features: omit runtime script and update metadata
-  async_boundary: include streamed-template observer and replacement runtime
+  async_boundary: include the boundary replacement runtime, which per decision:client-runtime-ownership the caller supplies rather than an api:render-html-chain entry point
   partial_update: include manifest, delta application, and api:client-component-update runtime
 injection:
   - emit one same-origin external module script after document content or at validated body-end slot
