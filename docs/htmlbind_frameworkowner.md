@@ -379,6 +379,7 @@ Note that component styles and scripts are merged into the document head as
 inline markup today. There is no extraction to files under a public directory, so
 there is nothing for you to serve yet and no asset URL to configure. If your
 framework needs external stylesheets for caching or for a policy that forbids
+inline style, that is on you for now.
 
 ### Reading a component's signature
 
