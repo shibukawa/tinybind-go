@@ -18,11 +18,15 @@ fields:
     type: string
     ref: term:config-source
     description: winning source layer (default, file_toml, env, cli)
-go_shape: '{Key, Value, Place string}'
-helper_return: '[]struct{Key, Value, Place string} or named type alias'
+  - name: Masked
+    type: bool
+    description: >
+      Value is the redaction placeholder rather than the configured value, so a
+      caller re-rendering these records never compares against the mask text
+go_shape: '{Key, Value, Place string, Masked bool}'
 notes:
   - hide mode drops the record instead of returning empty Value
-  - mask mode sets Value to asterisks with length jitter
+  - mask mode sets Value to a fixed-width asterisk run per rule:secret-redaction, never length-jittered
   - show mode sets Value to string form of the effective value
   - rule:dependent-key-visibility can drop the record before redaction runs
   - duration Value is the time.Duration String() form

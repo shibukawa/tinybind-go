@@ -8,14 +8,14 @@ LoadResult exposes the effective config as an ordered, redacted, dependency-filt
 ```yaml
 signature: 'func (r *LoadResult) Provenance() []ProvenanceEntry'
 record: data:provenance-event
-entry_shape: 'ProvenanceEntry{Key string, Value string, Place Place}'
+entry_shape: 'ProvenanceEntry{Key string, Value string, Place Place, Masked bool}'
 coverage:
   - only keys present in the overlay; a field with no default and no source is absent
 behavior:
   - one record per effective term:config-key from concept:config-overlay
   - Place is the winning term:config-source
   - order follows rule:config-output-ordering
-  - rule:secret-redaction decides Value, and drops hide entries
+  - rule:secret-redaction decides Value and Masked, and drops hide entries
   - rule:dependent-key-visibility drops entries under an empty parent
   - multi-value keys render as their joined raw form
   - the process-only config path key never appears

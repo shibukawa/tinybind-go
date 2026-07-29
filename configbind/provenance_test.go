@@ -15,7 +15,7 @@ type secondProvenanceConfig struct{}
 
 // registerProvenanceFixture registers one definition whose keys are deliberately
 // not in alphabetical order, so a key sort would be visible in the output.
-func registerProvenanceFixture[T any](prefix string, keys []string, dependsOn map[string]string) {
+func registerProvenanceFixture[T any](prefix string, keys []string, dependsOn map[string][]string) {
 	full := make([]string, 0, len(keys))
 	defaults := map[string]string{}
 	metas := make([]cliparser.FieldMeta, 0, len(keys))
@@ -105,7 +105,7 @@ func TestProvenanceMasksSensitiveKeys(t *testing.T) {
 	configbind.ResetDefinitions()
 	t.Cleanup(configbind.ResetDefinitions)
 	registerProvenanceFixture[firstProvenanceConfig]("db",
-		[]string{"host", "password", "api_key", "access_key", "dsn"}, nil)
+		[]string{"host", "password", "api_key", "access_key", "dsn", "private_key"}, nil)
 	configbind.ResetTargets()
 	t.Cleanup(configbind.ResetTargets)
 	configbind.Bind[firstProvenanceConfig]("db")
@@ -114,13 +114,14 @@ func TestProvenanceMasksSensitiveKeys(t *testing.T) {
 	for _, entry := range loadProvenanceFixture(t, nil, "") {
 		values[entry.Key] = entry.Value
 	}
-	for _, key := range []string{"db.password", "db.api_key", "db.access_key"} {
+	// A DSN embeds its password, and a private key is the credential itself.
+	for _, key := range []string{"db.password", "db.api_key", "db.access_key", "db.dsn", "db.private_key"} {
 		if values[key] != "*****" {
 			t.Fatalf("%s=%q want a mask", key, values[key])
 		}
 	}
-	if values["db.host"] != "v-host" || values["db.dsn"] != "v-dsn" {
-		t.Fatalf("non-sensitive keys were masked: %v", values)
+	if values["db.host"] != "v-host" {
+		t.Fatalf("non-sensitive key was masked: %v", values)
 	}
 }
 
@@ -136,9 +137,9 @@ func TestProvenanceHidesDependentsTransitively(t *testing.T) {
 			"rdb.pool_size": "10",
 			"rdb.pool_idle": "2",
 		},
-		DependsOn: map[string]string{
-			"rdb.pool_size": "rdb.dsn",
-			"rdb.pool_idle": "rdb.pool_size",
+		DependsOn: map[string][]string{
+			"rdb.pool_size": {"rdb.dsn"},
+			"rdb.pool_idle": {"rdb.pool_size"},
 		},
 		FlagMetas: []cliparser.FieldMeta{
 			{Prefix: "rdb", Key: "dsn"},
@@ -172,7 +173,7 @@ func TestProvenanceTreatsZeroAsConfigured(t *testing.T) {
 		Prefix:    "limits",
 		KnownKeys: []string{"limits.max", "limits.window"},
 		Defaults:  map[string]string{"limits.max": "0", "limits.window": "30s"},
-		DependsOn: map[string]string{"limits.window": "limits.max"},
+		DependsOn: map[string][]string{"limits.window": {"limits.max"}},
 		FlagMetas: []cliparser.FieldMeta{
 			{Prefix: "limits", Key: "max"},
 			{Prefix: "limits", Key: "window"},
@@ -242,5 +243,186 @@ func TestFalsyKeepsWinningPlaceWhenSourceIsEmpty(t *testing.T) {
 	}
 	if entries[0].Value != "off" || entries[0].Place != configbind.PlaceEnv {
 		t.Fatalf("entry=%+v want off from env", entries[0])
+	}
+}
+
+// A zero duration is a deliberate setting on its own, so it hides dependents
+// only where a falsy tag says that zero is what "off" means for this key.
+func TestProvenanceHidesDependentsOfZeroDurationParent(t *testing.T) {
+	register := func(threshold string) {
+		configbind.ResetDefinitions()
+		configbind.Register[firstProvenanceConfig](configbind.Definition{
+			TypeName:  "example.test.sql",
+			Prefix:    "sql",
+			KnownKeys: []string{"sql.slow_threshold", "sql.explain"},
+			Defaults:  map[string]string{"sql.slow_threshold": threshold, "sql.explain": "true"},
+			Falsy:     map[string]string{"sql.slow_threshold": "0s"},
+			DependsOn: map[string][]string{"sql.explain": {"sql.slow_threshold"}},
+			Scaffold: []configbind.ScaffoldField{
+				{Key: "slow_threshold", Kind: configbind.ScaffoldDuration},
+				{Key: "explain", Kind: configbind.ScaffoldBool},
+			},
+			FlagMetas: []cliparser.FieldMeta{
+				{Prefix: "sql", Key: "slow_threshold"},
+				{Prefix: "sql", Key: "explain"},
+			},
+			Apply: func(any, *configbind.Overlay) error { return nil },
+		})
+		configbind.ResetTargets()
+		configbind.Bind[firstProvenanceConfig]("sql")
+	}
+	t.Cleanup(configbind.ResetDefinitions)
+	t.Cleanup(configbind.ResetTargets)
+
+	// "0" and "0ms" are the same duration as the declared "0s", which raw
+	// string equality could not see.
+	for _, zero := range []string{"0s", "0", "0ms"} {
+		register(zero)
+		got := strings.Join(provenanceKeys(loadProvenanceFixture(t, nil, "")), ",")
+		if got != "sql.slow_threshold" {
+			t.Fatalf("threshold=%s keys=%s want only the parent", zero, got)
+		}
+	}
+
+	register("500ms")
+	got := strings.Join(provenanceKeys(loadProvenanceFixture(t, nil, "")), ",")
+	if got != "sql.slow_threshold,sql.explain" {
+		t.Fatalf("keys=%s want the dependent back", got)
+	}
+}
+
+// Without a falsy tag a zero duration stays a real setting, so its dependents
+// keep printing.
+func TestProvenanceKeepsDependentsOfZeroDurationWithoutFalsy(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	configbind.Register[firstProvenanceConfig](configbind.Definition{
+		TypeName:  "example.test.sql",
+		Prefix:    "sql",
+		KnownKeys: []string{"sql.slow_threshold", "sql.explain"},
+		Defaults:  map[string]string{"sql.slow_threshold": "0s", "sql.explain": "true"},
+		DependsOn: map[string][]string{"sql.explain": {"sql.slow_threshold"}},
+		Scaffold: []configbind.ScaffoldField{
+			{Key: "slow_threshold", Kind: configbind.ScaffoldDuration},
+			{Key: "explain", Kind: configbind.ScaffoldBool},
+		},
+		FlagMetas: []cliparser.FieldMeta{
+			{Prefix: "sql", Key: "slow_threshold"},
+			{Prefix: "sql", Key: "explain"},
+		},
+		Apply: func(any, *configbind.Overlay) error { return nil },
+	})
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[firstProvenanceConfig]("sql")
+
+	got := strings.Join(provenanceKeys(loadProvenanceFixture(t, nil, "")), ",")
+	if got != "sql.slow_threshold,sql.explain" {
+		t.Fatalf("keys=%s; a zero duration without falsy is a setting", got)
+	}
+}
+
+// Every parent has to be non-empty: a key under a dependent struct answers to
+// the struct's parent as well as its own.
+func TestProvenanceHidesKeyWhenAnyParentIsEmpty(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	configbind.Register[firstProvenanceConfig](configbind.Definition{
+		TypeName:  "example.test.security",
+		Prefix:    "security",
+		KnownKeys: []string{"security.enabled", "security.mode", "security.hsts.max_age"},
+		Defaults: map[string]string{
+			"security.enabled":      "true",
+			"security.mode":         "",
+			"security.hsts.max_age": "31536000",
+		},
+		DependsOn: map[string][]string{
+			"security.hsts.max_age": {"security.enabled", "security.mode"},
+		},
+		FlagMetas: []cliparser.FieldMeta{
+			{Prefix: "security", Key: "enabled"},
+			{Prefix: "security", Key: "mode"},
+			{Prefix: "security", Key: "hsts.max_age"},
+		},
+		Apply: func(any, *configbind.Overlay) error { return nil },
+	})
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[firstProvenanceConfig]("security")
+
+	// enabled is set but mode is empty, so the leaf still goes.
+	got := strings.Join(provenanceKeys(loadProvenanceFixture(t, nil, "")), ",")
+	if got != "security.enabled,security.mode" {
+		t.Fatalf("keys=%s want the leaf hidden by its second parent", got)
+	}
+	got = strings.Join(provenanceKeys(loadProvenanceFixture(t, []string{"SECURITY_MODE=strict"}, "")), ",")
+	if got != "security.enabled,security.mode,security.hsts.max_age" {
+		t.Fatalf("keys=%s want the leaf back once both parents are set", got)
+	}
+}
+
+func TestProvenanceAppliesSecretTag(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	configbind.Register[firstProvenanceConfig](configbind.Definition{
+		TypeName:  "example.test.app",
+		Prefix:    "app",
+		KnownKeys: []string{"app.license", "app.owner", "app.identity_token", "app.plain"},
+		Defaults: map[string]string{
+			"app.license":        "L-1",
+			"app.owner":          "ops",
+			"app.identity_token": "public-claim",
+			"app.plain":          "visible",
+		},
+		Secrets: map[string]string{
+			"app.license":        "mask",
+			"app.owner":          "hide",
+			"app.identity_token": "show",
+		},
+		FlagMetas: []cliparser.FieldMeta{
+			{Prefix: "app", Key: "license"},
+			{Prefix: "app", Key: "owner"},
+			{Prefix: "app", Key: "identity_token"},
+			{Prefix: "app", Key: "plain"},
+		},
+		Apply: func(any, *configbind.Overlay) error { return nil },
+	})
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[firstProvenanceConfig]("app")
+
+	entries := loadProvenanceFixture(t, nil, "")
+	byKey := map[string]configbind.ProvenanceEntry{}
+	for _, entry := range entries {
+		byKey[entry.Key] = entry
+	}
+	if _, ok := byKey["app.owner"]; ok {
+		t.Fatalf("hide must drop the entry: %v", entries)
+	}
+	if got := byKey["app.license"]; got.Value != "*****" || !got.Masked {
+		t.Fatalf("license=%+v want a masked entry", got)
+	}
+	// show wins over the key-name policy, which would have masked this one.
+	if got := byKey["app.identity_token"]; got.Value != "public-claim" || got.Masked {
+		t.Fatalf("identity_token=%+v want the raw value", got)
+	}
+	if got := byKey["app.plain"]; got.Value != "visible" || got.Masked {
+		t.Fatalf("plain=%+v want the raw value", got)
+	}
+}
+
+func TestProvenanceMarksAutoMaskedEntries(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	registerProvenanceFixture[firstProvenanceConfig]("db", []string{"host", "password"}, nil)
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[firstProvenanceConfig]("db")
+
+	for _, entry := range loadProvenanceFixture(t, nil, "") {
+		wantMasked := entry.Key == "db.password"
+		if entry.Masked != wantMasked {
+			t.Fatalf("%s Masked=%v want %v", entry.Key, entry.Masked, wantMasked)
+		}
 	}
 }

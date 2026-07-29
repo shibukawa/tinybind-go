@@ -1,6 +1,7 @@
 package configbindfixture_test
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,7 @@ func TestGeneratedLoadPrecedence(t *testing.T) {
 port = 1
 host = "from-toml"
 cors_origins = ["a.example", "b.example"]
+max_request_body = 9223372036854775807
 tls.enabled = true
 tls.cert_path = "toml.crt"
 `
@@ -88,6 +90,11 @@ tls.cert_path = "toml.crt"
 	}
 	if cfg.Host != "from-env" {
 		t.Fatalf("Host=%q want from-env", cfg.Host)
+	}
+	// A sized integer keeps its width: an int64 field must survive a value no
+	// int32 could hold, and must not be narrowed on the way in.
+	if cfg.MaxRequestBody != math.MaxInt64 {
+		t.Fatalf("MaxRequestBody=%d want %d", cfg.MaxRequestBody, int64(math.MaxInt64))
 	}
 	if cfg.TLS.CertPath != "env.crt" {
 		t.Fatalf("CertPath=%q want env.crt", cfg.TLS.CertPath)

@@ -3,7 +3,7 @@ id: rule:falsy-value-resolution
 type: rule
 title: Falsy Value Resolution
 ---
-A falsy choice fills in for an empty value and counts as empty for dependents.
+A falsy value fills in for an empty value and counts as empty for dependents.
 
 ```yaml
 tag: decision:falsy-tag-form
@@ -23,8 +23,13 @@ emptiness:
   - the falsy choice joins "" and false as an empty parent in rule:dependent-key-visibility
   - the falsy field itself stays visible; only its dependents disappear
 timing: after all source layers merge, before generated apply
+comparison:
+  - by the field's own kind, not by raw text
+  - string: exact match
+  - duration and int: parsed value, so 0, 0s, and 0ms are one duration
+  - kind read from the parent's generated Scaffold entry
 scope:
-  - Bind string fields only
+  - Bind string, int, and duration fields
   - no effect on CLI flags, help, or scaffolds
 related:
   - decision:falsy-tag-form

@@ -33,9 +33,22 @@ sensitive_key_tokens:
   - access_key
   - accesskey
   - token
+  - dsn
+  - private_key
+token_rationale:
+  dsn: a connection string carries its password inline, as in postgres://user:pass@host/db
+  private_key: a PEM body is a credential under a key name matching no other token
+heuristic_limits:
+  - a substring match also masks an innocent compound such as token_bucket_size or secret_manager_endpoint
+  - over-masking is the safe direction; the explicit tag is the escape hatch
 implementation_state:
   - the tag-free auto policy is live in api:configbind-provenance
-  - the explicit secret tag is not read yet; every key follows the auto policy
+  - the secret tag is read from generated field metadata and outranks the auto policy
+  - data:provenance-event reports whether the value shown is the mask
+placement:
+  - a leaf field
+  - a nested struct field, which applies the mode to every field of that subtree
+  - rejected on an array-of-tables element or the array field itself, which have no one stable key
 scope:
   - Bind provenance / log helpers only
   - does not change values written into config structs

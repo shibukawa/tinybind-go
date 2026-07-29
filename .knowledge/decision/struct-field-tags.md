@@ -35,20 +35,23 @@ option_tags:
     meaning: how values appear in provenance log helpers
     modes:
       hide: omit entry from log output
-      mask: replace value with asterisks of length ~5 plus random +/- 2
-      show: emit raw value
+      mask: replace value with a fixed-width asterisk run; see rule:secret-redaction
+      show: emit raw value even when the key name looks sensitive
     default_without_tag: rule:secret-redaction auto policy
+    placement: a leaf field, or a nested struct field to cover its whole subtree
     redaction: rule:secret-redaction
   falsy:
     form: 'falsy:"off"'
-    meaning: the enum choice that means "off" for this string option
+    meaning: the value that means "off" for this option
     resolution: rule:falsy-value-resolution
-    applies_to: string fields, normally ones with an enum tag
+    applies_to: string, int, and duration fields
+    required_for: an int or duration named as a dependon parent
     detail: decision:falsy-tag-form
   dependon:
-    form: 'dependon:"prefix.parent_key"'
-    meaning: hide this field from provenance and scaffold output while the named parent is empty
-    parent_key: one absolute term:config-key; see decision:dependon-tag-form
+    form: 'dependon:"prefix.parent_key"' or 'dependon:".sibling_key"'
+    meaning: hide this field from provenance output while the named parent is empty
+    parent_key: one term:config-key, absolute or dot-prefixed relative; see decision:dependon-tag-form
+    placement: a leaf field, or a nested struct field to cover its whole subtree
     visibility: rule:dependent-key-visibility
     scope: output only; apply, CLI flags, and validation are unaffected
 arg_tags:

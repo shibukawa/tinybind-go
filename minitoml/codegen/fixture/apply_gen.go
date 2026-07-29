@@ -27,6 +27,9 @@ func ApplyWebServiceConfig(dst *WebServiceConfig, doc minitoml.Document) error {
 		if err != nil {
 			return fmt.Errorf("minitoml: webservice.max_conns: %w", err)
 		}
+		if int64(int(n)) != n {
+			return fmt.Errorf("minitoml: webservice.max_conns: %d out of range for int", n)
+		}
 		dst.MaxConns = int(n)
 	} else {
 		dst.MaxConns = 100
@@ -72,6 +75,9 @@ func ApplyWebServiceConfig(dst *WebServiceConfig, doc minitoml.Document) error {
 				n, err := v.AsInt()
 				if err != nil {
 					return fmt.Errorf("minitoml: webservice.listeners.port: %w", err)
+				}
+				if int64(int(n)) != n {
+					return fmt.Errorf("minitoml: webservice.listeners.port: %d out of range for int", n)
 				}
 				dst.Listeners[i1].Port = int(n)
 			} else {

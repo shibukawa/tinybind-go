@@ -357,15 +357,17 @@ func discoverySymbolMatches(obj types.Object, symbol DiscoverySymbol) bool {
 	if signature.Recv() == nil {
 		return false
 	}
-	receiver := signature.Recv().Type()
-	if pointer, ok := receiver.(*types.Pointer); ok {
-		receiver = pointer.Elem()
-	}
-	named, ok := receiver.(*types.Named)
+	named, ok := unaliasPtr(signature.Recv().Type()).(*types.Named)
 	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == symbol.ReceiverPackagePath && named.Obj().Name() == symbol.ReceiverType
 }
 
 func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
+	return namedTypeName(instantiatedTypeArgAt(info, fun, index))
+}
+
+// instantiatedTypeArgAt returns the type argument inferred for an instantiated
+// generic call, for the calls that spell no explicit type argument.
+func instantiatedTypeArgAt(info *types.Info, fun ast.Expr, index int) types.Type {
 	for {
 		switch e := fun.(type) {
 		case *ast.ParenExpr:
@@ -376,28 +378,38 @@ func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
 			fun = e.X
 		case *ast.SelectorExpr:
 			if inst, ok := info.Instances[e.Sel]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		case *ast.Ident:
 			if inst, ok := info.Instances[e]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		default:
-			return ""
+			return nil
 		}
 	}
 }
 
 func namedTypeName(t types.Type) string {
-	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
-	}
-	if n, ok := t.(*types.Named); ok && n.Obj() != nil {
+	if n, ok := unaliasPtr(t).(*types.Named); ok && n.Obj() != nil {
 		return n.Obj().Name()
 	}
 	return ""
+}
+
+// unaliasPtr resolves type aliases and strips one pointer indirection. Since
+// Go 1.24 the go/types default is gotypesalias=1, so an alias arrives as
+// *types.Alias and passes no *types.Named assertion on its own; every named
+// type test here goes through this helper so an alias behaves as the type it
+// names. A defined type stays itself: only aliases are transparent.
+func unaliasPtr(t types.Type) types.Type {
+	t = types.Unalias(t)
+	if p, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(p.Elem())
+	}
+	return t
 }
 
 func propagateNestedUsage(plans []TypePlan) {

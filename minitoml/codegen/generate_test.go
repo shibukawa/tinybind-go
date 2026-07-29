@@ -202,3 +202,47 @@ func TestGenerateNestedStructSlicesUseDistinctLoopVariables(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateIntegerFieldWidths(t *testing.T) {
+	src, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields: []codegen.Field{
+			{GoName: "MaxBody", Key: "max_body", Kind: codegen.FieldInt, GoType: "int64"},
+			{GoName: "Workers", Key: "workers", Kind: codegen.FieldInt, GoType: "uint16", Default: "4"},
+			{GoName: "Port", Key: "port", Kind: codegen.FieldInt},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	for _, want := range []string{
+		// int64 is what AsInt already returns, so it needs no range guard.
+		"dst.MaxBody = int64(n)",
+		"if n < 0 {",
+		"if int64(uint16(n)) != n {",
+		"dst.Workers = uint16(n)",
+		// An empty GoType stays int, and the guard catches a 32-bit target.
+		"if int64(int(n)) != n {",
+		"dst.Port = int(n)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "if int64(int64(n)) != n {") {
+		t.Fatalf("int64 needs no range guard:\n%s", text)
+	}
+}
+
+func TestGenerateRejectsOutOfRangeIntDefault(t *testing.T) {
+	_, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields:   []codegen.Field{{GoName: "Workers", Key: "workers", Kind: codegen.FieldInt, GoType: "uint8", Default: "300"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid uint8 default") {
+		t.Fatalf("err=%v want an out-of-range default rejection", err)
+	}
+}

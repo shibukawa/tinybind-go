@@ -275,3 +275,24 @@ func TestDurationInsideTableArrayElementReportsFullKey(t *testing.T) {
 		t.Fatalf("err=%v want the full element key in the message", err)
 	}
 }
+
+// The admin token has a default, so it reaches the overlay and the generated
+// struct; secret hide keeps it out of the log helper's output entirely.
+func TestProvenanceDropsHiddenSecret(t *testing.T) {
+	configbind.ResetTargets()
+	cfg := configbindfixture.Register()
+	res, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Args: []string{}, Environ: []string{},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AdminToken != "seed-token" {
+		t.Fatalf("AdminToken=%q; hide must not change the bound value", cfg.AdminToken)
+	}
+	for _, entry := range res.Provenance() {
+		if entry.Key == "webserver.admin_token" {
+			t.Fatalf("hidden secret leaked into provenance: %+v", entry)
+		}
+	}
+}

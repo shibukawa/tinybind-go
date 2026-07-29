@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - Discovering configuration structs used by `configbind.Bind[T]`
 - Deriving TOML keys, CLI options, and environment names from struct fields
-- Applying `default`, `key`, `opt`, `env`, `help`, `falsy`, and `dependon` tags
+- Applying `default`, `key`, `opt`, `env`, `help`, `falsy`, `dependon`, and `secret` tags
 - Mapping nested structs, `[]string`, and slices of structs from arrays of tables
 - Merging defaults, TOML, environment, and CLI values
 - Converting values to string, bool, int, `time.Duration`, and `[]string`
@@ -187,10 +187,16 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | Override the environment variable with an exact name | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
-| `falsy:"value"` | The choice that means "off" for a string option | `falsy:"off"` |
+| `falsy:"value"` | The value that means "off" for a string, int, or duration option | `falsy:"off"`, `falsy:"0s"` |
 | `dependon:"key"` | Hide this field from provenance while that key is empty | `dependon:"webserver.tls.enabled"` |
+| `dependon:".key"` | The same, naming a key inside the struct the tag is written in | `dependon:".enabled"` |
+| `secret:"hide"` | Never print this field in provenance output | `secret:"hide"` |
+| `secret:"mask"` | Print `*****` instead of the value | `secret:"mask"` |
+| `secret:"show"` | Print the value even though the key name looks sensitive | `secret:"show"` |
 
-`falsy` and `dependon` need a stable config key, so neither is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
+`falsy`, `dependon`, and `secret` need a stable config key, so none is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
+
+`dependon` and `secret` may also sit on a nested struct field, where they cover every field of that subtree. `falsy` may not: it names one value, and a struct has none.
 
 ### Godoc as the help source
 
@@ -631,7 +637,11 @@ for _, entry := range result.Provenance() {
 
 The slice is ordered rather than sorted: bindings appear in `Bind` call order, and the keys of one binding in the declaration order of its struct, nested structs expanded where they are declared. Keys that belong to no registered binding — a stray entry in someone's TOML file — trail the known ones in alphabetical order.
 
-Two filters run before you see the slice. A key whose path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, or `access_key` reports `*****` instead of its value. And a field with a `dependon` tag disappears while its parent is empty, which the next section covers.
+Two filters run before you see the slice.
+
+The first is disclosure. A `secret` tag decides on its own: `hide` drops the entry, `mask` reports `*****`, and `show` prints the value. A field with no tag is masked when its key path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, `access_key`, `dsn`, or `private_key` — a DSN carries its password inline, so it belongs on that list. The match is a substring, so a name like `token_bucket_size` is masked too; `secret:"show"` is the way out. `ProvenanceEntry.Masked` reports whether `Value` is the placeholder, so a caller re-rendering these entries never has to compare against the mask text.
+
+The second is dependency: a field with a `dependon` tag disappears while its parent is empty, which the next section covers.
 
 ### Hiding settings of a disabled feature
 
@@ -646,11 +656,41 @@ type WebServerConfig struct {
 
 The parent is a full config key including its prefix, so a field can depend on one bound by another package. While `webserver.tracing` reads as empty, `webserver.tracing_url` is absent from the provenance slice; `webserver.tracing` itself still appears, since an empty parent is the reason its dependents vanished. A hidden parent hides its own dependents in turn.
 
-"Empty" means the empty string or `false` — an `int` of 0, an empty list, and a zero duration are deliberate settings, not absent ones. An enum-style option needs a third form, which is what `falsy` supplies: it names the choice that means "off". That choice then counts as empty for anything depending on the field, and it also fills the field in when nothing sets it:
+A leading dot names a key inside the struct the tag is written in, which is what lets one struct type be embedded at several prefixes:
+
+```go
+type EndpointConfig struct {
+	Enabled bool
+	Path    string `dependon:".enabled" help:"URL path"`
+}
+
+type ServerConfig struct {
+	Health    EndpointConfig
+	Readiness EndpointConfig
+}
+```
+
+`server.health.path` answers to `server.health.enabled` and `server.readiness.path` to `server.readiness.enabled`, from the one tag.
+
+A tag on a nested struct field covers its whole subtree, so a subsystem is disabled in one place rather than once per leaf. A leaf inside such a subtree keeps its own parent as well: both have to be non-empty for the key to print.
+
+"Empty" means the empty string or `false` — an `int` of 0, an empty list, and a zero duration are deliberate settings, not absent ones. An option whose "off" is some other value needs a third form, which is what `falsy` supplies: it names the value that means off. That value then counts as empty for anything depending on the field, and it also fills the field in when nothing sets it:
 
 - No `default` tag and no source sets the key: the field resolves to `off`.
 - A source sets the key to `""`: it resolves to `off`, keeping that source as its `Place`.
 - A `default` tag is present: the default wins and `falsy` never substitutes.
+
+A number or a duration works the same way, which is how a zero threshold switches off what depends on it:
+
+```go
+type SQLConfig struct {
+	// Zero disables slow-statement detection, and with it EXPLAIN.
+	SlowThreshold time.Duration `falsy:"0s" help:"slow statement threshold"`
+	Explain       bool          `dependon:"sql.slow_threshold" help:"run EXPLAIN on slow statements"`
+}
+```
+
+The comparison is by value rather than by text, so `0`, `0s`, and `0ms` all read as off. Without the `falsy` tag a number or duration cannot be a parent at all: generation fails rather than guessing that zero means disabled.
 
 None of this reaches the bound struct. `TracingURL` is still populated from its sources, CLI flags and help are unchanged, and scaffolds still list every field so the options stay discoverable before a first load.
 

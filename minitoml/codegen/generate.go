@@ -29,6 +29,61 @@ const (
 	FieldStructSlice
 )
 
+// IntFieldSpec describes how one integer field is parsed and assigned.
+type IntFieldSpec struct {
+	// Name is the Go type the generated code converts to.
+	Name string
+	// Signed selects strconv.ParseInt over strconv.ParseUint.
+	Signed bool
+	// BitSize is the strconv bit size. Zero means the platform-sized int or
+	// uint, which is the value strconv itself takes for that case, so the
+	// accepted range follows the build target instead of the generator host.
+	BitSize int
+}
+
+var intFieldSpecs = map[string]IntFieldSpec{
+	"int":    {Name: "int", Signed: true},
+	"int8":   {Name: "int8", Signed: true, BitSize: 8},
+	"int16":  {Name: "int16", Signed: true, BitSize: 16},
+	"int32":  {Name: "int32", Signed: true, BitSize: 32},
+	"int64":  {Name: "int64", Signed: true, BitSize: 64},
+	"uint":   {Name: "uint"},
+	"uint8":  {Name: "uint8", BitSize: 8},
+	"uint16": {Name: "uint16", BitSize: 16},
+	"uint32": {Name: "uint32", BitSize: 32},
+	"uint64": {Name: "uint64", BitSize: 64},
+}
+
+// IntFieldSpecOf resolves a Field.GoType. An empty name means int, so a field
+// built before widths were carried keeps its exact generated form.
+func IntFieldSpecOf(goType string) (IntFieldSpec, error) {
+	if goType == "" {
+		goType = "int"
+	}
+	spec, ok := intFieldSpecs[goType]
+	if !ok {
+		return IntFieldSpec{}, fmt.Errorf("unsupported integer type %q", goType)
+	}
+	return spec, nil
+}
+
+// ParseLiteral reads one default value at the field's own width. The returned
+// text is the value re-rendered as an untyped Go integer literal.
+func (s IntFieldSpec) ParseLiteral(text string) (string, error) {
+	if s.Signed {
+		n, err := strconv.ParseInt(text, 10, s.BitSize)
+		if err != nil {
+			return "", err
+		}
+		return strconv.FormatInt(n, 10), nil
+	}
+	n, err := strconv.ParseUint(text, 10, s.BitSize)
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatUint(n, 10), nil
+}
+
 // Field describes one struct field for intermediate-form apply generation.
 type Field struct {
 	// GoName is the exported Go field name.
@@ -42,6 +97,10 @@ type Field struct {
 	Nested []Field
 	// ElemType is the element struct's Go type name when Kind is FieldStructSlice.
 	ElemType string
+	// GoType is the Go type an integer field is assigned as (int64, uint32, or
+	// a defined type over one of them). Empty means int, which keeps the
+	// generated form of a plain int field unchanged.
+	GoType string
 	// Default is an optional default used when the key is absent (string form).
 	Default string
 	// Opt is an optional CLI name override ("long" or "long,short").
@@ -58,6 +117,9 @@ type Field struct {
 	// Falsy is the enum choice from a falsy tag that means "off" for this field.
 	// An empty value resolves to it, and it hides fields that depend on this one.
 	Falsy string
+	// Secret is the disclosure mode from a secret tag: hide, mask, or show. On
+	// a nested struct it covers every field of the subtree.
+	Secret string
 }
 
 // Spec describes one Bind-style config struct and its prefix table name.
@@ -153,7 +215,9 @@ func emitFields(b *bytes.Buffer, scope emitScope, recv, prefix string, fields []
 		case FieldBool:
 			emitBoolField(b, scope, access, fullKey, f.Default)
 		case FieldInt:
-			emitIntField(b, scope, access, fullKey, f.Default)
+			if err := emitIntField(b, scope, access, fullKey, f); err != nil {
+				return fmt.Errorf("codegen: %s: %w", f.GoName, err)
+			}
 		case FieldDuration:
 			if err := emitDurationField(b, scope, access, fullKey, f.Default); err != nil {
 				return fmt.Errorf("codegen: %s: %w", f.GoName, err)
@@ -205,19 +269,42 @@ func emitBoolField(b *bytes.Buffer, scope emitScope, access, fullKey, def string
 	fmt.Fprintf(b, "%s}\n", in)
 }
 
-func emitIntField(b *bytes.Buffer, scope emitScope, access, fullKey, def string) {
+// emitIntField reads the key as an int64 and converts it to the field's own
+// integer type. The round-trip guard rejects a value the target type cannot
+// hold instead of storing a wrapped one; it holds for every width, including
+// the platform-sized int and uint, without importing math.
+func emitIntField(b *bytes.Buffer, scope emitScope, access, fullKey string, f Field) error {
+	spec, err := IntFieldSpecOf(f.GoType)
+	if err != nil {
+		return err
+	}
 	in := scope.indent
 	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
 	fmt.Fprintf(b, "%s\tn, err := v.AsInt()\n", in)
 	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
 	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, scope.diagKey(fullKey))
 	fmt.Fprintf(b, "%s\t}\n", in)
-	fmt.Fprintf(b, "%s\t%s = int(n)\n", in, access)
-	if def != "" {
+	if !spec.Signed {
+		fmt.Fprintf(b, "%s\tif n < 0 {\n", in)
+		fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%d out of range for %s\", n)\n", in, scope.diagKey(fullKey), spec.Name)
+		fmt.Fprintf(b, "%s\t}\n", in)
+	}
+	if spec.Name != "int64" {
+		fmt.Fprintf(b, "%s\tif int64(%s(n)) != n {\n", in, spec.Name)
+		fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%d out of range for %s\", n)\n", in, scope.diagKey(fullKey), spec.Name)
+		fmt.Fprintf(b, "%s\t}\n", in)
+	}
+	fmt.Fprintf(b, "%s\t%s = %s(n)\n", in, access, spec.Name)
+	if f.Default != "" {
+		literal, err := spec.ParseLiteral(f.Default)
+		if err != nil {
+			return fmt.Errorf("invalid %s default %q: %w", spec.Name, f.Default, err)
+		}
 		fmt.Fprintf(b, "%s} else {\n", in)
-		fmt.Fprintf(b, "%s\t%s = %s\n", in, access, def)
+		fmt.Fprintf(b, "%s\t%s = %s\n", in, access, literal)
 	}
 	fmt.Fprintf(b, "%s}\n", in)
+	return nil
 }
 
 // emitDurationField reads the key as a string and parses it with

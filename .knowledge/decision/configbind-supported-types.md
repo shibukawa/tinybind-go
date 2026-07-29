@@ -21,7 +21,7 @@ supported_composites:
   - slice of a same-package named struct, mapped to a TOML array of tables
 go_type_hints:
   bool: bool
-  int: int or sized integer TBD
+  int: int and every sized integer, signed or unsigned, per requirement:sized-integer-config-fields
   string: string
   duration: time.Duration
   datetime: time.Time
@@ -44,6 +44,16 @@ duration:
     time.Duration has underlying int64, so kind detection must match the named
     type first or duration silently binds as int
   array_of_duration: out of scope in v1
+integer:
+  requirement: requirement:sized-integer-config-fields
+  value_form: rule:integer-value-parsing
+  codegen_hazard: >
+    one FieldInt kind for every width makes generated apply narrow a 64-bit
+    parse to int, which fails to compile for int64 and truncates on a 32-bit
+    target
+alias_transparency:
+  requirement: requirement:alias-transparent-type-analysis
+  hazard: an alias of a supported type must classify as that type, not fall through to its underlying form
 out_of_scope_v1:
   - file paths as first-class config value types
   - multipart or file upload handling
@@ -64,6 +74,9 @@ rationale:
   - smaller shape simplifies codegen and TinyGo portability
 related:
   - requirement:configbind-product-goals
+  - requirement:sized-integer-config-fields
+  - requirement:alias-transparent-type-analysis
+  - rule:integer-value-parsing
   - requirement:configbind-tinygo
   - requirement:duration-config-fields
   - rule:duration-value-parsing

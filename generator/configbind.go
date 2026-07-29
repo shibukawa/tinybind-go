@@ -197,7 +197,17 @@ func discoverConfigBindCalls(f *ast.File, info *types.Info, patterns []CallPatte
 			discoveryErr = fmt.Errorf("generator: %s pattern %s argument_type index %d exceeds wrapper signature", pattern.Operation, callTargetKey(pattern.Target), *typeSource.ArgumentType)
 			return false
 		}
-		typeName := callTypeRoleName(info, call, typeSource)
+		roleType := callTypeRoleType(info, call, typeSource)
+		if isTypeParam(roleType) {
+			// A generic wrapper handing its own type parameter to the wrapped
+			// operation names no concrete config type here; the type is only
+			// known where the wrapper is instantiated, and that call site is
+			// matched by its own registered pattern. Skipping keeps one such
+			// wrapper from failing the whole package, which would also lose the
+			// config types declared beside it.
+			return true
+		}
+		typeName := localNamedTypeName(roleType)
 		if typeName == "" {
 			discoveryErr = fmt.Errorf("generator: %s pattern %s could not resolve a same-package config type", pattern.Operation, callTargetKey(pattern.Target))
 			return false
@@ -257,11 +267,7 @@ func matchingCallPattern(obj types.Object, patterns []CallPattern) (CallPattern,
 		if !ok || signature.Recv() == nil {
 			continue
 		}
-		receiver := signature.Recv().Type()
-		if pointer, ok := receiver.(*types.Pointer); ok {
-			receiver = pointer.Elem()
-		}
-		named, ok := receiver.(*types.Named)
+		named, ok := unaliasPtr(signature.Recv().Type()).(*types.Named)
 		if ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == pattern.Target.Method.ReceiverPackagePath && named.Obj().Name() == pattern.Target.Method.ReceiverType {
 			return pattern, true
 		}
@@ -269,25 +275,36 @@ func matchingCallPattern(obj types.Object, patterns []CallPattern) (CallPattern,
 	return CallPattern{}, false
 }
 
-func callTypeRoleName(info *types.Info, call *ast.CallExpr, source TypeSource) string {
+// callTypeRoleType resolves the type a pattern's type role points at, whether
+// it is spelled as an explicit type argument, inferred at an instantiation, or
+// taken from a value argument's type.
+func callTypeRoleType(info *types.Info, call *ast.CallExpr, source TypeSource) types.Type {
 	if source.GenericArgument != nil {
 		args := genericTypeArgExprs(call.Fun)
 		if len(args) > *source.GenericArgument {
-			return localNamedTypeName(info.TypeOf(args[*source.GenericArgument]))
+			return info.TypeOf(args[*source.GenericArgument])
 		}
-		return instantiatedTypeNameAt(info, call.Fun, *source.GenericArgument)
+		return instantiatedTypeArgAt(info, call.Fun, *source.GenericArgument)
 	}
 	if source.ArgumentType != nil && len(call.Args) > *source.ArgumentType {
-		return localNamedTypeName(info.TypeOf(call.Args[*source.ArgumentType]))
+		return info.TypeOf(call.Args[*source.ArgumentType])
 	}
-	return ""
+	return nil
+}
+
+// isTypeParam reports whether a type role resolved to a type parameter rather
+// than a concrete type. That is not a resolution failure: it means this call
+// site is not a generation target.
+func isTypeParam(value types.Type) bool {
+	if value == nil {
+		return false
+	}
+	_, ok := unaliasPtr(value).(*types.TypeParam)
+	return ok
 }
 
 func localNamedTypeName(value types.Type) string {
-	if pointer, ok := value.(*types.Pointer); ok {
-		value = pointer.Elem()
-	}
-	named, ok := value.(*types.Named)
+	named, ok := unaliasPtr(value).(*types.Named)
 	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
 		return ""
 	}
@@ -358,8 +375,11 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 		arg := structTagGet(tag, "arg")
 		dependsOn := structTagGet(tag, "dependon")
 		falsy := structTagGet(tag, "falsy")
+		secret := structTagGet(tag, "secret")
 
-		ft := f.Type()
+		// An alias is transparent here: it must bind as the type it names, not
+		// fall through to that type's underlying form.
+		ft := types.Unalias(f.Type())
 		if named, ok := ft.(*types.Named); ok {
 			if underlying, ok := named.Underlying().(*types.Struct); ok {
 				nested, err := c.fields(underlying, joinConfigKey(keyPrefix, key))
@@ -378,6 +398,7 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 					Arg:       arg,
 					DependsOn: dependsOn,
 					Falsy:     falsy,
+					Secret:    secret,
 				})
 				continue
 			}
@@ -393,21 +414,24 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 					return nil, fmt.Errorf("%s: %w", f.Name(), err)
 				}
 				fields = append(fields, cbcg.Field{
-					GoName:   f.Name(),
-					Key:      key,
-					Kind:     cbcg.FieldStructSlice,
-					ElemType: elem.Obj().Name(),
-					Nested:   nested,
-					Default:  def,
-					Opt:      opt,
-					Env:      env,
-					Help:     help,
-					Arg:      arg,
+					GoName:    f.Name(),
+					Key:       key,
+					Kind:      cbcg.FieldStructSlice,
+					ElemType:  elem.Obj().Name(),
+					Nested:    nested,
+					Default:   def,
+					Opt:       opt,
+					Env:       env,
+					Help:      help,
+					DependsOn: dependsOn,
+					Falsy:     falsy,
+					Secret:    secret,
+					Arg:       arg,
 				})
 				continue
 			}
 		}
-		kind, err := configFieldKind(ft)
+		kind, goType, err := configFieldKind(ft)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Name(), err)
 		}
@@ -415,6 +439,7 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 			GoName:    f.Name(),
 			Key:       key,
 			Kind:      kind,
+			GoType:    goType,
 			Default:   def,
 			Opt:       opt,
 			Env:       env,
@@ -422,6 +447,7 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 			Arg:       arg,
 			DependsOn: dependsOn,
 			Falsy:     falsy,
+			Secret:    secret,
 		})
 	}
 	return fields, nil
@@ -432,8 +458,9 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 // which the generated code names directly. Other slices return a nil struct so
 // the caller falls through to the scalar-slice kinds.
 func configElementStruct(field *types.Var, slice *types.Slice) (*types.Named, *types.Struct, error) {
-	if pointer, ok := slice.Elem().(*types.Pointer); ok {
-		if named, ok := pointer.Elem().(*types.Named); ok {
+	elem := types.Unalias(slice.Elem())
+	if pointer, ok := elem.(*types.Pointer); ok {
+		if named, ok := types.Unalias(pointer.Elem()).(*types.Named); ok {
 			if _, ok := named.Underlying().(*types.Struct); ok {
 				return nil, nil, fmt.Errorf("use []%s instead of []*%s for an array of tables",
 					named.Obj().Name(), named.Obj().Name())
@@ -441,7 +468,7 @@ func configElementStruct(field *types.Var, slice *types.Slice) (*types.Named, *t
 		}
 		return nil, nil, nil
 	}
-	named, ok := slice.Elem().(*types.Named)
+	named, ok := elem.(*types.Named)
 	if !ok {
 		return nil, nil, nil
 	}
@@ -468,39 +495,60 @@ func (c *configFieldCollector) elementFields(elem *types.Named, st *types.Struct
 	return c.fields(st, keyPrefix)
 }
 
-func configFieldKind(t types.Type) (cbcg.FieldKind, error) {
+// configFieldKind classifies a field type. For an integer it also returns the
+// Go integer type the generated code must assign, so a sized field keeps its
+// width instead of being narrowed to int.
+func configFieldKind(t types.Type) (cbcg.FieldKind, string, error) {
 	// time.Duration must be matched by name: its underlying type is int64, so
 	// the basic switch below would bind it as an int and reject "5s".
 	if isTimeDuration(t) {
-		return cbcg.FieldDuration, nil
+		return cbcg.FieldDuration, "", nil
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		switch u.Kind() {
 		case types.String:
-			return cbcg.FieldString, nil
+			return cbcg.FieldString, "", nil
 		case types.Bool:
-			return cbcg.FieldBool, nil
+			return cbcg.FieldBool, "", nil
 		case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
 			types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
-			return cbcg.FieldInt, nil
+			goType, err := integerGoTypeName(t)
+			if err != nil {
+				return 0, "", err
+			}
+			return cbcg.FieldInt, goType, nil
 		default:
-			return 0, fmt.Errorf("unsupported basic type %s", u)
+			return 0, "", fmt.Errorf("unsupported basic type %s", u)
 		}
 	case *types.Slice:
 		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.String {
-			return cbcg.FieldStringSlice, nil
+			return cbcg.FieldStringSlice, "", nil
 		}
-		return 0, fmt.Errorf("only []string slices supported in configbind v1")
+		return 0, "", fmt.Errorf("only []string slices supported in configbind v1")
 	default:
-		return 0, fmt.Errorf("unsupported field type %s", t)
+		return 0, "", fmt.Errorf("unsupported field type %s", t)
 	}
 }
 
-// isTimeDuration reports whether t is exactly time.Duration. A locally defined
-// named type whose underlying type is time.Duration does not qualify.
+// integerGoTypeName is the Go type name the generated assignment converts to.
+// Only a predeclared integer type, or an alias of one, is supported: a defined
+// type would need its own name for the conversion and its underlying width for
+// the parse, and carrying both is out of scope for v1. Until then it fails
+// here rather than emitting an assignment that does not compile.
+func integerGoTypeName(t types.Type) (string, error) {
+	basic, ok := types.Unalias(t).(*types.Basic)
+	if !ok {
+		return "", fmt.Errorf("defined integer type %s is unsupported; use a predeclared integer type", t)
+	}
+	return basic.Name(), nil
+}
+
+// isTimeDuration reports whether t is exactly time.Duration, including through
+// an alias. A locally defined named type whose underlying type is
+// time.Duration does not qualify.
 func isTimeDuration(t types.Type) bool {
-	named, ok := t.(*types.Named)
+	named, ok := types.Unalias(t).(*types.Named)
 	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
 		return false
 	}

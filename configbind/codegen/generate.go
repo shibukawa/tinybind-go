@@ -83,19 +83,23 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 	// known lets dependon parents be checked against the keys generated in this
 	// run. A parent bound in another package is invisible here and passes.
 	known := knownFieldKinds(specs)
+	knownFalsy, err := knownFalsyChoices(specs)
+	if err != nil {
+		return nil, fmt.Errorf("configbind/codegen: %w", err)
+	}
 	for i, s := range specs {
 		if s.PackagePath == "" {
 			s.PackagePath = packageName
 		}
 		registerName := fmt.Sprintf("register%sDefinition%d", s.TypeName, indexOffset+i)
-		var err error
+		var genErr error
 		if s.SubCommand {
-			err = emitSubCommandType(&b, s, registerName)
+			genErr = emitSubCommandType(&b, s, registerName)
 		} else {
-			err = emitType(&b, s, registerName, known)
+			genErr = emitType(&b, s, registerName, known, knownFalsy)
 		}
-		if err != nil {
-			return nil, err
+		if genErr != nil {
+			return nil, genErr
 		}
 	}
 
@@ -144,7 +148,7 @@ func specsNeedTime(specs []Spec) bool {
 	return false
 }
 
-func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]FieldKind) error {
+func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]FieldKind, knownFalsy map[string]string) error {
 	if s.TypeName == "" || s.Prefix == "" {
 		return fmt.Errorf("configbind/codegen: TypeName and Prefix required")
 	}
@@ -156,13 +160,23 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]Fie
 	if err := checkTableArrayFields(s.Fields); err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
 	}
+	if err := checkStructFieldTags("", s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 	keys := collectKeys(s.Prefix, s.Fields)
 	defaults := collectDefaults(s.Prefix, s.Fields)
-	dependsOn, err := collectDependsOn(s.Prefix, s.Fields, known)
+	falsy, err := collectFalsy(s.Prefix, s.Fields)
 	if err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
 	}
-	falsy, err := collectFalsy(s.Prefix, s.Fields)
+	// A number or duration parent needs its own falsy choice, and that parent
+	// may live in another spec of this run, so the whole run's falsy map feeds
+	// the check.
+	dependsOn, err := collectDependsOn(s.Prefix, s.Fields, known, knownFalsy)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
+	secrets, err := collectSecrets(s.Prefix, s.Fields)
 	if err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
 	}
@@ -198,11 +212,17 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]Fie
 		b.WriteString("\t\t},\n")
 	}
 	if len(dependsOn) > 0 {
-		b.WriteString("\t\tDependsOn: map[string]string{\n")
+		b.WriteString("\t\tDependsOn: map[string][]string{\n")
 		for _, k := range keys {
-			if parent, ok := dependsOn[k]; ok {
-				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(parent))
+			parents, ok := dependsOn[k]
+			if !ok {
+				continue
 			}
+			quoted := make([]string, 0, len(parents))
+			for _, parent := range parents {
+				quoted = append(quoted, strconv.Quote(parent))
+			}
+			fmt.Fprintf(b, "\t\t\t%s: {%s},\n", strconv.Quote(k), strings.Join(quoted, ", "))
 		}
 		b.WriteString("\t\t},\n")
 	}
@@ -211,6 +231,15 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]Fie
 		for _, k := range keys {
 			if value, ok := falsy[k]; ok {
 				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(value))
+			}
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(secrets) > 0 {
+		b.WriteString("\t\tSecrets: map[string]string{\n")
+		for _, k := range keys {
+			if mode, ok := secrets[k]; ok {
+				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(mode))
 			}
 		}
 		b.WriteString("\t\t},\n")
@@ -275,8 +304,11 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 			name string
 			set  bool
 		}{
-			{"dependon", field.Field.DependsOn != ""},
+			// Parents and Secret include what a struct above the field
+			// declared, so a tag written there is caught here too.
+			{"dependon", len(field.Parents) > 0},
 			{"falsy", field.Field.Falsy != ""},
+			{"secret", field.Secret != ""},
 		} {
 			if tag.set {
 				return fmt.Errorf("configbind/codegen: subcommand %s: field %s cannot use %s; subcommand fields are not overlay-backed",
@@ -363,25 +395,68 @@ type scaffoldCodegenField struct {
 	Field Field
 	// Nested holds the element fields of an array of tables, keyed relative to Key.
 	Nested []scaffoldCodegenField
+	// Parents are the absolute dependon parents this key answers to: its own
+	// tag plus every tag declared on a struct above it.
+	Parents []string
+	// Secret is the disclosure mode in force here, from this field's own tag or
+	// the nearest struct above it that declared one.
+	Secret string
 }
 
 // flattenFields returns the leaf fields reachable by a single config key.
 // Arrays of tables are skipped: their element fields are addressed per element,
 // not by one stable key, so they have no flag, env, or default of their own.
+//
+// A dependon or secret tag on a nested struct covers the whole subtree, so the
+// walk carries both down; a leaf's own dependon adds to the inherited parents
+// rather than replacing them, because both conditions have to hold for the key
+// to be worth printing.
 func flattenFields(prefix string, fields []Field) []scaffoldCodegenField {
+	return flattenInheriting(prefix, fields, nil, "")
+}
+
+func flattenInheriting(prefix string, fields []Field, parents []string, secret string) []scaffoldCodegenField {
 	var result []scaffoldCodegenField
 	for _, field := range fields {
 		key := joinKey(prefix, field.Key)
+		fieldParents := parents
+		if parent := resolveParentKey(prefix, field.DependsOn); parent != "" {
+			fieldParents = append(append([]string(nil), parents...), parent)
+		}
+		fieldSecret := secret
+		if field.Secret != "" {
+			fieldSecret = field.Secret
+		}
 		switch field.Kind {
 		case FieldStruct:
-			result = append(result, flattenFields(key, field.Nested)...)
+			result = append(result, flattenInheriting(key, field.Nested, fieldParents, fieldSecret)...)
 		case FieldStructSlice:
 			continue
 		default:
-			result = append(result, scaffoldCodegenField{Key: key, Field: field})
+			result = append(result, scaffoldCodegenField{
+				Key:     key,
+				Field:   field,
+				Parents: fieldParents,
+				Secret:  fieldSecret,
+			})
 		}
 	}
 	return result
+}
+
+// resolveParentKey turns one dependon tag into an absolute config key. A
+// leading dot makes it relative to the struct the tag is written in, which is
+// what lets one shared struct type name a sibling under every prefix it is
+// embedded at; anything else is already absolute.
+func resolveParentKey(prefix, tag string) string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return ""
+	}
+	if rest, ok := strings.CutPrefix(tag, "."); ok {
+		return joinKey(prefix, strings.TrimSpace(rest))
+	}
+	return tag
 }
 
 // flattenScaffoldFields is flattenFields plus one entry per array of tables,
@@ -463,6 +538,39 @@ func rejectTableArrays(fields []Field) error {
 			}
 		case FieldStructSlice:
 			return fmt.Errorf("field %s: a subcommand cannot take an array of tables", field.GoName)
+		}
+	}
+	return nil
+}
+
+// checkStructFieldTags rejects the tags a struct field cannot carry. dependon
+// and secret describe a whole subtree and are propagated to its leaves, but
+// falsy names one value, which a struct does not have. An array of tables is
+// addressed per element, so none of the three has anywhere to land.
+func checkStructFieldTags(prefix string, fields []Field) error {
+	for _, field := range fields {
+		key := joinKey(prefix, field.Key)
+		switch field.Kind {
+		case FieldStruct:
+			if field.Falsy != "" {
+				return fmt.Errorf("field %s: falsy applies to a leaf field, not to the nested struct %s", field.GoName, key)
+			}
+			if err := checkStructFieldTags(key, field.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			for _, tag := range []struct {
+				name string
+				set  bool
+			}{
+				{"dependon", field.DependsOn != ""},
+				{"falsy", field.Falsy != ""},
+				{"secret", field.Secret != ""},
+			} {
+				if tag.set {
+					return fmt.Errorf("field %s: %s does not apply to the array of tables %s; its elements have no stable key", field.GoName, tag.name, key)
+				}
+			}
 		}
 	}
 	return nil
@@ -618,19 +726,30 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 				b.WriteString("\t}\n")
 			}
 		case FieldInt:
+			// Parsing at the field's own width keeps an int64 field from being
+			// narrowed to int, and turns an out-of-range value into an error
+			// instead of a wrapped one.
+			spec, err := codegen.IntFieldSpecOf(f.GoType)
+			if err != nil {
+				return fmt.Errorf("field %s: %w", f.GoName, err)
+			}
+			parse := "strconv.ParseInt"
+			if !spec.Signed {
+				parse = "strconv.ParseUint"
+			}
 			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
-			b.WriteString("\t\tn, err := strconv.ParseInt(v, 10, 64)\n")
+			fmt.Fprintf(b, "\t\tn, err := %s(v, 10, %d)\n", parse, spec.BitSize)
 			b.WriteString("\t\tif err != nil {\n")
 			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", scope.diagKey(full))
 			b.WriteString("\t\t}\n")
-			fmt.Fprintf(b, "\t\t%s = int(n)\n", access)
+			fmt.Fprintf(b, "\t\t%s = %s(n)\n", access, spec.Name)
 			if f.Default != "" {
-				value, err := strconv.ParseInt(f.Default, 10, 64)
+				literal, err := spec.ParseLiteral(f.Default)
 				if err != nil {
-					return fmt.Errorf("invalid int default %q for %s", f.Default, f.GoName)
+					return fmt.Errorf("invalid %s default %q for %s", spec.Name, f.Default, f.GoName)
 				}
 				b.WriteString("\t} else {\n")
-				fmt.Fprintf(b, "\t\t%s = %s\n", access, strconv.FormatInt(value, 10))
+				fmt.Fprintf(b, "\t\t%s = %s\n", access, literal)
 				b.WriteString("\t}\n")
 			} else {
 				b.WriteString("\t}\n")
@@ -723,6 +842,25 @@ func collectKeys(prefix string, fields []Field) []string {
 }
 
 // knownFieldKinds indexes every Bind key emitted in this generation run by kind.
+// knownFalsyChoices is the run's falsy map, which a dependon check needs when
+// the parent it names lives in another spec of the same run.
+func knownFalsyChoices(specs []Spec) (map[string]string, error) {
+	out := map[string]string{}
+	for _, spec := range specs {
+		if spec.SubCommand {
+			continue
+		}
+		falsy, err := collectFalsy(spec.Prefix, spec.Fields)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range falsy {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
 func knownFieldKinds(specs []Spec) map[string]FieldKind {
 	known := map[string]FieldKind{}
 	for _, spec := range specs {
@@ -736,26 +874,25 @@ func knownFieldKinds(specs []Spec) map[string]FieldKind {
 	return known
 }
 
-// collectDependsOn maps each dependon-tagged key to its parent key, rejecting
-// the mistakes that are visible at generation time. A parent that belongs to
-// another package is absent from known and is accepted as-is.
-func collectDependsOn(prefix string, fields []Field, known map[string]FieldKind) (map[string]string, error) {
-	out := map[string]string{}
+// collectDependsOn maps each dependent key to every parent it answers to: the
+// key's own dependon tag plus the tags of the structs it sits under. It rejects
+// the mistakes visible at generation time; a parent that belongs to another
+// package is absent from known and is accepted as-is.
+func collectDependsOn(prefix string, fields []Field, known map[string]FieldKind, falsy map[string]string) (map[string][]string, error) {
+	out := map[string][]string{}
 	for _, field := range flattenFields(prefix, fields) {
-		parent := strings.TrimSpace(field.Field.DependsOn)
-		if parent == "" {
-			continue
+		for _, parent := range field.Parents {
+			if strings.Contains(parent, ",") {
+				return nil, fmt.Errorf("field %s: dependon takes one parent key, got %q", field.Field.GoName, parent)
+			}
+			if parent == field.Key {
+				return nil, fmt.Errorf("field %s: dependon refers to itself", field.Field.GoName)
+			}
+			if err := checkParentKind(field.Field.GoName, parent, known, falsy); err != nil {
+				return nil, err
+			}
+			out[field.Key] = appendParent(out[field.Key], parent)
 		}
-		if strings.Contains(parent, ",") {
-			return nil, fmt.Errorf("field %s: dependon takes one parent key, got %q", field.Field.GoName, parent)
-		}
-		if parent == field.Key {
-			return nil, fmt.Errorf("field %s: dependon refers to itself", field.Field.GoName)
-		}
-		if kind, ok := known[parent]; ok && kind != FieldString && kind != FieldBool {
-			return nil, fmt.Errorf("field %s: dependon parent %q must be a string or bool field", field.Field.GoName, parent)
-		}
-		out[field.Key] = parent
 	}
 	if err := checkDependencyCycles(out); err != nil {
 		return nil, err
@@ -763,9 +900,41 @@ func collectDependsOn(prefix string, fields []Field, known map[string]FieldKind)
 	return out, nil
 }
 
-// collectFalsy maps each falsy-tagged key to the choice that means "off". The
-// tag is written for enum-like string options, so other kinds are rejected:
-// bool already has false, and a number or duration has no such choice.
+// checkParentKind states which kinds have a defined "empty". A string is empty
+// when it is "", a bool when it is false; a number or duration has no such
+// value of its own, because zero is a deliberate setting, so it may only be a
+// parent once its own falsy tag says which value means off.
+func checkParentKind(owner, parent string, known map[string]FieldKind, falsy map[string]string) error {
+	kind, ok := known[parent]
+	if !ok {
+		return nil
+	}
+	switch kind {
+	case FieldString, FieldBool:
+		return nil
+	case FieldInt, FieldDuration:
+		if falsy[parent] == "" {
+			return fmt.Errorf("field %s: dependon parent %q is a number or duration, so it needs its own falsy tag to say which value means off", owner, parent)
+		}
+		return nil
+	default:
+		return fmt.Errorf("field %s: dependon parent %q must be a string, bool, int, or duration field", owner, parent)
+	}
+}
+
+func appendParent(parents []string, parent string) []string {
+	for _, existing := range parents {
+		if existing == parent {
+			return parents
+		}
+	}
+	return append(parents, parent)
+}
+
+// collectFalsy maps each falsy-tagged key to the choice that means "off". A
+// string names one of its own enum choices; a number or duration names the
+// zero-ish value that disables the feature it configures. Bool is excluded
+// because false already says it, and so are the kinds with no single value.
 func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
 	out := map[string]string{}
 	for _, field := range flattenFields(prefix, fields) {
@@ -773,29 +942,66 @@ func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
 		if value == "" {
 			continue
 		}
-		if field.Field.Kind != FieldString {
-			return nil, fmt.Errorf("field %s: falsy applies to string fields only", field.Field.GoName)
+		switch field.Field.Kind {
+		case FieldString:
+		case FieldInt:
+			spec, err := codegen.IntFieldSpecOf(field.Field.GoType)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", field.Field.GoName, err)
+			}
+			if _, err := spec.ParseLiteral(value); err != nil {
+				return nil, fmt.Errorf("field %s: falsy %q is not a valid %s: %w", field.Field.GoName, value, spec.Name, err)
+			}
+		case FieldDuration:
+			if _, err := time.ParseDuration(value); err != nil {
+				return nil, fmt.Errorf("field %s: falsy %q is not a duration: %w", field.Field.GoName, value, err)
+			}
+		default:
+			return nil, fmt.Errorf("field %s: falsy applies to string, int, and duration fields only", field.Field.GoName)
 		}
 		out[field.Key] = value
 	}
 	return out, nil
 }
 
+// collectSecrets maps each key to its disclosure mode, including the keys that
+// inherit one from a struct above them.
+func collectSecrets(prefix string, fields []Field) (map[string]string, error) {
+	out := map[string]string{}
+	for _, field := range flattenFields(prefix, fields) {
+		if field.Secret == "" {
+			continue
+		}
+		switch field.Secret {
+		case "hide", "mask", "show":
+		default:
+			return nil, fmt.Errorf("field %s: secret must be hide, mask, or show, got %q", field.Field.GoName, field.Secret)
+		}
+		out[field.Key] = field.Secret
+	}
+	return out, nil
+}
+
 // checkDependencyCycles rejects a dependon chain that loops back on itself.
 // Only same-run edges are visible, which is where an author-written cycle lives.
-func checkDependencyCycles(edges map[string]string) error {
-	for start := range edges {
-		seen := map[string]bool{start: true}
-		for key := start; ; {
-			parent, ok := edges[key]
-			if !ok {
-				break
-			}
+func checkDependencyCycles(edges map[string][]string) error {
+	var walk func(key string, seen map[string]bool) error
+	walk = func(key string, seen map[string]bool) error {
+		for _, parent := range edges[key] {
 			if seen[parent] {
 				return fmt.Errorf("dependon cycle through %q", parent)
 			}
 			seen[parent] = true
-			key = parent
+			if err := walk(parent, seen); err != nil {
+				return err
+			}
+			delete(seen, parent)
+		}
+		return nil
+	}
+	for start := range edges {
+		if err := walk(start, map[string]bool{start: true}); err != nil {
+			return err
 		}
 	}
 	return nil

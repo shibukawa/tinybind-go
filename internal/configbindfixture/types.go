@@ -8,10 +8,15 @@ type WebServerConfig struct {
 	Host        string        `default:"localhost" help:"listen host"`
 	ReadTimeout time.Duration `default:"5s" help:"request read timeout"`
 	CorsOrigins []string      `help:"CORS origins"`
-	Tracing     string        `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
-	TracingURL  string        `dependon:"webserver.tracing" help:"tracing collector URL"`
-	TLS         TLSConfig
-	Routes      []RouteConfig `help:"static routes, one [[webserver.routes]] table each"`
+	// MaxRequestBody has no default, so it stays out of provenance until a
+	// source sets it. It is here to keep a sized integer in the compiled path.
+	MaxRequestBody int64 `help:"maximum request body in bytes"`
+	// AdminToken is set but never printed: secret hide drops it from provenance.
+	AdminToken string `default:"seed-token" secret:"hide" help:"admin API token"`
+	Tracing    string `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
+	TracingURL string `dependon:"webserver.tracing" help:"tracing collector URL"`
+	TLS        TLSConfig
+	Routes     []RouteConfig `help:"static routes, one [[webserver.routes]] table each"`
 }
 
 // RouteConfig is one [[webserver.routes]] element.
@@ -24,8 +29,10 @@ type RouteConfig struct {
 
 // TLSConfig is nested under webserver.tls.
 type TLSConfig struct {
-	Enabled  bool   `default:"false" help:"enable TLS"`
-	CertPath string `env:"TLS_CERT_FILE" dependon:"webserver.tls.enabled" help:"TLS certificate path"`
+	Enabled bool `default:"false" help:"enable TLS"`
+	// The relative parent resolves to webserver.tls.enabled, the same key the
+	// absolute form named, and keeps working if this struct is embedded twice.
+	CertPath string `env:"TLS_CERT_FILE" dependon:".enabled" help:"TLS certificate path"`
 }
 
 // MigrateOptions is a CLI-only subcommand fixture.

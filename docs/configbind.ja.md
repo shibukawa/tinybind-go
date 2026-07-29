@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - 設定構造体と `configbind.Bind[T]` の利用箇所の発見
 - 構造体 field から TOML key、CLI option、環境変数名の決定
-- `default`、`key`、`opt`、`env`、`help`、`falsy`、`dependon` tag の反映
+- `default`、`key`、`opt`、`env`、`help`、`falsy`、`dependon`、`secret` tag の反映
 - nested struct、`[]string`、array of tables から作る struct slice の設定 mapping
 - default → TOML → env → CLI の merge
 - string、bool、int、`time.Duration`、`[]string` への型変換
@@ -187,10 +187,16 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | 環境変数名を正確な名前で上書き | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
-| `falsy:"value"` | string option において「off」を意味する選択肢 | `falsy:"off"` |
+| `falsy:"value"` | string、int、duration の option において「off」を意味する値 | `falsy:"off"`、`falsy:"0s"` |
 | `dependon:"key"` | 指定 key が空の間、この field を provenance から隠す | `dependon:"webserver.tls.enabled"` |
+| `dependon:".key"` | 同上。tag を書いた構造体の中の key を指す | `dependon:".enabled"` |
+| `secret:"hide"` | provenance に一切出力しない | `secret:"hide"` |
+| `secret:"mask"` | 値の代わりに `*****` を出力する | `secret:"mask"` |
+| `secret:"show"` | key 名が機密に見えても値をそのまま出力する | `secret:"show"` |
 
-`falsy` と `dependon` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
+`falsy`、`dependon`、`secret` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
+
+`dependon` と `secret` は入れ子の構造体 field にも書けます。その場合は subtree 全体に効きます。`falsy` は書けません。値を 1 つ指名する tag であり、構造体には値がないためです。
 
 ### godoc を説明の source にする
 
@@ -620,7 +626,11 @@ for _, entry := range result.Provenance() {
 
 この slice は sort されているのではなく、順番が保たれています。binding は `Bind` を呼んだ順、その中の key は構造体の定義順で、nested struct は宣言された位置に展開されます。どの binding にも属さない key — たとえば誰かの TOML file に紛れ込んだ entry — は、既知の key のあとに辞書順で続きます。
 
-slice を受け取る前に filter が 2 つ走ります。key path に `password`、`secret`、`token`、`apikey`、`api_key`、`credential`、`access_key` を含む key は、値の代わりに `*****` を返します。もう 1 つが `dependon` tag による抑制で、次節で説明します。
+slice を受け取る前に filter が 2 つ走ります。
+
+1 つ目は開示制御です。`secret` tag があればそれが決めます。`hide` は entry ごと落とし、`mask` は `*****` を返し、`show` は値をそのまま出力します。tag のない field は、key path に `password`、`secret`、`token`、`apikey`、`api_key`、`credential`、`access_key`、`dsn`、`private_key` を含む場合に mask されます。DSN は password を URL に埋め込むのが普通なので、この一覧に入ります。部分一致なので `token_bucket_size` のような無害な名前も mask されます。逃げ道が `secret:"show"` です。`ProvenanceEntry.Masked` は `Value` が placeholder かどうかを返すので、出力を加工する側が mask 文字列と比較する必要はありません。
+
+2 つ目が `dependon` tag による抑制で、次節で説明します。
 
 ### 無効な機能の設定を隠す
 
@@ -635,11 +645,41 @@ type WebServerConfig struct {
 
 親は prefix を含む完全な設定 key なので、別 package が bind した key にも依存できます。`webserver.tracing` が空と読める間、`webserver.tracing_url` は provenance の slice に現れません。`webserver.tracing` 自身は出力されます。親が空であること自体が、子が消えた理由だからです。親が隠れている場合は、その親に依存する field も連鎖して隠れます。
 
-「空」とは空文字と `false` です。`int` の 0、空の list、0 秒の duration は「設定されていない」ではなく意図した設定なので、空とは扱いません。enum 型の option にはもう 1 つの形が要り、それが `falsy` です。「off」を意味する選択肢を宣言すると、その値は依存 field にとって空として扱われ、さらに何も値を設定しなかった場合の値としても使われます。
+先頭の `.` は、tag を書いた構造体の中の key を指します。同じ構造体型を複数の prefix に埋め込めるのはこの形のおかげです。
+
+```go
+type EndpointConfig struct {
+	Enabled bool
+	Path    string `dependon:".enabled" help:"URL path"`
+}
+
+type ServerConfig struct {
+	Health    EndpointConfig
+	Readiness EndpointConfig
+}
+```
+
+tag は 1 つでも、`server.health.path` は `server.health.enabled` に、`server.readiness.path` は `server.readiness.enabled` に従います。
+
+入れ子の構造体 field に書いた場合は subtree 全体に効くので、subsystem 単位の無効化を leaf ごとに繰り返す必要はありません。subtree の中の leaf が自分の親も持つ場合は両方に従い、どちらかが空なら出力されません。
+
+「空」とは空文字と `false` です。`int` の 0、空の list、0 秒の duration は「設定されていない」ではなく意図した設定なので、空とは扱いません。「off」が別の値である option にはもう 1 つの形が要り、それが `falsy` です。「off」を意味する値を宣言すると、その値は依存 field にとって空として扱われ、さらに何も値を設定しなかった場合の値としても使われます。
 
 - `default` tag がなく、どの入力元も key を設定しない場合: `off` になります。
 - 入力元が key を `""` に設定した場合: `off` になり、`Place` はその入力元のままです。
 - `default` tag がある場合: default が優先され、`falsy` は使われません。
+
+数値と duration も同じです。閾値 0 で、それに依存する機能ごと無効にできます。
+
+```go
+type SQLConfig struct {
+	// 0 なら slow statement 検出を止め、EXPLAIN も無効になる。
+	SlowThreshold time.Duration `falsy:"0s" help:"slow statement threshold"`
+	Explain       bool          `dependon:"sql.slow_threshold" help:"run EXPLAIN on slow statements"`
+}
+```
+
+比較は文字列ではなく値で行うので、`0`、`0s`、`0ms` はすべて off と読めます。`falsy` tag がない数値や duration は、そもそも親にできません。0 を無効の意味だと推測するのではなく、生成時にエラーになります。
 
 いずれも bind 先の構造体には影響しません。`TracingURL` は入力元の値で populate されますし、CLI flag や help も変わりません。雛形も全 field を出力し続けます。初回 load より前に option を発見できなくなっては困るためです。
 

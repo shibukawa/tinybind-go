@@ -11,10 +11,16 @@ intent: keep effective-config output readable by suppressing settings of a disab
 problem: an unused subsystem still prints its whole default block, burying the settings in use
 tag: decision:dependon-tag-form
 policy: rule:dependent-key-visibility
-enum_parents:
+off_valued_parents:
   tag: decision:falsy-tag-form
   policy: rule:falsy-value-resolution
-  purpose: let an enum-style parent declare which choice means "off"
+  purpose: let a parent whose off state is not "" or false declare which value means off
+  kinds: enum-style strings, and numbers or durations whose zero disables a feature
+shared_struct_types:
+  relative_parent: one tag on a shared struct type resolves per prefix it is embedded at
+  subtree_parent: a tag on a nested struct field covers every field below it
+  conjunctive: a key with several parents needs all of them non-empty
+  detail: decision:shared-config-struct-instances
 surfaces:
   - provenance records returned from api:configbind-provenance only
 non_goals:
@@ -24,9 +30,9 @@ non_goals:
   - hiding scaffold lines, which must stay discoverable before any load
   - inferring a parent from key path nesting without the tag
 codegen:
-  - resolve the parent key and kind at generation time
-  - emit the parent key into the generated definition alongside the field
-  - unknown parent, non string or bool parent, self-reference, or cycle fails generation
+  - resolve every parent key and kind at generation time
+  - emit the parent keys into the generated definition alongside the field
+  - a list parent, a number or duration parent with no falsy tag, self-reference, or a cycle fails generation
 related:
   - decision:dependon-tag-form
   - rule:dependent-key-visibility
@@ -44,7 +50,11 @@ acceptance:
   - middleware.rdb.dsn itself still appears in provenance while empty
   - setting dsn makes pool_size appear again with its own winning Place
   - 'a bool parent tls.enabled=false hides every field that depends on it'
-  - a parent with int value 0 does not hide its dependents
+  - a parent with int value 0 and no falsy tag does not hide its dependents
+  - 'a slow_threshold duration with falsy:"0s" hides its dependents at 0, 0s, and 0ms'
+  - 'one dependon:".enabled" on a shared struct resolves per embedding prefix'
+  - a dependon on a nested struct field hides every key of that subtree
+  - a key under a dependent struct that also names its own parent needs both to be set
   - a hidden parent hides dependents of dependents
   - hidden fields are still populated in the bound struct
   - scaffold output still lists the field regardless of its parent
