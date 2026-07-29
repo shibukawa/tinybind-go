@@ -448,6 +448,35 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 The `env` value is used exactly as written and must begin with a letter or `_`. Assigning the same environment name to multiple fields is a generation error. Use `env:"-"` for a field that must not accept environment input.
 
+### Referencing the environment from a configuration file
+
+Write `${NAME}` inside a TOML string and the load expands it from the environment. A reference does not have to span the whole value; it can sit anywhere inside the string.
+
+```toml
+[[database]]
+name = "primary"
+dsn = "postgres://app:${PRIMARY_DB_PASSWORD}@db1.internal:5432/app"
+
+[[database]]
+name = "replica"
+dsn = "postgres://app:${REPLICA_DB_PASSWORD}@db2.internal:5432/app"
+```
+
+This exists mainly to get credentials into the elements of an array of tables. An element has no CLI option and no environment variable of its own, so a reference is what lets the file keep owning the element count while the values come from outside.
+
+The rules:
+
+- Only strings in the TOML file expand. Keys, table headers, numbers, and booleans do not. Array elements and the fields of `[[...]]` elements do.
+- An undefined name fails the load. The file layer outranks defaults, so expanding to an empty string would quietly erase a `default` tag value; failing at startup is easier to notice. A variable set to the empty string counts as defined and expands to `""`.
+- `$$` yields one literal `$`. A `$` followed by neither `{` nor `$` stays literal.
+- An expanded value still belongs to the file layer, so environment and CLI overrides keep their usual precedence.
+- A `${...}` written in an environment or CLI value stays literal.
+- A reference names a raw environment variable. Per-field environment names and `env:"-"` do not affect it.
+
+There is no `${NAME:-default}` fallback form.
+
+Note that an existing configuration file whose string values contain `$$` changes meaning.
+
 ## CLI subcommands
 
 `SubCommand[T]` declares a generated, CLI-only command branch. Its fields never
@@ -586,7 +615,10 @@ Element count is data, so an element has no CLI option and no environment
 variable: the TOML file is its only source. `default` still applies, once per
 element — the first route above gets `listing = false`. Tagging an element field
 with `opt` or `env` is a generation error rather than a tag that quietly does
-nothing, and a subcommand cannot take a slice of structs at all.
+nothing, and a subcommand cannot take a slice of structs at all. To inject a
+credential or a machine-specific path into an element, write a `${NAME}`
+reference in its value — see [referencing the environment from a configuration
+file](#referencing-the-environment-from-a-configuration-file).
 
 The element struct must be a named struct in the same package, held by value:
 `[]*RouteConfig` and a struct that reaches itself are both rejected during
