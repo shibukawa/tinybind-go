@@ -315,9 +315,36 @@ export component Card(label: string): html {
 
 この `head` の中では `style` と `script` の中身が生テキストとして扱われるので、CSS や JavaScript の波括弧がテンプレート構文と衝突しません。寄与は静的なマークアップである必要があります。マージ済み head は body の最初の1バイトより前に書かれるため、リクエストデータに依存できないからです。
 
-描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。
+描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。同一性はタグ単位なので、2 つの component が両方 `/shared.css` をリンクしてそれぞれ独自の style を宣言した場合、link は 1 つ、style ブロックは 2 つになります。
 
 その寄与には行き先が必要です。ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素が出力先になります。
+
+#### 寄与を調べる
+
+束縛済みの component は、自身の寄与をタグ単位で報告します。各タグを宣言した component も一緒に返ります。
+
+```go
+fragment := Badge(BadgeParams{Label: "new"})
+
+fragment.Head()
+// []string{`<link rel="stylesheet" href="/shared.css">`, `<style>.badge_uvkb9m { color: red }</style>`}
+
+fragment.HeadSources()
+// []string{"Badge (components.tb.html:5:1)", "Badge (components.tb.html:6:1)"}
+```
+
+`Head` と `HeadSources` は 1 つのリストに対する 2 つのビューです。長さも順序も同じなので、どちらの添字 `i` も同じタグを指します。`Wrapper` も同じ組を持つので、チェーンの要素がどちらの形かを知らずに調べられます。
+
+これは、寄与を配送できない呼び出し側のためのものです。ドキュメントシェルを含まないレスポンス — たとえば swap ライブラリ向けの部分描画 — にはマージ先の head がなく、寄与を捨てればスタイルの当たっていない領域が、どのログにも何も残さずに差し込まれます。拒否するのが安全側の選択で、`HeadSources` は、その報告が head のマークアップを出して読み手に grep させるのではなく、直すべき component を名指しするための手段です。
+
+```go
+if head := fragment.Head(); len(head) > 0 {
+	// component Badge (components.tb.html:5:1) declares <link rel="stylesheet" ...>
+	return fmt.Errorf("component %s declares %s", fragment.HeadSources()[0], head[0])
+}
+```
+
+`MergeHead` は重複を落としたマージ済みタグを返すので、対応する出自リストを持ちません。チェーンの各要素に自身の分を尋ねてください。
 
 ### スコープ付き style
 

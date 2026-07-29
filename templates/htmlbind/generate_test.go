@@ -37,7 +37,10 @@ func TestGenerateFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{})
+			// The filename reaches generated output through HeadSources, so it is
+			// passed as a stable slash-joined label rather than as the on-disk path,
+			// which would bake this checkout's layout into the golden.
+			got, err := htmlbind.Generate(name+"/input.txt", input, htmlbind.GenerateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

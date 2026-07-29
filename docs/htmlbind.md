@@ -345,10 +345,48 @@ the merged head is written before the first body byte, so it cannot depend on
 request data.
 
 Every component reachable from the rendered chain contributes, including
-components called from a body, and identical tags are emitted once.
+components called from a body, and identical tags are emitted once. Identity is
+per tag, so two components that both link `/shared.css` and then declare their
+own styles emit one link and two style blocks.
 
 Those contributions need somewhere to land. The document shell is the component
 that owns `html`, `head`, and `body`, and its `head` element is the destination.
+
+#### Inspecting contributions
+
+A bound component reports its own contributions, one entry per tag, together with
+the component that declared each one:
+
+```go
+fragment := Badge(BadgeParams{Label: "new"})
+
+fragment.Head()
+// []string{`<link rel="stylesheet" href="/shared.css">`, `<style>.badge_uvkb9m { color: red }</style>`}
+
+fragment.HeadSources()
+// []string{"Badge (components.tb.html:5:1)", "Badge (components.tb.html:6:1)"}
+```
+
+`Head` and `HeadSources` are two views of one list: same length, same order, so
+index `i` of either describes the same tag. `Wrapper` carries the same pair, so a
+chain member can be inspected without knowing which form it is.
+
+This is what a caller uses when it cannot deliver a contribution. A response with
+no document shell — a partial rendered for a swap library, say — has no head to
+merge into, and dropping a contribution would swap in an unstyled region with
+nothing in any log. Rejecting it is the safe choice, and `HeadSources` is how the
+report names the component to change rather than printing head markup the reader
+then has to grep for:
+
+```go
+if head := fragment.Head(); len(head) > 0 {
+	// component Badge (components.tb.html:5:1) declares <link rel="stylesheet" ...>
+	return fmt.Errorf("component %s declares %s", fragment.HeadSources()[0], head[0])
+}
+```
+
+`MergeHead` returns the merged tags with duplicates dropped, so it has no
+matching source list. Ask a chain member for its own.
 
 ### Scoped styles
 

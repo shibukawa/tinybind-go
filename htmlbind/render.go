@@ -12,10 +12,11 @@ import (
 // Generated code returns one from Bind<Name> for a component with a children
 // parameter.
 type Wrapper struct {
-	head     []string
-	hasAwait bool
-	validate func() error
-	render   func(*Renderer, Fragment) error
+	head        []string
+	headSources []string
+	hasAwait    bool
+	validate    func() error
+	render      func(*Renderer, Fragment) error
 }
 
 // Validate runs the wrapper's parameter check without rendering.
@@ -31,8 +32,9 @@ func (w Wrapper) Validate() error {
 // which field the unnamed slot binds to.
 func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment)) Wrapper {
 	wrapper := Wrapper{
-		head:     plan.Head,
-		hasAwait: plan.HasAwaitBlock,
+		head:        plan.Head,
+		headSources: plan.HeadSources,
+		hasAwait:    plan.HasAwaitBlock,
 		render: func(r *Renderer, children Fragment) error {
 			local := params
 			setChildren(&local, children)
@@ -48,8 +50,13 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 	return wrapper
 }
 
-// Head returns the wrapper's own head contributions.
+// Head returns the wrapper's own head contributions, one entry per tag.
 func (w Wrapper) Head() []string { return w.head }
+
+// HeadSources names the component that declared each Head entry, in the same
+// order and with the same length. It is the Wrapper form of the accessor
+// documented on Fragment.
+func (w Wrapper) HeadSources() []string { return w.headSources }
 
 // HasAwaitBlock reports whether rendering this wrapper can open an await
 // boundary. The child it wraps is counted separately, because a wrapper is
