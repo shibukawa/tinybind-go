@@ -9,14 +9,14 @@ default < TOML file < environment variable < CLI option
 ```
 
 > [!IMPORTANT]
-> configbind の TOML parser は標準 TOML のフルセットではなく、設定用途に絞った subset です。quoted key、inline table、array of tables、nested array などは利用できません。既存の一般的な TOML file をそのまま読み込む用途ではなく、対応範囲に合わせて設定 file を用意してください。詳しくは「[TOML file](#toml-file)」を参照してください。
+> configbind の TOML parser は標準 TOML のフルセットではなく、設定用途に絞った subset です。quoted key、inline table、nested array などは利用できません。既存の一般的な TOML file をそのまま読み込む用途ではなく、対応範囲に合わせて設定 file を用意してください。詳しくは「[TOML file](#toml-file)」を参照してください。
 
 ## 自動化されること
 
 - 設定構造体と `configbind.Bind[T]` の利用箇所の発見
 - 構造体 field から TOML key、CLI option、環境変数名の決定
 - `default`、`key`、`opt`、`env`、`help` tag の反映
-- nested struct と `[]string` の設定 mapping
+- nested struct、`[]string`、array of tables から作る struct slice の設定 mapping
 - default → TOML → env → CLI の merge
 - string、bool、int、`[]string` への型変換
 - 各設定値が最終的にどの入力元から来たかの記録
@@ -296,14 +296,30 @@ enabled = true
 cert_path = "/etc/myserver/server.crt"
 ```
 
+繰り返す設定は array of tables で書きます。`[[...]]` header 1つが1要素になり、struct の slice へ入ります。
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+`[[...]]` header 以降の key はすべてその要素に属するため、その table 自身の key は最初の要素より前に書きます。開いている要素の下の standard table header、たとえば `[webserver.routes.rewrite]` はその要素の sub-table です。同じ nest は dotted key（`rewrite.from = "/old"`）でも書けます。
+
 configbind が読む TOML は意図的に限定された subset です。
 
 - table、nested table、bare dotted key
 - string、bool、integer、float の scalar
 - primitive scalar の array
+- array of tables
 - comment
 
-quoted key、inline table、array of tables、nested array は利用できません。ここにある制限は1つではなく2つです。parser が受け付ける範囲と、struct field が受け取れる範囲。狭いのは後者です。float の TOML 値は parse できても、float field へ直接 bind することはできません。
+quoted key、inline table、nested array は利用できません。ここにある制限は1つではなく2つです。parser が受け付ける範囲と、struct field が受け取れる範囲。狭いのは後者です。float の TOML 値は parse できても、float field へ直接 bind することはできません。
 
 ## 設定 file の探索
 
@@ -528,6 +544,37 @@ WEBSERVER_TLS_CERT_PATH=production.crt \
 
 この場合、`CertPath` は env、`CorsOrigins` は CLI、`Enabled` は TOML、`Host` は default から取得されます。
 
+## 繰り返す設定
+
+struct の slice は array of tables から読み込まれます。
+
+```go
+type WebServerConfig struct {
+	Routes []RouteConfig `help:"static routes"`
+}
+
+type RouteConfig struct {
+	Path    string
+	Dir     string
+	Listing bool `default:"false"`
+}
+```
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+要素数そのものが data であるため、要素の field には CLI option も環境変数もありません。入力元は TOML file だけです。`default` は要素ごとに適用され、上の例では最初の route が `listing = false` になります。要素の field に `opt` や `env` を付けると、黙って無視されるのではなく生成時のエラーになります。subcommand は struct の slice を受け取れません。
+
+要素の型は同一 package の named struct を値で持つ必要があります。`[]*RouteConfig` と、自分自身へ到達する struct はどちらも生成時に拒否されます。scaffold は slice ごとに `[[...]]` block の例を1つ出力します。
+
 ## 複数の設定構造体
 
 複数の `Bind` target を登録し、1回の `Load` でまとめて適用できます。
@@ -596,8 +643,9 @@ func Load(opts LoadOptions) (*LoadResult, error)
 - `int`
 - `[]string`
 - 上記を持つ named nested struct
+- 同一 package の named struct を要素とする `[]T`（array of tables から読み込み）
 
-float、map、任意の slice、pointer、`time.Duration` などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
+float、map、その他の slice、pointer、`time.Duration` などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
 
 ```go
 type RawConfig struct {

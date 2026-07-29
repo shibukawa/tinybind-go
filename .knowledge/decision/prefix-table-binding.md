@@ -25,6 +25,7 @@ example:
     [webservice.tls]
     enabled = true
 nested_structs: standard nested tables only; no inline tables
+struct_slices: repeated [[prefix.key]] tables, one per element
 related:
   - api:configbind-bind
   - requirement:struct-registration

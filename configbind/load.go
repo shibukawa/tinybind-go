@@ -251,19 +251,31 @@ func mergeDocument(o *Overlay, doc minitoml.Document, place Place) error {
 		if !ok {
 			continue
 		}
-		if v.Kind == minitoml.KindArray {
+		switch v.Kind {
+		case minitoml.KindArray:
 			sl, err := v.AsStringSlice()
 			if err != nil {
 				return err
 			}
 			o.SetMulti(k, sl, place)
-			continue
+		case minitoml.KindTableArray:
+			// Each [[k]] element becomes its own overlay, keyed relative to k.
+			tables := make([]*Overlay, 0, len(v.Tables))
+			for _, table := range v.Tables {
+				element := NewOverlay()
+				if err := mergeDocument(element, table, place); err != nil {
+					return err
+				}
+				tables = append(tables, element)
+			}
+			o.SetTables(k, tables, place)
+		default:
+			s, err := v.AsString()
+			if err != nil {
+				return err
+			}
+			o.Set(k, s, place)
 		}
-		s, err := v.AsString()
-		if err != nil {
-			return err
-		}
-		o.Set(k, s, place)
 	}
 	return nil
 }

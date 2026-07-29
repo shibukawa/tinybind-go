@@ -9,14 +9,14 @@ default < TOML file < environment variable < CLI option
 ```
 
 > [!IMPORTANT]
-> configbind implements a configuration-focused TOML subset, not the complete TOML specification. Quoted keys, inline tables, arrays of tables, nested arrays, and some other TOML syntax are unsupported. Prepare configuration files for this supported subset rather than assuming that an arbitrary existing TOML document can be loaded. See [TOML files](#toml-files) for the complete list used by configbind.
+> configbind implements a configuration-focused TOML subset, not the complete TOML specification. Quoted keys, inline tables, nested arrays, and some other TOML syntax are unsupported. Prepare configuration files for this supported subset rather than assuming that an arbitrary existing TOML document can be loaded. See [TOML files](#toml-files) for the complete list used by configbind.
 
 ## What is automated
 
 - Discovering configuration structs used by `configbind.Bind[T]`
 - Deriving TOML keys, CLI options, and environment names from struct fields
 - Applying `default`, `key`, `opt`, `env`, and `help` tags
-- Mapping nested structs and `[]string`
+- Mapping nested structs, `[]string`, and slices of structs from arrays of tables
 - Merging defaults, TOML, environment, and CLI values
 - Converting values to string, bool, int, and `[]string`
 - Recording the winning source for every merged setting
@@ -296,14 +296,35 @@ enabled = true
 cert_path = "/etc/myserver/server.crt"
 ```
 
+A repeated setting uses an array of tables. Each `[[...]]` header starts one
+element, and the elements fill a slice of structs:
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+Every key after a `[[...]]` header belongs to that element, so the enclosing
+table's own keys must come before the first element. A standard table header
+under an open element, such as `[webserver.routes.rewrite]`, is that element's
+sub-table; the same nesting can be written inline with dotted keys
+(`rewrite.from = "/old"`).
+
 configbind intentionally reads a restricted TOML subset:
 
 - Tables, nested tables, and bare dotted keys
 - String, bool, integer, and float scalars
 - Arrays of primitive scalars
+- Arrays of tables
 - Comments
 
-Quoted keys, inline tables, arrays of tables, and nested arrays are not supported. There are really two limits here rather than one — what the parser accepts, and what a struct field can receive — and the second is the narrower of the two. A TOML float parses, yet it cannot be bound directly to a float field.
+Quoted keys, inline tables, and nested arrays are not supported. There are really two limits here rather than one — what the parser accepts, and what a struct field can receive — and the second is the narrower of the two. A TOML float parses, yet it cannot be bound directly to a float field.
 
 ## Configuration file discovery
 
@@ -528,6 +549,43 @@ WEBSERVER_TLS_CERT_PATH=production.crt \
 
 Here `CertPath` comes from the environment, `CorsOrigins` from CLI, `Enabled` from TOML, and `Host` from its default.
 
+## Repeated settings
+
+A slice of structs is filled from an array of tables:
+
+```go
+type WebServerConfig struct {
+	Routes []RouteConfig `help:"static routes"`
+}
+
+type RouteConfig struct {
+	Path    string
+	Dir     string
+	Listing bool `default:"false"`
+}
+```
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+Element count is data, so an element has no CLI option and no environment
+variable: the TOML file is its only source. `default` still applies, once per
+element — the first route above gets `listing = false`. Tagging an element field
+with `opt` or `env` is a generation error rather than a tag that quietly does
+nothing, and a subcommand cannot take a slice of structs at all.
+
+The element struct must be a named struct in the same package, held by value:
+`[]*RouteConfig` and a struct that reaches itself are both rejected during
+generation. The scaffold renders one example `[[...]]` block per slice.
+
 ## Multiple configuration structs
 
 Register multiple `Bind` targets and apply all of them with one `Load`:
@@ -596,8 +654,9 @@ The practical v1 field types are:
 - `int`
 - `[]string`
 - Named nested structs containing those types
+- `[]T` where `T` is a named struct in the same package, filled from an array of tables
 
-Floats, maps, arbitrary slices, pointers, and `time.Duration` cannot be bound directly. Receive them in a supported representation and convert after `Load`:
+Floats, maps, other slices, pointers, and `time.Duration` cannot be bound directly. Receive them in a supported representation and convert after `Load`:
 
 ```go
 type RawConfig struct {

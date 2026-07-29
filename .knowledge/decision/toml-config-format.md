@@ -18,12 +18,13 @@ example:
   - 'Bind[WebServiceConfig]("webservice") reads [webservice]'
   - nested struct fields use [webservice.child] tables
   - primitive arrays use TOML arrays of scalars
+  - slices of structs use arrays of tables [[prefix.child]]
 out_of_scope_v1:
   - YAML
   - JSON config files
   - HCL
   - inline tables
-  - arrays of tables
+  - arrays of inline tables
   - quoted keys
 related:
   - requirement:layered-config-load

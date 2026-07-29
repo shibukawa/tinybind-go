@@ -26,6 +26,7 @@ func registerWebServerConfigDefinition0() {
 			"webserver.cors_origins",
 			"webserver.tls.enabled",
 			"webserver.tls.cert_path",
+			"webserver.routes",
 		},
 		Defaults: map[string]string{
 			"webserver.port":        "8080",
@@ -46,6 +47,11 @@ func registerWebServerConfigDefinition0() {
 			{Key: "cors_origins", Kind: configbind.ScaffoldStringSlice, Help: "CORS origins"},
 			{Key: "tls.enabled", Kind: configbind.ScaffoldBool, Default: "false", Help: "enable TLS"},
 			{Key: "tls.cert_path", Kind: configbind.ScaffoldString, Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
+			{Key: "routes", Kind: configbind.ScaffoldTableArray, Help: "static routes, one [[webserver.routes]] table each", Nested: []configbind.ScaffoldField{
+				{Key: "path", Kind: configbind.ScaffoldString, Help: "URL path prefix"},
+				{Key: "dir", Kind: configbind.ScaffoldString, Help: "directory served under the path"},
+				{Key: "listing", Kind: configbind.ScaffoldBool, Default: "false", Help: "allow directory listing"},
+			}},
 		},
 	})
 }
@@ -83,6 +89,29 @@ func applyWebServerConfigDefinition0(dst any, o *configbind.Overlay) error {
 	}
 	if v, ok := o.GetString("webserver.tls.cert_path"); ok {
 		p.TLS.CertPath = v
+	}
+	if ta1, ok := o.Get("webserver.routes"); ok {
+		if !ta1.IsTables {
+			return fmt.Errorf("configbind: webserver.routes: expected an array of tables ([[webserver.routes]])")
+		}
+		p.Routes = make([]RouteConfig, len(ta1.Tables))
+		for i1 := range ta1.Tables {
+			if v, ok := ta1.Tables[i1].GetString("path"); ok {
+				p.Routes[i1].Path = v
+			}
+			if v, ok := ta1.Tables[i1].GetString("dir"); ok {
+				p.Routes[i1].Dir = v
+			}
+			if v, ok := ta1.Tables[i1].GetString("listing"); ok {
+				bb, err := strconv.ParseBool(v)
+				if err != nil {
+					return fmt.Errorf("configbind: webserver.routes.listing: %w", err)
+				}
+				p.Routes[i1].Listing = bb
+			} else {
+				p.Routes[i1].Listing = false
+			}
+		}
 	}
 	return nil
 }

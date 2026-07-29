@@ -117,3 +117,58 @@ func TestGeneratedApplyUsesDefaultsWhenKeysAbsent(t *testing.T) {
 		t.Fatalf("default TLS.Enabled should be false")
 	}
 }
+
+func TestGenerateStructSliceRequiresElemType(t *testing.T) {
+	spec := codegen.Spec{
+		TypeName: "Config",
+		Prefix:   "app",
+		Fields: []codegen.Field{{
+			GoName: "Listeners",
+			Key:    "listeners",
+			Kind:   codegen.FieldStructSlice,
+			Nested: []codegen.Field{{GoName: "Addr", Key: "addr", Kind: codegen.FieldString}},
+		}},
+	}
+	if _, err := codegen.Generate("fixture", []codegen.Spec{spec}); err == nil {
+		t.Fatal("expected an error when ElemType is missing")
+	}
+}
+
+func TestGenerateNestedStructSlicesUseDistinctLoopVariables(t *testing.T) {
+	spec := codegen.Spec{
+		TypeName: "Config",
+		Prefix:   "app",
+		Fields: []codegen.Field{{
+			GoName:   "Servers",
+			Key:      "servers",
+			Kind:     codegen.FieldStructSlice,
+			ElemType: "Server",
+			Nested: []codegen.Field{{
+				GoName:   "Disks",
+				Key:      "disks",
+				Kind:     codegen.FieldStructSlice,
+				ElemType: "Disk",
+				Nested:   []codegen.Field{{GoName: "Mount", Key: "mount", Kind: codegen.FieldString}},
+			}},
+		}},
+	}
+	// format.Source would already reject a redeclared loop variable; assert the
+	// nesting is emitted the way the element documents are shaped.
+	src, err := codegen.Generate("fixture", []codegen.Spec{spec})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	text := string(src)
+	for _, want := range []string{
+		`doc.Get("app.servers")`,
+		`for i1 := range elems1 {`,
+		`elems1[i1].Get("disks")`,
+		`for i2 := range elems2 {`,
+		`dst.Servers[i1].Disks[i2].Mount = s`,
+		`"minitoml: app.servers.disks.mount: %w"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated source missing %s\n%s", want, text)
+		}
+	}
+}

@@ -6,6 +6,14 @@ type WebServiceConfig struct {
 	MaxConns    int
 	CorsOrigins []string
 	TLS         TLSConfig
+	Listeners   []ListenerConfig
+}
+
+// ListenerConfig is one element of an array of tables.
+type ListenerConfig struct {
+	Addr string
+	Port int
+	TLS  TLSConfig
 }
 
 // TLSConfig is a nested config struct.

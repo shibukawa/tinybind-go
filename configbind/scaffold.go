@@ -19,9 +19,12 @@ const (
 	ScaffoldBool
 	ScaffoldInt
 	ScaffoldStringSlice
+	// ScaffoldTableArray is an array of tables rendered as a [[key]] block.
+	ScaffoldTableArray
 )
 
-// ScaffoldField is generated metadata for one leaf configuration field.
+// ScaffoldField is generated metadata for one leaf configuration field, or for
+// one array of tables and its element fields.
 type ScaffoldField struct {
 	Key     string
 	Kind    ScaffoldKind
@@ -29,6 +32,9 @@ type ScaffoldField struct {
 	Opt     string
 	Env     string
 	Help    string
+	// Nested holds the element fields when Kind is ScaffoldTableArray. Their
+	// keys are relative to Key.
+	Nested []ScaffoldField
 }
 
 // ScaffoldTOML renders all registered definitions as one deterministic TOML scaffold.
@@ -39,14 +45,33 @@ func ScaffoldTOML() (string, error) {
 	}
 	var b strings.Builder
 	currentPrefix := ""
+	// Arrays of tables are held back: TOML reads every key after a [[header]] as
+	// part of that element, so the prefix's own keys must come first.
+	var tableArrays []scaffoldEntry
+	flushTableArrays := func() error {
+		for _, entry := range tableArrays {
+			if err := writeScaffoldTableArray(&b, entry.fullKey, entry.field); err != nil {
+				return fmt.Errorf("configbind: scaffold %s: %w", entry.fullKey, err)
+			}
+		}
+		tableArrays = nil
+		return nil
+	}
 	for _, entry := range entries {
 		if entry.definition.Prefix != currentPrefix {
+			if err := flushTableArrays(); err != nil {
+				return "", err
+			}
 			if currentPrefix != "" {
 				b.WriteByte('\n')
 			}
 			currentPrefix = entry.definition.Prefix
 			writeScaffoldHelp(&b, docs[currentPrefix])
 			fmt.Fprintf(&b, "[%s]\n", currentPrefix)
+		}
+		if entry.field.Kind == ScaffoldTableArray {
+			tableArrays = append(tableArrays, entry)
+			continue
 		}
 		writeScaffoldHelp(&b, entry.field.Help)
 		value, err := scaffoldValue(entry.field, true)
@@ -55,7 +80,40 @@ func ScaffoldTOML() (string, error) {
 		}
 		fmt.Fprintf(&b, "%s = %s\n", entry.field.Key, value)
 	}
+	if err := flushTableArrays(); err != nil {
+		return "", err
+	}
 	return b.String(), nil
+}
+
+// writeScaffoldTableArray renders one [[key]] block holding a single example
+// element, then the element's own arrays of tables under it.
+func writeScaffoldTableArray(b *strings.Builder, fullKey string, field ScaffoldField) error {
+	b.WriteByte('\n')
+	writeScaffoldHelp(b, field.Help)
+	fmt.Fprintf(b, "[[%s]]\n", fullKey)
+	var nestedArrays []ScaffoldField
+	for _, nested := range field.Nested {
+		if !validScaffoldKeyPath(nested.Key) {
+			return fmt.Errorf("scaffold field key %q is not a bare TOML key path", nested.Key)
+		}
+		if nested.Kind == ScaffoldTableArray {
+			nestedArrays = append(nestedArrays, nested)
+			continue
+		}
+		writeScaffoldHelp(b, nested.Help)
+		value, err := scaffoldValue(nested, true)
+		if err != nil {
+			return fmt.Errorf("%s: %w", nested.Key, err)
+		}
+		fmt.Fprintf(b, "%s = %s\n", nested.Key, value)
+	}
+	for _, nested := range nestedArrays {
+		if err := writeScaffoldTableArray(b, fullKey+"."+nested.Key, nested); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ScaffoldEnv renders all registered Bind fragments as one deterministic .env scaffold.
@@ -73,6 +131,10 @@ func ScaffoldEnv() (string, error) {
 	envs := make([]envEntry, 0, len(entries))
 	seen := map[string]string{}
 	for _, entry := range entries {
+		if entry.field.Kind == ScaffoldTableArray {
+			// A repeated table has no environment variable form.
+			continue
+		}
 		def, err := cliparser.DefFromField(cliparser.FieldMeta{
 			Prefix: entry.definition.Prefix,
 			Key:    entry.field.Key,
@@ -215,6 +277,8 @@ func scaffoldValue(field ScaffoldField, toml bool) (string, error) {
 			return "[]", nil
 		}
 		return strconv.Quote(""), nil
+	case ScaffoldTableArray:
+		return "", fmt.Errorf("an array of tables has no inline value form")
 	default:
 		return "", fmt.Errorf("unsupported field kind %d", field.Kind)
 	}

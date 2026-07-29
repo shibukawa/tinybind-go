@@ -54,5 +54,46 @@ func ApplyWebServiceConfig(dst *WebServiceConfig, doc minitoml.Document) error {
 		}
 		dst.TLS.CertPath = s
 	}
+	if v, ok := doc.Get("webservice.listeners"); ok {
+		elems1, err := v.AsTables()
+		if err != nil {
+			return fmt.Errorf("minitoml: webservice.listeners: %w", err)
+		}
+		dst.Listeners = make([]ListenerConfig, len(elems1))
+		for i1 := range elems1 {
+			if v, ok := elems1[i1].Get("addr"); ok {
+				s, err := v.AsString()
+				if err != nil {
+					return fmt.Errorf("minitoml: webservice.listeners.addr: %w", err)
+				}
+				dst.Listeners[i1].Addr = s
+			}
+			if v, ok := elems1[i1].Get("port"); ok {
+				n, err := v.AsInt()
+				if err != nil {
+					return fmt.Errorf("minitoml: webservice.listeners.port: %w", err)
+				}
+				dst.Listeners[i1].Port = int(n)
+			} else {
+				dst.Listeners[i1].Port = 80
+			}
+			if v, ok := elems1[i1].Get("tls.enabled"); ok {
+				bb, err := v.AsBool()
+				if err != nil {
+					return fmt.Errorf("minitoml: webservice.listeners.tls.enabled: %w", err)
+				}
+				dst.Listeners[i1].TLS.Enabled = bb
+			} else {
+				dst.Listeners[i1].TLS.Enabled = false
+			}
+			if v, ok := elems1[i1].Get("tls.cert_path"); ok {
+				s, err := v.AsString()
+				if err != nil {
+					return fmt.Errorf("minitoml: webservice.listeners.tls.cert_path: %w", err)
+				}
+				dst.Listeners[i1].TLS.CertPath = s
+			}
+		}
+	}
 	return nil
 }

@@ -22,6 +22,8 @@ const (
 	FieldStringSlice
 	// FieldStruct is a nested struct field.
 	FieldStruct
+	// FieldStructSlice is a slice of structs read from an array of tables.
+	FieldStructSlice
 )
 
 // Field describes one struct field for intermediate-form apply generation.
@@ -32,8 +34,11 @@ type Field struct {
 	Key string
 	// Kind is the field type.
 	Kind FieldKind
-	// Nested holds child fields when Kind is FieldStruct.
+	// Nested holds child fields when Kind is FieldStruct or FieldStructSlice.
+	// For FieldStructSlice they are the element struct's fields.
 	Nested []Field
+	// ElemType is the element struct's Go type name when Kind is FieldStructSlice.
+	ElemType string
 	// Default is an optional default used when the key is absent (string form).
 	Default string
 	// Opt is an optional CLI name override ("long" or "long,short").
@@ -97,7 +102,9 @@ func emitApply(b *bytes.Buffer, spec Spec) error {
 	b.WriteString("\tif dst == nil {\n")
 	b.WriteString("\t\treturn fmt.Errorf(\"minitoml: nil destination\")\n")
 	b.WriteString("\t}\n")
-	if err := emitFields(b, "dst", spec.Prefix, spec.Fields); err != nil {
+	// Top-level lookup keys already carry the prefix, so diagnostics need no extra one.
+	scope := emitScope{doc: "doc", indent: "\t"}
+	if err := emitFields(b, scope, "dst", spec.Prefix, spec.Fields); err != nil {
 		return err
 	}
 	b.WriteString("\treturn nil\n")
@@ -105,7 +112,22 @@ func emitApply(b *bytes.Buffer, spec Spec) error {
 	return nil
 }
 
-func emitFields(b *bytes.Buffer, recv, prefix string, fields []Field) error {
+// emitScope is the destination one group of fields reads from: the Go
+// expression holding its minitoml.Document, the indent of the emitted block,
+// and the key path used in diagnostics (which differs from the lookup key
+// inside an array-of-tables element, whose keys are element-relative).
+type emitScope struct {
+	doc        string
+	indent     string
+	diagPrefix string
+	depth      int
+}
+
+func (s emitScope) diagKey(lookupKey string) string {
+	return joinKey(s.diagPrefix, lookupKey)
+}
+
+func emitFields(b *bytes.Buffer, scope emitScope, recv, prefix string, fields []Field) error {
 	for _, f := range fields {
 		if f.GoName == "" || f.Key == "" {
 			return fmt.Errorf("codegen: field GoName and Key are required")
@@ -114,15 +136,19 @@ func emitFields(b *bytes.Buffer, recv, prefix string, fields []Field) error {
 		access := recv + "." + f.GoName
 		switch f.Kind {
 		case FieldString:
-			emitStringField(b, access, fullKey, f.Default)
+			emitStringField(b, scope, access, fullKey, f.Default)
 		case FieldBool:
-			emitBoolField(b, access, fullKey, f.Default)
+			emitBoolField(b, scope, access, fullKey, f.Default)
 		case FieldInt:
-			emitIntField(b, access, fullKey, f.Default)
+			emitIntField(b, scope, access, fullKey, f.Default)
 		case FieldStringSlice:
-			emitStringSliceField(b, access, fullKey)
+			emitStringSliceField(b, scope, access, fullKey)
 		case FieldStruct:
-			if err := emitFields(b, access, fullKey, f.Nested); err != nil {
+			if err := emitFields(b, scope, access, fullKey, f.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			if err := emitStructSliceField(b, scope, access, fullKey, f); err != nil {
 				return err
 			}
 		default:
@@ -132,62 +158,92 @@ func emitFields(b *bytes.Buffer, recv, prefix string, fields []Field) error {
 	return nil
 }
 
-func emitStringField(b *bytes.Buffer, access, fullKey, def string) {
-	fmt.Fprintf(b, "\tif v, ok := doc.Get(%q); ok {\n", fullKey)
-	b.WriteString("\t\ts, err := v.AsString()\n")
-	b.WriteString("\t\tif err != nil {\n")
-	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", fullKey)
-	b.WriteString("\t\t}\n")
-	fmt.Fprintf(b, "\t\t%s = s\n", access)
+func emitStringField(b *bytes.Buffer, scope emitScope, access, fullKey, def string) {
+	in := scope.indent
+	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
+	fmt.Fprintf(b, "%s\ts, err := v.AsString()\n", in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
+	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, scope.diagKey(fullKey))
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s\t%s = s\n", in, access)
 	if def != "" {
-		b.WriteString("\t} else {\n")
-		fmt.Fprintf(b, "\t\t%s = %s\n", access, strconv.Quote(def))
-		b.WriteString("\t}\n")
-	} else {
-		b.WriteString("\t}\n")
+		fmt.Fprintf(b, "%s} else {\n", in)
+		fmt.Fprintf(b, "%s\t%s = %s\n", in, access, strconv.Quote(def))
 	}
+	fmt.Fprintf(b, "%s}\n", in)
 }
 
-func emitBoolField(b *bytes.Buffer, access, fullKey, def string) {
-	fmt.Fprintf(b, "\tif v, ok := doc.Get(%q); ok {\n", fullKey)
-	b.WriteString("\t\tbb, err := v.AsBool()\n")
-	b.WriteString("\t\tif err != nil {\n")
-	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", fullKey)
-	b.WriteString("\t\t}\n")
-	fmt.Fprintf(b, "\t\t%s = bb\n", access)
+func emitBoolField(b *bytes.Buffer, scope emitScope, access, fullKey, def string) {
+	in := scope.indent
+	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
+	fmt.Fprintf(b, "%s\tbb, err := v.AsBool()\n", in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
+	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, scope.diagKey(fullKey))
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s\t%s = bb\n", in, access)
 	if def != "" {
-		b.WriteString("\t} else {\n")
-		fmt.Fprintf(b, "\t\t%s = %v\n", access, def == "true")
-		b.WriteString("\t}\n")
-	} else {
-		b.WriteString("\t}\n")
+		fmt.Fprintf(b, "%s} else {\n", in)
+		fmt.Fprintf(b, "%s\t%s = %v\n", in, access, def == "true")
 	}
+	fmt.Fprintf(b, "%s}\n", in)
 }
 
-func emitIntField(b *bytes.Buffer, access, fullKey, def string) {
-	fmt.Fprintf(b, "\tif v, ok := doc.Get(%q); ok {\n", fullKey)
-	b.WriteString("\t\tn, err := v.AsInt()\n")
-	b.WriteString("\t\tif err != nil {\n")
-	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", fullKey)
-	b.WriteString("\t\t}\n")
-	fmt.Fprintf(b, "\t\t%s = int(n)\n", access)
+func emitIntField(b *bytes.Buffer, scope emitScope, access, fullKey, def string) {
+	in := scope.indent
+	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
+	fmt.Fprintf(b, "%s\tn, err := v.AsInt()\n", in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
+	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, scope.diagKey(fullKey))
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s\t%s = int(n)\n", in, access)
 	if def != "" {
-		b.WriteString("\t} else {\n")
-		fmt.Fprintf(b, "\t\t%s = %s\n", access, def)
-		b.WriteString("\t}\n")
-	} else {
-		b.WriteString("\t}\n")
+		fmt.Fprintf(b, "%s} else {\n", in)
+		fmt.Fprintf(b, "%s\t%s = %s\n", in, access, def)
 	}
+	fmt.Fprintf(b, "%s}\n", in)
 }
 
-func emitStringSliceField(b *bytes.Buffer, access, fullKey string) {
-	fmt.Fprintf(b, "\tif v, ok := doc.Get(%q); ok {\n", fullKey)
-	b.WriteString("\t\tsl, err := v.AsStringSlice()\n")
-	b.WriteString("\t\tif err != nil {\n")
-	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", fullKey)
-	b.WriteString("\t\t}\n")
-	fmt.Fprintf(b, "\t\t%s = sl\n", access)
-	b.WriteString("\t}\n")
+func emitStringSliceField(b *bytes.Buffer, scope emitScope, access, fullKey string) {
+	in := scope.indent
+	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
+	fmt.Fprintf(b, "%s\tsl, err := v.AsStringSlice()\n", in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
+	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, scope.diagKey(fullKey))
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s\t%s = sl\n", in, access)
+	fmt.Fprintf(b, "%s}\n", in)
+}
+
+// emitStructSliceField expands one array of tables into a loop that fills a
+// slice of structs. Element keys are relative to the array key, so the nested
+// fields are emitted with an empty prefix against the element document.
+func emitStructSliceField(b *bytes.Buffer, scope emitScope, access, fullKey string, f Field) error {
+	if f.ElemType == "" {
+		return fmt.Errorf("codegen: field %s needs ElemType for a struct slice", f.GoName)
+	}
+	in := scope.indent
+	diagKey := scope.diagKey(fullKey)
+	elems := fmt.Sprintf("elems%d", scope.depth+1)
+	index := fmt.Sprintf("i%d", scope.depth+1)
+	fmt.Fprintf(b, "%sif v, ok := %s.Get(%q); ok {\n", in, scope.doc, fullKey)
+	fmt.Fprintf(b, "%s\t%s, err := v.AsTables()\n", in, elems)
+	fmt.Fprintf(b, "%s\tif err != nil {\n", in)
+	fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"minitoml: %s: %%w\", err)\n", in, diagKey)
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s\t%s = make([]%s, len(%s))\n", in, access, f.ElemType, elems)
+	fmt.Fprintf(b, "%s\tfor %s := range %s {\n", in, index, elems)
+	inner := emitScope{
+		doc:        fmt.Sprintf("%s[%s]", elems, index),
+		indent:     in + "\t\t",
+		diagPrefix: diagKey,
+		depth:      scope.depth + 1,
+	}
+	if err := emitFields(b, inner, fmt.Sprintf("%s[%s]", access, index), "", f.Nested); err != nil {
+		return err
+	}
+	fmt.Fprintf(b, "%s\t}\n", in)
+	fmt.Fprintf(b, "%s}\n", in)
+	return nil
 }
 
 func joinKey(prefix, key string) string {
@@ -216,6 +272,25 @@ func WebServiceFixtureSpec() Spec {
 				Nested: []Field{
 					{GoName: "Enabled", Key: "enabled", Kind: FieldBool, Default: "false"},
 					{GoName: "CertPath", Key: "cert_path", Kind: FieldString},
+				},
+			},
+			{
+				GoName:   "Listeners",
+				Key:      "listeners",
+				Kind:     FieldStructSlice,
+				ElemType: "ListenerConfig",
+				Nested: []Field{
+					{GoName: "Addr", Key: "addr", Kind: FieldString},
+					{GoName: "Port", Key: "port", Kind: FieldInt, Default: "80"},
+					{
+						GoName: "TLS",
+						Key:    "tls",
+						Kind:   FieldStruct,
+						Nested: []Field{
+							{GoName: "Enabled", Key: "enabled", Kind: FieldBool, Default: "false"},
+							{GoName: "CertPath", Key: "cert_path", Kind: FieldString},
+						},
+					},
 				},
 			},
 		},
