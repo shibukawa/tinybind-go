@@ -342,7 +342,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-Generation fails when the template contains no WHERE at all. A conditional WHERE is harder, because whether it survives is only known at call time:
+Whether a clause can come out empty is a property of the template, not of runtime data, so the whole check runs at generation time and no guard is emitted into generated code. A conditional WHERE fails to generate, because one call path would delete every row:
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +351,27 @@ DELETE FROM users
 }
 ```
 
-So the check runs twice. This template generates, but calling the builder with `enabled == false` returns an error and the statement never reaches the database. There is currently no opt-in for an intentional full-table UPDATE or DELETE.
+An `if` with an `else` where both branches emit a predicate does generate, because no path leaves the clause empty:
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+The same proof covers a dynamic `SET` list: an UPDATE whose assignments are all conditional is a generation error.
+
+The keyword must belong to the statement itself. A WHERE inside a subquery, a CTE body, a string literal, or a comment does not satisfy the requirement, so this is rejected:
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+The check applies to every cardinality, not only `sql.exec`. A `DELETE ... RETURNING` declared as `sql.one<T>` is proven the same way. There is currently no opt-in for an intentional full-table UPDATE or DELETE.
+
+A `sql.predicate` satisfies the requirement only when that predicate is itself non-empty on every path.
 
 ## Using the low-level builder
 
@@ -418,6 +438,23 @@ for user, err := range ListActiveUsersContext(ctx, true) {
 Without an executor, these functions return `sqlbind.ErrNoSQLExecutor`. `WithSQLExecutor` accepts `*sql.DB`, `*sql.Conn`, `*sql.Tx`, or another `sqlbind.SQLExecutor` implementation.
 
 The ordinary explicit-executor APIs remain available, so both styles can coexist.
+
+### Read-only executors
+
+When the Context carries a connection to a read replica, or a transaction begun with `sql.TxOptions{ReadOnly: true}`, add `sqlbind.AsReadOnly()`.
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // a SELECT, so it runs
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+Write statements are identified at generation time and return `sqlbind.ErrReadOnlyExecutor` before executing. The error names the rejected statement. No SQL is built and no round trip happens, so the failure is identical on a developer machine or in a test that never touches a replica.
+
+A statement counts as read-only only when it opens with `SELECT`, `VALUES`, or `TABLE`, or is a `WITH` whose CTE bodies do not write and whose tail reads, and when it carries no top-level row-locking clause such as `FOR UPDATE`. A `DELETE ... RETURNING` declared as `sql.one<T>`, and a `SELECT ... FOR UPDATE`, are both writes. Anything the analysis cannot resolve is a write, so a misclassification can only cost a replica connection rather than send a write to a read-only executor.
+
+Writes that are invisible in the SQL text, such as a `SELECT` calling a function that writes, are not detected; the database remains the final guard. The check is disabled when a custom resolver (`-sql-executor-resolver`) is configured, because that contract cannot carry the access mode.
 
 ## Context-only public API
 

@@ -18,6 +18,8 @@ detection: rule:sql-top-level-keyword-scan
 rules:
   - a mutation must have a top-level WHERE clause
   - the WHERE clause must be provably non-empty on every branch path
+  - the clause ends at the next top-level keyword, so content belonging to a later clause is not proof
+  - clause_terminators: RETURNING, ORDER, LIMIT, OFFSET, FETCH, GROUP, HAVING, WINDOW, FOR, UNION, INTERSECT, EXCEPT
   - a predicate emitted only inside an if without an else that also emits one is not proof
   - an if/else where both branches emit a predicate is proof
   - a sql.predicate call is proof only when that predicate is itself provably non-empty on every path
@@ -28,6 +30,7 @@ set_clause:
   - an UPDATE whose SET items are all conditional is a generation error, replacing the pre-execution empty check in requirement:sql-template-v1
 full_table_mutation: still needs the future explicit opt-in named in requirement:sql-template-v1; without it an unconditional whole-table mutation stays a generation error
 acceptance:
+  - 'delete from t where {if flag} id = {id} {end} returning id generates a diagnostic'
   - 'delete from t where id = {id} generates'
   - 'delete from t generates a diagnostic'
   - 'delete from t {if flag} where id = {id} {end} generates a diagnostic'
