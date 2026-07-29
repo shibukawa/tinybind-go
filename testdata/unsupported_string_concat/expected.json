@@ -2,7 +2,7 @@
   "routes": [],
   "diagnostics": [
     {
-      "file": "/Users/shibukawayoshiki/develop/httpbind-go/testdata/unsupported_string_concat/main.go",
+      "file": "main.go",
       "line": 20,
       "column": 2,
       "reason": "dynamic_pattern",

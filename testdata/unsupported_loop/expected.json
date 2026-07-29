@@ -2,7 +2,7 @@
   "routes": [],
   "diagnostics": [
     {
-      "file": "/Users/shibukawayoshiki/develop/httpbind-go/testdata/unsupported_loop/main.go",
+      "file": "main.go",
       "line": 28,
       "column": 3,
       "reason": "dynamic_pattern",
