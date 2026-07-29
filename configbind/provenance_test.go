@@ -426,3 +426,174 @@ func TestProvenanceMarksAutoMaskedEntries(t *testing.T) {
 		}
 	}
 }
+
+type tableArrayProvenanceConfig struct{}
+
+// registerConnectionsFixture registers one array of tables whose element fields
+// are declared group-then-dsn, which is the reverse of their alphabetical order.
+func registerConnectionsFixture(secrets map[string]string, dependsOn map[string][]string, extraKeys []string) {
+	keys := append([]string{"rdb.connections"}, extraKeys...)
+	configbind.Register[tableArrayProvenanceConfig](configbind.Definition{
+		TypeName:  "example.test.rdb",
+		Prefix:    "rdb",
+		KnownKeys: keys,
+		Secrets:   secrets,
+		DependsOn: dependsOn,
+		Apply:     func(any, *configbind.Overlay) error { return nil },
+		Scaffold: []configbind.ScaffoldField{{
+			Key:  "connections",
+			Kind: configbind.ScaffoldTableArray,
+			Nested: []configbind.ScaffoldField{
+				{Key: "group", Kind: configbind.ScaffoldString},
+				{Key: "dsn", Kind: configbind.ScaffoldString},
+			},
+		}},
+	})
+}
+
+const connectionsTOML = `
+[[rdb.connections]]
+group = "writer"
+dsn = "postgres://app:s3cret@primary/db"
+
+[[rdb.connections]]
+group = "reader"
+dsn = "postgres://app:s3cret@replica/db"
+`
+
+func TestProvenanceExpandsTableArrayElements(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	registerConnectionsFixture(nil, nil, nil)
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[tableArrayProvenanceConfig]("rdb")
+
+	entries := loadProvenanceFixture(t, nil, connectionsTOML)
+	got := provenanceKeys(entries)
+	want := []string{
+		"rdb.connections[0].group",
+		"rdb.connections[0].dsn",
+		"rdb.connections[1].group",
+		"rdb.connections[1].dsn",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("keys=%v want %v", got, want)
+	}
+	// The array key itself carries no value, so it is replaced by its elements.
+	for _, entry := range entries {
+		if entry.Key == "rdb.connections" {
+			t.Fatalf("the bare array key must not be reported: %v", entries)
+		}
+	}
+	if entries[0].ArrayKey != "rdb.connections" || entries[0].Index != 0 {
+		t.Fatalf("entry[0]=%+v want ArrayKey rdb.connections index 0", entries[0])
+	}
+	if entries[3].ArrayKey != "rdb.connections" || entries[3].Index != 1 {
+		t.Fatalf("entry[3]=%+v want ArrayKey rdb.connections index 1", entries[3])
+	}
+	if entries[0].Value != "writer" || entries[0].Place != configbind.PlaceFile {
+		t.Fatalf("entry[0]=%+v want the file value", entries[0])
+	}
+}
+
+// dsn is a sensitive key token, so an element value is masked with no tag at all.
+func TestProvenanceMasksElementByKeyToken(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	registerConnectionsFixture(nil, nil, nil)
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[tableArrayProvenanceConfig]("rdb")
+
+	for _, entry := range loadProvenanceFixture(t, nil, connectionsTOML) {
+		wantMasked := strings.HasSuffix(entry.Key, ".dsn")
+		if entry.Masked != wantMasked {
+			t.Fatalf("%s Masked=%v want %v", entry.Key, entry.Masked, wantMasked)
+		}
+		if wantMasked && strings.Contains(entry.Value, "s3cret") {
+			t.Fatalf("%s leaked the password: %q", entry.Key, entry.Value)
+		}
+	}
+}
+
+// A secret tag on an element field is keyed by its stable path under the array
+// and applies at every index.
+func TestProvenanceAppliesElementSecretAtEveryIndex(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	registerConnectionsFixture(map[string]string{"rdb.connections.group": "mask"}, nil, nil)
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[tableArrayProvenanceConfig]("rdb")
+
+	masked := 0
+	for _, entry := range loadProvenanceFixture(t, nil, connectionsTOML) {
+		if strings.HasSuffix(entry.Key, ".group") {
+			if !entry.Masked || entry.Value != "*****" {
+				t.Fatalf("%s=%+v want a masked entry", entry.Key, entry)
+			}
+			masked++
+		}
+	}
+	if masked != 2 {
+		t.Fatalf("masked=%d want both elements", masked)
+	}
+}
+
+// hide on an element field drops that field from every element, and hide on the
+// array drops the whole set.
+func TestProvenanceHidesElementFieldsAndWholeArray(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		secrets map[string]string
+		want    []string
+	}{
+		{
+			name:    "one field",
+			secrets: map[string]string{"rdb.connections.dsn": "hide"},
+			want:    []string{"rdb.connections[0].group", "rdb.connections[1].group"},
+		},
+		{
+			name:    "whole array",
+			secrets: map[string]string{"rdb.connections": "hide"},
+			want:    nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configbind.ResetDefinitions()
+			t.Cleanup(configbind.ResetDefinitions)
+			registerConnectionsFixture(tc.secrets, nil, nil)
+			configbind.ResetTargets()
+			t.Cleanup(configbind.ResetTargets)
+			configbind.Bind[tableArrayProvenanceConfig]("rdb")
+
+			got := provenanceKeys(loadProvenanceFixture(t, nil, connectionsTOML))
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("keys=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An empty dependon parent folds the whole connection set away, which is the
+// largest block a disabled feature owns.
+func TestProvenanceHidesTableArrayUnderEmptyParent(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+	registerConnectionsFixture(
+		nil,
+		map[string][]string{"rdb.connections": {"rdb.enabled"}},
+		[]string{"rdb.enabled"},
+	)
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetTargets)
+	configbind.Bind[tableArrayProvenanceConfig]("rdb")
+
+	body := "rdb.enabled = false\n" + connectionsTOML
+	got := provenanceKeys(loadProvenanceFixture(t, nil, body))
+	// The parent stays: it is the reason its dependents vanished.
+	if strings.Join(got, ",") != "rdb.enabled" {
+		t.Fatalf("keys=%v want only rdb.enabled", got)
+	}
+}

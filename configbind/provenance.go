@@ -1,6 +1,7 @@
 package configbind
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -8,7 +9,8 @@ import (
 
 // ProvenanceEntry is one effective config key prepared for logging.
 type ProvenanceEntry struct {
-	// Key is the stable config key (e.g. "webserver.port").
+	// Key is the stable config key (e.g. "webserver.port"), or the indexed form
+	// for a field of an array-of-tables element (e.g. "rdb.connections[0].dsn").
 	Key string
 	// Value is the display form after redaction, never the raw secret.
 	Value string
@@ -18,6 +20,14 @@ type ProvenanceEntry struct {
 	// configured value, so a caller re-rendering these entries can tell the two
 	// apart without comparing against the mask text.
 	Masked bool
+	// ArrayKey is the array of tables this entry is an element field of, with
+	// the indices of any enclosing arrays already in place. It is empty for an
+	// ordinary key, so a caller groups a tree by it and orders by Index without
+	// parsing Key apart at its brackets.
+	ArrayKey string
+	// Index is the element's position within ArrayKey, and 0 when ArrayKey is
+	// empty.
+	Index int
 }
 
 // maskedValue replaces a sensitive value in provenance output. The mask has a
@@ -29,8 +39,8 @@ const maskedValue = "*****"
 // A connection string carries its password inline (postgres://user:pass@host),
 // and a private key is a credential under a name that matches no other token,
 // so both belong here. The match is a substring, so an innocent compound such
-// as token_bucket_size is masked too; over-masking is the safe direction while
-// the explicit secret tag is not read yet.
+// as token_bucket_size is masked too; over-masking is the safe direction for a
+// key whose author wrote no secret tag to say otherwise.
 var sensitiveKeyTokens = []string{
 	"password",
 	"secret",
@@ -48,17 +58,19 @@ var sensitiveKeyTokens = []string{
 //
 // Entries follow Bind registration order, and within one binding the field
 // declaration order of its struct; keys that belong to no registered binding
-// sort lexicographically after all known keys. A secret tag decides whether a
-// value is shown, masked, or dropped, and a key with no tag is masked when its
-// name looks sensitive. Fields whose dependon parent is empty are omitted,
-// while the parent itself is kept: an empty parent is the reason its dependents
-// vanished.
+// sort lexicographically after all known keys. An array of tables expands in
+// place into one entry per element field, keyed key[index].field and ordered by
+// index then declaration. A secret tag decides whether a value is shown, masked,
+// or dropped, and a key with no tag is masked when its name looks sensitive.
+// Fields whose dependon parent is empty are omitted, while the parent itself is
+// kept: an empty parent is the reason its dependents vanished.
 func (r *LoadResult) Provenance() []ProvenanceEntry {
 	if r == nil || r.Overlay == nil {
 		return nil
 	}
 	hidden := r.hiddenKeys()
 	secrets := r.secretModes()
+	elements := r.tableArrayFields()
 	seen := make(map[string]bool)
 	out := make([]ProvenanceEntry, 0, len(r.Overlay.entries))
 	appendKey := func(key string) {
@@ -71,6 +83,12 @@ func (r *LoadResult) Provenance() []ProvenanceEntry {
 		}
 		entry, ok := r.Overlay.Get(key)
 		if !ok {
+			return
+		}
+		if entry.IsTables {
+			// An array of tables holds no value of its own, so reporting the key
+			// alone would say only that some elements exist.
+			out = append(out, expandTables(key, key, entry.Tables, elements[key], secrets)...)
 			return
 		}
 		value, masked := displayValue(key, entry.Raw, secrets[key])
@@ -120,6 +138,85 @@ func (r *LoadResult) hiddenKeys() map[string]bool {
 		}
 	}
 	return hidden
+}
+
+// tableArrayFields indexes the element fields of every array of tables by the
+// array's absolute key. The generated scaffold already lists them in struct
+// declaration order, which is the order provenance reports them in; the overlay
+// cannot supply it, because its own key list is sorted.
+func (r *LoadResult) tableArrayFields() map[string][]ScaffoldField {
+	out := make(map[string][]ScaffoldField)
+	for _, definition := range r.definitions {
+		collectTableArrayFields(out, definition.Prefix, definition.Scaffold)
+	}
+	return out
+}
+
+func collectTableArrayFields(out map[string][]ScaffoldField, prefix string, fields []ScaffoldField) {
+	for _, field := range fields {
+		key := field.Key
+		if prefix != "" {
+			key = prefix + "." + field.Key
+		}
+		if field.Kind != ScaffoldTableArray {
+			continue
+		}
+		out[key] = field.Nested
+		// A nested array's fields are indexed under the path with no indices in
+		// it, which is the same path the generated secret map uses.
+		collectTableArrayFields(out, key, field.Nested)
+	}
+}
+
+// expandTables turns one array of tables into per-element entries.
+//
+// displayKey carries the indices of every enclosing array, because that is what
+// a reader needs to find the element in the file. secretKey carries none, since
+// an index exists only at run time and the generated secret map is keyed by the
+// stable path under the array.
+func expandTables(displayKey, secretKey string, tables []*Overlay, fields []ScaffoldField, secrets map[string]string) []ProvenanceEntry {
+	var out []ProvenanceEntry
+	for index, element := range tables {
+		if element == nil {
+			continue
+		}
+		arrayKey := displayKey
+		for _, field := range fields {
+			fullKey := fmt.Sprintf("%s[%d].%s", displayKey, index, field.Key)
+			mode := secrets[secretKey+"."+field.Key]
+			if mode == secretHide {
+				continue
+			}
+			if field.Kind == ScaffoldTableArray {
+				nested, ok := element.GetTables(field.Key)
+				if !ok {
+					continue
+				}
+				out = append(out, expandTables(
+					fmt.Sprintf("%s[%d].%s", displayKey, index, field.Key),
+					secretKey+"."+field.Key,
+					nested,
+					field.Nested,
+					secrets,
+				)...)
+				continue
+			}
+			entry, ok := element.Get(field.Key)
+			if !ok {
+				continue
+			}
+			value, masked := displayValue(fullKey, entry.Raw, mode)
+			out = append(out, ProvenanceEntry{
+				Key:      fullKey,
+				Value:    value,
+				Place:    entry.Place,
+				Masked:   masked,
+				ArrayKey: arrayKey,
+				Index:    index,
+			})
+		}
+	}
+	return out
 }
 
 // secretModes indexes every generated secret tag by absolute key.

@@ -18,6 +18,10 @@ options_considered:
   child_defaults_in_the_struct_field_tag:
     verdict: rejected
     why: encodes a key/value mini-language inside one tag and escapes Go type checking
+    enforcement: >
+      the rejection has to be a generation error; a default tag on a nested
+      struct field is currently accepted and dropped without a report, which
+      reads as acceptance of this option. See requirement:struct-tag-placement-totality
   relative_dependon:
     verdict: adopted
     form: 'dependon:".enabled", resolved against the containing struct prefix'
@@ -36,6 +40,7 @@ per_instance_defaults:
 deferred_work:
   - per-instance default registration that also feeds scaffold and help output
 related:
+  - requirement:struct-tag-placement-totality
   - decision:dependon-tag-form
   - decision:struct-field-tags
   - requirement:dependent-field-visibility

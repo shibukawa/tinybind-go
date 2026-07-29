@@ -37,6 +37,15 @@ subtree_placement:
   semantics: rule:dependent-key-visibility subtree_scope
   state: implemented; the parent is carried to every leaf of the subtree
   falsy_on_a_struct: rejected, since falsy names one value and a struct has none
+array_of_tables_placement:
+  element_field: rejected; an element key carries a runtime index, so nothing can name it
+  array_field:
+    verdict: allowed
+    effect: an empty parent hides the array and all its elements
+    correction: >
+      the earlier blanket rejection gave one reason, that elements have no stable
+      key, for both placements; the array field does have one
+    detail: requirement:array-of-tables-provenance
 effect: rule:dependent-key-visibility
 scope_limits:
   - presentation only; see rule:dependent-key-visibility for what it never changes
@@ -46,8 +55,10 @@ validation_time:
     only keys emitted in the same generation run can be checked, because
     requirement:modular-package-generation generates each package separately
   rejected_at_codegen:
-    - dependon, falsy, or secret on an array-of-tables element or on the array field itself, neither of which has one stable key
+    - dependon or falsy on an array-of-tables element field, which has no stable key
+    - falsy on the array field itself, which has no single value
     - falsy on a struct field
+    - a leaf-only tag on a struct field, per requirement:struct-tag-placement-totality
     - a parent in this run that is a list, or a number or duration with no falsy tag
     - self-reference
     - comma-separated parent list

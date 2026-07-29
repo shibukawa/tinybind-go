@@ -21,8 +21,12 @@ type WebServerConfig struct {
 
 // RouteConfig is one [[webserver.routes]] element.
 type RouteConfig struct {
-	Path    string        `help:"URL path prefix"`
-	Dir     string        `help:"directory served under the path"`
+	Path string `help:"URL path prefix"`
+	Dir  string `help:"directory served under the path"`
+	// Owner carries no sensitive key token, so only the tag can mask it. It is
+	// resolved by the element's path under the array key, which is stable even
+	// though the element's own key carries a run-time index.
+	Owner   string        `secret:"mask" help:"team that owns this route"`
 	Listing bool          `default:"false" help:"allow directory listing"`
 	MaxAge  time.Duration `default:"1h" help:"cache max age for this route"`
 }
