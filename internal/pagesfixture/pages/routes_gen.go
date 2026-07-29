@@ -73,6 +73,10 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				httpbind.WriteError(w, r, err)
 			}
 		})
+
+	// Server function endpoints. Each handler owns its whole response, so
+	// nothing is generated around it; registration is all there is.
+	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)
 }
 
 // NewServeMux returns a ServeMux carrying every discovered route.
@@ -100,4 +104,28 @@ type RouteInfo struct {
 	Dir string
 	// Params names the dynamic segments, in route order.
 	Params []string
+}
+
+// Actions lists every server function endpoint. Every exported
+// handler in a route package is reachable whether or not a template references
+// it, so this is what makes that surface inspectable.
+//
+// An endpoint grants nothing: the path hides structure but is not a capability
+// token, so each handler still authenticates and authorizes its own caller.
+var Actions = []ActionInfo{
+	{Pattern: "POST /_action/00369cf962b6/Rename", Path: "/_action/00369cf962b6/Rename", Dir: "users/id_", Handler: "Rename", Hash: "00369cf962b6"},
+}
+
+// ActionInfo is one entry of Actions.
+type ActionInfo struct {
+	// Pattern is the stdlib ServeMux pattern the endpoint is registered under.
+	Pattern string
+	// Path is the pattern without its method.
+	Path string
+	// Dir is the declaring package's directory relative to the route root.
+	Dir string
+	// Handler is the exported Go function name.
+	Handler string
+	// Hash is the stable half of the path.
+	Hash string
 }

@@ -17,7 +17,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Ops: []htmlbind.Op[PageParams]{
 		planPageOps.Static(" <h1>user "),
 		planPageOps.Text(func(p PageParams) string { return p.Name }),
-		planPageOps.Static("</h1> "),
+		planPageOps.Static("</h1> <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> "),
 	},
 }
 

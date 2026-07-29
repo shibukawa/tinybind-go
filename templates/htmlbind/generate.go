@@ -28,6 +28,18 @@ type GenerateOptions struct {
 	// byte. It exists for a project comparing generated markup against
 	// pre-existing golden files.
 	PreserveWhitespace bool
+	// ServerActions maps each handler name a template reaches through
+	// ServerActionAttr to the endpoint URL the lowering writes. The caller
+	// resolves it, because the URL depends on the route the template serves and
+	// the compiler cannot see that; [ActionRefs] reports what needs resolving.
+	//
+	// A reference with no entry here is a compile error, so a template naming a
+	// handler nobody resolved never silently emits a dead element.
+	ServerActions map[string]string
+	// ServerActionAttr is the attribute the lowering writes. Empty uses
+	// [DefaultActionAttr]. A framework driving an existing client library points
+	// it at that library's vocabulary, such as hx-post.
+	ServerActionAttr string
 }
 
 // Generate parses, validates, and compiles an HTML template module to Go.
@@ -89,10 +101,22 @@ type goEmitter struct {
 	// checks collects the hoisted parameter checks of the component being
 	// emitted.
 	checks []string
+	// actions and actionAttr mirror the ServerActions and ServerActionAttr
+	// options, which together decide what a server-action attribute lowers to.
+	actions    map[string]string
+	actionAttr string
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
-	e := &goEmitter{c: c, contextExternals: options.ContextExternals}
+	e := &goEmitter{
+		c:                c,
+		contextExternals: options.ContextExternals,
+		actions:          options.ServerActions,
+		actionAttr:       options.ServerActionAttr,
+	}
+	if e.actionAttr == "" {
+		e.actionAttr = DefaultActionAttr
+	}
 	pkg := options.Package
 	if pkg == "" && c.module.Package != nil {
 		pkg = c.module.Package.Name

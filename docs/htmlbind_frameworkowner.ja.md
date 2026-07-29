@@ -388,12 +388,55 @@ page, ok := htmlbind.Lookup(sigs, "Page")
 ```
 
 `Generate` と同じ解析を通すので、コンパイルできないモジュールは部分的な答えを
-返さず同じ診断で失敗する。[httpbind_frameworkowner.ja.md](httpbind_frameworkowner.ja.md)
+返さず同じ診断で失敗する。[httpbind_discovered_router.ja.md](httpbind_discovered_router.ja.md)
 のファイルシステムルータが、生成ハンドラの復号対象を決めるために読むのもこれである。
+
+### サーバーアクションを解決する
+
+テンプレートは URL ではなく Go のハンドラを名指しできる。
+
+```html
+<button server-action="Rename" data-target="#name">rename</button>
+```
+
+コンパイラはこれを自力で下げられない。URL はハンドラがどこにマウントされているかに
+依存し、このモジュールはルーティングについて何も知らないからだ。だから解決は、
+実装者を真ん中に挟んだ2つのパスになる。
+
+```go
+refs, err := htmlbind.ActionRefs("page.tb.html", source)
+// refs[0] == {Component: "Page", Handler: "Rename", Element: "button", Pos: ...}
+
+out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
+	Package:          "id_",
+	ServerActions:    map[string]string{"Rename": "/_action/00369cf962b6/Rename"},
+	ServerActionAttr: "hx-post",   // 任意。既定は data-tb-action
+})
+```
+
+`ActionRefs` はモジュールが参照している名前を、診断がテンプレートを引用できるよう
+位置つきで報告する。実装者はそれをテンプレートが属するパッケージに対して解決し、
+答えを `ServerActions` で返す。解決しなかった参照はコンパイルエラーになる。黙って
+死んだ要素が出ることはない。
+
+下げ方は意図的に薄い。`server-action` は URL を運ぶ属性1つになり、その要素の
+それ以外の属性は読まれずに残る。だから `data-target` や `hx-swap` の意味は実装者の
+クライアントランタイムが決められる。`ServerActionAttr` があるのは、生成された
+アクションが tinybind のものではなく既に使っているライブラリを動かせるようにする
+ためである。
+
+`GenerateOptions.ContextExternals` も同じ形で、こちらが前例として見る価値がある。
+どちらも呼び出し側しか決められないテンプレートの事実であり、パスの間に Go の
+パッケージを読んで解決される。
+
+探索型ルータはこれらを全部やってくれる。ハッシュ、エンドポイントのパス、どの
+ハンドラが公開されるか —— それらの導出は
+[httpbind_discovered_router.ja.md](httpbind_discovered_router.ja.md) にある。
 
 ## ルーティング
 
 ルーティングは `htmlbind` の責務ではない。このモジュールはレスポンスボディを書いて
-そこで止まるので、どちらのルータもここには無い。登録を読む側と、テンプレートの
-ディレクトリから登録を生成する側の両方が
-[httpbind_frameworkowner.ja.md](httpbind_frameworkowner.ja.md) にある。
+そこで止まるので、どちらのルータもここには無い。登録を読む側は
+[httpbind_frameworkowner.ja.md](httpbind_frameworkowner.ja.md) に、テンプレートの
+ディレクトリから登録を生成する側は
+[httpbind_discovered_router.ja.md](httpbind_discovered_router.ja.md) にある。

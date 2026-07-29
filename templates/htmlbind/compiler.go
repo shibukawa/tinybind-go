@@ -147,6 +147,9 @@ type compiler struct {
 	// async type. It is the binding source of the await clause being analyzed,
 	// so an async value read anywhere else is a local error with a position.
 	awaitSource Expr
+	// actions collects the server-action references the module makes, in source
+	// order, for the resolution pass described on ServerActionAttr.
+	actions []ActionRef
 }
 
 type CompileError struct {
@@ -555,6 +558,12 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			c.loopDepth--
 		case *ElementNode:
 			for _, attribute := range node.Attributes {
+				if attribute.Name == ServerActionAttr {
+					if err := c.analyzeServerAction(node.Name, attribute, node.Attributes); err != nil {
+						return err
+					}
+					continue
+				}
 				if err := c.analyzeAttribute(node.Name, attribute, scope); err != nil {
 					return err
 				}

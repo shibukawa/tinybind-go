@@ -90,6 +90,18 @@ type Emitter struct {
 	RegisterFunc string
 	MuxFunc      string
 	TableVar     string
+	// ActionPrefix is the reserved path every server function endpoint hangs
+	// below. Empty uses [DefaultActionPrefix]. A framework mounting under a
+	// sub-path or owning its own URL namespace sets it, which is why it is not
+	// the fixed value the endpoint hash is.
+	ActionPrefix string
+	// ActionTableVar names the generated list of endpoints. Every server
+	// function is reachable whether or not a template references it, so the
+	// list is what makes that surface inspectable.
+	ActionTableVar string
+	// ActionAttr is the attribute a lowered server-action writes in compiled
+	// templates. Empty uses the htmlbind default.
+	ActionAttr string
 
 	tmpl *template.Template
 }
@@ -108,14 +120,16 @@ func NewEmitter() *Emitter {
 		tmpl = template.Must(tmpl.AddParseTree(stable, tmpl.Lookup(file).Tree))
 	}
 	return &Emitter{
-		Symbols:      DefaultSymbols(),
-		ParamsType:   RouteParamsType,
-		DecodeFunc:   DecodeRouteFunc,
-		RenderFunc:   RenderFunc,
-		RegisterFunc: RegisterFunc,
-		MuxFunc:      MuxFunc,
-		TableVar:     TableVar,
-		tmpl:         tmpl,
+		Symbols:        DefaultSymbols(),
+		ParamsType:     RouteParamsType,
+		DecodeFunc:     DecodeRouteFunc,
+		RenderFunc:     RenderFunc,
+		RegisterFunc:   RegisterFunc,
+		MuxFunc:        MuxFunc,
+		TableVar:       TableVar,
+		ActionPrefix:   DefaultActionPrefix,
+		ActionTableVar: ActionTableVar,
+		tmpl:           tmpl,
 	}
 }
 
