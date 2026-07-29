@@ -113,6 +113,9 @@ func (request GenerateRequest) applyTo(base Options) Options {
 	if request.SQLTemplatePattern != "" {
 		options.SQLTemplatePattern = request.SQLTemplatePattern
 	}
+	if request.SQLDialect != "" {
+		options.SQLDialect = request.SQLDialect
+	}
 	return options
 }
 
@@ -133,6 +136,9 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	}
 	if len(files) == 0 {
 		return nil, nil
+	}
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return nil, err
 	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {

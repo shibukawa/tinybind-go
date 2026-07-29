@@ -9,17 +9,17 @@ default < TOML file < environment variable < CLI option
 ```
 
 > [!IMPORTANT]
-> configbind implements a configuration-focused TOML subset, not the complete TOML specification. Quoted keys, inline tables, arrays of tables, nested arrays, and some other TOML syntax are unsupported. Prepare configuration files for this supported subset rather than assuming that an arbitrary existing TOML document can be loaded. See [TOML files](#toml-files) for the complete list used by configbind.
+> configbind implements a configuration-focused TOML subset, not the complete TOML specification. Quoted keys, inline tables, nested arrays, and some other TOML syntax are unsupported. Prepare configuration files for this supported subset rather than assuming that an arbitrary existing TOML document can be loaded. See [TOML files](#toml-files) for the complete list used by configbind.
 
 ## What is automated
 
 - Discovering configuration structs used by `configbind.Bind[T]`
 - Deriving TOML keys, CLI options, and environment names from struct fields
-- Applying `default`, `key`, `opt`, `env`, and `help` tags
-- Mapping nested structs and `[]string`
+- Applying `default`, `key`, `opt`, `env`, `help`, `falsy`, `dependon`, and `secret` tags
+- Mapping nested structs, `[]string`, and slices of structs from arrays of tables
 - Merging defaults, TOML, environment, and CLI values
-- Converting values to string, bool, int, and `[]string`
-- Recording the winning source for every merged setting
+- Converting values to string, bool, int, `time.Duration`, and `[]string`
+- Recording the winning source for every merged setting, in declaration order and with secrets masked
 
 Application code never implements any of the generated internals. It obtains a pointer with `Bind` and calls `Load` once during startup.
 
@@ -65,6 +65,8 @@ func WriteScaffoldEnv(w io.Writer) error
 ```
 
 The TOML output uses the supported restricted subset. Both formats use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
+
+Within a `[prefix]` table the keys follow the declaration order of the struct. The tables themselves are ordered by prefix and type name, so scaffold output never depends on package initialization order. The environment scaffold stays sorted by variable name, since it has no table grouping to hang declaration order on.
 
 For example, this definition:
 
@@ -185,6 +187,16 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | Override the environment variable with an exact name | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
+| `falsy:"value"` | The value that means "off" for a string, int, or duration option | `falsy:"off"`, `falsy:"0s"` |
+| `dependon:"key"` | Hide this field from provenance while that key is empty | `dependon:"webserver.tls.enabled"` |
+| `dependon:".key"` | The same, naming a key inside the struct the tag is written in | `dependon:".enabled"` |
+| `secret:"hide"` | Never print this field in provenance output | `secret:"hide"` |
+| `secret:"mask"` | Print `*****` instead of the value | `secret:"mask"` |
+| `secret:"show"` | Print the value even though the key name looks sensitive | `secret:"show"` |
+
+`falsy`, `dependon`, and `secret` need a stable config key, so none is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
+
+`dependon` and `secret` may also sit on a nested struct field, where they cover every field of that subtree. `falsy` may not: it names one value, and a struct has none.
 
 ### Godoc as the help source
 
@@ -296,14 +308,35 @@ enabled = true
 cert_path = "/etc/myserver/server.crt"
 ```
 
+A repeated setting uses an array of tables. Each `[[...]]` header starts one
+element, and the elements fill a slice of structs:
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+Every key after a `[[...]]` header belongs to that element, so the enclosing
+table's own keys must come before the first element. A standard table header
+under an open element, such as `[webserver.routes.rewrite]`, is that element's
+sub-table; the same nesting can be written inline with dotted keys
+(`rewrite.from = "/old"`).
+
 configbind intentionally reads a restricted TOML subset:
 
 - Tables, nested tables, and bare dotted keys
 - String, bool, integer, and float scalars
 - Arrays of primitive scalars
+- Arrays of tables
 - Comments
 
-Quoted keys, inline tables, arrays of tables, and nested arrays are not supported. There are really two limits here rather than one — what the parser accepts, and what a struct field can receive — and the second is the narrower of the two. A TOML float parses, yet it cannot be bound directly to a float field.
+Quoted keys, inline tables, and nested arrays are not supported. There are really two limits here rather than one — what the parser accepts, and what a struct field can receive — and the second is the narrower of the two. A TOML float parses, yet it cannot be bound directly to a float field.
 
 ## Configuration file discovery
 
@@ -421,6 +454,35 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 The `env` value is used exactly as written and must begin with a letter or `_`. Assigning the same environment name to multiple fields is a generation error. Use `env:"-"` for a field that must not accept environment input.
 
+### Referencing the environment from a configuration file
+
+Write `${NAME}` inside a TOML string and the load expands it from the environment. A reference does not have to span the whole value; it can sit anywhere inside the string.
+
+```toml
+[[database]]
+name = "primary"
+dsn = "postgres://app:${PRIMARY_DB_PASSWORD}@db1.internal:5432/app"
+
+[[database]]
+name = "replica"
+dsn = "postgres://app:${REPLICA_DB_PASSWORD}@db2.internal:5432/app"
+```
+
+This exists mainly to get credentials into the elements of an array of tables. An element has no CLI option and no environment variable of its own, so a reference is what lets the file keep owning the element count while the values come from outside.
+
+The rules:
+
+- Only strings in the TOML file expand. Keys, table headers, numbers, and booleans do not. Array elements and the fields of `[[...]]` elements do.
+- An undefined name fails the load. The file layer outranks defaults, so expanding to an empty string would quietly erase a `default` tag value; failing at startup is easier to notice. A variable set to the empty string counts as defined and expands to `""`.
+- `$$` yields one literal `$`. A `$` followed by neither `{` nor `$` stays literal.
+- An expanded value still belongs to the file layer, so environment and CLI overrides keep their usual precedence.
+- A `${...}` written in an environment or CLI value stays literal.
+- A reference names a raw environment variable. Per-field environment names and `env:"-"` do not affect it.
+
+There is no `${NAME:-default}` fallback form.
+
+Note that an existing configuration file whose string values contain `$$` changes meaning.
+
 ## CLI subcommands
 
 `SubCommand[T]` declares a generated, CLI-only command branch. Its fields never
@@ -528,6 +590,46 @@ WEBSERVER_TLS_CERT_PATH=production.crt \
 
 Here `CertPath` comes from the environment, `CorsOrigins` from CLI, `Enabled` from TOML, and `Host` from its default.
 
+## Repeated settings
+
+A slice of structs is filled from an array of tables:
+
+```go
+type WebServerConfig struct {
+	Routes []RouteConfig `help:"static routes"`
+}
+
+type RouteConfig struct {
+	Path    string
+	Dir     string
+	Listing bool `default:"false"`
+}
+```
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+Element count is data, so an element has no CLI option and no environment
+variable: the TOML file is its only source. `default` still applies, once per
+element — the first route above gets `listing = false`. Tagging an element field
+with `opt` or `env` is a generation error rather than a tag that quietly does
+nothing, and a subcommand cannot take a slice of structs at all. To inject a
+credential or a machine-specific path into an element, write a `${NAME}`
+reference in its value — see [referencing the environment from a configuration
+file](#referencing-the-environment-from-a-configuration-file).
+
+The element struct must be a named struct in the same package, held by value:
+`[]*RouteConfig` and a struct that reaches itself are both rejected during
+generation. The scaffold renders one example `[[...]]` block per slice.
+
 ## Multiple configuration structs
 
 Register multiple `Bind` targets and apply all of them with one `Load`:
@@ -552,7 +654,81 @@ Call every `Bind` before `Load`. The returned pointers contain their final value
 
 ## Inspecting provenance
 
-`LoadResult.Overlay` contains the merged values and each winning source:
+`LoadResult.Provenance()` returns the effective configuration ready to log:
+
+```go
+result, err := configbind.Load(options)
+if err != nil {
+	return err
+}
+
+for _, entry := range result.Provenance() {
+	log.Printf("%s = %s (%s)", entry.Key, entry.Value, entry.Place)
+}
+```
+
+The slice is ordered rather than sorted: bindings appear in `Bind` call order, and the keys of one binding in the declaration order of its struct, nested structs expanded where they are declared. Keys that belong to no registered binding — a stray entry in someone's TOML file — trail the known ones in alphabetical order.
+
+Two filters run before you see the slice.
+
+The first is disclosure. A `secret` tag decides on its own: `hide` drops the entry, `mask` reports `*****`, and `show` prints the value. A field with no tag is masked when its key path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, `access_key`, `dsn`, or `private_key` — a DSN carries its password inline, so it belongs on that list. The match is a substring, so a name like `token_bucket_size` is masked too; `secret:"show"` is the way out. `ProvenanceEntry.Masked` reports whether `Value` is the placeholder, so a caller re-rendering these entries never has to compare against the mask text.
+
+The second is dependency: a field with a `dependon` tag disappears while its parent is empty, which the next section covers.
+
+### Hiding settings of a disabled feature
+
+An unconfigured subsystem otherwise prints its whole block of defaults, burying the settings actually in use. `dependon` names the parent that decides whether this field matters:
+
+```go
+type WebServerConfig struct {
+	Tracing    string `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
+	TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
+}
+```
+
+The parent is a full config key including its prefix, so a field can depend on one bound by another package. While `webserver.tracing` reads as empty, `webserver.tracing_url` is absent from the provenance slice; `webserver.tracing` itself still appears, since an empty parent is the reason its dependents vanished. A hidden parent hides its own dependents in turn.
+
+A leading dot names a key inside the struct the tag is written in, which is what lets one struct type be embedded at several prefixes:
+
+```go
+type EndpointConfig struct {
+	Enabled bool
+	Path    string `dependon:".enabled" help:"URL path"`
+}
+
+type ServerConfig struct {
+	Health    EndpointConfig
+	Readiness EndpointConfig
+}
+```
+
+`server.health.path` answers to `server.health.enabled` and `server.readiness.path` to `server.readiness.enabled`, from the one tag.
+
+A tag on a nested struct field covers its whole subtree, so a subsystem is disabled in one place rather than once per leaf. A leaf inside such a subtree keeps its own parent as well: both have to be non-empty for the key to print.
+
+"Empty" means the empty string or `false` — an `int` of 0, an empty list, and a zero duration are deliberate settings, not absent ones. An option whose "off" is some other value needs a third form, which is what `falsy` supplies: it names the value that means off. That value then counts as empty for anything depending on the field, and it also fills the field in when nothing sets it:
+
+- No `default` tag and no source sets the key: the field resolves to `off`.
+- A source sets the key to `""`: it resolves to `off`, keeping that source as its `Place`.
+- A `default` tag is present: the default wins and `falsy` never substitutes.
+
+A number or a duration works the same way, which is how a zero threshold switches off what depends on it:
+
+```go
+type SQLConfig struct {
+	// Zero disables slow-statement detection, and with it EXPLAIN.
+	SlowThreshold time.Duration `falsy:"0s" help:"slow statement threshold"`
+	Explain       bool          `dependon:"sql.slow_threshold" help:"run EXPLAIN on slow statements"`
+}
+```
+
+The comparison is by value rather than by text, so `0`, `0s`, and `0ms` all read as off. Without the `falsy` tag a number or duration cannot be a parent at all: generation fails rather than guessing that zero means disabled.
+
+None of this reaches the bound struct. `TracingURL` is still populated from its sources, CLI flags and help are unchanged, and scaffolds still list every field so the options stay discoverable before a first load.
+
+### The raw overlay
+
+`LoadResult.Overlay` holds the merged values and each winning source, unfiltered:
 
 ```go
 result, err := configbind.Load(options)
@@ -573,7 +749,9 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found at all. Nothing in the overlay is masked automatically, so logging raw overlay values wholesale will log your credentials with them.
+`Overlay.All()` iterates every entry in sorted key order when you want the whole table.
+
+`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found at all. Nothing in the overlay is masked, so logging raw overlay values wholesale will log your credentials with them — use `Provenance()` for anything that reaches a log.
 
 ## Public APIs
 
@@ -594,17 +772,41 @@ The practical v1 field types are:
 - `string`
 - `bool`
 - `int`
+- `time.Duration`
 - `[]string`
 - Named nested structs containing those types
+- `[]T` where `T` is a named struct in the same package, filled from an array of tables
 
-Floats, maps, arbitrary slices, pointers, and `time.Duration` cannot be bound directly. Receive them in a supported representation and convert after `Load`:
+Floats, maps, other slices, and pointers cannot be bound directly. Receive them in a supported representation and convert after `Load`.
+
+### Durations
+
+A `time.Duration` field accepts the Go duration syntax and nothing else, in every source:
 
 ```go
-type RawConfig struct {
-	ReadTimeout string `default:"5s"`
+type ServerConfig struct {
+	ReadTimeout time.Duration `default:"5s" help:"request read timeout"`
 }
+```
 
-timeout, err := time.ParseDuration(cfg.ReadTimeout)
+```toml
+[webserver]
+read_timeout = "1h30m"
+```
+
+A bare number is rejected, because `5` cannot say whether it means seconds or nanoseconds. That applies to the `default` tag as well, where an unparsable value fails `go generate` rather than `Load`. Scaffolds emit durations as quoted strings, and a `default`-less field starts at `"0s"`.
+
+Only `time.Duration` itself is treated this way. A named type of your own whose underlying type is `time.Duration` binds as an integer.
+
+Duration fields work inside an array-of-tables element too, where the `default` applies once per element:
+
+```toml
+[[webserver.routes]]
+path = "/static"
+max_age = "15m"
+
+[[webserver.routes]]
+path = "/assets"   # max_age falls back to its default
 ```
 
 ## Troubleshooting

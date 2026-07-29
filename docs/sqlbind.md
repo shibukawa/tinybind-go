@@ -10,7 +10,7 @@ Neither workflow reflects over application struct fields at runtime. Both genera
 ## What SQL templates automate
 
 - Discovering `.tb.sql` files
-- Turning value expressions into `$1`, `$2`, ... placeholders and `Args`
+- Turning value expressions into dialect-appropriate placeholders and `Args`
 - Generating `database/sql` APIs based on result cardinality
 - Checking SELECT/RETURNING column count and names against the result type
 - Scanning query results
@@ -56,7 +56,21 @@ To use another naming convention, pass base-name globs with
 
 The defaults remain `*.tb.html` and `*.tb.sql`.
 
-Placeholders are PostgreSQL style — `$1`, `$2`, and so on — and generated runtime APIs accept no dialect or placeholder option. The dialect is fixed when the code is generated, not chosen when it runs.
+## Choosing a dialect
+
+A run that finds a SQL template must name its target database. There is no default:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
+```
+
+`postgresql`, `mysql`, and `sqlite` are the accepted values, and omitting the flag is a generation error rather than a quiet PostgreSQL default. The reason is that the wrong placeholder token produces SQL the target engine simply rejects, while nothing in the templates hints at the mistake. A package holding only HTML templates needs no dialect.
+
+Placeholders follow the selection: `$1`, `$2`, and so on for PostgreSQL, `?` for MySQL and SQLite. SQLite reads several placeholder spellings, and `?` is the positional one, which is what matches how arguments are bound. Generated runtime APIs accept no dialect or placeholder argument, so switching engines changes the emitted SQL text and nothing about the signatures you call. The dialect is fixed when the code is generated, not chosen when it runs.
+
+The placeholder token is the only thing the dialect changes. Everything else you write reaches the generated SQL verbatim: tinybind will not rewrite `||` into `CONCAT`, translate `ON CONFLICT` into `ON DUPLICATE KEY UPDATE`, or work around MySQL's missing `RETURNING`. A translation layer of that kind looks correct and fails subtly — `||` is string concatenation in PostgreSQL and SQLite but logical OR in MySQL, so rewriting it can invert a predicate — and it would make the SQL you read in the template different from the SQL that runs. Write for the engine you selected. One generated package therefore serves one engine; run the generator twice to serve two.
+
+That last point is worth weighing before you reach for SQLite in tests against a PostgreSQL production database. The two share `RETURNING` and `ON CONFLICT`, so plain CRUD often does port, but nothing checks that it did, and the generated package you exercise is not the one you ship. Selecting the dialect per generated directory is what makes running both deliberate.
 
 ## Minimal query
 
@@ -236,6 +250,10 @@ That check only holds if the shape is knowable statically. Runtime conditions th
 
 The table stops at the Go type; the driver has to agree as well. Your SQL driver must be able to scan returned values into these types, so choose types that match both the schema and the driver, and use optional types wherever NULL is possible.
 
+Two entries need more than the driver's agreement. A `url` column is carried as text in both directions: a `url.URL` parameter binds as its string form, and a returned column is parsed back through a runtime adapter, because `database/sql` can neither bind nor scan a struct. An optional `url` leaves a nil pointer for NULL; a required one reports an error, exactly as a required `string` does.
+
+Separately, `datetime`, `date`, and `time` require the driver to hand back a `time.Time`; text and bytes do not scan into one. With MySQL that means `parseTime=true` in the DSN. With SQLite it depends on your driver and on the column's declared type, since SQLite stores no date type of its own. Either way it is driver configuration, not something the dialect selection can set for you.
+
 ## Conditional SQL
 
 ```text
@@ -342,7 +360,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-Generation fails when the template contains no WHERE at all. A conditional WHERE is harder, because whether it survives is only known at call time:
+Whether a clause can come out empty is a property of the template, not of runtime data, so the whole check runs at generation time and no guard is emitted into generated code. A conditional WHERE fails to generate, because one call path would delete every row:
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +369,27 @@ DELETE FROM users
 }
 ```
 
-So the check runs twice. This template generates, but calling the builder with `enabled == false` returns an error and the statement never reaches the database. There is currently no opt-in for an intentional full-table UPDATE or DELETE.
+An `if` with an `else` where both branches emit a predicate does generate, because no path leaves the clause empty:
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+The same proof covers a dynamic `SET` list: an UPDATE whose assignments are all conditional is a generation error.
+
+The keyword must belong to the statement itself. A WHERE inside a subquery, a CTE body, a string literal, or a comment does not satisfy the requirement, so this is rejected:
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+The check applies to every cardinality, not only `sql.exec`. A `DELETE ... RETURNING` declared as `sql.one<T>` is proven the same way. There is currently no opt-in for an intentional full-table UPDATE or DELETE.
+
+A `sql.predicate` satisfies the requirement only when that predicate is itself non-empty on every path.
 
 ## Using the low-level builder
 
@@ -418,6 +456,23 @@ for user, err := range ListActiveUsersContext(ctx, true) {
 Without an executor, these functions return `sqlbind.ErrNoSQLExecutor`. `WithSQLExecutor` accepts `*sql.DB`, `*sql.Conn`, `*sql.Tx`, or another `sqlbind.SQLExecutor` implementation.
 
 The ordinary explicit-executor APIs remain available, so both styles can coexist.
+
+### Read-only executors
+
+When the Context carries a connection to a read replica, or a transaction begun with `sql.TxOptions{ReadOnly: true}`, add `sqlbind.AsReadOnly()`.
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // a SELECT, so it runs
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+Write statements are identified at generation time and return `sqlbind.ErrReadOnlyExecutor` before executing. The error names the rejected statement. No SQL is built and no round trip happens, so the failure is identical on a developer machine or in a test that never touches a replica.
+
+A statement counts as read-only only when it opens with `SELECT`, `VALUES`, or `TABLE`, or is a `WITH` whose CTE bodies do not write and whose tail reads, and when it carries no top-level row-locking clause such as `FOR UPDATE`. A `DELETE ... RETURNING` declared as `sql.one<T>`, and a `SELECT ... FOR UPDATE`, are both writes. Anything the analysis cannot resolve is a write, so a misclassification can only cost a replica connection rather than send a write to a read-only executor.
+
+Writes that are invisible in the SQL text, such as a `SELECT` calling a function that writes, are not detected; the database remains the final guard. The check is disabled when a custom resolver (`-sql-executor-resolver`) is configured, because that contract cannot carry the access mode.
 
 ## Context-only public API
 

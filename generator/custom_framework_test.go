@@ -46,6 +46,7 @@ func customFrameworkOptions(t *testing.T) generator.Options {
 	options.SQLTemplatePattern = "*.pw.sql"
 	options.SQLContextOnlyAPI = true
 	options.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "tempmod/pw", Name: "SQLExecutor"}
+	options.SQLDialect = "postgresql"
 	return options
 }
 

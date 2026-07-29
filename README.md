@@ -135,9 +135,11 @@ value exits without regenerating. `-force` regenerates regardless. See
 [docs/httpbind.md](docs/httpbind.md#skipping-unchanged-packages).
 
 The CLI automatically discovers `.tb.html` and `.tb.sql` files in the target
-package and writes `tinybind_templates_gen.go`. SQL value expressions become
-driver arguments; PostgreSQL-style `$1`, `$2`, … placeholders are generated in
-encounter order:
+package and writes `tinybind_templates_gen.go`. A package containing SQL
+templates must name its database with `-sql-dialect postgresql`, `mysql`, or
+`sqlite`; there is no default. SQL value expressions become driver arguments,
+and placeholders are generated in encounter order in the style that dialect
+requires — `$1`, `$2`, … for PostgreSQL and `?` for MySQL and SQLite:
 
 ```text
 package store

@@ -11,7 +11,9 @@ behavior:
   - generator emits apply functions for T fields
   - apply reads concept:config-overlay entries and parses decision:configbind-supported-types
   - nested Go structs map to nested standard tables or dotted bare keys under the prefix
-  - default, help, enum, secret tags resolved at generation time via decision:struct-field-tags
+  - default, help, enum, secret, dependon tags resolved at generation time via decision:struct-field-tags
+  - time.Duration fields bind via requirement:duration-config-fields, matched before basic int kinds
+  - dependon never suppresses apply; see rule:dependent-key-visibility
   - key paths under prefix align with TOML hierarchy and prefixed env/CLI names
   - multiple structs use prefix partitioning, not a shared flat key space
   - reject shapes forbidden by decision:toml-shape-constraints

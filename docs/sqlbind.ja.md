@@ -10,7 +10,7 @@ tinybind-go は SQL に2方向から取り組みます。答える問いがそ�
 ## SQL template で自動化されること
 
 - `.tb.sql` の自動発見
-- 値式から `$1`, `$2`, ... placeholder と `Args` の生成
+- 値式から dialect に応じた placeholder と `Args` の生成
 - statement の戻り件数に応じた `database/sql` API
 - SELECT / RETURNING の列数・列名と結果型の検査
 - query result の scan
@@ -56,7 +56,21 @@ go generate ./...
 
 既定値は引き続き `*.tb.html` と `*.tb.sql` です。
 
-placeholder は PostgreSQL 形式の `$1`, `$2`, ... で、生成される実行時 API に dialect や placeholder の選択肢はありません。dialect が決まるのはコード生成の時点で、実行時ではありません。
+## dialect の選択
+
+SQL template を含む生成では、対象データベースの指定が必須です。既定値はありません。
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
+```
+
+指定できるのは `postgresql`、`mysql`、`sqlite` で、省略すると PostgreSQL と黙って解釈するのではなく生成エラーになります。placeholder の形式を間違えると対象エンジンがその SQL を単純に拒否しますが、template のどこを読んでもその間違いは現れないからです。HTML template しか持たない package に dialect は不要です。
+
+placeholder は選択に従い、PostgreSQL なら `$1`, `$2`, ...、MySQL と SQLite なら `?` になります。SQLite は複数の placeholder 表記を読みますが、`?` が位置指定の形式で、引数の bind のされ方に一致します。生成される実行時 API に dialect や placeholder の引数はないので、エンジンを切り替えても変わるのは出力される SQL テキストだけで、呼び出す側の signature は変わりません。dialect が決まるのはコード生成の時点で、実行時ではありません。
+
+dialect が変えるのは placeholder だけです。それ以外に書いたものは逐語的に生成 SQL へ届きます。`||` を `CONCAT` に書き換えたり、`ON CONFLICT` を `ON DUPLICATE KEY UPDATE` に翻訳したり、MySQL に無い `RETURNING` を回避したりはしません。この種の翻訳層は正しく見えて静かに壊れます — `||` は PostgreSQL と SQLite では文字列連結ですが MySQL では論理和なので、書き換えると述語が反転しえます — し、template で読む SQL と実際に走る SQL が別物になります。選んだエンジンに向けて書いてください。したがって生成された1つの package が対応するのは1つのエンジンです。2つ必要なら generator を2回走らせます。
+
+この点は、本番が PostgreSQL でテストだけ SQLite にしようとする前に検討する価値があります。両者は `RETURNING` と `ON CONFLICT` を共有するので単純な CRUD なら移植できることも多いのですが、移植できたことを検証する仕組みはありませんし、テストで動かす生成 package は出荷する package とは別物です。dialect を生成ディレクトリ単位で選ぶ形にしてあるのは、両方走らせることを意識的な選択にするためです。
 
 ## 最小の query
 
@@ -236,6 +250,10 @@ ORDER BY id
 
 この表が示すのは Go の型までで、driver も同意している必要があります。使用する SQL driver が返す値をこれらの型へ `database/sql.Rows.Scan` できることが前提なので、schema と driver の両方に合う型を選び、NULL がありうる列では optional 型を使ってください。
 
+2つだけ、driver の同意以上のものが要る型があります。`url` 列は両方向ともテキストとして運ばれます。`url.URL` の parameter は文字列形式で bind され、返ってきた列は runtime の adapter で parse し直されます。`database/sql` は struct を bind することも scan することもできないからです。optional な `url` は NULL のとき nil pointer になり、必須の `url` は必須の `string` と同じくエラーになります。
+
+もう1つは `datetime` / `date` / `time` で、driver が `time.Time` を返してくれる必要があります。テキストやバイト列は `time.Time` へ scan できません。MySQL なら DSN の `parseTime=true` がそれにあたります。SQLite は日付型を持たないので、driver と列の宣言型次第です。いずれにせよ driver の設定であって、dialect の選択が代わりに面倒を見られる範囲ではありません。
+
 ## 条件付き SQL
 
 ```text
@@ -342,7 +360,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-WHERE が template 内にまったくなければ、生成時に失敗します。やっかいなのは条件 block の中にある WHERE で、それが残るかどうかは呼び出しの時点でしか分かりません。
+clause が空になりうるかどうかは template の性質であって実行時データの性質ではないため、検査はすべて生成時に行われ、生成コードにガードは入りません。条件 block の中だけにある WHERE は、片方の経路が全件削除になるため生成に失敗します。
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +369,27 @@ DELETE FROM users
 }
 ```
 
-そこで検査は2段階になります。この template は生成できますが、builder を `enabled == false` で呼べば error になり、statement が DB に届くことはありません。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+`else` があって両分岐とも述語を出す場合は、空になる経路がないので生成できます。
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+同じ証明が動的な `SET` list にも適用されます。代入がすべて条件付きの UPDATE は生成エラーです。
+
+keyword はその statement 自身のものでなければなりません。subquery、CTE 本体、文字列リテラル、コメントの中にある WHERE は条件を満たさないため、次は拒否されます。
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+検査は `sql.exec` だけでなくすべての cardinality に適用されます。`sql.one<T>` として宣言した `DELETE ... RETURNING` も同じように証明されます。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+
+`sql.predicate` が条件を満たすのは、その predicate 自身がすべての経路で空にならない場合だけです。
 
 ## 低レベル builder を使う
 
@@ -418,6 +456,23 @@ for user, err := range ListActiveUsersContext(ctx, true) {
 Context に executor がなければ `sqlbind.ErrNoSQLExecutor` が返ります。`WithSQLExecutor` に渡せるのは `*sql.DB`、`*sql.Conn`、`*sql.Tx` など `sqlbind.SQLExecutor` を満たす値です。
 
 executor を引数で明示する通常 API も残るため、用途に応じて併用できます。
+
+### 読み取り専用 executor
+
+read replica への接続や `sql.TxOptions{ReadOnly: true}` で開始した transaction を Context に入れるときは、`sqlbind.AsReadOnly()` を付けます。
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // SELECT なので実行される
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+書き込み statement は生成時に判定され、実行前に `sqlbind.ErrReadOnlyExecutor` を返します。エラーには弾かれた statement 名が入ります。SQL の組み立てもデータベースへの往復も発生しないため、read replica に繋がっていない開発環境やテストでも同じように失敗します。
+
+読み取りと判定されるのは、先頭が `SELECT` / `VALUES` / `TABLE`、または CTE 本体に書き込みを含まず末尾が読み取りの `WITH` で、かつトップレベルに `FOR UPDATE` などの行ロック句がない statement だけです。`DELETE ... RETURNING` を `sql.one<T>` で宣言したものや `SELECT ... FOR UPDATE` は書き込みとして扱われます。判定できないものはすべて書き込みに倒れるので、誤判定は「read replica を使えたはずが writer を使う」方向にしか起きません。
+
+`SELECT` から書き込みを行う関数を呼ぶ場合など、静的に判定できない書き込みは検出できません。最終的な防御はデータベース側に残ります。カスタム resolver（`-sql-executor-resolver`）を指定した場合、その契約は読み取り専用かどうかを運べないため、このチェックは無効になります。
 
 ## context のみの公開 API
 

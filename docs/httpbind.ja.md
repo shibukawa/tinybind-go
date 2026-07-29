@@ -139,7 +139,7 @@ curl 'http://localhost:8080/hello?name=Ada'
 ```go
 type SearchRequest struct {
 	Keyword string `query:"keyword" check:"required"`
-	Page    int    `query:"page" check:"min=1,default=1"`
+	Page    int    `query:"page" check:"min=1" default:"1"`
 	Filter  string `payload:"filter"`
 }
 ```
@@ -256,10 +256,8 @@ type EventRequest struct {
 | ルール | 対象 | 例 |
 | --- | --- | --- |
 | `required` | 入力の存在。string は空文字、file は空内容も拒否 | `check:"required"` |
-| `default=value` | scalar | `check:"default=1"` |
 | `min` / `max` | 数値 | `check:"min=1,max=100"` |
 | `minlen` / `maxlen` / `len` | string | `check:"minlen=3,maxlen=64"` |
-| `enum=a\|b` | scalar | `check:"enum=asc\|desc"` |
 | `pattern=...` | string | `check:"pattern=^[A-Z]{3}$"` |
 | `email` | string | `check:"email"` |
 | `uuid` | string | `check:"uuid"` |
@@ -274,12 +272,27 @@ type CreateAccountRequest struct {
 	Name     string `check:"required,minlen=1,maxlen=64"`
 	Email    string `check:"required,email,maxlen=254"`
 	Age      int    `check:"min=0,max=150"`
-	Plan     string `check:"enum=free|pro,default=free"`
+	Plan     string `enum:"free,pro" default:"free"`
 	PostCode string `check:"pattern=^[0-9]{3}-[0-9]{4}$"`
 }
 ```
 
-デフォルト値が適用されるのは検証の後、しかも値が送られてこなかったときだけです。この順序のおかげで `check:"min=1,default=-1"` が sentinel として使えます。未指定なら `-1` が届き、明示的に送られた `-1` は弾かれます。
+### enum とデフォルト値
+
+許可値リストとデフォルト値は、それぞれ独立した `enum` / `default` タグに書きます。configbind が config 構造体で使っているタグと同じものです。
+
+```go
+type ListRequest struct {
+	Sort string `query:"sort" enum:"asc,desc" default:"asc"`
+	Page int    `query:"page" check:"min=1" default:"1"`
+}
+```
+
+どちらも対象は scalar フィールドのみで、値はそのフィールドの型として解釈できる必要があります。`enum` の区切りはカンマなので、値自体にカンマを含めることはできません。`check:"enum=asc|desc"` や `check:"default=1"` と書いた場合は、使うべきタグを案内する生成エラーになります。
+
+デフォルト値は制約ではありません。何かを弾くのではなく、送られてこなかった値を埋めるだけです。一方 enum は値を弾きます。そのため `enum` タグだけを持つフィールドでも検証コードは生成され、`400` レスポンスもドキュメントに載ります。
+
+デフォルト値が適用されるのは検証の後、しかも値が送られてこなかったときだけです。この順序のおかげで `check:"min=1" default:"-1"` が sentinel として使えます。未指定なら `-1` が届き、明示的に送られた `-1` は弾かれます。
 
 やっかいなのは「送られてきたかどうか」そのものです。非 pointer の数値や bool では、Go のゼロ値だけから「未指定」と「明示的な 0 / false」を区別できない場面があります。どちらだったかを知ることが契約の一部なら、この制約を織り込んだ設計が必要です。
 

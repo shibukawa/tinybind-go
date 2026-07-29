@@ -27,8 +27,9 @@ resolver_contract:
   SQLExecutor: ExecContext-compatible and QueryContext-compatible
   accepted_values: [sql.DB, sql.Conn, sql.Tx]
 standard_runtime:
-  setter: WithSQLExecutor(context.Context, SQLExecutor) context.Context
+  setter: WithSQLExecutor(context.Context, SQLExecutor, ...ExecutorOption) context.Context
   resolver: SQLExecutorFromContext(context.Context) (SQLExecutor, error)
+  write_resolver: WriteExecutorFromContext per requirement:sql-read-only-executor
   key: private typed key
 wrapper_behavior:
   sql.exec: resolve then delegate to explicit API

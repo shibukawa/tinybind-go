@@ -41,17 +41,19 @@ func TestScaffoldsCombineRegisteredFragmentsDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Tables sort by (prefix, TypeName) so init order stays unobservable, while
+	// keys inside one table keep their struct declaration order.
 	wantTOML := `# CacheConfig configures the response cache
 [middleware.cache]
 service_name = ""
 
 # ServerConfig configures the public HTTP listener
 [webserver]
+# HTTP listen port
+port = 8080
 # listen host
 host = "localhost"
 origins = []
-# HTTP listen port
-port = 8080
 secret = ""
 # enable TLS
 tls.enabled = true

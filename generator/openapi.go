@@ -127,7 +127,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 		ensureSchema(schemas, reqName, types[reqName])
 		if tp, ok := types[reqName]; ok {
 			for _, f := range tp.Fields {
-				if f.Check.HasValidation() {
+				if f.HasValidation() {
 					hasCheckValidation = true
 				}
 				switch f.Source {
@@ -365,7 +365,8 @@ func schemaForKind(kind string) map[string]any {
 	}
 }
 
-// schemaForField builds an OpenAPI schema object including check-tag constraints.
+// schemaForField builds an OpenAPI schema object including check-tag constraints
+// and the enum and default tags.
 func schemaForField(f FieldPlan) map[string]any {
 	s := schemaForKind(f.Kind)
 	c := f.Check
@@ -385,9 +386,9 @@ func schemaForField(f FieldPlan) map[string]any {
 		s["minLength"] = *c.Len
 		s["maxLength"] = *c.Len
 	}
-	if len(c.Enum) > 0 {
-		enums := make([]any, 0, len(c.Enum))
-		for _, v := range c.Enum {
+	if f.Enum.Set {
+		enums := make([]any, 0, len(f.Enum.Values))
+		for _, v := range f.Enum.Values {
 			enums = append(enums, enumJSONValue(f.Kind, v))
 		}
 		s["enum"] = enums
@@ -410,8 +411,8 @@ func schemaForField(f FieldPlan) map[string]any {
 	if c.DateTime {
 		s["format"] = "date-time"
 	}
-	if c.HasDefault {
-		s["default"] = enumJSONValue(f.Kind, c.Default)
+	if f.Default.Set {
+		s["default"] = enumJSONValue(f.Kind, f.Default.Value)
 	}
 	return describe(s, f.Doc)
 }

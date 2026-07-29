@@ -139,7 +139,7 @@ For scalar `input` fields, binding checks the query first and reads the body onl
 ```go
 type SearchRequest struct {
 	Keyword string `query:"keyword" check:"required"`
-	Page    int    `query:"page" check:"min=1,default=1"`
+	Page    int    `query:"page" check:"min=1" default:"1"`
 	Filter  string `payload:"filter"`
 }
 ```
@@ -256,10 +256,8 @@ type EventRequest struct {
 | Rule | Applies to | Example |
 | --- | --- | --- |
 | `required` | Input presence; also rejects empty strings and empty files | `check:"required"` |
-| `default=value` | Scalars | `check:"default=1"` |
 | `min` / `max` | Numbers | `check:"min=1,max=100"` |
 | `minlen` / `maxlen` / `len` | Strings | `check:"minlen=3,maxlen=64"` |
-| `enum=a\|b` | Scalars | `check:"enum=asc\|desc"` |
 | `pattern=...` | Strings | `check:"pattern=^[A-Z]{3}$"` |
 | `email` | Strings | `check:"email"` |
 | `uuid` | Strings | `check:"uuid"` |
@@ -274,12 +272,27 @@ type CreateAccountRequest struct {
 	Name     string `check:"required,minlen=1,maxlen=64"`
 	Email    string `check:"required,email,maxlen=254"`
 	Age      int    `check:"min=0,max=150"`
-	Plan     string `check:"enum=free|pro,default=free"`
+	Plan     string `enum:"free,pro" default:"free"`
 	PostCode string `check:"pattern=^[0-9]{3}-[0-9]{4}$"`
 }
 ```
 
-Defaults are applied after validation, and only when a value was absent. That ordering makes `check:"min=1,default=-1"` usable as a sentinel: an absent value arrives as `-1`, while an explicitly supplied `-1` is rejected.
+### Enums and default values
+
+An allowed-value list and a default value each go in their own tag — `enum` and `default`, the same tags configbind uses on config structs:
+
+```go
+type ListRequest struct {
+	Sort string `query:"sort" enum:"asc,desc" default:"asc"`
+	Page int    `query:"page" check:"min=1" default:"1"`
+}
+```
+
+Both apply to scalar fields only, and their values have to parse as the field's type. `enum` values are comma-separated, so a value cannot contain a comma. Writing `check:"enum=asc|desc"` or `check:"default=1"` is a generation error pointing at the tag to use instead.
+
+A default is not a constraint — it never rejects anything, it fills in a value nobody supplied. An enum does reject values, so a field carrying only an `enum` tag still generates validation and still documents a `400` response.
+
+Defaults are applied after validation, and only when a value was absent. That ordering makes `check:"min=1" default:"-1"` usable as a sentinel: an absent value arrives as `-1`, while an explicitly supplied `-1` is rejected.
 
 Presence itself is harder. For non-pointer numbers and booleans, Go's zero value can make an omitted value indistinguishable from an explicit `0` or `false`, so a contract that depends on knowing which one happened needs to account for that limit.
 

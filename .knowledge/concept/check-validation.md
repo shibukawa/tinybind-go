@@ -14,7 +14,10 @@ ssot:
   input: Go struct check tags
   outputs:
     - generated validateXxx after bind then defaults
-    - OpenAPI required/minimum/maximum/minLength/maxLength/enum/pattern/format/default
+    - OpenAPI required/minimum/maximum/minLength/maxLength/pattern/format
+excludes:
+  default: standalone default tag per decision:default-tag-form
+  enum: standalone enum tag per decision:enum-tag-form; still validation, still generated
 pipeline: rule:check-codegen-pipeline
 pipeline_order:
   - bind
@@ -31,10 +34,15 @@ example: |
   type CreateUserRequest struct {
       Name  string `check:"required,minlen=1,maxlen=64"`
       Email string `check:"required,email,maxlen=254"`
-      Age   int    `check:"min=0,max=150"`
+      Age   int    `check:"min=0,max=150" default:"0"`
       ID    string `path:"id" check:"required,uuid"`
+      Sort  string `query:"sort" enum:"asc,desc" default:"asc"`
   }
 related:
+  - decision:default-tag-form
+  - decision:enum-tag-form
+  - rule:default-tag-semantics
+  - rule:enum-tag-semantics
   - concept:request-binding
   - concept:code-generation
   - concept:openapi-generation

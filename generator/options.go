@@ -64,6 +64,12 @@ type Options struct {
 	// applied to file base names. Empty values use the standard patterns.
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
+	// SQLDialect names the target database for SQL templates: "postgresql",
+	// "mysql", or "sqlite". A run that discovers a SQL template must set it.
+	// There is no default, because an assumed dialect emits placeholders the
+	// target engine rejects, and nothing about the templates reveals the
+	// mistake.
+	SQLDialect string
 	// SQLContextAPI adds Context-resolved wrappers for exported SQL templates.
 	SQLContextAPI bool
 	// SQLContextOnlyAPI publishes only the Context-resolved SQL surface under

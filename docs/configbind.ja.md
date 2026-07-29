@@ -9,17 +9,17 @@ default < TOML file < environment variable < CLI option
 ```
 
 > [!IMPORTANT]
-> configbind の TOML parser は標準 TOML のフルセットではなく、設定用途に絞った subset です。quoted key、inline table、array of tables、nested array などは利用できません。既存の一般的な TOML file をそのまま読み込む用途ではなく、対応範囲に合わせて設定 file を用意してください。詳しくは「[TOML file](#toml-file)」を参照してください。
+> configbind の TOML parser は標準 TOML のフルセットではなく、設定用途に絞った subset です。quoted key、inline table、nested array などは利用できません。既存の一般的な TOML file をそのまま読み込む用途ではなく、対応範囲に合わせて設定 file を用意してください。詳しくは「[TOML file](#toml-file)」を参照してください。
 
 ## 自動化されること
 
 - 設定構造体と `configbind.Bind[T]` の利用箇所の発見
 - 構造体 field から TOML key、CLI option、環境変数名の決定
-- `default`、`key`、`opt`、`env`、`help` tag の反映
-- nested struct と `[]string` の設定 mapping
+- `default`、`key`、`opt`、`env`、`help`、`falsy`、`dependon`、`secret` tag の反映
+- nested struct、`[]string`、array of tables から作る struct slice の設定 mapping
 - default → TOML → env → CLI の merge
-- string、bool、int、`[]string` への型変換
-- 各設定値が最終的にどの入力元から来たかの記録
+- string、bool、int、`time.Duration`、`[]string` への型変換
+- 各設定値が最終的にどの入力元から来たかの、定義順かつ secret を mask した記録
 
 生成コードの内部を利用者が実装することは一切ありません。アプリケーションがすることは、`Bind` で設定 pointer を取得し、起動時に一度 `Load` を呼ぶことだけです。
 
@@ -65,6 +65,8 @@ func WriteScaffoldEnv(w io.Writer) error
 ```
 
 TOML 出力は対応 subset 内の文法を使います。どちらの形式も `default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
+
+`[prefix]` table 内の key は構造体の定義順に並びます。table 自体は prefix と型名の順なので、雛形の出力順が package の初期化順に左右されることはありません。環境変数の雛形は table による grouping がないため、従来どおり変数名順のままです。
 
 たとえば次の定義がある場合:
 
@@ -185,6 +187,16 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | 環境変数名を正確な名前で上書き | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
+| `falsy:"value"` | string、int、duration の option において「off」を意味する値 | `falsy:"off"`、`falsy:"0s"` |
+| `dependon:"key"` | 指定 key が空の間、この field を provenance から隠す | `dependon:"webserver.tls.enabled"` |
+| `dependon:".key"` | 同上。tag を書いた構造体の中の key を指す | `dependon:".enabled"` |
+| `secret:"hide"` | provenance に一切出力しない | `secret:"hide"` |
+| `secret:"mask"` | 値の代わりに `*****` を出力する | `secret:"mask"` |
+| `secret:"show"` | key 名が機密に見えても値をそのまま出力する | `secret:"show"` |
+
+`falsy`、`dependon`、`secret` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
+
+`dependon` と `secret` は入れ子の構造体 field にも書けます。その場合は subtree 全体に効きます。`falsy` は書けません。値を 1 つ指名する tag であり、構造体には値がないためです。
 
 ### godoc を説明の source にする
 
@@ -296,14 +308,30 @@ enabled = true
 cert_path = "/etc/myserver/server.crt"
 ```
 
+繰り返す設定は array of tables で書きます。`[[...]]` header 1つが1要素になり、struct の slice へ入ります。
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+`[[...]]` header 以降の key はすべてその要素に属するため、その table 自身の key は最初の要素より前に書きます。開いている要素の下の standard table header、たとえば `[webserver.routes.rewrite]` はその要素の sub-table です。同じ nest は dotted key（`rewrite.from = "/old"`）でも書けます。
+
 configbind が読む TOML は意図的に限定された subset です。
 
 - table、nested table、bare dotted key
 - string、bool、integer、float の scalar
 - primitive scalar の array
+- array of tables
 - comment
 
-quoted key、inline table、array of tables、nested array は利用できません。ここにある制限は1つではなく2つです。parser が受け付ける範囲と、struct field が受け取れる範囲。狭いのは後者です。float の TOML 値は parse できても、float field へ直接 bind することはできません。
+quoted key、inline table、nested array は利用できません。ここにある制限は1つではなく2つです。parser が受け付ける範囲と、struct field が受け取れる範囲。狭いのは後者です。float の TOML 値は parse できても、float field へ直接 bind することはできません。
 
 ## 設定 file の探索
 
@@ -421,6 +449,35 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 `env` の値は大文字・小文字を含めてそのまま利用され、英字または `_` で始まる環境変数名を指定します。同じ環境変数名を複数 field に割り当てると生成 error になります。環境変数から設定されたくない field には `env:"-"` を指定できます。
 
+### 設定 file の中で環境変数を参照する
+
+TOML の文字列の中に `${NAME}` と書くと、読み込み時に環境変数の値へ展開されます。値全体を置き換える必要はなく、文字列の途中でも使えます。
+
+```toml
+[[database]]
+name = "primary"
+dsn = "postgres://app:${PRIMARY_DB_PASSWORD}@db1.internal:5432/app"
+
+[[database]]
+name = "replica"
+dsn = "postgres://app:${REPLICA_DB_PASSWORD}@db2.internal:5432/app"
+```
+
+これは主に、array of tables の要素へ credential を渡すための機能です。要素には CLI option も環境変数もありませんが、要素数を file 側に持たせたまま、値だけを外から注入できます。
+
+規則は次の通りです。
+
+- 参照できるのは TOML file の文字列だけです。key、table header、数値や真偽値は対象外です。配列の要素と `[[...]]` の要素の field も展開されます。
+- 環境変数が未定義なら error になり、起動しません。空文字が入って `default` を打ち消すよりも、起動時に気づける方が安全なためです。値が空文字に設定されている場合は「定義済み」として扱われ、空文字に展開されます。
+- `$$` は `$` 1文字になります。`{` にも `$` にも続かない単独の `$` はそのままの文字です。
+- 展開しても入力元は TOML file のままなので、環境変数や CLI による上書きの優先順位は変わりません。
+- 環境変数や CLI から来た値の中の `${...}` は展開されません。
+- 参照する名前は生の環境変数名です。field ごとの環境変数名や `env:"-"` の影響は受けません。
+
+`${NAME:-default}` のような fallback 記法は今のところありません。
+
+既存の設定 file に `$$` を含む文字列がある場合は意味が変わるので注意してください。
+
 ## CLI subcommand
 
 `SubCommand[T]` は、生成される CLI 専用の command branch を宣言します。その
@@ -528,6 +585,37 @@ WEBSERVER_TLS_CERT_PATH=production.crt \
 
 この場合、`CertPath` は env、`CorsOrigins` は CLI、`Enabled` は TOML、`Host` は default から取得されます。
 
+## 繰り返す設定
+
+struct の slice は array of tables から読み込まれます。
+
+```go
+type WebServerConfig struct {
+	Routes []RouteConfig `help:"static routes"`
+}
+
+type RouteConfig struct {
+	Path    string
+	Dir     string
+	Listing bool `default:"false"`
+}
+```
+
+```toml
+[[webserver.routes]]
+path = "/"
+dir = "./public"
+
+[[webserver.routes]]
+path = "/files"
+dir = "./files"
+listing = true
+```
+
+要素数そのものが data であるため、要素の field には CLI option も環境変数もありません。入力元は TOML file だけです。`default` は要素ごとに適用され、上の例では最初の route が `listing = false` になります。要素の field に `opt` や `env` を付けると、黙って無視されるのではなく生成時のエラーになります。subcommand は struct の slice を受け取れません。要素に credential や環境ごとの path を渡したい場合は、値の中に `${NAME}` と書いてください（[設定 file の中で環境変数を参照する](#設定-file-の中で環境変数を参照する)）。
+
+要素の型は同一 package の named struct を値で持つ必要があります。`[]*RouteConfig` と、自分自身へ到達する struct はどちらも生成時に拒否されます。scaffold は slice ごとに `[[...]]` block の例を1つ出力します。
+
 ## 複数の設定構造体
 
 複数の `Bind` target を登録し、1回の `Load` でまとめて適用できます。
@@ -552,7 +640,81 @@ _ = database.URL
 
 ## 入力元を確認する
 
-`LoadResult.Overlay` には、merge 後の値と勝った入力元が入っています。
+`LoadResult.Provenance()` は、そのまま log に流せる形の実効設定を返します。
+
+```go
+result, err := configbind.Load(options)
+if err != nil {
+	return err
+}
+
+for _, entry := range result.Provenance() {
+	log.Printf("%s = %s (%s)", entry.Key, entry.Value, entry.Place)
+}
+```
+
+この slice は sort されているのではなく、順番が保たれています。binding は `Bind` を呼んだ順、その中の key は構造体の定義順で、nested struct は宣言された位置に展開されます。どの binding にも属さない key — たとえば誰かの TOML file に紛れ込んだ entry — は、既知の key のあとに辞書順で続きます。
+
+slice を受け取る前に filter が 2 つ走ります。
+
+1 つ目は開示制御です。`secret` tag があればそれが決めます。`hide` は entry ごと落とし、`mask` は `*****` を返し、`show` は値をそのまま出力します。tag のない field は、key path に `password`、`secret`、`token`、`apikey`、`api_key`、`credential`、`access_key`、`dsn`、`private_key` を含む場合に mask されます。DSN は password を URL に埋め込むのが普通なので、この一覧に入ります。部分一致なので `token_bucket_size` のような無害な名前も mask されます。逃げ道が `secret:"show"` です。`ProvenanceEntry.Masked` は `Value` が placeholder かどうかを返すので、出力を加工する側が mask 文字列と比較する必要はありません。
+
+2 つ目が `dependon` tag による抑制で、次節で説明します。
+
+### 無効な機能の設定を隠す
+
+使っていない subsystem も、放っておけば default 値の塊をそのまま出力し、実際に効いている設定を埋もれさせます。`dependon` は、その field が意味を持つかどうかを決める親を指定します。
+
+```go
+type WebServerConfig struct {
+	Tracing    string `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
+	TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
+}
+```
+
+親は prefix を含む完全な設定 key なので、別 package が bind した key にも依存できます。`webserver.tracing` が空と読める間、`webserver.tracing_url` は provenance の slice に現れません。`webserver.tracing` 自身は出力されます。親が空であること自体が、子が消えた理由だからです。親が隠れている場合は、その親に依存する field も連鎖して隠れます。
+
+先頭の `.` は、tag を書いた構造体の中の key を指します。同じ構造体型を複数の prefix に埋め込めるのはこの形のおかげです。
+
+```go
+type EndpointConfig struct {
+	Enabled bool
+	Path    string `dependon:".enabled" help:"URL path"`
+}
+
+type ServerConfig struct {
+	Health    EndpointConfig
+	Readiness EndpointConfig
+}
+```
+
+tag は 1 つでも、`server.health.path` は `server.health.enabled` に、`server.readiness.path` は `server.readiness.enabled` に従います。
+
+入れ子の構造体 field に書いた場合は subtree 全体に効くので、subsystem 単位の無効化を leaf ごとに繰り返す必要はありません。subtree の中の leaf が自分の親も持つ場合は両方に従い、どちらかが空なら出力されません。
+
+「空」とは空文字と `false` です。`int` の 0、空の list、0 秒の duration は「設定されていない」ではなく意図した設定なので、空とは扱いません。「off」が別の値である option にはもう 1 つの形が要り、それが `falsy` です。「off」を意味する値を宣言すると、その値は依存 field にとって空として扱われ、さらに何も値を設定しなかった場合の値としても使われます。
+
+- `default` tag がなく、どの入力元も key を設定しない場合: `off` になります。
+- 入力元が key を `""` に設定した場合: `off` になり、`Place` はその入力元のままです。
+- `default` tag がある場合: default が優先され、`falsy` は使われません。
+
+数値と duration も同じです。閾値 0 で、それに依存する機能ごと無効にできます。
+
+```go
+type SQLConfig struct {
+	// 0 なら slow statement 検出を止め、EXPLAIN も無効になる。
+	SlowThreshold time.Duration `falsy:"0s" help:"slow statement threshold"`
+	Explain       bool          `dependon:"sql.slow_threshold" help:"run EXPLAIN on slow statements"`
+}
+```
+
+比較は文字列ではなく値で行うので、`0`、`0s`、`0ms` はすべて off と読めます。`falsy` tag がない数値や duration は、そもそも親にできません。0 を無効の意味だと推測するのではなく、生成時にエラーになります。
+
+いずれも bind 先の構造体には影響しません。`TracingURL` は入力元の値で populate されますし、CLI flag や help も変わりません。雛形も全 field を出力し続けます。初回 load より前に option を発見できなくなっては困るためです。
+
+### 生の overlay
+
+`LoadResult.Overlay` には、filter を通していない merge 後の値と勝った入力元が入っています。
 
 ```go
 result, err := configbind.Load(options)
@@ -573,7 +735,9 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file がそもそも見つかったかを示します。overlay の値は何も自動 mask されないため、raw value をまとめて log すれば credential も一緒に log されます。
+table 全体を走査したい場合は `Overlay.All()` が key の辞書順で entry を返します。
+
+`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file がそもそも見つかったかを示します。overlay の値は mask されないため、raw value をまとめて log すれば credential も一緒に log されます。log に出すものは `Provenance()` を使ってください。
 
 ## 利用する API
 
@@ -594,17 +758,41 @@ func Load(opts LoadOptions) (*LoadResult, error)
 - `string`
 - `bool`
 - `int`
+- `time.Duration`
 - `[]string`
 - 上記を持つ named nested struct
+- 同一 package の named struct を要素とする `[]T`（array of tables から読み込み）
 
-float、map、任意の slice、pointer、`time.Duration` などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
+float、map、その他の slice、pointer などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
+
+### duration
+
+`time.Duration` の field は、どの入力元でも Go の duration 文法のみを受け付けます。
 
 ```go
-type RawConfig struct {
-	ReadTimeout string `default:"5s"`
+type ServerConfig struct {
+	ReadTimeout time.Duration `default:"5s" help:"request read timeout"`
 }
+```
 
-timeout, err := time.ParseDuration(cfg.ReadTimeout)
+```toml
+[webserver]
+read_timeout = "1h30m"
+```
+
+裸の数値は拒否します。`5` では秒なのか nanosecond なのか判断できないためです。これは `default` tag も同じで、parse できない値は `Load` ではなく `go generate` で失敗します。雛形は duration を quote された文字列として出力し、`default` のない field は `"0s"` から始まります。
+
+この扱いを受けるのは `time.Duration` そのものだけです。underlying type が `time.Duration` の独自 named type は整数として bind されます。
+
+array of tables の要素内でも duration は使えます。`default` は要素ごとに適用されます。
+
+```toml
+[[webserver.routes]]
+path = "/static"
+max_age = "15m"
+
+[[webserver.routes]]
+path = "/assets"   # max_age は default になる
 ```
 
 ## よくある問題

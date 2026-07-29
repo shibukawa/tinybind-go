@@ -105,6 +105,11 @@ func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, erro
 	if len(files) == 0 {
 		return "", nil
 	}
+	// The dialect is a configuration error, not a template diagnostic, so it is
+	// reported once against the discovered set and before anything is written.
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return "", err
+	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
 		return "", err
@@ -221,6 +226,7 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 	}
 	options := templatesql.GenerateOptions{
 		Package:     pkg,
+		Dialect:     g.Options.SQLDialect,
 		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
 		ContextOnly: g.Options.SQLContextOnlyAPI,
 	}
@@ -228,6 +234,25 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
 	}
 	return templatesql.Generate(file.path, source, options)
+}
+
+// checkSQLDialect validates the configured dialect when the run discovers a SQL
+// template. A package holding only HTML templates needs no dialect.
+func checkSQLDialect(files []templateFile, dialect string) error {
+	found := false
+	for _, file := range files {
+		if file.kind == sqlTemplate {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	if err := templatesql.ValidateDialect(dialect); err != nil {
+		return fmt.Errorf("%w; set Options.SQLDialect or -sql-dialect", err)
+	}
+	return nil
 }
 
 func checkTemplatePackage(filename string, declaration *htmlbind.PackageDecl, pkg string) error {

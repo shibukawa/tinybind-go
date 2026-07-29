@@ -3,12 +3,14 @@ id: rule:check-v1-rule-set
 type: rule
 title: Check Validation v1 Rule Set
 ---
-v1 check rules cover presence, defaults, numeric bounds, lengths, enums, patterns, and ISO format shortcuts.
+v1 check rules cover presence, numeric bounds, lengths, patterns, and ISO format shortcuts.
 
 ```yaml
-presence_and_defaults:
+presence:
   - required
-  - default
+own_tag_not_check_rule:
+  default: rule:default-tag-semantics
+  enum: rule:enum-tag-semantics
 default_timing: after validate; see rule:check-codegen-pipeline
 default_may_be_out_of_range: true
 numeric_inclusive:
@@ -18,8 +20,7 @@ length:
   - minlen
   - maxlen
   - len
-set_and_pattern:
-  - enum
+pattern:
   - pattern
 format_shortcuts:
   - uuid
@@ -32,7 +33,6 @@ type_applicability:
   minlen_maxlen_len: string and slice
   required: see rule:check-required-semantics
   format_shortcuts: string primarily; skip empty unless required
-  enum: comparable scalar or string
 deferred_optional:
   - gt
   - gte
@@ -55,17 +55,19 @@ openapi_map:
   minlen: minLength or minItems
   maxlen: maxLength or maxItems
   len: minLength+maxLength or minItems+maxItems
-  enum: enum
   pattern: pattern
   email: format email
   uuid: format uuid
   date: format date
   time: format time
   datetime: format date-time
-  default: default
+  default: default keyword, sourced from the default tag not from check
+  enum: enum keyword, sourced from the enum tag not from check
 related:
   - concept:check-validation
   - rule:check-tag-syntax
+  - rule:default-tag-semantics
+  - rule:enum-tag-semantics
   - rule:check-required-semantics
   - rule:check-format-validators
   - rule:openapi-validation-metadata

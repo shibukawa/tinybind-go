@@ -46,11 +46,26 @@ type FieldPlan struct {
 	Kind     string      // string|int|int64|bool|float64|file|rest_*|struct|slice|map
 	JSON     string      // json name for encode/document keys
 	Check    CheckRules  // from check:"" tag; empty if absent
+	Enum     EnumRule    // from enum:"" tag; unset if absent
+	Default  DefaultRule // from default:"" tag; unset if absent
 	TypeName string      // KindStruct name, or element struct name for slice/map of struct
 	ElemKind string      // for slice/map: string|int|int64|bool|float64|struct
 	DB       string      // SQL result column (db tag or snake_case field name)
 	GroupKey bool        // groupkey tag presence
 	Doc      string      // godoc of the field (doc or line comment)
+}
+
+// HasValidation reports whether anything about the field can reject a bound
+// value, across every tag that carries a constraint.
+func (f FieldPlan) HasValidation() bool {
+	return f.Check.HasValidation() || f.Enum.Set
+}
+
+// NeedsPresence is true when codegen must track whether the field was present:
+// validation has to skip absent optional values, and a default only applies to
+// a field nobody supplied.
+func (f FieldPlan) NeedsPresence() bool {
+	return f.HasValidation() || f.Default.Set
 }
 
 // IsRest reports whether f is a payload rest map field.
@@ -342,15 +357,17 @@ func discoverySymbolMatches(obj types.Object, symbol DiscoverySymbol) bool {
 	if signature.Recv() == nil {
 		return false
 	}
-	receiver := signature.Recv().Type()
-	if pointer, ok := receiver.(*types.Pointer); ok {
-		receiver = pointer.Elem()
-	}
-	named, ok := receiver.(*types.Named)
+	named, ok := unaliasPtr(signature.Recv().Type()).(*types.Named)
 	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == symbol.ReceiverPackagePath && named.Obj().Name() == symbol.ReceiverType
 }
 
 func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
+	return namedTypeName(instantiatedTypeArgAt(info, fun, index))
+}
+
+// instantiatedTypeArgAt returns the type argument inferred for an instantiated
+// generic call, for the calls that spell no explicit type argument.
+func instantiatedTypeArgAt(info *types.Info, fun ast.Expr, index int) types.Type {
 	for {
 		switch e := fun.(type) {
 		case *ast.ParenExpr:
@@ -361,28 +378,38 @@ func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
 			fun = e.X
 		case *ast.SelectorExpr:
 			if inst, ok := info.Instances[e.Sel]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		case *ast.Ident:
 			if inst, ok := info.Instances[e]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		default:
-			return ""
+			return nil
 		}
 	}
 }
 
 func namedTypeName(t types.Type) string {
-	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
-	}
-	if n, ok := t.(*types.Named); ok && n.Obj() != nil {
+	if n, ok := unaliasPtr(t).(*types.Named); ok && n.Obj() != nil {
 		return n.Obj().Name()
 	}
 	return ""
+}
+
+// unaliasPtr resolves type aliases and strips one pointer indirection. Since
+// Go 1.24 the go/types default is gotypesalias=1, so an alias arrives as
+// *types.Alias and passes no *types.Named assertion on its own; every named
+// type test here goes through this helper so an alias behaves as the type it
+// names. A defined type stays itself: only aliases are transparent.
+func unaliasPtr(t types.Type) types.Type {
+	t = types.Unalias(t)
+	if p, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(p.Elem())
+	}
+	return t
 }
 
 func propagateNestedUsage(plans []TypePlan) {
@@ -534,6 +561,22 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 	if err != nil {
 		return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
 	}
+	var enum EnumRule
+	if enumRaw, ok := tagLookup(tag, "enum"); ok {
+		enum, err = ParseEnumTag(enumRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
+	// Looked up rather than read, so that default:"" is an empty-string default
+	// and not the same thing as carrying no default tag at all.
+	var def DefaultRule
+	if defRaw, ok := tagLookup(tag, "default"); ok {
+		def, err = ParseDefaultTag(defRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
 	return FieldPlan{
 		Name:     fieldName,
 		Wire:     wire,
@@ -541,6 +584,8 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		Kind:     kind,
 		JSON:     jsonName,
 		Check:    check,
+		Enum:     enum,
+		Default:  def,
 		TypeName: typeName,
 		ElemKind: elemKind,
 		DB:       dbColumn(fieldName, tag),
@@ -716,6 +761,30 @@ func tagValue(tag *ast.BasicLit, key string) string {
 		return ""
 	}
 	return lookupTag(raw, key)
+}
+
+// tagLookup reports the value of key and whether the tag carried it at all,
+// which tagValue cannot express for tags whose empty value is meaningful.
+func tagLookup(tag *ast.BasicLit, key string) (string, bool) {
+	if tag == nil {
+		return "", false
+	}
+	raw, err := strconv.Unquote(tag.Value)
+	if err != nil {
+		return "", false
+	}
+	for _, part := range strings.Fields(raw) {
+		k, v, ok := strings.Cut(part, ":")
+		if !ok || k != key {
+			continue
+		}
+		val, err := strconv.Unquote(v)
+		if err != nil {
+			return strings.Trim(v, `"`), true
+		}
+		return val, true
+	}
+	return "", false
 }
 
 func lookupTag(raw, key string) string {

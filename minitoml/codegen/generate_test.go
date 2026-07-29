@@ -117,3 +117,132 @@ func TestGeneratedApplyUsesDefaultsWhenKeysAbsent(t *testing.T) {
 		t.Fatalf("default TLS.Enabled should be false")
 	}
 }
+
+func TestGenerateEmitsDurationField(t *testing.T) {
+	src, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []codegen.Field{{GoName: "ReadTimeout", Key: "read_timeout", Kind: codegen.FieldDuration, Default: "250ms"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"time"`,
+		"time.ParseDuration(s)",
+		"dst.ReadTimeout = 250000000 // 250ms",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("generated duration field %q missing:\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsUnparsableDurationDefault(t *testing.T) {
+	_, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []codegen.Field{{GoName: "ReadTimeout", Key: "read_timeout", Kind: codegen.FieldDuration, Default: "250"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration default") {
+		t.Fatalf("err=%v want a rejected bare-number default", err)
+	}
+}
+func TestGenerateStructSliceRequiresElemType(t *testing.T) {
+	spec := codegen.Spec{
+		TypeName: "Config",
+		Prefix:   "app",
+		Fields: []codegen.Field{{
+			GoName: "Listeners",
+			Key:    "listeners",
+			Kind:   codegen.FieldStructSlice,
+			Nested: []codegen.Field{{GoName: "Addr", Key: "addr", Kind: codegen.FieldString}},
+		}},
+	}
+	if _, err := codegen.Generate("fixture", []codegen.Spec{spec}); err == nil {
+		t.Fatal("expected an error when ElemType is missing")
+	}
+}
+
+func TestGenerateNestedStructSlicesUseDistinctLoopVariables(t *testing.T) {
+	spec := codegen.Spec{
+		TypeName: "Config",
+		Prefix:   "app",
+		Fields: []codegen.Field{{
+			GoName:   "Servers",
+			Key:      "servers",
+			Kind:     codegen.FieldStructSlice,
+			ElemType: "Server",
+			Nested: []codegen.Field{{
+				GoName:   "Disks",
+				Key:      "disks",
+				Kind:     codegen.FieldStructSlice,
+				ElemType: "Disk",
+				Nested:   []codegen.Field{{GoName: "Mount", Key: "mount", Kind: codegen.FieldString}},
+			}},
+		}},
+	}
+	// format.Source would already reject a redeclared loop variable; assert the
+	// nesting is emitted the way the element documents are shaped.
+	src, err := codegen.Generate("fixture", []codegen.Spec{spec})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	text := string(src)
+	for _, want := range []string{
+		`doc.Get("app.servers")`,
+		`for i1 := range elems1 {`,
+		`elems1[i1].Get("disks")`,
+		`for i2 := range elems2 {`,
+		`dst.Servers[i1].Disks[i2].Mount = s`,
+		`"minitoml: app.servers.disks.mount: %w"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated source missing %s\n%s", want, text)
+		}
+	}
+}
+
+func TestGenerateIntegerFieldWidths(t *testing.T) {
+	src, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields: []codegen.Field{
+			{GoName: "MaxBody", Key: "max_body", Kind: codegen.FieldInt, GoType: "int64"},
+			{GoName: "Workers", Key: "workers", Kind: codegen.FieldInt, GoType: "uint16", Default: "4"},
+			{GoName: "Port", Key: "port", Kind: codegen.FieldInt},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	for _, want := range []string{
+		// int64 is what AsInt already returns, so it needs no range guard.
+		"dst.MaxBody = int64(n)",
+		"if n < 0 {",
+		"if int64(uint16(n)) != n {",
+		"dst.Workers = uint16(n)",
+		// An empty GoType stays int, and the guard catches a 32-bit target.
+		"if int64(int(n)) != n {",
+		"dst.Port = int(n)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "if int64(int64(n)) != n {") {
+		t.Fatalf("int64 needs no range guard:\n%s", text)
+	}
+}
+
+func TestGenerateRejectsOutOfRangeIntDefault(t *testing.T) {
+	_, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields:   []codegen.Field{{GoName: "Workers", Key: "workers", Kind: codegen.FieldInt, GoType: "uint8", Default: "300"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid uint8 default") {
+		t.Fatalf("err=%v want an out-of-range default rejection", err)
+	}
+}
