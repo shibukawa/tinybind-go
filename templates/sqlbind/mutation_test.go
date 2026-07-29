@@ -15,14 +15,14 @@ func mutationSource(declarations string) []byte {
 
 func generates(t *testing.T, declarations string) {
 	t.Helper()
-	if _, err := sqlbind.Generate("mutation.tb.sql", mutationSource(declarations), sqlbind.GenerateOptions{}); err != nil {
+	if _, err := sqlbind.Generate("mutation.tb.sql", mutationSource(declarations), sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}); err != nil {
 		t.Errorf("Generate(%s) = %v, want success", declarations, err)
 	}
 }
 
 func diagnoses(t *testing.T, declarations, want string) {
 	t.Helper()
-	_, err := sqlbind.Generate("mutation.tb.sql", mutationSource(declarations), sqlbind.GenerateOptions{})
+	_, err := sqlbind.Generate("mutation.tb.sql", mutationSource(declarations), sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
 	if err == nil {
 		t.Errorf("Generate(%s) succeeded, want a diagnostic", declarations)
 		return
@@ -114,7 +114,7 @@ func TestNonMutationsAreNotChecked(t *testing.T) {
 func TestGeneratedCodeCarriesNoMutationGuard(t *testing.T) {
 	generated, err := sqlbind.Generate("mutation.tb.sql", mutationSource(
 		`export statement A(id: int, name: string): sql.exec {UPDATE users SET name = {name} WHERE id = {id}}`),
-		sqlbind.GenerateOptions{})
+		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
 	if err != nil {
 		t.Fatal(err)
 	}

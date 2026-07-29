@@ -24,7 +24,10 @@ type GenerateRequest struct {
 	// globs. Empty values retain the generator options.
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
-	ConfigBindName      string
+	// SQLDialect overrides the generator option for this run. An empty value
+	// retains it.
+	SQLDialect     string
+	ConfigBindName string
 	Check               bool
 	GenerateAll         bool
 	// Force regenerates even when the generated files record the current input

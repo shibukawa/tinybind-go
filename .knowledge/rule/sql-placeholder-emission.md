@@ -26,6 +26,7 @@ initial_styles:
   question: '?, ?, ...'
 configuration:
   phase: code generation
-  relation: separate option from SQL dialect; default follows decision:postgresql-first-template-sql
+  relation: derived from data:sql-dialect, not selected independently
+  selection: requirement:sql-dialect-selection; explicit, with no implicit default
 dynamic_sql: generated runtime appender owns numbering when optional clauses change argument count
 ```
