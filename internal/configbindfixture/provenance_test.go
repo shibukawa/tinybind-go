@@ -219,3 +219,59 @@ func TestFalsyParentHidesItsDependents(t *testing.T) {
 		})
 	}
 }
+
+func TestDurationInsideTableArrayElement(t *testing.T) {
+	configbind.ResetTargets()
+	cfg := configbindfixture.Register()
+
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "config.toml")
+	body := `
+[[webserver.routes]]
+path = "/static"
+dir = "./public"
+max_age = "15m"
+
+[[webserver.routes]]
+path = "/assets"
+dir = "./assets"
+`
+	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Environ: []string{},
+		Args: []string{"--config-path", tomlPath},
+	}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Routes) != 2 {
+		t.Fatalf("Routes=%+v want 2 elements", cfg.Routes)
+	}
+	if cfg.Routes[0].MaxAge != 15*time.Minute {
+		t.Fatalf("Routes[0].MaxAge=%v want 15m", cfg.Routes[0].MaxAge)
+	}
+	// The default applies once per element, not once per array.
+	if cfg.Routes[1].MaxAge != time.Hour {
+		t.Fatalf("Routes[1].MaxAge=%v want the 1h default", cfg.Routes[1].MaxAge)
+	}
+}
+
+func TestDurationInsideTableArrayElementReportsFullKey(t *testing.T) {
+	configbind.ResetTargets()
+	configbindfixture.Register()
+
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "config.toml")
+	body := "[[webserver.routes]]\npath = \"/x\"\nmax_age = \"15\"\n"
+	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Environ: []string{},
+		Args: []string{"--config-path", tomlPath},
+	})
+	if err == nil || !strings.Contains(err.Error(), "webserver.routes.max_age") {
+		t.Fatalf("err=%v want the full element key in the message", err)
+	}
+}

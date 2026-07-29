@@ -308,3 +308,111 @@ func TestGenerateRejectsFalsyInSubCommand(t *testing.T) {
 		t.Fatalf("err=%v want a subcommand rejection", err)
 	}
 }
+
+func TestGenerateTableArrayRules(t *testing.T) {
+	routes := Field{
+		GoName:   "Routes",
+		Key:      "routes",
+		Kind:     FieldStructSlice,
+		ElemType: "RouteConfig",
+		Nested:   []Field{{GoName: "Path", Key: "path", Kind: FieldString}},
+	}
+
+	t.Run("bind_emits_a_loop", func(t *testing.T) {
+		src, err := Generate("sample", []Spec{{
+			TypeName: "AppConfig", Prefix: "app", Fields: []Field{routes},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(src)
+		for _, want := range []string{
+			`o.Get("app.routes")`,
+			"if !ta1.IsTables {",
+			"p.Routes = make([]RouteConfig, len(ta1.Tables))",
+			`ta1.Tables[i1].GetString("path")`,
+			`Key: "routes", Kind: configbind.ScaffoldTableArray`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("missing %q in\n%s", want, text)
+			}
+		}
+		// A repeated table has no flag or env form, so it stays out of FlagMetas.
+		if strings.Contains(text, `Key: "routes", Opt`) || strings.Contains(text, `{Prefix: "app", Key: "routes"`) {
+			t.Fatalf("routes must not become a flag:\n%s", text)
+		}
+	})
+
+	t.Run("element_flags_rejected", func(t *testing.T) {
+		flagged := routes
+		flagged.Nested = []Field{{GoName: "Path", Key: "path", Kind: FieldString, Opt: "path"}}
+		_, err := Generate("sample", []Spec{{
+			TypeName: "AppConfig", Prefix: "app", Fields: []Field{flagged},
+		}})
+		if err == nil || !strings.Contains(err.Error(), "no flag or env form") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+
+	t.Run("subcommand_rejected", func(t *testing.T) {
+		_, err := Generate("sample", []Spec{{
+			TypeName: "Serve", SubCommand: true, Name: "serve", Help: "serve files",
+			Fields: []Field{routes},
+		}})
+		if err == nil || !strings.Contains(err.Error(), "cannot take an array of tables") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+}
+
+func TestGenerateDurationInsideTableArrayElement(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Nested: []Field{
+				{GoName: "MaxAge", Key: "max_age", Kind: FieldDuration, Default: "1h"},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	// The element loop reads its own overlay, and diagnostics name the full path.
+	for _, want := range []string{
+		`ta1.Tables[i1].GetString("max_age")`,
+		`"configbind: server.routes.max_age: %w"`,
+		`p.Routes[i1].MaxAge = 3600000000000 // 1h0m0s`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated element duration %q missing:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `o.GetString("max_age")`) {
+		t.Fatalf("element field must not read the top-level overlay:\n%s", text)
+	}
+}
+
+func TestGenerateRejectsDependsOnInsideTableArrayElement(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Nested: []Field{
+				{GoName: "Dir", Key: "dir", Kind: FieldString, DependsOn: "server.root"},
+			},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon or falsy") {
+		t.Fatalf("err=%v want an element-field rejection", err)
+	}
+}

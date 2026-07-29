@@ -24,7 +24,7 @@ inputs:
 excluded_inputs:
   - api:configbind-subcommand types and fields
 outputs:
-  - combined TOML text with prefix tables, dotted nested keys, and primitive arrays
+  - combined TOML text with prefix tables, dotted nested keys, primitive arrays, and one example [[key]] block per struct slice
   - combined .env text using runtime environment naming and overrides
   - comments derived from help tags next to keys
   - struct doc comment lines above each [prefix] table header in TOML only
@@ -39,8 +39,10 @@ constraints:
   - table order does not depend on package init order; see rule:config-output-ordering
   - fields inside one table follow struct declaration order
   - dependon never removes a field from a scaffold; see rule:dependent-key-visibility
-  - do not emit inline tables, arrays of tables, or quoted keys
+  - do not emit inline tables or quoted keys
   - nested structs become nested tables or dotted bare keys
+  - struct slices become [[prefix.key]] blocks written after that prefix's own keys
+  - .env output omits struct slices, which have no environment form
   - do not include subcommand options or positionals
   - opt CLI renames do not change TOML key names in the scaffold
 related:

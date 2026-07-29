@@ -16,6 +16,7 @@ applies_to:
   - Bind string fields, typically ones carrying an enum tag
 rejected_at_codegen:
   - falsy on a bool, int, duration, or slice field
+  - falsy on an array-of-tables element field, whose key is per element, not stable
   - falsy on a subcommand field, which has no overlay
 not_enforced_yet:
   - membership of the value in the enum allowlist; configbind does not read enum

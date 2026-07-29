@@ -11,6 +11,15 @@ type WebServerConfig struct {
 	Tracing     string        `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
 	TracingURL  string        `dependon:"webserver.tracing" help:"tracing collector URL"`
 	TLS         TLSConfig
+	Routes      []RouteConfig `help:"static routes, one [[webserver.routes]] table each"`
+}
+
+// RouteConfig is one [[webserver.routes]] element.
+type RouteConfig struct {
+	Path    string        `help:"URL path prefix"`
+	Dir     string        `help:"directory served under the path"`
+	Listing bool          `default:"false" help:"allow directory listing"`
+	MaxAge  time.Duration `default:"1h" help:"cache max age for this route"`
 }
 
 // TLSConfig is nested under webserver.tls.

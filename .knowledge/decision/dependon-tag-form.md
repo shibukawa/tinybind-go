@@ -33,6 +33,7 @@ validation_time:
     only keys emitted in the same generation run can be checked, because
     requirement:modular-package-generation generates each package separately
   rejected_at_codegen:
+    - dependon or falsy on an array-of-tables element field, which has no stable key
     - parent in this run whose kind is neither string nor bool
     - self-reference
     - comma-separated parent list

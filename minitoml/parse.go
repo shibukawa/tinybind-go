@@ -9,8 +9,8 @@ import (
 // Parse parses restricted TOML bytes into an intermediate Document.
 //
 // Allowed: standard tables, nested tables, dotted bare keys, bare keys only,
-// scalar values, and arrays of primitive scalars.
-// Forbidden: quoted keys, inline tables, arrays of tables.
+// scalar values, arrays of primitive scalars, and arrays of tables ([[key]]).
+// Forbidden: quoted keys, inline tables, arrays of inline tables.
 func Parse(data []byte) (Document, error) {
 	p := &parser{
 		src:  data,
@@ -18,6 +18,7 @@ func Parse(data []byte) (Document, error) {
 		col:  1,
 		doc:  NewDocument(),
 	}
+	p.cur = p.doc
 	if err := p.parse(); err != nil {
 		return Document{}, err
 	}
@@ -30,12 +31,27 @@ func ParseString(s string) (Document, error) {
 }
 
 type parser struct {
-	src         []byte
-	pos         int
-	line        int
-	col         int
+	src  []byte
+	pos  int
+	line int
+	col  int
+	doc  Document
+	// cur is the document key/value pairs land in: the root document, or the
+	// element document of the innermost open [[array]] header.
+	cur Document
+	// tablePrefix is the current [table] path relative to cur.
 	tablePrefix string
-	doc         Document
+	// scopes are the open [[array]] headers, outermost first. Every element
+	// document is created by NewDocument, so writing through a Document copy
+	// updates the shared map the parent value already holds.
+	scopes []arrayScope
+}
+
+// arrayScope is one open array-of-tables element: the header path as written in
+// the file, and the document its keys are written into.
+type arrayScope struct {
+	path string
+	doc  Document
 }
 
 func (p *parser) parse() error {
@@ -63,8 +79,10 @@ func (p *parser) parse() error {
 func (p *parser) parseTableHeader() error {
 	startLine, startCol := p.line, p.col
 	p.advance() // [
+	isArray := false
 	if p.peek() == '[' {
-		return p.errorf(startLine, startCol, "arrays of tables are not allowed")
+		isArray = true
+		p.advance()
 	}
 	p.skipSpace()
 	path, err := p.parseKeyPath()
@@ -76,15 +94,93 @@ func (p *parser) parseTableHeader() error {
 		return p.errorf(p.line, p.col, "expected ']' after table name")
 	}
 	p.advance()
+	if isArray {
+		if p.peek() != ']' {
+			return p.errorf(p.line, p.col, "expected ']]' after array of tables name")
+		}
+		p.advance()
+	}
 	p.skipSpace()
 	if err := p.expectEOLOrComment(); err != nil {
 		return err
 	}
-	p.tablePrefix = path
+
+	target, rel := p.enterScope(path)
+	if isArray {
+		return p.beginTableArrayElement(target, path, rel, startLine, startCol)
+	}
+	if err := p.checkTableArrayConflict(target, rel, path, startLine, startCol); err != nil {
+		return err
+	}
+	p.cur = target
+	p.tablePrefix = rel
+	return nil
+}
+
+// enterScope closes the open array-of-tables scopes that path leaves behind and
+// returns the document the header writes into, plus path relative to it.
+func (p *parser) enterScope(path string) (Document, string) {
+	for len(p.scopes) > 0 {
+		top := p.scopes[len(p.scopes)-1]
+		if strings.HasPrefix(path, top.path+".") {
+			return top.doc, path[len(top.path)+1:]
+		}
+		p.scopes = p.scopes[:len(p.scopes)-1]
+	}
+	return p.doc, path
+}
+
+// beginTableArrayElement appends one element to the array of tables at rel and
+// makes it the destination for following keys.
+func (p *parser) beginTableArrayElement(target Document, path, rel string, line, col int) error {
+	if err := p.checkAncestorTableArray(target, rel, path, line, col); err != nil {
+		return err
+	}
+	v, ok := target.Get(rel)
+	if ok && v.Kind != KindTableArray {
+		return p.errorf(line, col, "[[%s]] conflicts with key %q already defined as %s", path, path, v.KindName())
+	}
+	if !ok {
+		v = Value{Kind: KindTableArray}
+	}
+	elem := NewDocument()
+	v.Tables = append(v.Tables, elem)
+	target.Set(rel, v)
+	p.scopes = append(p.scopes, arrayScope{path: path, doc: elem})
+	p.cur = elem
+	p.tablePrefix = ""
+	return nil
+}
+
+// checkTableArrayConflict rejects a key or [table] header that would reopen or
+// reach through an array of tables in target.
+func (p *parser) checkTableArrayConflict(target Document, rel, path string, line, col int) error {
+	if v, ok := target.Get(rel); ok && v.Kind == KindTableArray {
+		return p.errorf(line, col, "%q is an array of tables; use a [[%s]] header", path, path)
+	}
+	return p.checkAncestorTableArray(target, rel, path, line, col)
+}
+
+// checkAncestorTableArray rejects a path whose parent is an array of tables, so
+// [servers.tls] never silently lands outside the [[servers]] element it reads as.
+func (p *parser) checkAncestorTableArray(target Document, rel, path string, line, col int) error {
+	base := path[:len(path)-len(rel)]
+	for i := 0; i < len(rel); i++ {
+		if rel[i] != '.' {
+			continue
+		}
+		v, ok := target.Get(rel[:i])
+		if !ok || v.Kind != KindTableArray {
+			continue
+		}
+		ancestor := base + rel[:i]
+		return p.errorf(line, col, "%q is an array of tables; %q must follow its [[%s]] header", ancestor, path, ancestor)
+	}
 	return nil
 }
 
 func (p *parser) parseKeyValue() error {
+	keyLine, keyCol := p.line, p.col
 	path, err := p.parseKeyPath()
 	if err != nil {
 		return err
@@ -104,8 +200,20 @@ func (p *parser) parseKeyValue() error {
 		return err
 	}
 	full := joinKey(p.tablePrefix, path)
-	p.doc.Set(full, val)
+	if err := p.checkTableArrayConflict(p.cur, full, joinKey(p.basePath(), full), keyLine, keyCol); err != nil {
+		return err
+	}
+	p.cur.Set(full, val)
 	return nil
+}
+
+// basePath is the header path of the document keys currently land in, so
+// diagnostics can name a key by its full path in the file.
+func (p *parser) basePath() string {
+	if len(p.scopes) == 0 {
+		return ""
+	}
+	return p.scopes[len(p.scopes)-1].path
 }
 
 func (p *parser) parseKeyPath() (string, error) {
@@ -188,7 +296,7 @@ func (p *parser) parseArray() (Value, error) {
 	for {
 		p.skipSpaceAndComments()
 		if p.peek() == '[' {
-			return Value{}, p.errorf(p.line, p.col, "arrays of tables and nested arrays are not allowed")
+			return Value{}, p.errorf(p.line, p.col, "nested arrays are not allowed")
 		}
 		v, err := p.parseValue()
 		if err != nil {

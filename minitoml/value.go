@@ -1,4 +1,6 @@
 // Package minitoml parses a restricted TOML subset into a flat intermediate key/value form.
+// Arrays of tables are the one nested shape: a [[key]] array holds one sub-document
+// per element, each itself flat.
 package minitoml
 
 import (
@@ -22,9 +24,11 @@ const (
 	KindFloat
 	// KindArray is an array of primitive scalars.
 	KindArray
+	// KindTableArray is an array of tables written as repeated [[key]] headers.
+	KindTableArray
 )
 
-// Value is one intermediate scalar or primitive array.
+// Value is one intermediate scalar, primitive array, or array of tables.
 type Value struct {
 	Kind  Kind
 	Str   string
@@ -32,6 +36,9 @@ type Value struct {
 	Int   int64
 	Float float64
 	Array []Value
+	// Tables holds one Document per [[key]] element when Kind is KindTableArray.
+	// Each element's keys are relative to the table-array key itself.
+	Tables []Document
 }
 
 // String returns a display form of the value.
@@ -49,6 +56,18 @@ func (v Value) String() string {
 		parts := make([]string, len(v.Array))
 		for i, e := range v.Array {
 			parts[i] = e.String()
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case KindTableArray:
+		parts := make([]string, len(v.Tables))
+		for i, t := range v.Tables {
+			keys := t.Keys()
+			pairs := make([]string, len(keys))
+			for j, k := range keys {
+				e, _ := t.Get(k)
+				pairs[j] = k + " = " + e.String()
+			}
+			parts[i] = "{" + strings.Join(pairs, ", ") + "}"
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	default:
@@ -69,6 +88,8 @@ func (v Value) AsString() (string, error) {
 		return strconv.FormatFloat(v.Float, 'g', -1, 64), nil
 	case KindArray:
 		return "", fmt.Errorf("minitoml: expected string scalar, got array")
+	case KindTableArray:
+		return "", fmt.Errorf("minitoml: expected string scalar, got table array")
 	default:
 		return "", fmt.Errorf("minitoml: unknown value kind %d", v.Kind)
 	}
@@ -128,6 +149,14 @@ func (v Value) AsStringSlice() ([]string, error) {
 	return out, nil
 }
 
+// AsTables returns the per-element documents of an array of tables.
+func (v Value) AsTables() ([]Document, error) {
+	if v.Kind != KindTableArray {
+		return nil, fmt.Errorf("minitoml: expected table array, got %s", v.KindName())
+	}
+	return v.Tables, nil
+}
+
 // KindName returns a human-readable kind name.
 func (v Value) KindName() string {
 	switch v.Kind {
@@ -141,6 +170,8 @@ func (v Value) KindName() string {
 		return "float"
 	case KindArray:
 		return "array"
+	case KindTableArray:
+		return "table array"
 	default:
 		return "unknown"
 	}
@@ -188,7 +219,8 @@ func (d Document) Keys() []string {
 	return keys
 }
 
-// Clone returns a shallow copy of the document map.
+// Clone returns a shallow copy of the document map. Table-array elements are
+// shared with the original, not copied.
 func (d Document) Clone() Document {
 	out := NewDocument()
 	for k, v := range d.entries {

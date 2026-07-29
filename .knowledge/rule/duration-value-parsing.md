@@ -24,6 +24,8 @@ validation_time:
   - external sources: load time; error names the term:config-key and the offending raw value
 scope:
   - configbind duration fields only
+  - includes duration fields of an array-of-tables element, which read that
+    element's own overlay and report the full dotted key in errors
   - does not change how other scalars parse
 related:
   - requirement:duration-config-fields

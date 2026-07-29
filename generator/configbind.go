@@ -316,6 +316,9 @@ type configFieldCollector struct {
 	docs    *docIndex
 	planned map[*ast.Field]bool
 	edits   []helpBackfill
+	// open are the element struct types currently being walked, so a struct that
+	// holds a slice of itself is reported instead of recursing forever.
+	open []*types.Named
 }
 
 // help returns the description for one field. An existing help tag always wins,
@@ -379,6 +382,31 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 				continue
 			}
 		}
+		if slice, ok := ft.Underlying().(*types.Slice); ok {
+			elem, elemStruct, err := configElementStruct(f, slice)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", f.Name(), err)
+			}
+			if elemStruct != nil {
+				nested, err := c.elementFields(elem, elemStruct, joinConfigKey(keyPrefix, key))
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", f.Name(), err)
+				}
+				fields = append(fields, cbcg.Field{
+					GoName:   f.Name(),
+					Key:      key,
+					Kind:     cbcg.FieldStructSlice,
+					ElemType: elem.Obj().Name(),
+					Nested:   nested,
+					Default:  def,
+					Opt:      opt,
+					Env:      env,
+					Help:     help,
+					Arg:      arg,
+				})
+				continue
+			}
+		}
 		kind, err := configFieldKind(ft)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Name(), err)
@@ -397,6 +425,47 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 		})
 	}
 	return fields, nil
+}
+
+// configElementStruct reports whether a slice field is an array of tables: a
+// slice of a named struct declared in the same package as the config struct,
+// which the generated code names directly. Other slices return a nil struct so
+// the caller falls through to the scalar-slice kinds.
+func configElementStruct(field *types.Var, slice *types.Slice) (*types.Named, *types.Struct, error) {
+	if pointer, ok := slice.Elem().(*types.Pointer); ok {
+		if named, ok := pointer.Elem().(*types.Named); ok {
+			if _, ok := named.Underlying().(*types.Struct); ok {
+				return nil, nil, fmt.Errorf("use []%s instead of []*%s for an array of tables",
+					named.Obj().Name(), named.Obj().Name())
+			}
+		}
+		return nil, nil, nil
+	}
+	named, ok := slice.Elem().(*types.Named)
+	if !ok {
+		return nil, nil, nil
+	}
+	st, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		return nil, nil, nil
+	}
+	if named.Obj().Pkg() == nil || field.Pkg() == nil || named.Obj().Pkg().Path() != field.Pkg().Path() {
+		return nil, nil, fmt.Errorf("array-of-tables element type %s must be declared in the config struct's package", named.Obj().Name())
+	}
+	return named, st, nil
+}
+
+// elementFields walks an array-of-tables element struct, refusing a struct that
+// reaches itself.
+func (c *configFieldCollector) elementFields(elem *types.Named, st *types.Struct, keyPrefix string) ([]cbcg.Field, error) {
+	for _, open := range c.open {
+		if open == elem {
+			return nil, fmt.Errorf("recursive config struct %s is not supported", elem.Obj().Name())
+		}
+	}
+	c.open = append(c.open, elem)
+	defer func() { c.open = c.open[:len(c.open)-1] }()
+	return c.fields(st, keyPrefix)
 }
 
 func configFieldKind(t types.Type) (cbcg.FieldKind, error) {
