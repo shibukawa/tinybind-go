@@ -12,7 +12,7 @@ func registry(t *testing.T, e *Emitter, tree *Tree, analyses []Analysis, layouts
 	if e == nil {
 		e = NewEmitter()
 	}
-	source, err := e.Registry(tree, "pages", analyses, layouts)
+	source, err := e.Registry(tree, "pages", analyses, layouts, nil)
 	if err != nil {
 		t.Fatalf("Registry: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestRegistryRejectsAMissingLayoutSignature(t *testing.T) {
 	layout := Layout{RelDir: "", Package: "pages", File: "pages/layout.tb.html"}
 	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil, layout)
 
-	_, err := NewEmitter().Registry(&Tree{Routes: []Route{about}}, "pages", []Analysis{analysis}, nil)
+	_, err := NewEmitter().Registry(&Tree{Routes: []Route{about}}, "pages", []Analysis{analysis}, nil, nil)
 	if err == nil {
 		t.Fatal("missing layout signature accepted, want rejection")
 	}
@@ -156,7 +156,7 @@ func TestRegistryRejectsASlotlessLayout(t *testing.T) {
 	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil, layout)
 
 	_, err := NewEmitter().Registry(&Tree{Routes: []Route{about}}, "pages", []Analysis{analysis},
-		map[string]ComponentSignature{"": {Name: "Layout"}})
+		map[string]ComponentSignature{"": {Name: "Layout"}}, nil)
 	if err == nil {
 		t.Fatal("slotless layout accepted, want rejection")
 	}
@@ -167,7 +167,7 @@ func TestRegistryRejectsASlotlessLayout(t *testing.T) {
 
 func TestRegistryRejectsMismatchedAnalysisCount(t *testing.T) {
 	home, _ := templateOnly("/", "", "pages", "example.com/m/pages", nil, nil)
-	if _, err := NewEmitter().Registry(&Tree{Routes: []Route{home}}, "pages", nil, nil); err == nil {
+	if _, err := NewEmitter().Registry(&Tree{Routes: []Route{home}}, "pages", nil, nil, nil); err == nil {
 		t.Fatal("missing analysis accepted, want rejection")
 	}
 }
@@ -179,7 +179,7 @@ func TestRegistryRejectsATypedPageWhoseResultsDoNotFitTheComponent(t *testing.T)
 		Component: ComponentSignature{Name: "Page", Inputs: []Value{{Name: "a", Type: "string"}, {Name: "b", Type: "int"}}},
 		Page:      &PageFunc{Rung: RungTypedPage, File: "pages/x/page.go", Results: []Value{{Type: "string"}}},
 	}
-	_, err := NewEmitter().Registry(&Tree{Routes: []Route{route}}, "pages", []Analysis{analysis}, nil)
+	_, err := NewEmitter().Registry(&Tree{Routes: []Route{route}}, "pages", []Analysis{analysis}, nil, nil)
 	if err == nil {
 		t.Fatal("arity mismatch accepted, want rejection")
 	}
