@@ -29,8 +29,17 @@ type Op[P any] interface {
 // package initialization and shared by every render.
 type Plan[P any] struct {
 	// Head holds this component's document head contributions as ready to
-	// write HTML. They merge into the shell head before any body byte.
+	// write HTML, one entry per contributed tag. They merge into the shell head
+	// before any body byte.
 	Head []string
+	// HeadSources names the component that declared each Head entry, in the same
+	// order and with the same length. It exists so a caller that has to reject a
+	// contribution can say which component to change, instead of printing head
+	// markup a reader then has to grep for.
+	//
+	// It is generated data, so reading it costs nothing and needs no reflection.
+	// It is nil for a component with no contribution, which is most of them.
+	HeadSources []string
 	// HasAwaitBlock reports whether this component, or any component it calls,
 	// owns an await boundary. Generation computes it over the call graph, so a
 	// component that only calls an async one still reports true.
@@ -112,18 +121,20 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 // The zero Fragment is absent, which is how an optional slot with no argument
 // is represented.
 type Fragment struct {
-	head     []string
-	hasAwait bool
-	validate func() error
-	render   func(*Renderer) error
+	head        []string
+	headSources []string
+	hasAwait    bool
+	validate    func() error
+	render      func(*Renderer) error
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func Bind[P any](plan *Plan[P], params P) Fragment {
 	fragment := Fragment{
-		head:     plan.Head,
-		hasAwait: plan.HasAwaitBlock,
-		render:   func(r *Renderer) error { return plan.Exec(r, params) },
+		head:        plan.Head,
+		headSources: plan.HeadSources,
+		hasAwait:    plan.HasAwaitBlock,
+		render:      func(r *Renderer) error { return plan.Exec(r, params) },
 	}
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
@@ -145,8 +156,17 @@ func (f Fragment) Validate() error {
 // slot renders its default instead.
 func (f Fragment) Present() bool { return f.render != nil }
 
-// Head returns the fragment's own head contributions.
+// Head returns the fragment's own head contributions, one entry per tag.
 func (f Fragment) Head() []string { return f.head }
+
+// HeadSources names the component that declared each Head entry, in the same
+// order and with the same length. Head and HeadSources are two views of one
+// list, so index i of either describes the same contributed tag.
+//
+// A caller that cannot deliver a head contribution uses it to report which
+// component to change. The merged head returned by MergeHead has no matching
+// source list, because deduplication drops entries: ask a member for its own.
+func (f Fragment) HeadSources() []string { return f.headSources }
 
 // HasAwaitBlock reports whether rendering this fragment can open an await
 // boundary, so a caller knows whether a response will need the client runtime

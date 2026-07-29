@@ -1,6 +1,7 @@
 package htmlbind
 
 import (
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -22,6 +23,10 @@ type htmlParser struct {
 	// element, where style and script bodies are raw text like a single-file
 	// component block rather than template markup.
 	insideHeadContribution bool
+	// insideShellHead marks that parsing is inside the document shell's own head,
+	// which is the one place where a raw-text diagnostic can point at the
+	// contributing head element that would have parsed instead.
+	insideShellHead bool
 }
 
 var voidElements = map[string]bool{
@@ -31,6 +36,9 @@ var voidElements = map[string]bool{
 }
 
 func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Terminator, error) {
+	// A script or style body is authored JavaScript or CSS, where a brace is
+	// ordinary syntax of that language rather than template punctuation.
+	raw := isRawTextContext(context)
 	var nodes []Node
 	for p.pos < len(p.source) {
 		if strings.HasPrefix(p.source[p.pos:], "{{") {
@@ -44,6 +52,14 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 			continue
 		}
 		if p.source[p.pos] == '}' {
+			// Raw text is always terminated by its closing tag, so no brace here
+			// can close a declaration body or a control block; the authored
+			// language owns it.
+			if raw {
+				nodes = appendText(nodes, "}", p.position(p.pos))
+				p.pos++
+				continue
+			}
 			if stopTag != "" {
 				return nil, nil, p.errAt(p.pos, "missing closing tag </"+stopTag+">")
 			}
@@ -89,10 +105,15 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 			continue
 		}
 		if p.source[p.pos] == '{' {
+			if raw && !p.rawInsertionAhead() {
+				nodes = appendText(nodes, "{", p.position(p.pos))
+				p.pos++
+				continue
+			}
 			start := p.pos
 			content, contentOffset, err := p.readDirective()
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, p.annotateRawText(raw, context, err)
 			}
 			p.context.SetOffset(p.pos)
 			node, terminator, err := p.context.ParseEmbedded(syntax.Embedded{
@@ -101,7 +122,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 				ContentOffset: contentOffset,
 			}, context)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, p.annotateRawText(raw, context, err)
 			}
 			p.pos = p.context.Offset()
 			if terminator != nil {
@@ -172,10 +193,16 @@ func (p *htmlParser) parseElement(context string) (Node, error) {
 			p.insideHTMLElement = true
 			defer func() { p.insideHTMLElement = outer }()
 		}
-		if name == "head" && !p.insideHTMLElement {
-			outer := p.insideHeadContribution
-			p.insideHeadContribution = true
-			defer func() { p.insideHeadContribution = outer }()
+		if name == "head" {
+			if p.insideHTMLElement {
+				outer := p.insideShellHead
+				p.insideShellHead = true
+				defer func() { p.insideShellHead = outer }()
+			} else {
+				outer := p.insideHeadContribution
+				p.insideHeadContribution = true
+				defer func() { p.insideHeadContribution = outer }()
+			}
 		}
 		children, terminator, err = p.parseNodes(name, childContext)
 		if err != nil {
@@ -245,6 +272,136 @@ func (p *htmlParser) parseSlot(start int, context string) (Node, error) {
 	}
 	slot.Default = children
 	return slot, nil
+}
+
+// isRawTextContext reports whether an insertion context is the body of a
+// raw-text element, whose content is authored in another language.
+func isRawTextContext(context string) bool {
+	return context == "html:script" || context == "html:style"
+}
+
+// rawTextElement names the element owning a raw-text insertion context.
+func rawTextElement(context string) string {
+	return strings.TrimPrefix(context, "html:")
+}
+
+// insertionKeywords open a control block. They are recognized before the value
+// shapes below because a keyword is never a bare value.
+var insertionKeywords = map[string]bool{
+	"if": true, "else": true, "for": true,
+	"await": true, "recover": true, "fallback": true,
+}
+
+// rawInsertionAhead reports whether the brace at the parser position opens a
+// template insertion rather than a JavaScript or CSS block.
+//
+// Inside raw text an insertion must open tight, with the content against the
+// brace, and take one of a small set of shapes. A block in either authored
+// language opens with a space or a line break far more often than not, so the
+// tight rule alone separates `{js}` from `{ this.value = 1 }` and `{ render() }`,
+// which the shapes below could not tell apart on their own. Anything an
+// insertion cannot express this way is written parenthesized.
+// See rule:raw-text-insertion-gate.
+func (p *htmlParser) rawInsertionAhead() bool {
+	// A brace after a dollar sign is a JavaScript template literal placeholder,
+	// which the browser evaluates. Reading it as an insertion would silently
+	// substitute a server value into what the author wrote as client code.
+	if p.pos > 0 && p.source[p.pos-1] == '$' {
+		return false
+	}
+	i := p.pos + 1
+	if i >= len(p.source) {
+		return false
+	}
+	// A closing directive and a parenthesized expression cannot begin a block in
+	// either authored language, so they need no further evidence.
+	if p.source[i] == '/' || p.source[i] == '(' {
+		return true
+	}
+	name, after := readInsertionName(p.source, i)
+	if name == "" {
+		return false
+	}
+	// A control keyword is followed by its clause, so it needs no shape check.
+	if insertionKeywords[name] {
+		return true
+	}
+	after = skipBlanks(p.source, after)
+	if after >= len(p.source) {
+		return false
+	}
+	// A bare value, a member access, and a call are the remaining insertion
+	// shapes. A minified declaration such as `{color:red}` or a shorthand such
+	// as `{a, b}` stops here, because neither a colon nor a comma can follow.
+	switch p.source[after] {
+	case '}', '.', '(':
+		return true
+	}
+	return false
+}
+
+// skipBlanks advances over spaces and tabs. It is applied after the insertion
+// name and never before it, because leading blanks are what distinguish an
+// authored block from an insertion.
+func skipBlanks(source string, i int) int {
+	for i < len(source) && (source[i] == ' ' || source[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+// readInsertionName reads the identifier a raw-text insertion may start with. It
+// returns an empty name when the position does not begin one, which is what
+// keeps a numeric key such as `{0: 'a'}` out of the recognized set.
+func readInsertionName(source string, i int) (string, int) {
+	start := i
+	first, size := utf8.DecodeRuneInString(source[i:])
+	if !unicode.IsLetter(first) && first != '_' {
+		return "", i
+	}
+	i += size
+	for i < len(source) {
+		r, size := utf8.DecodeRuneInString(source[i:])
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' {
+			break
+		}
+		i += size
+	}
+	return source[start:i], i
+}
+
+// rawTextHint names the raw-text context and its escapes. A brace inside script
+// or style content is usually authored JavaScript or CSS, so a bare position and
+// an expression-grammar message leave an author guessing which language the
+// generator was reading.
+func rawTextHint(context string, shellHead bool) string {
+	element := rawTextElement(context)
+	insert := "RawJavaScript or JsonForScript"
+	if element == "style" {
+		insert = "RawCSS"
+	}
+	hint := "; this is inside <" + element + "> content, where {...} is a template insertion." +
+		" Write {{...}} to keep a literal brace, insert a value with " + insert +
+		", or move the " + element + " to a file under the public asset directory"
+	// The asymmetry is worth naming, because the same markup in a component head
+	// contribution is read verbatim and compiles.
+	if shellHead {
+		hint += ". A <head> declared outside <html> is a contribution, whose script and style bodies are verbatim"
+	}
+	return hint
+}
+
+// annotateRawText adds the raw-text hint to a parser diagnostic.
+func (p *htmlParser) annotateRawText(raw bool, context string, err error) error {
+	if !raw {
+		return err
+	}
+	var parseErr *syntax.ParseError
+	if !errors.As(err, &parseErr) {
+		return err
+	}
+	parseErr.Message += rawTextHint(context, p.insideShellHead)
+	return err
 }
 
 // readRawUntilClose consumes the verbatim body of a raw-text element and

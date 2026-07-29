@@ -37,7 +37,10 @@ func TestGenerateFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{})
+			// The filename reaches generated output through HeadSources, so it is
+			// passed as a stable slash-joined label rather than as the on-disk path,
+			// which would bake this checkout's layout into the golden.
+			got, err := htmlbind.Generate(name+"/input.txt", input, htmlbind.GenerateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,6 +105,11 @@ func TestGenerateDiagnostics(t *testing.T) {
 		{"optional mixed attribute", `component Bad(value: string?): html {<p title="prefix {value}">x</p>}`, "optional expression must be the entire attribute"},
 		{"unsafe json field", `type Payload { target: url } component Bad(value: Payload): html {<script>{JsonForScript(value)}</script>}`, "not statically serializable"},
 		{"noncomparable values", `component Bad(left: string[], right: string[]): html {{if left == right}x{/if}}`, "values are not comparable"},
+		// An object shorthand and a single-statement block match an insertion
+		// shape, so they reach analysis; the hint has to survive that far.
+		{"shorthand reaching analysis", `component Bad(): html {<script>const o = {name};</script>}`, "inside <script> content"},
+		{"tight call block reaching analysis", `component Bad(): html {<script>if(x){render()}</script>}`, "inside <script> content"},
+		{"typed insertion keeps its hint", `component Bad(value: string): html {<script>{value}</script>}`, "insert a value with RawJavaScript or JsonForScript"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -575,4 +583,97 @@ component Page(id: string): html {{await user = LoadUser(id), tags = LoadTags(id
 	if !bytes.Contains(mixed, []byte("LoadUser(p.Id)")) {
 		t.Fatalf("plain external gained a ctx argument:\n%s", mixed)
 	}
+}
+
+// TestDocumentedRawTextExamples compiles the examples in the "Braces inside
+// <script> and <style>" section of docs/htmlbind.md, so the documented rules and
+// rule:raw-text-insertion-gate cannot drift apart.
+func TestDocumentedRawTextExamples(t *testing.T) {
+	t.Run("authored content survives byte for byte", func(t *testing.T) {
+		source := "export component Widget(): html {\n<script>\n" +
+			"class X {}\n" +
+			"function f() {\n  return 1\n}\n" +
+			"function g(){return 1}\n" +
+			"const o = { a: 1 };\n" +
+			"const n = {0: 'a'};\n" +
+			"const p = {a, b};\n" +
+			"class C { m() { this.v = 1; } }\n" +
+			"if (x) { render() }\n" +
+			"const s = `hi ${name}`;\n" +
+			"</script>\n<style>\n" +
+			".a { color: red; }\n" +
+			".b{color:red}\n" +
+			"@media print {\n  .c { color: #000; }\n}\n" +
+			"</style>\n" +
+			"<script type=\"speculationrules\">\n{\"prerender\": [{\"where\": {\"href_matches\": \"/*\"}}]}\n</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("documented content example failed: %v", err)
+		}
+		for _, want := range []string{
+			`class X {}`, `function g(){return 1}`, `const o = { a: 1 };`, `const n = {0: 'a'};`,
+			`const p = {a, b};`, `class C { m() { this.v = 1; } }`, `if (x) { render() }`,
+			"`hi ${name}`", `.a { color: red; }`, `.b{color:red}`, `.c { color: #000; }`,
+			`{\"prerender\": [{\"where\": {\"href_matches\": \"/*\"}}]}`,
+		} {
+			if !bytes.Contains(generated, []byte(want)) {
+				t.Errorf("generated output missing authored line %q", want)
+			}
+		}
+	})
+
+	t.Run("every documented insertion shape compiles", func(t *testing.T) {
+		source := `type Payload { id: int }
+type Config { js: trusted_javascript }
+
+export component Widget(
+  js: trusted_javascript,
+  cfg: Config,
+  css: string,
+  payload: Payload,
+  ready: bool,
+  on: trusted_javascript,
+  off: trusted_javascript
+): html {
+<script>{js}</script>
+<script>{cfg.js}</script>
+<script>{JsonForScript(payload)}</script>
+<script>{(ready ? on : off)}</script>
+<style>{RawCSS(css)}</style>
+<script>{if ready}console.log(1){/if}</script>
+}
+`
+		if _, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"}); err != nil {
+			t.Fatalf("documented insertion example failed: %v", err)
+		}
+	})
+
+	t.Run("the escape resolves a collision", func(t *testing.T) {
+		source := "export component W(): html {\n<script>const o = {{name}};</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("documented escape example failed: %v", err)
+		}
+		if !bytes.Contains(generated, []byte(`const o = {name};`)) {
+			t.Fatal("escape did not emit a literal brace pair")
+		}
+	})
+
+	t.Run("a bare script_json value is already encoded", func(t *testing.T) {
+		// The documented residual: a tight shorthand naming an insertable
+		// parameter compiles. It must compile rather than crash, because the
+		// emitter only unwraps a direct JsonForScript call.
+		source := "export component W(payload: script_json): html {\n<script>const o = {payload};</script>\n}\n"
+		if _, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"}); err != nil {
+			t.Fatalf("bare script_json insertion failed: %v", err)
+		}
+		spaced := "export component W(payload: script_json): html {\n<script>const o = { payload };</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(spaced), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("spaced form failed: %v", err)
+		}
+		if !bytes.Contains(generated, []byte(`const o = { payload };`)) {
+			t.Fatal("spaced form was not kept as authored content")
+		}
+	})
 }

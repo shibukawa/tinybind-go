@@ -36,6 +36,11 @@ json_for_script:
   - escape U+2028 and U+2029 for JavaScript parser compatibility
   - prevent a serialized value from terminating the containing script element
   - produce data only; never treat input as executable JavaScript
+script_json_lowering:
+  call_form: JsonForScript is lowered rather than called, because the encoding is generated per argument type, so the emitter reaches the argument through the call expression
+  value_form: a script_json value reaching script content any other way is already encoded and is emitted raw, without unwrapping
+  sources: a parameter declared script_json, a record field, and an external result
+  fixed: 2026-07-30; the emitter asserted every script_json insertion was a JsonForScript call and panicked on the value form, which rule:raw-text-insertion-gate documentation surfaced
 diagnostics:
   - reject trusted_html in attributes, style content, or script content
   - reject trusted_css outside style content

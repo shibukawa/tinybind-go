@@ -315,9 +315,36 @@ export component Card(label: string): html {
 
 この `head` の中では `style` と `script` の中身が生テキストとして扱われるので、CSS や JavaScript の波括弧がテンプレート構文と衝突しません。寄与は静的なマークアップである必要があります。マージ済み head は body の最初の1バイトより前に書かれるため、リクエストデータに依存できないからです。
 
-描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。
+描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。同一性はタグ単位なので、2 つの component が両方 `/shared.css` をリンクしてそれぞれ独自の style を宣言した場合、link は 1 つ、style ブロックは 2 つになります。
 
 その寄与には行き先が必要です。ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素が出力先になります。
+
+#### 寄与を調べる
+
+束縛済みの component は、自身の寄与をタグ単位で報告します。各タグを宣言した component も一緒に返ります。
+
+```go
+fragment := Badge(BadgeParams{Label: "new"})
+
+fragment.Head()
+// []string{`<link rel="stylesheet" href="/shared.css">`, `<style>.badge_uvkb9m { color: red }</style>`}
+
+fragment.HeadSources()
+// []string{"Badge (components.tb.html:5:1)", "Badge (components.tb.html:6:1)"}
+```
+
+`Head` と `HeadSources` は 1 つのリストに対する 2 つのビューです。長さも順序も同じなので、どちらの添字 `i` も同じタグを指します。`Wrapper` も同じ組を持つので、チェーンの要素がどちらの形かを知らずに調べられます。
+
+これは、寄与を配送できない呼び出し側のためのものです。ドキュメントシェルを含まないレスポンス — たとえば swap ライブラリ向けの部分描画 — にはマージ先の head がなく、寄与を捨てればスタイルの当たっていない領域が、どのログにも何も残さずに差し込まれます。拒否するのが安全側の選択で、`HeadSources` は、その報告が head のマークアップを出して読み手に grep させるのではなく、直すべき component を名指しするための手段です。
+
+```go
+if head := fragment.Head(); len(head) > 0 {
+	// component Badge (components.tb.html:5:1) declares <link rel="stylesheet" ...>
+	return fmt.Errorf("component %s declares %s", fragment.HeadSources()[0], head[0])
+}
+```
+
+`MergeHead` は重複を落としたマージ済みタグを返すので、対応する出自リストを持ちません。チェーンの各要素に自身の分を尋ねてください。
 
 ### スコープ付き style
 
@@ -487,6 +514,114 @@ export component Document(
 | `JsonForScript(value)` | `<script>` 内 | 型付きデータを script 用に安全な JSON へ変換 |
 
 `Raw*` は sanitizer ではありません。外部入力をそのまま渡さず、アプリケーションが信頼できる固定値または事前に安全性を保証した値に限定してください。データを JavaScript へ渡す用途では `RawJavaScript` ではなく `JsonForScript` を使います。
+
+### `<script>` と `<style>` の中の波括弧
+
+`<script>` と `<style>` の内容は JavaScript と CSS であり、そこでの `{` はその言語の構文です。この 2 つの要素の中では、波括弧が**間に空白を置かずに**次の形のいずれかで書かれたときだけテンプレートの挿入になります。
+
+```text
+{name}                    値そのもの
+{record.field}            メンバアクセス
+{JsonForScript(payload)}  呼び出し
+{(active ? on : off)}     丸括弧で囲んだ式
+{if ready} ... {/if}      制御ブロック
+```
+
+それ以外の波括弧は内容です。区別しているのは直後の空白なので、`{ name }` は内容、`{name}` は挿入です。
+
+#### 内容として残るもの
+
+以下はどれもエスケープ不要で、1 行ずつそのまま出力されます。
+
+```text
+export component Widget(): html {
+<script>
+class X {}                                  // 空ブロック
+function f() {
+  return 1
+}                                           // 行末の波括弧
+function g(){return 1}                      // minify された関数
+const o = { a: 1 };                         // オブジェクトリテラル
+const n = {0: 'a'};                         // 数値キー
+const p = {a, b};                           // 短縮記法の複数指定
+class C { m() { this.v = 1; } }             // this へ代入するメソッド本体
+if (x) { render() }                         // 1 文だけのブロック
+const s = `hi ${name}`;                     // テンプレートリテラル
+</script>
+<style>
+.a { color: red; }                          /* 宣言ブロック */
+.b{color:red}                               /* minify された宣言 */
+@media print {
+  .c { color: #000; }
+}                                           /* 入れ子の at-rule */
+</style>
+<script type="speculationrules">
+{"prerender": [{"where": {"href_matches": "/*"}}]}
+</script>
+}
+```
+
+特筆すべきは `${name}` の行です。そのまま残るので、JavaScript のテンプレートリテラルはブラウザ側の意味を保ちます。この規則を入れる前は挿入として読まれていて、`name` という名前の `trusted_javascript` パラメータがスコープにあると**診断なしでコンパイルが通り**、クライアントコードとして書いたものにサーバの値が埋め込まれていました。
+
+#### 挿入になるもの
+
+以下はいずれも式の文法に到達し、子ノード位置の挿入とまったく同じように、文脈に対して型検査されます。
+
+```text
+type Payload { id: int }
+type Config { js: trusted_javascript }
+
+export component Widget(
+  js: trusted_javascript,
+  cfg: Config,
+  css: string,
+  payload: Payload,
+  ready: bool,
+  on: trusted_javascript,
+  off: trusted_javascript
+): html {
+<script>{js}</script>                          <!-- 値そのもの -->
+<script>{cfg.js}</script>                      <!-- メンバアクセス -->
+<script>{JsonForScript(payload)}</script>      <!-- 呼び出し -->
+<script>{(ready ? on : off)}</script>          <!-- 丸括弧で囲んだ式 -->
+<style>{RawCSS(css)}</style>                   <!-- style 内容での呼び出し -->
+<script>{if ready}console.log(1){/if}</script> <!-- 制御ブロック -->
+}
+```
+
+上の形で表せない式は丸括弧で囲みます — `{items[0]}` ではなく `{(items[0])}`、`{ready ? on : off}` ではなく `{(ready ? on : off)}`。
+
+#### 内容と形が衝突する場合
+
+タイトに書かれるため形に一致してしまう記述が 2 つあります。どちらも黙って置換されるのではなく、診断されます。
+
+```text
+<script>const o = {name};</script>     ⟶  unknown identifier name
+<script>if(x){render()}</script>       ⟶  unknown function render
+```
+
+逃げ道は `{{` ... `}}` です。ここに限らずテンプレート全体でのリテラル波括弧のエスケープで、`{` ... `}` を 1 組だけ出力し、中身は解析されません。
+
+```text
+<script>const o = {{name}};</script>
+```
+
+は `const o = {name};` を出力します。
+
+1 つだけ黙って通るケースが残ります。タイトな短縮記法の名前が、挿入可能な型のパラメータ名と一致した場合です。`payload: script_json` がスコープにある状態の `const o = {payload};` はコンパイルが通り、置換されます。対処は上のエスケープで、また、実際のコードでずっと多く書かれる空白付きの `const o = { payload };` が内容として扱われる理由もここにあります。
+
+`<html>` の外側に宣言した `<head>` は [head 寄与](#component-の-style-と-script)であり、その `<script>` と `<style>` の内容は verbatim です。そこには形の規則が一切適用されません。上の規則が対象にしているのは、ドキュメントシェル自身の head と、要素の内容です。
+
+波括弧が意図せず挿入として読まれた場合、診断が要素名と逃げ道を示します。
+
+```text
+tasks.tb.html:13:65: unknown identifier name; this is inside <script> content,
+where {...} is a template insertion. Write {{...}} to keep a literal brace,
+insert a value with RawJavaScript or JsonForScript, or move the script to a file
+under the public asset directory
+```
+
+数行を超えるスクリプトなら、最後の選択肢がたいてい正解です。アプリケーションが配信するファイルに出して参照してください。
 
 ## 外部関数
 
@@ -986,5 +1121,23 @@ profile.tb.html:12:8: html:url requires url, got string
 - `await` ブロックに `fallback` 節を書かなかった
 - `html` または `async` パラメータを持つ component や、`await` 境界に到達する
   component に `@cache` を付けた
+- JavaScript や CSS が挿入の形と衝突した
+  → [`<script>` と `<style>` の中の波括弧](#script-と-style-の中の波括弧)
+
+`<script>` / `<style>` の内容で出た診断は、要素名と逃げ道を示します。そこでの波括弧はテンプレート構文よりも、書かれた内容であることのほうが多いからです。
+
+```text
+tasks.tb.html:13:65: unknown identifier name; this is inside <script> content,
+where {...} is a template insertion. Write {{...}} to keep a literal brace,
+insert a value with RawJavaScript or JsonForScript, or move the script to a file
+under the public asset directory
+```
+
+ドキュメントシェル自身の `<head>` の中では、さらに 1 文が付きます。`<html>` の外側に宣言した `<head>` なら、同じマークアップが verbatim として読まれるからです。
+
+```text
+. A <head> declared outside <html> is a contribution, whose script and style
+bodies are verbatim
+```
 
 診断が出るのはコード生成時です。テンプレートを変更したら、ビルドやテストの前に必ず `go generate ./...` を実行してください。実行するまで Go のビルドが見ているのは以前のプランで、そこにはテンプレート側で既に直した診断も含まれています。

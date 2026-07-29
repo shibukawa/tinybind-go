@@ -100,12 +100,20 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if err := e.emitOps(plan, component.Body.([]Node)); err != nil {
 		return err
 	}
-	head := "nil"
-	if fragment := renderStaticHTML(info.head); strings.TrimSpace(fragment) != "" {
-		head = "[]string{" + strconv.Quote(fragment) + "}"
-	}
-	if transitive := e.c.transitiveHead(component.Name); len(transitive) > 0 {
-		head = "[]string{" + strings.Join(transitive, ", ") + "}"
+	// transitiveHead already starts at this component, so it covers the component's
+	// own contribution as well as every one it reaches.
+	head, headSources := "nil", ""
+	if tags := e.c.transitiveHead(component.Name); len(tags) > 0 {
+		htmlParts := make([]string, 0, len(tags))
+		sourceParts := make([]string, 0, len(tags))
+		for _, tag := range tags {
+			htmlParts = append(htmlParts, strconv.Quote(tag.html))
+			sourceParts = append(sourceParts, strconv.Quote(tag.source))
+		}
+		head = "[]string{" + strings.Join(htmlParts, ", ") + "}"
+		// Written only beside a non-empty head, so a project with no contribution
+		// anywhere keeps its previous generated output byte for byte.
+		headSources = "\tHeadSources: []string{" + strings.Join(sourceParts, ", ") + "},\n"
 	}
 	ops := plan.literal()
 	// The flag is written only when it is true, so a project with no await
@@ -132,8 +140,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s\tOps: %s,\n}\n\n",
-		prefix, params, head, await, check, cache, indentBlock(ops, "\t"))
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, headSources, await, check, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -509,17 +517,23 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 		p.op(fmt.Sprintf("Slot(func(%s %s) htmlbind.Fragment { return %s }, nil)", receiverIdent, p.scope.goType, code))
 		return nil
 	}
+	// JsonForScript is lowered rather than called: the encoding is generated per
+	// argument type, so the argument has to be reached through the call. A
+	// script_json value arriving any other way — a parameter, a record field, an
+	// external result — is already encoded, so it falls through to the raw path
+	// below rather than being unwrapped.
 	if context == "html:script" && t.kind == kindScriptJSON {
-		call := expr.(*CallExpr)
-		argument := call.Arguments[0]
-		argCode, err := e.exprCode(argument, p.scope)
-		if err != nil {
-			return err
+		if call, ok := jsonForScriptCall(expr); ok {
+			argument := call.Arguments[0]
+			argCode, err := e.exprCode(argument, p.scope)
+			if err != nil {
+				return err
+			}
+			p.flush()
+			p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
+				receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
+			return nil
 		}
-		p.flush()
-		p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
-			receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
-		return nil
 	}
 	raw := t.required().kind == kindTrustedHTML || t.required().kind == kindTrustedCSS || t.required().kind == kindTrustedJS || t.required().kind == kindScriptJSON
 	kind := "Text"
@@ -533,6 +547,20 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 	p.flush()
 	p.op(fmt.Sprintf("%s(func(%s %s) string { %s })", kind, receiverIdent, p.scope.goType, body))
 	return nil
+}
+
+// jsonForScriptCall reports whether an expression is a direct JsonForScript
+// call, which is the only form whose argument the emitter can encode.
+func jsonForScriptCall(expr Expr) (*CallExpr, bool) {
+	call, ok := expr.(*CallExpr)
+	if !ok || len(call.Arguments) != 1 {
+		return nil, false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	if !ok || identifier.Name != "JsonForScript" {
+		return nil, false
+	}
+	return call, true
 }
 
 func (e *goEmitter) emitIfOp(p *planEmitter, node *syntax.IfNode) error {
@@ -932,24 +960,46 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 	return "", fmt.Errorf("unsupported expression %T", expr)
 }
 
+// headTag is one contributed head tag together with the component that declared
+// it. The origin is carried so a caller rejecting a contribution can name it;
+// see requirement:head-contribution-provenance.
+type headTag struct {
+	html   string
+	source string
+}
+
 // transitiveHead collects the head contributions of a component and every
 // component reachable from it, because a nested call renders after the shell
 // head is already written.
-func (c *compiler) transitiveHead(name string) []string {
-	var out []string
-	seen := map[string]bool{}
+//
+// One entry per contributed tag rather than per contributing component, because
+// requirement:head-merging deduplicates on the tag and identity is per tag: two
+// components sharing a stylesheet link must collapse to one even when the rest
+// of their contributions differ.
+func (c *compiler) transitiveHead(name string) []headTag {
+	var out []headTag
+	visited := map[string]bool{}
+	// Identity is the tag, so two components contributing the same stylesheet
+	// link collapse here and the first declarer keeps the attribution. Merging
+	// across chain members deduplicates again, because a member cannot see the
+	// contributions of the members it is composed with.
+	emitted := map[string]bool{}
 	var visit func(string)
 	visit = func(current string) {
-		if seen[current] {
+		if visited[current] {
 			return
 		}
-		seen[current] = true
+		visited[current] = true
 		info, ok := c.components[current]
 		if !ok {
 			return
 		}
-		if fragment := renderStaticHTML(info.head); strings.TrimSpace(fragment) != "" {
-			out = append(out, strconv.Quote(fragment))
+		for _, tag := range c.headTags(info) {
+			if emitted[tag.html] {
+				continue
+			}
+			emitted[tag.html] = true
+			out = append(out, tag)
 		}
 		for _, called := range c.calledComponents(info) {
 			visit(called)
@@ -957,6 +1007,44 @@ func (c *compiler) transitiveHead(name string) []string {
 	}
 	visit(name)
 	return out
+}
+
+// headTags splits one component's head contribution into its individual tags.
+// Whitespace between tags is dropped, because the merged head is assembled from
+// the tags rather than from the authored block.
+func (c *compiler) headTags(info *componentInfo) []headTag {
+	var out []headTag
+	for _, node := range info.head {
+		if _, ok := node.(*TextNode); ok {
+			continue
+		}
+		html := renderStaticHTML([]Node{node})
+		if strings.TrimSpace(html) == "" {
+			continue
+		}
+		out = append(out, headTag{html: html, source: c.headSource(info, node)})
+	}
+	return out
+}
+
+// headSource names the declaring component and the position of the tag, in the
+// form a diagnostic can print directly.
+func (c *compiler) headSource(info *componentInfo, node Node) string {
+	pos := nodePosition(node)
+	return fmt.Sprintf("%s (%s:%d:%d)", info.decl.Name, c.filename, pos.Line, pos.Col)
+}
+
+// nodePosition reads the source position of a static head node.
+func nodePosition(node Node) Position {
+	switch node := node.(type) {
+	case *ElementNode:
+		return node.Pos
+	case *CommentNode:
+		return node.Pos
+	case *TextNode:
+		return node.Pos
+	}
+	return Position{Line: 1, Col: 1}
 }
 
 // calledComponents lists the components a component's body invokes.

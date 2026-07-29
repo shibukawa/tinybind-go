@@ -32,7 +32,8 @@ server_api:
       plural: one id per contributed tag, because identity is per tag and a member usually contributes several
       pairs_with: the existing Head accessor returning tag markup, so Head and HeadIDs are the two views of one list in the same order
       rejected_name: HeadChildrenIDs, because children is already the reserved unnamed-slot parameter name, so it reads as the ids of slot content rather than of head tags
-    wrapper_gap: Wrapper exposes no head accessor today while Fragment exposes Head, so both Head and HeadIDs land on Wrapper
+    wrapper_gap: closed 2026-07-30; Wrapper already exposes Head, and requirement:head-contribution-provenance added HeadSources to both forms, so HeadIDs follows an established pair rather than introducing one
+    granularity_settled: Head is now one entry per contributed tag, which this requirement's per-tag id assumed; requirement:head-contribution-provenance made the change
     why_this_shape: it follows the principle already applied to the await flag, that a caller decides from the values in its own hand, and it keeps the render entry from growing a struct
     filtering: with member tokens in hand, a caller drops the markup of an unchanged member from the merged list by token, so the module needs no notion of which member changed
   transport: the module returns data and never serializes it; the framework places it in its navigation response, per the decision:client-runtime-ownership split

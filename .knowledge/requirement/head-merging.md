@@ -30,6 +30,12 @@ collection:
 merge:
   order: root contributions first, then contributors in deterministic composition order
   dedup: identical nodes collapse to one; identity uses element name and normalized attributes
+  granularity:
+    rule: a contribution is carried as one entry per tag, so identity is per tag as dedup above requires
+    was: one concatenated string per contributing component, which collapsed only when two components' whole contributions matched
+    fixed: 2026-07-30 with requirement:head-contribution-provenance; the 'two components declaring the same stylesheet emit one link' acceptance below did not hold before it
+    layers: generation collapses a repeated tag within one member's reachable set, and MergeHead collapses across chain members
+  provenance: requirement:head-contribution-provenance keeps a parallel source list naming the declaring component of each entry
   singleton:
     title: the innermost contributor wins; the root value is the default
     charset_and_viewport: exactly one survives; a conflicting value is a generation error
