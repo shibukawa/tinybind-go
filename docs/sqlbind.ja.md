@@ -342,7 +342,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-WHERE が template 内にまったくなければ、生成時に失敗します。やっかいなのは条件 block の中にある WHERE で、それが残るかどうかは呼び出しの時点でしか分かりません。
+clause が空になりうるかどうかは template の性質であって実行時データの性質ではないため、検査はすべて生成時に行われ、生成コードにガードは入りません。条件 block の中だけにある WHERE は、片方の経路が全件削除になるため生成に失敗します。
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +351,27 @@ DELETE FROM users
 }
 ```
 
-そこで検査は2段階になります。この template は生成できますが、builder を `enabled == false` で呼べば error になり、statement が DB に届くことはありません。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+`else` があって両分岐とも述語を出す場合は、空になる経路がないので生成できます。
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+同じ証明が動的な `SET` list にも適用されます。代入がすべて条件付きの UPDATE は生成エラーです。
+
+keyword はその statement 自身のものでなければなりません。subquery、CTE 本体、文字列リテラル、コメントの中にある WHERE は条件を満たさないため、次は拒否されます。
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+検査は `sql.exec` だけでなくすべての cardinality に適用されます。`sql.one<T>` として宣言した `DELETE ... RETURNING` も同じように証明されます。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+
+`sql.predicate` が条件を満たすのは、その predicate 自身がすべての経路で空にならない場合だけです。
 
 ## 低レベル builder を使う
 
@@ -418,6 +438,23 @@ for user, err := range ListActiveUsersContext(ctx, true) {
 Context に executor がなければ `sqlbind.ErrNoSQLExecutor` が返ります。`WithSQLExecutor` に渡せるのは `*sql.DB`、`*sql.Conn`、`*sql.Tx` など `sqlbind.SQLExecutor` を満たす値です。
 
 executor を引数で明示する通常 API も残るため、用途に応じて併用できます。
+
+### 読み取り専用 executor
+
+read replica への接続や `sql.TxOptions{ReadOnly: true}` で開始した transaction を Context に入れるときは、`sqlbind.AsReadOnly()` を付けます。
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // SELECT なので実行される
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+書き込み statement は生成時に判定され、実行前に `sqlbind.ErrReadOnlyExecutor` を返します。エラーには弾かれた statement 名が入ります。SQL の組み立てもデータベースへの往復も発生しないため、read replica に繋がっていない開発環境やテストでも同じように失敗します。
+
+読み取りと判定されるのは、先頭が `SELECT` / `VALUES` / `TABLE`、または CTE 本体に書き込みを含まず末尾が読み取りの `WITH` で、かつトップレベルに `FOR UPDATE` などの行ロック句がない statement だけです。`DELETE ... RETURNING` を `sql.one<T>` で宣言したものや `SELECT ... FOR UPDATE` は書き込みとして扱われます。判定できないものはすべて書き込みに倒れるので、誤判定は「read replica を使えたはずが writer を使う」方向にしか起きません。
+
+`SELECT` から書き込みを行う関数を呼ぶ場合など、静的に判定できない書き込みは検出できません。最終的な防御はデータベース側に残ります。カスタム resolver（`-sql-executor-resolver`）を指定した場合、その契約は読み取り専用かどうかを運べないため、このチェックは無効になります。
 
 ## context のみの公開 API
 

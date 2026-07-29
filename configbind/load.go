@@ -127,6 +127,10 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		}
 	}
 
+	// One environment for both the file layer's ${NAME} expansion and the env
+	// layer below it.
+	environ := environMap(opts.Environ)
+
 	// TOML file.
 	if found {
 		data, err := os.ReadFile(cfgPath)
@@ -137,13 +141,13 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("configbind: parse toml %q: %w", cfgPath, err)
 		}
-		if err := mergeDocument(o, doc, PlaceFile); err != nil {
+		if err := mergeDocument(o, doc, PlaceFile, environ, ""); err != nil {
 			return nil, err
 		}
 	}
 
 	// Env (names from CLI long options, e.g. opt port -> PORT).
-	envMap := ReadEnv(fieldDefs, opts.Environ)
+	envMap := readEnvMap(fieldDefs, environ)
 	o.MergeMap(envMap, PlaceEnv)
 
 	// CLI (highest).
@@ -277,7 +281,17 @@ func applySubcommandValues(name string, args []string, definition SubCommandDefi
 	return nil
 }
 
-func mergeDocument(o *Overlay, doc minitoml.Document, place Place) error {
+// mergeDocument merges a parsed document into the overlay, expanding ${NAME} in
+// string values on the way. diagPrefix carries the path of the enclosing
+// table-array element so an error inside [[db]] can name the element it came
+// from; it is empty at the top level, where the document keys are already full.
+func mergeDocument(o *Overlay, doc minitoml.Document, place Place, environ map[string]string, diagPrefix string) error {
+	diagKey := func(key string) string {
+		if diagPrefix == "" {
+			return key
+		}
+		return diagPrefix + "." + key
+	}
 	for _, k := range doc.Keys() {
 		v, ok := doc.Get(k)
 		if !ok {
@@ -289,13 +303,26 @@ func mergeDocument(o *Overlay, doc minitoml.Document, place Place) error {
 			if err != nil {
 				return err
 			}
+			// Only elements written as strings can carry a reference; a number
+			// or bool has no ${} form to expand.
+			for i := range sl {
+				if v.Array[i].Kind != minitoml.KindString {
+					continue
+				}
+				expanded, err := expandEnvRefs(sl[i], environ, diagKey(k))
+				if err != nil {
+					return err
+				}
+				sl[i] = expanded
+			}
 			o.SetMulti(k, sl, place)
 		case minitoml.KindTableArray:
 			// Each [[k]] element becomes its own overlay, keyed relative to k.
 			tables := make([]*Overlay, 0, len(v.Tables))
-			for _, table := range v.Tables {
+			for i, table := range v.Tables {
 				element := NewOverlay()
-				if err := mergeDocument(element, table, place); err != nil {
+				elemPrefix := fmt.Sprintf("%s[%d]", diagKey(k), i)
+				if err := mergeDocument(element, table, place, environ, elemPrefix); err != nil {
 					return err
 				}
 				tables = append(tables, element)
@@ -305,6 +332,12 @@ func mergeDocument(o *Overlay, doc minitoml.Document, place Place) error {
 			s, err := v.AsString()
 			if err != nil {
 				return err
+			}
+			if v.Kind == minitoml.KindString {
+				s, err = expandEnvRefs(s, environ, diagKey(k))
+				if err != nil {
+					return err
+				}
 			}
 			o.Set(k, s, place)
 		}

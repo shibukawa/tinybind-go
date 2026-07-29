@@ -40,7 +40,7 @@ func TestBuilder(t *testing.T) {
 func TestGenerateExecMutationAndQuestionPlaceholders(t *testing.T) {
 	source := []byte(`package queries
 export statement Rename(id: int, name: string, enabled: bool): sql.exec {
-UPDATE users SET name = {name} {if enabled}WHERE id = {id}{/if}
+UPDATE users SET name = {name} WHERE id = {id} {if enabled}AND enabled{/if}
 }`)
 	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{PlaceholderStyle: "question"})
 	if err != nil {
@@ -329,4 +329,71 @@ func exportedFuncSignatures(t *testing.T, generated []byte) []string {
 		out = append(out, buffer.String())
 	}
 	return out
+}
+
+// A write statement must resolve its executor through the resolver that rejects
+// a read-only Context, and must fail before it reaches the database.
+func TestGenerateReadOnlyExecutorRejection(t *testing.T) {
+	source := []byte(`package queries
+type User { id: int, name: string }
+export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}
+export statement LockUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id} FOR UPDATE}
+export statement PopUser(id: int): sql.one<User> {DELETE FROM users WHERE id = {id} RETURNING id, name}
+export statement PurgeUsers(): sql.many<User> {DELETE FROM users WHERE id > 0 RETURNING id, name}
+export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
+	generated, err := sqlbind.Generate("readonly.tb.sql", source, sqlbind.GenerateOptions{ContextAPI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"LockUser", "PopUser", "PurgeUsers", "DeleteUser"} {
+		call := `_tinybindsql.WriteExecutorFromContext(ctx, "` + name + `")`
+		if !bytes.Contains(generated, []byte(call)) {
+			t.Fatalf("write statement %s lacks %q:\n%s", name, call, generated)
+		}
+	}
+	if bytes.Count(generated, []byte("_tinybindsql.SQLExecutorFromContext(ctx)")) != 2 {
+		t.Fatalf("read statements should be the only users of the plain resolver:\n%s", generated)
+	}
+	runtimeTest := []byte(`package queries
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "strings"
+    "testing"
+    rootsql "github.com/shibukawa/tinybind-go/sqlbind"
+)
+var errQuery = errors.New("query reached the database")
+var errExec = errors.New("exec reached the database")
+type failingExecutor struct{}
+func (failingExecutor) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errQuery }
+func (failingExecutor) ExecContext(context.Context, string, ...any) (sql.Result, error) { return nil, errExec }
+func TestReadOnlyContextRejectsWrites(t *testing.T) {
+    ctx := rootsql.WithSQLExecutor(context.Background(), failingExecutor{}, rootsql.AsReadOnly())
+
+    // Writes stop at the resolver, so the database is never reached.
+    if _, err := LockUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("FOR UPDATE error = %v", err) }
+    if _, err := PopUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("DELETE RETURNING error = %v", err) }
+    if _, err := DeleteUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("exec error = %v", err) }
+    purged := 0
+    for _, err := range PurgeUsersContext(ctx) { purged++; if !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("many write error = %v", err) } }
+    if purged != 1 { t.Fatalf("many write yields = %d", purged) }
+
+    // The error names the statement that was misrouted.
+    _, err := PopUserContext(ctx, 1)
+    if !strings.Contains(err.Error(), "PopUser") { t.Fatalf("error does not name the statement: %v", err) }
+
+    // Reads run against the same read-only executor.
+    if _, err := GetUserContext(ctx, 1); !errors.Is(err, errQuery) { t.Fatalf("read error = %v", err) }
+    listed := 0
+    for _, err := range ListUsersContext(ctx) { listed++; if !errors.Is(err, errQuery) { t.Fatalf("many read error = %v", err) } }
+    if listed != 1 { t.Fatalf("many read yields = %d", listed) }
+
+    // Without AsReadOnly every statement reaches the database as before.
+    writable := rootsql.WithSQLExecutor(context.Background(), failingExecutor{})
+    if _, err := PopUserContext(writable, 1); !errors.Is(err, errQuery) { t.Fatalf("writable one error = %v", err) }
+    if _, err := DeleteUserContext(writable, 1); !errors.Is(err, errExec) { t.Fatalf("writable exec error = %v", err) }
+}`)
+	runGenerated(t, generated, runtimeTest)
 }

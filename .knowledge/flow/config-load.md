@@ -50,7 +50,7 @@ flow:
         - concept:cli-option-codegen
         - requirement:config-file-discovery
     - id: parse-toml
-      action: parse the single resolved TOML file into key/value map; merge as file_toml; no multi-file merge
+      action: parse the single resolved TOML file into key/value map; expand ${NAME} in string values; merge as file_toml; no multi-file merge
       refs:
         - concept:reusable-source-parsers
         - concept:config-overlay
@@ -59,13 +59,25 @@ flow:
         - decision:toml-shape-constraints
         - rule:toml-shape-validation
         - decision:config-file-path-resolution
+        - requirement:config-env-interpolation
+        - decision:env-interpolation-layer
+        - rule:env-interpolation-syntax
         - api:configbind-bind
+      notes:
+        - expansion runs in configbind, not in the parser, and covers array and
+          array-of-tables elements through the same merge recursion
+        - an undefined ${NAME} aborts the load instead of writing an empty value
+        - expanded values keep place file_toml, so later layers still override them
     - id: parse-env
       action: reusable env reader yields map; generated known-key filter merges as env
       refs:
         - concept:reusable-source-parsers
         - concept:config-overlay
+        - requirement:config-env-interpolation
         - api:configbind-bind
+      notes:
+        - the same environment set feeds the file interpolation step
+        - env values are merged literally; ${...} inside them is not expanded
     - id: parse-cli
       action: generic CLI map machinery plus generated flag names merge Bind keys as cli; dispatch SubCommand to *T or nil
       refs:

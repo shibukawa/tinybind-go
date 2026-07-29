@@ -217,11 +217,18 @@ func (e *goEmitter) contextAPIName(name string) string {
 	return name + "Context"
 }
 
-func (e *goEmitter) resolverCall() string {
-	if e.resolver == nil {
-		return "_tinybindsql.SQLExecutorFromContext(ctx)"
+// resolverCall selects the Context resolver for one statement. A write
+// statement uses the resolver that rejects a read-only executor, unless a
+// framework resolver is configured: that contract carries no access mode, so
+// the check is unavailable there.
+func (e *goEmitter) resolverCall(statement string, readOnly bool) string {
+	if e.resolver != nil {
+		return "_tinybindresolver." + e.resolver.Name + "(ctx)"
 	}
-	return "_tinybindresolver." + e.resolver.Name + "(ctx)"
+	if readOnly {
+		return runtime("SQLExecutorFromContext") + "(ctx)"
+	}
+	return fmt.Sprintf("%s(ctx, %q)", runtime("WriteExecutorFromContext"), statement)
 }
 
 func (e *goEmitter) emitDeclaredTypes() {
@@ -385,7 +392,7 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 	if info.cardinality == "many" {
 		fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
 		fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
-		fmt.Fprintf(&e.b, "\t\texecutor, err := %s\n", e.resolverCall())
+		fmt.Fprintf(&e.b, "\t\texecutor, err := %s\n", e.resolverCall(statement.Name, info.readOnly))
 		fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
 		fmt.Fprintf(&e.b, "\t\tfor value, err := range %s(ctx, executor%s) {\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
 		e.b.WriteString("\t\t\tif !yield(value, err) { return }\n\t\t}\n\t}\n}\n\n")
@@ -401,7 +408,7 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 		returnType = "*" + result
 	}
 	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
-	fmt.Fprintf(&e.b, "\texecutor, err := %s\n", e.resolverCall())
+	fmt.Fprintf(&e.b, "\texecutor, err := %s\n", e.resolverCall(statement.Name, info.readOnly))
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
 	fmt.Fprintf(&e.b, "\treturn %s(ctx, executor%s)\n}\n\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
 }

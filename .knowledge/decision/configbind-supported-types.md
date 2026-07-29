@@ -59,7 +59,8 @@ out_of_scope_v1:
   - multipart or file upload handling
   - binary blobs
   - arbitrary nested maps of mixed types
-  - flags or env vars for array-of-tables elements
+  - flags or env vars for array-of-tables elements; element values still take
+    outside input through requirement:config-env-interpolation
   - recursive config structs
   - inline tables in TOML
   - arrays of inline tables in TOML
@@ -71,6 +72,8 @@ rationale:
   - nested structs use standard tables, never inline tables
   - repeated settings are data, so struct slices read from arrays of tables
   - an element count has no CLI or env form, so those layers skip struct slices
+  - a per-value ${NAME} reference injects element secrets without giving the env
+    layer any say over the element count
   - smaller shape simplifies codegen and TinyGo portability
 related:
   - requirement:configbind-product-goals
@@ -79,6 +82,7 @@ related:
   - rule:integer-value-parsing
   - requirement:configbind-tinygo
   - requirement:duration-config-fields
+  - requirement:config-env-interpolation
   - rule:duration-value-parsing
   - concept:config-struct-mapping
   - decision:toml-shape-constraints

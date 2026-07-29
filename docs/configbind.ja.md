@@ -449,6 +449,35 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 `env` の値は大文字・小文字を含めてそのまま利用され、英字または `_` で始まる環境変数名を指定します。同じ環境変数名を複数 field に割り当てると生成 error になります。環境変数から設定されたくない field には `env:"-"` を指定できます。
 
+### 設定 file の中で環境変数を参照する
+
+TOML の文字列の中に `${NAME}` と書くと、読み込み時に環境変数の値へ展開されます。値全体を置き換える必要はなく、文字列の途中でも使えます。
+
+```toml
+[[database]]
+name = "primary"
+dsn = "postgres://app:${PRIMARY_DB_PASSWORD}@db1.internal:5432/app"
+
+[[database]]
+name = "replica"
+dsn = "postgres://app:${REPLICA_DB_PASSWORD}@db2.internal:5432/app"
+```
+
+これは主に、array of tables の要素へ credential を渡すための機能です。要素には CLI option も環境変数もありませんが、要素数を file 側に持たせたまま、値だけを外から注入できます。
+
+規則は次の通りです。
+
+- 参照できるのは TOML file の文字列だけです。key、table header、数値や真偽値は対象外です。配列の要素と `[[...]]` の要素の field も展開されます。
+- 環境変数が未定義なら error になり、起動しません。空文字が入って `default` を打ち消すよりも、起動時に気づける方が安全なためです。値が空文字に設定されている場合は「定義済み」として扱われ、空文字に展開されます。
+- `$$` は `$` 1文字になります。`{` にも `$` にも続かない単独の `$` はそのままの文字です。
+- 展開しても入力元は TOML file のままなので、環境変数や CLI による上書きの優先順位は変わりません。
+- 環境変数や CLI から来た値の中の `${...}` は展開されません。
+- 参照する名前は生の環境変数名です。field ごとの環境変数名や `env:"-"` の影響は受けません。
+
+`${NAME:-default}` のような fallback 記法は今のところありません。
+
+既存の設定 file に `$$` を含む文字列がある場合は意味が変わるので注意してください。
+
 ## CLI subcommand
 
 `SubCommand[T]` は、生成される CLI 専用の command branch を宣言します。その
@@ -583,7 +612,7 @@ dir = "./files"
 listing = true
 ```
 
-要素数そのものが data であるため、要素の field には CLI option も環境変数もありません。入力元は TOML file だけです。`default` は要素ごとに適用され、上の例では最初の route が `listing = false` になります。要素の field に `opt` や `env` を付けると、黙って無視されるのではなく生成時のエラーになります。subcommand は struct の slice を受け取れません。
+要素数そのものが data であるため、要素の field には CLI option も環境変数もありません。入力元は TOML file だけです。`default` は要素ごとに適用され、上の例では最初の route が `listing = false` になります。要素の field に `opt` や `env` を付けると、黙って無視されるのではなく生成時のエラーになります。subcommand は struct の slice を受け取れません。要素に credential や環境ごとの path を渡したい場合は、値の中に `${NAME}` と書いてください（[設定 file の中で環境変数を参照する](#設定-file-の中で環境変数を参照する)）。
 
 要素の型は同一 package の named struct を値で持つ必要があります。`[]*RouteConfig` と、自分自身へ到達する struct はどちらも生成時に拒否されます。scaffold は slice ごとに `[[...]]` block の例を1つ出力します。
 
