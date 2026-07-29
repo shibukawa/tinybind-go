@@ -15,6 +15,9 @@ scope: decision:route-feature-ownership
 convention: decision:html-route-file-conventions
 segment_notation: decision:route-segment-notation
 handler_shape: decision:route-handler-shape
+action_lowering: decision:server-action-lowering
+action_profile: decision:action-lowering-profile
+render_mode: decision:script-free-render-mode
 route_plan: data:html-render-route-plan
 requirements:
   - requirement:generated-route-registration

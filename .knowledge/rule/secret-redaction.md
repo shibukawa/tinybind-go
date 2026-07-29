@@ -55,7 +55,15 @@ scope:
   - SubCommand fields may use the same helper if logged, but no TOML/env layers
 priority:
   - explicit secret tag wins over auto policy
+array_of_tables:
+  state: implemented; an element field's secret tag reaches the generated map
+  array_field_mode: a mode on the array covers every field of every element
+  keying: >
+    an element key carries a runtime index, so the map keys element fields by their
+    path under the array key and expansion applies it at every index
+  detail: requirement:array-of-tables-provenance
 related:
+  - requirement:array-of-tables-provenance
   - decision:struct-field-tags
   - requirement:source-provenance-logging
   - data:provenance-event

@@ -66,6 +66,10 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 		rootPackage = PackageName(filepath.Base(tree.Root))
 	}
 
+	if err := ValidateActionPrefix(emitter.ActionPrefix, tree); err != nil {
+		return nil, err
+	}
+
 	var out []Generated
 	var errs []error
 
@@ -73,6 +77,26 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 	// are keyed by RelDir so every route sharing a layout reads the same one.
 	layoutSignatures := map[string]ComponentSignature{}
 	seenLayout := map[string]bool{}
+
+	// Server functions are resolved before any template is compiled, because a
+	// template names a handler and the compiler needs the URL that name lowers
+	// to. Discovery is keyed by the declaring directory, so a package holding
+	// both a page and a layout is read once.
+	actionsByDir := map[string][]Action{}
+	var allActions []Action
+	discoverActions := func(dir, relDir, pkg, importPath string) {
+		if _, done := actionsByDir[relDir]; done {
+			return
+		}
+		found, err := DiscoverActions(dir, relDir, pkg, importPath, emitter.ActionPrefix)
+		if err != nil {
+			errs = append(errs, err)
+			actionsByDir[relDir] = nil
+			return
+		}
+		actionsByDir[relDir] = found
+		allActions = append(allActions, found...)
+	}
 
 	analyses := make([]Analysis, 0, len(tree.Routes))
 	for _, route := range tree.Routes {
@@ -87,13 +111,15 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 				continue
 			}
 			layoutSignatures[layout.RelDir] = signature
-			source, err := compileTemplate(layout.File, layout.Package)
+			discoverActions(filepath.Dir(layout.File), layout.RelDir, layout.Package, layout.ImportPath)
+			source, err := compileTemplate(layout.File, layout.Package, emitter, actionsByDir[layout.RelDir])
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 			out = append(out, Generated{Path: componentPath(layout.File, componentSuffix), Source: source})
 		}
+		discoverActions(route.Dir, route.RelDir, route.Package, route.ImportPath)
 
 		analysis, err := Analyze(route)
 		if err != nil {
@@ -107,7 +133,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 
 		pagePath := componentPath(route.PageFile, componentSuffix)
 		if !alreadyEmitted(out, pagePath) {
-			source, err := compileTemplate(route.PageFile, route.Package)
+			source, err := compileTemplate(route.PageFile, route.Package, emitter, actionsByDir[route.RelDir])
 			if err != nil {
 				errs = append(errs, err)
 			} else {
@@ -127,7 +153,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 		return nil, joinErrors(errs)
 	}
 
-	registry, err := emitter.Registry(tree, rootPackage, analyses, layoutSignatures)
+	registry, err := emitter.Registry(tree, rootPackage, analyses, layoutSignatures, allActions)
 	if err != nil {
 		return nil, err
 	}
@@ -158,12 +184,16 @@ func componentPath(templatePath, suffix string) string {
 	return filepath.Join(filepath.Dir(templatePath), base+suffix)
 }
 
-func compileTemplate(path, pkg string) ([]byte, error) {
+func compileTemplate(path, pkg string, emitter *Emitter, actions []Action) ([]byte, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return htmlbind.Generate(path, source, htmlbind.GenerateOptions{Package: pkg})
+	return htmlbind.Generate(path, source, htmlbind.GenerateOptions{
+		Package:          pkg,
+		ServerActions:    actionURLs(actions),
+		ServerActionAttr: emitter.ActionAttr,
+	})
 }
 
 func alreadyEmitted(files []Generated, path string) bool {

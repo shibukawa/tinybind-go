@@ -23,7 +23,18 @@ fields:
     description: >
       Value is the redaction placeholder rather than the configured value, so a
       caller re-rendering these records never compares against the mask text
-go_shape: '{Key, Value, Place string, Masked bool}'
+go_shape: '{Key, Value, Place string, Masked bool, ArrayKey string, Index int}'
+element_detail: requirement:array-of-tables-provenance
+element_fields:
+  - name: ArrayKey
+    type: string
+    description: >
+      the array-of-tables key this record is an element of; empty means the record
+      is not an element, following the empty-means-absent convention already used
+      for the tag fields
+  - name: Index
+    type: int
+    description: element position, so a caller groups and orders a tree without splitting Key on a bracket
 notes:
   - hide mode drops the record instead of returning empty Value
   - mask mode sets Value to a fixed-width asterisk run per rule:secret-redaction, never length-jittered

@@ -237,10 +237,8 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]Fie
 	}
 	if len(secrets) > 0 {
 		b.WriteString("\t\tSecrets: map[string]string{\n")
-		for _, k := range keys {
-			if mode, ok := secrets[k]; ok {
-				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(mode))
-			}
+		for _, secret := range secrets {
+			fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(secret.Key), strconv.Quote(secret.Mode))
 		}
 		b.WriteString("\t\t},\n")
 	}
@@ -431,7 +429,15 @@ func flattenInheriting(prefix string, fields []Field, parents []string, secret s
 		case FieldStruct:
 			result = append(result, flattenInheriting(key, field.Nested, fieldParents, fieldSecret)...)
 		case FieldStructSlice:
-			continue
+			// The array itself is one stable key, so it carries its own dependon
+			// and secret. Its elements are addressed per element and are collected
+			// by collectElementSecrets instead.
+			result = append(result, scaffoldCodegenField{
+				Key:     key,
+				Field:   field,
+				Parents: fieldParents,
+				Secret:  fieldSecret,
+			})
 		default:
 			result = append(result, scaffoldCodegenField{
 				Key:     key,
@@ -543,15 +549,26 @@ func rejectTableArrays(fields []Field) error {
 	return nil
 }
 
-// checkStructFieldTags rejects the tags a struct field cannot carry. dependon
-// and secret describe a whole subtree and are propagated to its leaves, but
-// falsy names one value, which a struct does not have. An array of tables is
-// addressed per element, so none of the three has anywhere to land.
+// checkStructFieldTags rejects the tags a struct field cannot carry.
+//
+// Every tag has an outcome here, because the tags that reached this walk without
+// one were accepted and dropped: a default on a nested struct generated nothing
+// and reported nothing. dependon and secret describe a whole subtree and are
+// propagated to its leaves. falsy names one value, which neither a struct nor an
+// array has. default, opt, env, and arg each address one scalar key, so they
+// have nowhere to land on either.
+//
+// help is the exception: requirement:godoc-help-precedence backfills help tags
+// into source from godoc, including onto struct fields, so rejecting it here
+// would fail the generation run that wrote it.
 func checkStructFieldTags(prefix string, fields []Field) error {
 	for _, field := range fields {
 		key := joinKey(prefix, field.Key)
 		switch field.Kind {
 		case FieldStruct:
+			if err := checkScalarOnlyTags(field, "the nested struct "+key); err != nil {
+				return err
+			}
 			if field.Falsy != "" {
 				return fmt.Errorf("field %s: falsy applies to a leaf field, not to the nested struct %s", field.GoName, key)
 			}
@@ -559,27 +576,47 @@ func checkStructFieldTags(prefix string, fields []Field) error {
 				return err
 			}
 		case FieldStructSlice:
-			for _, tag := range []struct {
-				name string
-				set  bool
-			}{
-				{"dependon", field.DependsOn != ""},
-				{"falsy", field.Falsy != ""},
-				{"secret", field.Secret != ""},
-			} {
-				if tag.set {
-					return fmt.Errorf("field %s: %s does not apply to the array of tables %s; its elements have no stable key", field.GoName, tag.name, key)
-				}
+			if err := checkScalarOnlyTags(field, "the array of tables "+key); err != nil {
+				return err
+			}
+			// dependon and secret stay: the array itself owns one stable key, so a
+			// parent can hide it whole and a disclosure mode can cover its elements.
+			// Only falsy still has no single value to name.
+			if field.Falsy != "" {
+				return fmt.Errorf("field %s: falsy applies to a leaf field, not to the array of tables %s", field.GoName, key)
 			}
 		}
 	}
 	return nil
 }
 
+// checkScalarOnlyTags rejects the tags that address exactly one scalar key.
+func checkScalarOnlyTags(field Field, subject string) error {
+	for _, tag := range []struct {
+		name string
+		set  bool
+		why  string
+	}{
+		{"default", field.Default != "", "a default is one parsed value"},
+		{"opt", field.Opt != "", "a CLI flag carries one value"},
+		{"env", field.Env != "", "an environment variable carries one value"},
+		{"arg", field.Arg != "", "a positional argument carries one value"},
+	} {
+		if tag.set {
+			return fmt.Errorf("field %s: %s applies to a leaf field, not to %s; %s", field.GoName, tag.name, subject, tag.why)
+		}
+	}
+	return nil
+}
+
+// checkElementFields rejects the tags an array-of-tables element field cannot
+// carry. secret is not among them: an element value needs redaction as much as
+// any other, and it is resolved by the element's path under the array key, which
+// is stable even though the element's own key carries a runtime index.
 func checkElementFields(owner string, fields []Field) error {
 	for _, field := range fields {
-		if field.Opt != "" || field.Env != "" {
-			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no flag or env form", owner, field.GoName)
+		if field.Opt != "" || field.Env != "" || field.Arg != "" {
+			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no flag, env, or positional form", owner, field.GoName)
 		}
 		// An element field has no stable config key, so nothing can name it as a
 		// dependon parent and nothing can look it up to hide or fill it in.
@@ -683,11 +720,36 @@ func scaffoldKindName(kind FieldKind) string {
 type applyScope struct {
 	src        string
 	diagPrefix string
-	depth      int
+	// diagIndexArgs names the loop variables that fill the [%d] verbs diagPrefix
+	// carries, in the order they appear. An element's only identifier is its
+	// position, so an error inside one has to name it.
+	diagIndexArgs []string
+	depth         int
 }
 
+// diagKey returns the key as a Go format string; it holds a [%d] verb per array
+// of tables enclosing this scope.
 func (s applyScope) diagKey(key string) string {
 	return joinKey(s.diagPrefix, key)
+}
+
+// diagArgs returns the argument list that precedes any later verb, ready to
+// splice into an emitted fmt.Errorf call.
+func (s applyScope) diagArgs() string {
+	if len(s.diagIndexArgs) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(s.diagIndexArgs, ", ")
+}
+
+// doubledDiagArgs feeds a message that spells the key twice, so each occurrence
+// gets its own copy of the index arguments.
+func doubledDiagArgs(s applyScope) string {
+	if len(s.diagIndexArgs) == 0 {
+		return ""
+	}
+	both := append(append([]string(nil), s.diagIndexArgs...), s.diagIndexArgs...)
+	return ", " + strings.Join(both, ", ")
 }
 
 // emitApplyFields writes the field assignments for one struct.
@@ -711,7 +773,7 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
 			b.WriteString("\t\tbb, err := strconv.ParseBool(v)\n")
 			b.WriteString("\t\tif err != nil {\n")
-			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", scope.diagKey(full))
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
 			fmt.Fprintf(b, "\t\t%s = bb\n", access)
 			if f.Default != "" {
@@ -740,7 +802,7 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
 			fmt.Fprintf(b, "\t\tn, err := %s(v, 10, %d)\n", parse, spec.BitSize)
 			b.WriteString("\t\tif err != nil {\n")
-			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", scope.diagKey(full))
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
 			fmt.Fprintf(b, "\t\t%s = %s(n)\n", access, spec.Name)
 			if f.Default != "" {
@@ -758,7 +820,7 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
 			b.WriteString("\t\td, err := time.ParseDuration(v)\n")
 			b.WriteString("\t\tif err != nil {\n")
-			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", scope.diagKey(full))
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
 			fmt.Fprintf(b, "\t\t%s = d\n", access)
 			if f.Default != "" {
@@ -803,14 +865,18 @@ func emitApplyStructSlice(b *bytes.Buffer, scope applyScope, access, full string
 	index := fmt.Sprintf("i%d", scope.depth+1)
 	fmt.Fprintf(b, "\tif %s, ok := %s.Get(%q); ok {\n", entry, scope.src, full)
 	fmt.Fprintf(b, "\t\tif !%s.IsTables {\n", entry)
-	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: expected an array of tables ([[%s]])\")\n", diagKey, diagKey)
+	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: expected an array of tables ([[%s]])\"%s)\n",
+		diagKey, diagKey, doubledDiagArgs(scope))
 	b.WriteString("\t\t}\n")
 	fmt.Fprintf(b, "\t\t%s = make([]%s, len(%s.Tables))\n", access, f.ElemType, entry)
 	fmt.Fprintf(b, "\t\tfor %s := range %s.Tables {\n", index, entry)
 	elemScope := applyScope{
-		src:        fmt.Sprintf("%s.Tables[%s]", entry, index),
-		diagPrefix: diagKey,
-		depth:      scope.depth + 1,
+		src: fmt.Sprintf("%s.Tables[%s]", entry, index),
+		// The element's index joins the key here, so every diagnostic emitted
+		// inside the loop names which element it came from.
+		diagPrefix:    diagKey + "[%d]",
+		diagIndexArgs: append(append([]string(nil), scope.diagIndexArgs...), index),
+		depth:         scope.depth + 1,
 	}
 	if err := emitApplyFields(b, elemScope, fmt.Sprintf("%s[%s]", access, index), "", f.Nested); err != nil {
 		return err
@@ -942,6 +1008,12 @@ func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
 		if value == "" {
 			continue
 		}
+		if field.Field.Kind == FieldStruct || field.Field.Kind == FieldStructSlice {
+			// checkStructFieldTags owns placement and words the rejection in terms
+			// of where the tag sits; reporting it here would preempt that with a
+			// message about value kinds instead.
+			continue
+		}
 		switch field.Field.Kind {
 		case FieldString:
 		case FieldInt:
@@ -964,22 +1036,57 @@ func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
 	return out, nil
 }
 
-// collectSecrets maps each key to its disclosure mode, including the keys that
-// inherit one from a struct above them.
-func collectSecrets(prefix string, fields []Field) (map[string]string, error) {
-	out := map[string]string{}
-	for _, field := range flattenFields(prefix, fields) {
-		if field.Secret == "" {
-			continue
+// secretEntry is one key and the disclosure mode that applies to it, kept in
+// declaration order so the generated map literal is deterministic.
+type secretEntry struct {
+	Key  string
+	Mode string
+}
+
+// collectSecrets lists every key with a disclosure mode in declaration order:
+// leaves, the keys that inherit a mode from a struct or array above them, and
+// the fields of array-of-tables elements.
+//
+// An element field is indexed by its path under the array key rather than by its
+// own key, because its own key carries an index that only exists at run time.
+// Provenance matches that path at every index.
+func collectSecrets(prefix string, fields []Field) ([]secretEntry, error) {
+	var out []secretEntry
+	var walk func(string, []Field, string) error
+	walk = func(p string, fs []Field, inherited string) error {
+		for _, field := range fs {
+			key := joinKey(p, field.Key)
+			mode := inherited
+			if field.Secret != "" {
+				if err := checkSecretMode(field.GoName, field.Secret); err != nil {
+					return err
+				}
+				mode = field.Secret
+			}
+			if mode != "" {
+				out = append(out, secretEntry{Key: key, Mode: mode})
+			}
+			switch field.Kind {
+			case FieldStruct, FieldStructSlice:
+				if err := walk(key, field.Nested, mode); err != nil {
+					return err
+				}
+			}
 		}
-		switch field.Secret {
-		case "hide", "mask", "show":
-		default:
-			return nil, fmt.Errorf("field %s: secret must be hide, mask, or show, got %q", field.Field.GoName, field.Secret)
-		}
-		out[field.Key] = field.Secret
+		return nil
+	}
+	if err := walk(prefix, fields, ""); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+func checkSecretMode(goName, mode string) error {
+	switch mode {
+	case "hide", "mask", "show":
+		return nil
+	}
+	return fmt.Errorf("field %s: secret must be hide, mask, or show, got %q", goName, mode)
 }
 
 // checkDependencyCycles rejects a dependon chain that loops back on itself.

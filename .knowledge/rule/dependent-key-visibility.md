@@ -45,6 +45,13 @@ subtree_scope:
   state: implemented
   wire_form: 'generated Definition.DependsOn is map[string][]string'
   still_rejected: falsy on a struct field, which names one value a struct does not have
+array_of_tables_scope:
+  trigger: dependon placed on an array-of-tables field
+  meaning: an empty parent hides the array key and every expanded element entry
+  why_the_array_field_qualifies: it owns one stable key, unlike its elements
+  element_fields: cannot declare a parent, and cannot be named as one
+  detail: requirement:array-of-tables-provenance
+  state: implemented
 applies_to:
   - provenance records from concept:provenance-log-helper only
 never_applies_to:

@@ -10,11 +10,49 @@ import (
 	"unicode"
 )
 
+// Dialect names a supported target database. It is the single generation-time
+// value carrying every engine difference, so a target is chosen once instead of
+// per facet.
+const (
+	DialectPostgreSQL = "postgresql"
+	DialectMySQL      = "mysql"
+	DialectSQLite     = "sqlite"
+)
+
+// SupportedDialects lists every accepted Dialect value, in the order error
+// messages report them.
+var SupportedDialects = []string{DialectPostgreSQL, DialectMySQL, DialectSQLite}
+
+// placeholderStyles maps each supported dialect to the runtime PlaceholderStyle
+// constant it emits. It is also the set ValidateDialect accepts, so a dialect
+// cannot be added without choosing a style for it. SQLite reads several
+// placeholder forms; ? is the positional one, matching how arguments are bound.
+var placeholderStyles = map[string]string{
+	DialectPostgreSQL: "Dollar",
+	DialectMySQL:      "Question",
+	DialectSQLite:     "Question",
+}
+
+// ValidateDialect reports whether name selects a supported database. It is
+// exported so a caller discovering SQL templates can reject a missing or
+// unknown dialect as a configuration error, before generating anything.
+func ValidateDialect(name string) error {
+	if _, ok := placeholderStyles[name]; ok {
+		return nil
+	}
+	if name == "" {
+		return fmt.Errorf("no SQL dialect selected; choose one of %s", strings.Join(SupportedDialects, ", "))
+	}
+	return fmt.Errorf("unsupported SQL dialect %q; choose one of %s", name, strings.Join(SupportedDialects, ", "))
+}
+
 // GenerateOptions controls SQL code generation.
 type GenerateOptions struct {
 	Package string
-	// PlaceholderStyle is "dollar" (the PostgreSQL default) or "question".
-	PlaceholderStyle string
+	// Dialect selects the target database. It is required: there is no implicit
+	// default, because a silently assumed dialect emits placeholders the target
+	// engine rejects.
+	Dialect string
 	// ContextAPI adds <Component>Context wrappers which resolve an executor
 	// from context.Context while preserving the explicit executor APIs.
 	ContextAPI bool
@@ -44,11 +82,8 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 	if err := c.analyze(); err != nil {
 		return nil, err
 	}
-	if options.PlaceholderStyle == "" {
-		options.PlaceholderStyle = "dollar"
-	}
-	if options.PlaceholderStyle != "dollar" && options.PlaceholderStyle != "question" {
-		return nil, fmt.Errorf("unsupported SQL placeholder style %q", options.PlaceholderStyle)
+	if err := ValidateDialect(options.Dialect); err != nil {
+		return nil, err
 	}
 	if options.ExecutorResolver != nil {
 		if options.ExecutorResolver.PackagePath == "" || !token.IsIdentifier(options.ExecutorResolver.Name) || !unicode.IsUpper([]rune(options.ExecutorResolver.Name)[0]) {
@@ -74,14 +109,14 @@ type goEmitter struct {
 	c           *compiler
 	b           bytes.Buffer
 	indent      int
-	style       string
+	dialect     string
 	contextAPI  bool
 	contextOnly bool
 	resolver    *ExecutorResolver
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
-	e := &goEmitter{c: c, style: options.PlaceholderStyle, contextAPI: options.ContextAPI, contextOnly: options.ContextOnly, resolver: options.ExecutorResolver}
+	e := &goEmitter{c: c, dialect: options.Dialect, contextAPI: options.ContextAPI, contextOnly: options.ContextOnly, resolver: options.ExecutorResolver}
 	if e.contextAPI && !e.contextOnly {
 		for _, statement := range c.statements {
 			if statement.decl.Exported && statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
@@ -179,12 +214,12 @@ const (
 func runtime(name string) string { return runtimeAlias + "." + name }
 
 // builderStyle names the PlaceholderStyle constant for the dialect chosen at
-// generation time.
+// generation time. The placeholder token is the only dialect difference the
+// generator emits; author SQL text reaches the output verbatim. Generate
+// validated the dialect, so an unmapped one would emit uncompilable code rather
+// than quietly fall back to another engine's placeholders.
 func (e *goEmitter) builderStyle() string {
-	if e.style == "question" {
-		return runtime("Question")
-	}
-	return runtime("Dollar")
+	return runtime(placeholderStyles[e.dialect])
 }
 
 func (e *goEmitter) hasContextAPI() bool {
@@ -421,7 +456,17 @@ func (e *goEmitter) scanArgs(t valueType, target string) string {
 	record := e.c.records[t.name]
 	var fields []string
 	for _, f := range record.Fields {
-		fields = append(fields, "&"+target+"."+goPublicName(f.Name))
+		address := "&" + target + "." + goPublicName(f.Name)
+		// database/sql cannot assign a text column into a struct, so a url
+		// field is scanned through a runtime adapter rather than its address.
+		if field, err := e.c.resolveType(f.Type); err == nil && field.kind == kindURL {
+			if field.optional {
+				address = runtime("ScanOptionalURL") + "(" + address + ")"
+			} else {
+				address = runtime("ScanURL") + "(" + address + ")"
+			}
+		}
+		fields = append(fields, address)
 	}
 	return strings.Join(fields, ", ")
 }

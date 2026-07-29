@@ -38,7 +38,8 @@ option_tags:
       mask: replace value with a fixed-width asterisk run; see rule:secret-redaction
       show: emit raw value even when the key name looks sensitive
     default_without_tag: rule:secret-redaction auto policy
-    placement: a leaf field, or a nested struct field to cover its whole subtree
+    placement: a leaf field, a nested struct field, or an array-of-tables field, each covering its whole subtree
+    element_fields: honored per requirement:array-of-tables-provenance
     redaction: rule:secret-redaction
   falsy:
     form: 'falsy:"off"'
@@ -51,7 +52,8 @@ option_tags:
     form: 'dependon:"prefix.parent_key"' or 'dependon:".sibling_key"'
     meaning: hide this field from provenance output while the named parent is empty
     parent_key: one term:config-key, absolute or dot-prefixed relative; see decision:dependon-tag-form
-    placement: a leaf field, or a nested struct field to cover its whole subtree
+    placement: a leaf field, a nested struct field, or an array-of-tables field, each covering its whole subtree
+    not_on: an array-of-tables element field, whose key carries a runtime index
     visibility: rule:dependent-key-visibility
     scope: output only; apply, CLI flags, and validation are unaffected
 arg_tags:
@@ -77,6 +79,7 @@ rules:
   - dependon affects output visibility only; the field is still applied
   - falsy affects the resolved value and dependent visibility; a default outranks it
   - opt changes CLI surface only; overlay config_key stays prefix.field_key
+  - every tag on a nested struct field either propagates or fails generation; see requirement:struct-tag-placement-totality
 example:
   go: |
     type WebServerConfig struct {

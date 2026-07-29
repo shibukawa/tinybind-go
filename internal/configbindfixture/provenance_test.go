@@ -271,8 +271,10 @@ func TestDurationInsideTableArrayElementReportsFullKey(t *testing.T) {
 		Vendor: "acme", Tool: "demo", Environ: []string{},
 		Args: []string{"--config-path", tomlPath},
 	})
-	if err == nil || !strings.Contains(err.Error(), "webserver.routes.max_age") {
-		t.Fatalf("err=%v want the full element key in the message", err)
+	// Position in the file is an element's only identifier, so the index is part
+	// of the key an operator has to search for.
+	if err == nil || !strings.Contains(err.Error(), "webserver.routes[0].max_age") {
+		t.Fatalf("err=%v want the indexed element key in the message", err)
 	}
 }
 
@@ -293,6 +295,67 @@ func TestProvenanceDropsHiddenSecret(t *testing.T) {
 	for _, entry := range res.Provenance() {
 		if entry.Key == "webserver.admin_token" {
 			t.Fatalf("hidden secret leaked into provenance: %+v", entry)
+		}
+	}
+}
+
+// End-to-end through the generated definition: an array of tables expands into
+// per-element entries, in declaration order, with the element's secret tag
+// applied at every index. The generated map is keyed by the element's stable
+// path, and this is where that key has to match what the runtime looks up.
+func TestProvenanceExpandsGeneratedTableArray(t *testing.T) {
+	configbind.ResetTargets()
+	configbindfixture.Register()
+
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "config.toml")
+	body := "" +
+		"[[webserver.routes]]\npath = \"/a\"\ndir = \"/srv/a\"\nowner = \"team-a\"\n" +
+		"[[webserver.routes]]\npath = \"/b\"\ndir = \"/srv/b\"\nowner = \"team-b\"\n"
+	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Environ: []string{},
+		Args: []string{"--config-path", tomlPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	byKey := map[string]configbind.ProvenanceEntry{}
+	for _, entry := range res.Provenance() {
+		if entry.ArrayKey == "" {
+			continue
+		}
+		got = append(got, entry.Key)
+		byKey[entry.Key] = entry
+	}
+	// Declaration order is path, dir, owner; alphabetical would put dir first.
+	want := []string{
+		"webserver.routes[0].path",
+		"webserver.routes[0].dir",
+		"webserver.routes[0].owner",
+		"webserver.routes[1].path",
+		"webserver.routes[1].dir",
+		"webserver.routes[1].owner",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("element keys=%v want %v", got, want)
+	}
+	for _, key := range []string{"webserver.routes[0].owner", "webserver.routes[1].owner"} {
+		if entry := byKey[key]; !entry.Masked || entry.Value != "*****" {
+			t.Fatalf("%s=%+v want the tag to mask it", key, entry)
+		}
+	}
+	if entry := byKey["webserver.routes[1].path"]; entry.Value != "/b" || entry.Index != 1 {
+		t.Fatalf("routes[1].path=%+v want /b at index 1", entry)
+	}
+	// The bare array key says only that some elements exist, so it is replaced.
+	for _, entry := range res.Provenance() {
+		if entry.Key == "webserver.routes" {
+			t.Fatalf("the bare array key must not be reported")
 		}
 	}
 }

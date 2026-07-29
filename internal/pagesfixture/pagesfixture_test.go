@@ -184,6 +184,84 @@ type routetreeInfo struct {
 	Params  []string
 }
 
+func actionPath(t *testing.T, handler string) string {
+	t.Helper()
+	for _, info := range pages.Actions {
+		if info.Handler == handler {
+			return info.Path
+		}
+	}
+	t.Fatalf("no endpoint for %s in %+v", handler, pages.Actions)
+	return ""
+}
+
+func TestServerActionEndpointReachesTheHandler(t *testing.T) {
+	rec := httptest.NewRecorder()
+	body := strings.NewReader("name=carol")
+	request := httptest.NewRequest(http.MethodPost, actionPath(t, "Rename"), body)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pages.NewServeMux().ServeHTTP(rec, request)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	// The handler owns the whole response, so what it wrote is what came back.
+	if got := rec.Body.String(); got != "renamed to CAROL" {
+		t.Errorf("body = %q", got)
+	}
+}
+
+func TestServerActionEndpointIsPostOnly(t *testing.T) {
+	if rec := get(t, pages.NewServeMux(), actionPath(t, "Rename")); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rec.Code)
+	}
+}
+
+func TestTemplateCarriesTheLoweredEndpointURL(t *testing.T) {
+	body := get(t, pages.NewServeMux(), "/users/alice").Body.String()
+	want := `data-tb-action="` + actionPath(t, "Rename") + `"`
+	if !strings.Contains(body, want) {
+		t.Errorf("page does not carry %s: %s", want, body)
+	}
+	// The reserved attribute is replaced, never emitted.
+	if strings.Contains(body, "server-action") {
+		t.Errorf("reserved attribute reached the output: %s", body)
+	}
+	// Every other attribute survives unread, which is what lets a framework
+	// author client behavior in its own vocabulary.
+	if !strings.Contains(body, `data-target="#name"`) {
+		t.Errorf("sibling attribute dropped: %s", body)
+	}
+}
+
+func TestUnexportedHandlerIsReachableAtNoURL(t *testing.T) {
+	for _, info := range pages.Actions {
+		if info.Handler == "internalOnly" {
+			t.Fatalf("an unexported handler was published: %+v", info)
+		}
+	}
+}
+
+func TestActionEndpointIsDeterministic(t *testing.T) {
+	// No build salt, so a client that cached the URL keeps working across a
+	// deploy. Regenerating must reproduce the committed path exactly.
+	if got := actionPath(t, "Rename"); got != "/_action/"+strings.Split(got, "/")[2]+"/Rename" {
+		t.Errorf("unexpected endpoint shape: %q", got)
+	}
+	files, err := routetree.Generate(options())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Path, "routes_gen.go") {
+			continue
+		}
+		if !strings.Contains(string(file.Source), actionPath(t, "Rename")) {
+			t.Errorf("regeneration produced a different endpoint than the committed one")
+		}
+	}
+}
+
 func TestDiscoveryDefaultsToPages(t *testing.T) {
 	if routetree.DefaultRootDir != "pages" {
 		t.Errorf("DefaultRootDir = %q, want pages", routetree.DefaultRootDir)

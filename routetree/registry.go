@@ -13,10 +13,24 @@ const TemplateRegistry = "registry"
 
 // Default names of the registry's generated declarations.
 const (
-	RegisterFunc = "Register"
-	MuxFunc      = "NewServeMux"
-	TableVar     = "Routes"
+	RegisterFunc   = "Register"
+	MuxFunc        = "NewServeMux"
+	TableVar       = "Routes"
+	ActionTableVar = "Actions"
 )
+
+// RegistryAction is one server function endpoint lowered to what the registry
+// template writes.
+type RegistryAction struct {
+	Pattern string
+	Path    string
+	Hash    string
+	Name    string
+	RelDir  string
+	// Selector qualifies the handler's package, such as "id_." It is empty for
+	// a handler in the root package itself.
+	Selector string
+}
 
 // RegistryRoute is one route lowered to what the registry template writes.
 type RegistryRoute struct {
@@ -44,15 +58,17 @@ type RegistryRoute struct {
 
 // RegistryModel is the data the registry template renders.
 type RegistryModel struct {
-	Header       string
-	Package      string
-	Imports      []Import
-	RegisterFunc string
-	MuxFunc      string
-	TableVar     string
-	DecodeFunc   string
-	Routes       []RegistryRoute
-	Symbols      Symbols
+	Header         string
+	Package        string
+	Imports        []Import
+	RegisterFunc   string
+	MuxFunc        string
+	TableVar       string
+	ActionTableVar string
+	DecodeFunc     string
+	Routes         []RegistryRoute
+	Actions        []RegistryAction
+	Symbols        Symbols
 }
 
 // Registry renders the integrated ServeMux for a whole tree, into the route
@@ -63,10 +79,11 @@ type RegistryModel struct {
 // them reaches back up. A per-route composer in a leaf package would have to
 // import its ancestors, which with a registry in the root is a cycle.
 //
-// analyses must hold one entry per route of the tree, and layouts maps a
-// layout's RelDir to its signature.
-func (e *Emitter) Registry(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature) ([]byte, error) {
-	model, err := e.registryModel(tree, rootPackage, analyses, layouts)
+// analyses must hold one entry per route of the tree, layouts maps a layout's
+// RelDir to its signature, and actions are the server functions discovered
+// across the tree.
+func (e *Emitter) Registry(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature, actions []Action) ([]byte, error) {
+	model, err := e.registryModel(tree, rootPackage, analyses, layouts, actions)
 	if err != nil {
 		return nil, err
 	}
@@ -82,20 +99,21 @@ func (e *Emitter) Registry(tree *Tree, rootPackage string, analyses []Analysis, 
 	return source, nil
 }
 
-func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature) (RegistryModel, error) {
+func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analysis, layouts map[string]ComponentSignature, actions []Action) (RegistryModel, error) {
 	if len(analyses) != len(tree.Routes) {
 		return RegistryModel{}, fmt.Errorf("routetree: tree has %d route(s) but %d analysis result(s) were supplied",
 			len(tree.Routes), len(analyses))
 	}
 
 	model := RegistryModel{
-		Header:       GeneratedHeader,
-		Package:      rootPackage,
-		RegisterFunc: e.RegisterFunc,
-		MuxFunc:      e.MuxFunc,
-		TableVar:     e.TableVar,
-		DecodeFunc:   e.DecodeFunc,
-		Symbols:      e.Symbols,
+		Header:         GeneratedHeader,
+		Package:        rootPackage,
+		RegisterFunc:   e.RegisterFunc,
+		MuxFunc:        e.MuxFunc,
+		TableVar:       e.TableVar,
+		ActionTableVar: orDefault(e.ActionTableVar, ActionTableVar),
+		DecodeFunc:     e.DecodeFunc,
+		Symbols:        e.Symbols,
 	}
 
 	aliases := newAliasSet(rootPackage)
@@ -190,6 +208,25 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		}
 		model.Routes = append(model.Routes, entry)
 	}
+
+	// Endpoints are registered after the pages, because an action's package is
+	// usually one the route loop already imported and reusing that alias keeps
+	// the import block stable.
+	errs = append(errs, checkActionCollisions(actions)...)
+	for _, action := range actions {
+		entry := RegistryAction{
+			Pattern: action.Pattern(),
+			Path:    action.Path,
+			Hash:    action.Hash,
+			Name:    action.Name,
+			RelDir:  action.RelDir,
+		}
+		if action.RelDir != "" {
+			entry.Selector = addImport(action.ImportPath, action.Package)
+		}
+		model.Actions = append(model.Actions, entry)
+	}
+
 	if len(errs) > 0 {
 		return RegistryModel{}, joinErrors(errs)
 	}

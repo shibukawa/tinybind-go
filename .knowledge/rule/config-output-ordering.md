@@ -12,6 +12,14 @@ ordering_authority:
 provenance_order:
   outer: Bind registration order, i.e. the order of api:configbind-bind calls
   inner: struct field declaration order, nested structs expanded in place
+  array_of_tables:
+    elements: index ascending at the array field's declared position
+    within_an_element: declaration order, from the generated scaffold Nested list
+    detail: requirement:array-of-tables-provenance
+    not_from: >
+      concept:config-overlay Keys, whose sort is that surface's own determinism
+      guarantee; reading element order from it reintroduces a lexicographic list
+      inside an otherwise declaration-ordered output
   unknown_keys:
     definition: overlay keys owned by no registered definition, e.g. stray TOML keys
     position: after every known key, sorted lexicographically
@@ -35,6 +43,7 @@ determinism:
   - order never depends on Go map iteration or hash seed
 related:
   - requirement:deterministic-config-output-order
+  - requirement:array-of-tables-provenance
   - concept:provenance-log-helper
   - concept:config-overlay
   - data:overlay-entry

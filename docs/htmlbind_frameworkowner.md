@@ -396,12 +396,56 @@ page, ok := htmlbind.Lookup(sigs, "Page")
 It runs the same analysis `Generate` does, so a module that would not compile
 fails here with the same diagnostic instead of yielding a partial answer. That is
 what the filesystem router in
-[httpbind_frameworkowner.md](httpbind_frameworkowner.md) reads to decide what a
-generated handler must decode.
+[httpbind_discovered_router.md](httpbind_discovered_router.md) reads to decide
+what a generated handler must decode.
+
+### Resolving a server action
+
+A template can name a Go handler instead of a URL:
+
+```html
+<button server-action="Rename" data-target="#name">rename</button>
+```
+
+The compiler cannot lower that on its own. A URL depends on where the handler is
+mounted, and the module knows nothing about routing, so resolution takes two
+passes with you in the middle:
+
+```go
+refs, err := htmlbind.ActionRefs("page.tb.html", source)
+// refs[0] == {Component: "Page", Handler: "Rename", Element: "button", Pos: ...}
+
+out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
+	Package:          "id_",
+	ServerActions:    map[string]string{"Rename": "/_action/00369cf962b6/Rename"},
+	ServerActionAttr: "hx-post",   // optional; defaults to data-tb-action
+})
+```
+
+`ActionRefs` reports what a module references, with a position for each so your
+diagnostic can quote the template. You resolve those names against whatever
+package the template belongs to, and hand the answers back through
+`ServerActions`. A reference you leave unresolved is a compile error rather than
+a silently dead element.
+
+The lowering is deliberately thin. `server-action` becomes one attribute carrying
+the URL, and every other attribute on that element survives unread — which is
+what leaves `data-target`, `hx-swap`, or anything else to mean whatever your
+client runtime decides. `ServerActionAttr` is there so a generated action can
+drive a library you already use instead of one of ours.
+
+`GenerateOptions.ContextExternals` works the same way and is the precedent worth
+noticing: both are template facts only the caller can settle, resolved by reading
+the Go package between passes.
+
+The discovered router does all of this for you. What it derives — the hash, the
+endpoint path, which handlers are exposed — is described in
+[httpbind_discovered_router.md](httpbind_discovered_router.md).
 
 ## Routing
 
 Routing is not an `htmlbind` concern. The module writes a response body and stops
-there, so neither router lives in it. Both — the one that reads your
-registrations and the one that generates them from a directory of templates — are
-described in [httpbind_frameworkowner.md](httpbind_frameworkowner.md).
+there, so neither router lives in it. The one that reads your registrations is
+described in [httpbind_frameworkowner.md](httpbind_frameworkowner.md), and the one
+that generates them from a directory of templates in
+[httpbind_discovered_router.md](httpbind_discovered_router.md).

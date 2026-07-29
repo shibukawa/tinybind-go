@@ -395,6 +395,9 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 }
 
 func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
+	if attribute.Name == ServerActionAttr {
+		return e.emitServerAction(p, attribute)
+	}
 	if attribute.Boolean {
 		p.static(" " + attribute.Name)
 		return nil
@@ -434,6 +437,32 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 		strconv.Quote(attribute.Name), receiverIdent, p.scope.goType, optional(value)))
 	return nil
 }
+
+// emitServerAction replaces the reserved attribute with the one carrying the
+// handler's endpoint. The URL is a compile-time constant, because the direct
+// entry point holds no path parameter, so the whole lowering is static text.
+func (e *goEmitter) emitServerAction(p *planEmitter, attribute Attribute) error {
+	name, _ := staticAttributeText(attribute)
+	url, ok := e.actions[name]
+	if !ok {
+		return e.c.error(attribute.Pos, "no server action was resolved for "+quoteName(name)+
+			"; it must be an exported handler in the Go package beside this template")
+	}
+	p.static(" " + e.actionAttr + `="` + escapeAttributeValue(url) + `"`)
+	return nil
+}
+
+// attributeValueEscaper makes a caller-supplied URL safe in a double-quoted
+// attribute. A generated endpoint contains none of these characters, but the
+// prefix is configurable and therefore not ours to trust.
+var attributeValueEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"\"", "&#34;",
+	"<", "&lt;",
+	">", "&gt;",
+)
+
+func escapeAttributeValue(value string) string { return attributeValueEscaper.Replace(value) }
 
 // attributeValueCode builds the escaped attribute value and the body that
 // reports whether it is present.
