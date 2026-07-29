@@ -38,6 +38,7 @@ options:
   FileTypes: TypePattern set
   HTMLTemplatePattern: base-name glob; empty uses '*.tb.html'
   SQLTemplatePattern: base-name glob; empty uses '*.tb.sql'
+  SQLDialect: data:sql-dialect value; required by requirement:sql-dialect-selection when the run discovers a SQL template, and hashed by rule:generation-input-hash so a dialect change forces regeneration
   SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
@@ -69,6 +70,7 @@ default_options:
   SQLTemplatePattern: '*.tb.sql'
   PublicDir: public/generated
   PublicURLBase: /public/generated
+  SQLDialect: unset; DefaultOptions supplies no dialect, because requirement:sql-dialect-selection forbids an implicit one
 zero_options: no discovery identities; CLI capabilities remain subject to rule:generator-feature-disable
 identity_reason:
   use: package import path plus declared name
@@ -90,4 +92,5 @@ related:
   - requirement:configurable-template-file-patterns
   - decision:sql-context-executor-api
   - requirement:custom-framework-generation-profile
+  - requirement:sql-dialect-selection
 ```
