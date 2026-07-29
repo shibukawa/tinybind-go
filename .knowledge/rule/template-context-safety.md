@@ -19,6 +19,7 @@ sql_lists:
   - joins
   - assignments
   - order items
+raw_text_gate: rule:raw-text-insertion-gate narrows which braces open an insertion inside script and style content, where the body is authored in another language
 rules:
   - format parser attaches one namespaced context ID to every shared expression and control node
   - HTML strings use context-specific escaping

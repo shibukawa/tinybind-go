@@ -1,6 +1,7 @@
 package htmlbind
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -505,10 +506,10 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 		case *syntax.ExpressionNode:
 			t, err := c.infer(node.Expression, scope)
 			if err != nil {
-				return err
+				return annotateRawTextInsertion(node.Context, err)
 			}
 			if err := c.validateInsertion(node.Context, t, exprPos(node.Expression)); err != nil {
-				return err
+				return annotateRawTextInsertion(node.Context, err)
 			}
 			if err := c.markHTMLParameterUse(node.Expression, t); err != nil {
 				return err
@@ -1031,6 +1032,22 @@ func (c *compiler) attributeValueType(attribute Attribute, scope map[string]valu
 		}
 	}
 	return valueType{kind: kindString}, nil
+}
+
+// annotateRawTextInsertion adds the raw-text hint to an analysis diagnostic. A
+// brace the parser accepted as an insertion can still be authored JavaScript
+// that happened to match an insertion shape, such as `{name}` written as an
+// object shorthand, and those reach analysis rather than the parser.
+func annotateRawTextInsertion(context string, err error) error {
+	if !isRawTextContext(context) {
+		return err
+	}
+	var compileErr *CompileError
+	if !errors.As(err, &compileErr) {
+		return err
+	}
+	compileErr.Message += rawTextHint(context, false)
+	return err
 }
 
 func (c *compiler) validateInsertion(context string, t valueType, pos Position) error {

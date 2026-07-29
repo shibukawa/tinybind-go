@@ -480,17 +480,23 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 		p.op(fmt.Sprintf("Slot(func(%s %s) htmlbind.Fragment { return %s }, nil)", receiverIdent, p.scope.goType, code))
 		return nil
 	}
+	// JsonForScript is lowered rather than called: the encoding is generated per
+	// argument type, so the argument has to be reached through the call. A
+	// script_json value arriving any other way — a parameter, a record field, an
+	// external result — is already encoded, so it falls through to the raw path
+	// below rather than being unwrapped.
 	if context == "html:script" && t.kind == kindScriptJSON {
-		call := expr.(*CallExpr)
-		argument := call.Arguments[0]
-		argCode, err := e.exprCode(argument, p.scope)
-		if err != nil {
-			return err
+		if call, ok := jsonForScriptCall(expr); ok {
+			argument := call.Arguments[0]
+			argCode, err := e.exprCode(argument, p.scope)
+			if err != nil {
+				return err
+			}
+			p.flush()
+			p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
+				receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
+			return nil
 		}
-		p.flush()
-		p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
-			receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
-		return nil
 	}
 	raw := t.required().kind == kindTrustedHTML || t.required().kind == kindTrustedCSS || t.required().kind == kindTrustedJS || t.required().kind == kindScriptJSON
 	kind := "Text"
@@ -504,6 +510,20 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 	p.flush()
 	p.op(fmt.Sprintf("%s(func(%s %s) string { %s })", kind, receiverIdent, p.scope.goType, body))
 	return nil
+}
+
+// jsonForScriptCall reports whether an expression is a direct JsonForScript
+// call, which is the only form whose argument the emitter can encode.
+func jsonForScriptCall(expr Expr) (*CallExpr, bool) {
+	call, ok := expr.(*CallExpr)
+	if !ok || len(call.Arguments) != 1 {
+		return nil, false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	if !ok || identifier.Name != "JsonForScript" {
+		return nil, false
+	}
+	return call, true
 }
 
 func (e *goEmitter) emitIfOp(p *planEmitter, node *syntax.IfNode) error {
