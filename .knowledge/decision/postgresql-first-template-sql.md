@@ -28,13 +28,21 @@ mysql:
   placeholder: question
   pending: rule:sql-dialect-syntax-rejection checks for RETURNING, ON CONFLICT, dollar-quoted literals, and identifier quoting
   not_planned: rewriting any of those into their MySQL equivalents
-future_sqlite:
-  priority: second dialect before broad PostgreSQL-only language features
-  requires:
-    - dynamic-affinity and STRICT-table schema handling
-    - explicit date, time, datetime, decimal, and boolean storage mappings
-    - placeholder expansion and parameter-limit checks
-    - RETURNING capability restrictions
+sqlite:
+  status: selectable for placeholder emission only
+  placeholder: question, the positional form among the several spellings SQLite reads
+  pending: the same rule:sql-dialect-syntax-rejection checks as mysql
+  closest_to_postgresql: RETURNING and ON CONFLICT are shared, so portable CRUD often survives untranslated, but nothing verifies it and the tested package is not the shipped one
+  earlier_prerequisites_dissolved:
+    reason: the list below assumed generation would lower types and syntax per engine; rule:sql-dialect-syntax-rejection ruled that out, leaving one placeholder table entry
+    was:
+      - dynamic-affinity and STRICT-table schema handling
+      - explicit date, time, datetime, decimal, and boolean storage mappings
+      - RETURNING capability restrictions
+    now:
+      - storage and affinity are driver and schema concerns, documented rather than generated
+      - SQLite has supported RETURNING since 3.35, so no restriction is needed
+      - a datetime scan depends on the driver and the declared type, like the MySQL parseTime DSN parameter
 future_postgresql:
   optional_lowering:
     - array parameters and ANY

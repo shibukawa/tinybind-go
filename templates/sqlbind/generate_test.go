@@ -53,27 +53,38 @@ UPDATE users SET name = {name} WHERE id = {id} {if enabled}AND enabled{/if}
 }
 
 // TestGenerateMySQLEmitsQuestionPlaceholders runs the generated builder,
-// because containing the right constant is not the same as producing SQL MySQL
-// accepts. Expanded value lists follow the selected style too.
-func TestGenerateMySQLEmitsQuestionPlaceholders(t *testing.T) {
-	source := []byte(`package queries
+// because containing the right constant is not the same as producing SQL the
+// engine accepts. Expanded value lists follow the selected style too.
+func TestGenerateEmitsEachDialectPlaceholderStyle(t *testing.T) {
+	for _, dialect := range []struct {
+		name string
+		want string
+	}{
+		{sqlbind.DialectPostgreSQL, "\\nSELECT id, name FROM users WHERE id = $1 AND name IN ($2, $3)\\n"},
+		{sqlbind.DialectMySQL, "\\nSELECT id, name FROM users WHERE id = ? AND name IN (?, ?)\\n"},
+		{sqlbind.DialectSQLite, "\\nSELECT id, name FROM users WHERE id = ? AND name IN (?, ?)\\n"},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			source := []byte(`package queries
 type User { id: int, name: string }
 export statement Find(id: int, names: string[]): sql.one<User> {
 SELECT id, name FROM users WHERE id = {id} AND name IN ({names})
 }`)
-	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectMySQL})
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtimeTest := []byte(`package queries
+			generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: dialect.name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtimeTest := []byte(`package queries
 import "testing"
 func TestBuilder(t *testing.T) {
 	statement, err := BuildFind(7, []string{"a", "b"})
 	if err != nil { t.Fatal(err) }
-	if statement.SQL != "\nSELECT id, name FROM users WHERE id = ? AND name IN (?, ?)\n" { t.Fatalf("SQL = %q", statement.SQL) }
+	if statement.SQL != "` + dialect.want + `" { t.Fatalf("SQL = %q", statement.SQL) }
 	if len(statement.Args) != 3 { t.Fatalf("Args = %#v", statement.Args) }
 }`)
-	runGenerated(t, generated, runtimeTest)
+			runGenerated(t, generated, runtimeTest)
+		})
+	}
 }
 
 func TestGenerateRequiresAKnownDialect(t *testing.T) {
@@ -84,8 +95,25 @@ export statement Ping(): sql.exec {SELECT 1}`)
 		if err == nil {
 			t.Fatalf("%s dialect generated successfully", name)
 		}
-		if !strings.Contains(err.Error(), "postgresql, mysql") {
+		if !strings.Contains(err.Error(), strings.Join(sqlbind.SupportedDialects, ", ")) {
 			t.Fatalf("%s dialect error does not list the choices: %v", name, err)
+		}
+	}
+}
+
+// TestEverySupportedDialectHasAPlaceholderStyle keeps the exported list and the
+// internal mapping from drifting apart. A dialect present in only one of them
+// would either be rejected as unknown or emit uncompilable generated code.
+func TestEverySupportedDialectHasAPlaceholderStyle(t *testing.T) {
+	source := []byte(`package queries
+export statement Ping(): sql.exec {SELECT 1}`)
+	for _, dialect := range sqlbind.SupportedDialects {
+		generated, err := sqlbind.Generate("ping.tb.sql", source, sqlbind.GenerateOptions{Dialect: dialect})
+		if err != nil {
+			t.Fatalf("%s: %v", dialect, err)
+		}
+		if !bytes.Contains(generated, []byte("_tinybindsql.NewBuilder(_tinybindsql.")) {
+			t.Fatalf("%s selected no placeholder style:\n%s", dialect, generated)
 		}
 	}
 }

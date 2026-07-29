@@ -64,11 +64,13 @@ SQL template を含む生成では、対象データベースの指定が必須�
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
 ```
 
-指定できるのは `postgresql` と `mysql` で、省略すると PostgreSQL と黙って解釈するのではなく生成エラーになります。placeholder の形式を間違えると対象エンジンがその SQL を単純に拒否しますが、template のどこを読んでもその間違いは現れないからです。HTML template しか持たない package に dialect は不要です。
+指定できるのは `postgresql`、`mysql`、`sqlite` で、省略すると PostgreSQL と黙って解釈するのではなく生成エラーになります。placeholder の形式を間違えると対象エンジンがその SQL を単純に拒否しますが、template のどこを読んでもその間違いは現れないからです。HTML template しか持たない package に dialect は不要です。
 
-placeholder は選択に従い、PostgreSQL なら `$1`, `$2`, ...、MySQL なら `?` になります。生成される実行時 API に dialect や placeholder の引数はないので、エンジンを切り替えても変わるのは出力される SQL テキストだけで、呼び出す側の signature は変わりません。dialect が決まるのはコード生成の時点で、実行時ではありません。
+placeholder は選択に従い、PostgreSQL なら `$1`, `$2`, ...、MySQL と SQLite なら `?` になります。SQLite は複数の placeholder 表記を読みますが、`?` が位置指定の形式で、引数の bind のされ方に一致します。生成される実行時 API に dialect や placeholder の引数はないので、エンジンを切り替えても変わるのは出力される SQL テキストだけで、呼び出す側の signature は変わりません。dialect が決まるのはコード生成の時点で、実行時ではありません。
 
-dialect が変えるのは placeholder だけです。それ以外に書いたものは逐語的に生成 SQL へ届きます。`||` を `CONCAT` に書き換えたり、`ON CONFLICT` を `ON DUPLICATE KEY UPDATE` に翻訳したり、MySQL に無い `RETURNING` を回避したりはしません。この種の翻訳層は正しく見えて静かに壊れます — `||` は PostgreSQL では文字列連結ですが MySQL では論理和なので、書き換えると述語が反転しえます — し、template で読む SQL と実際に走る SQL が別物になります。選んだエンジンに向けて書いてください。したがって生成された1つの package が対応するのは1つのエンジンです。2つ必要なら generator を2回走らせます。
+dialect が変えるのは placeholder だけです。それ以外に書いたものは逐語的に生成 SQL へ届きます。`||` を `CONCAT` に書き換えたり、`ON CONFLICT` を `ON DUPLICATE KEY UPDATE` に翻訳したり、MySQL に無い `RETURNING` を回避したりはしません。この種の翻訳層は正しく見えて静かに壊れます — `||` は PostgreSQL と SQLite では文字列連結ですが MySQL では論理和なので、書き換えると述語が反転しえます — し、template で読む SQL と実際に走る SQL が別物になります。選んだエンジンに向けて書いてください。したがって生成された1つの package が対応するのは1つのエンジンです。2つ必要なら generator を2回走らせます。
+
+この点は、本番が PostgreSQL でテストだけ SQLite にしようとする前に検討する価値があります。両者は `RETURNING` と `ON CONFLICT` を共有するので単純な CRUD なら移植できることも多いのですが、移植できたことを検証する仕組みはありませんし、テストで動かす生成 package は出荷する package とは別物です。dialect を生成ディレクトリ単位で選ぶ形にしてあるのは、両方走らせることを意識的な選択にするためです。
 
 ## 最小の query
 
@@ -248,7 +250,9 @@ ORDER BY id
 
 この表が示すのは Go の型までで、driver も同意している必要があります。使用する SQL driver が返す値をこれらの型へ `database/sql.Rows.Scan` できることが前提なので、schema と driver の両方に合う型を選び、NULL がありうる列では optional 型を使ってください。
 
-2つだけ、driver の同意以上のものが要る型があります。`url` 列は両方向ともテキストとして運ばれます。`url.URL` の parameter は文字列形式で bind され、返ってきた列は runtime の adapter で parse し直されます。`database/sql` は struct を bind することも scan することもできないからです。optional な `url` は NULL のとき nil pointer になり、必須の `url` は必須の `string` と同じくエラーになります。もう1つは `datetime` / `date` / `time` で、MySQL の DSN に `parseTime=true` が必要です。無いと driver がバイト列を返して scan が失敗します。これは driver の設定であって、dialect の選択が代わりに面倒を見られる範囲ではありません。
+2つだけ、driver の同意以上のものが要る型があります。`url` 列は両方向ともテキストとして運ばれます。`url.URL` の parameter は文字列形式で bind され、返ってきた列は runtime の adapter で parse し直されます。`database/sql` は struct を bind することも scan することもできないからです。optional な `url` は NULL のとき nil pointer になり、必須の `url` は必須の `string` と同じくエラーになります。
+
+もう1つは `datetime` / `date` / `time` で、driver が `time.Time` を返してくれる必要があります。テキストやバイト列は `time.Time` へ scan できません。MySQL なら DSN の `parseTime=true` がそれにあたります。SQLite は日付型を持たないので、driver と列の宣言型次第です。いずれにせよ driver の設定であって、dialect の選択が代わりに面倒を見られる範囲ではありません。
 
 ## 条件付き SQL
 

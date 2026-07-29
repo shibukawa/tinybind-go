@@ -38,7 +38,6 @@ regeneration:
   condition: the value must live on Options, not only on the per-run request, for the base configuration to be hashed
 deferred:
   - the rule:sql-dialect-syntax-rejection checks; the validation_attributes of data:sql-dialect hold their place
-  - sqlite selection
 non_goals:
   - translating author SQL between engines; rule:sql-dialect-syntax-rejection rejects instead
   - a runtime dialect argument; decision:sql-dialect-generation-time keeps generated APIs dialect-free
@@ -48,10 +47,11 @@ acceptance:
   - a run with SQL templates and no dialect fails with a configuration error naming the option
   - a run with no SQL template succeeds without the option
   - an unrecognized dialect fails and names the value
-  - dialect mysql emits sqlbind.NewBuilder(sqlbind.Question) and 'WHERE id = ?'
+  - dialect mysql and dialect sqlite emit sqlbind.NewBuilder(sqlbind.Question) and 'WHERE id = ?'
   - dialect postgresql emits sqlbind.NewBuilder(sqlbind.Dollar) and 'WHERE id = $1'
-  - an expanded value list follows the selected style for both dialects
+  - an expanded value list follows the selected style for every dialect
+  - every value in SupportedDialects generates, so the accepted set and the style table cannot drift apart
   - changing only the dialect makes previously stamped files report stale
-  - the generated public API is identical under both dialects except for placeholder text
+  - the generated public API is identical under every dialect except for placeholder text
   - no generated signature gains a dialect parameter
 ```

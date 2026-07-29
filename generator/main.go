@@ -27,7 +27,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
 	htmlTemplatePattern := flags.String("html-template-pattern", templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern), "HTML template file glob")
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
-	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql or mysql (required when SQL templates exist)")
+	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")

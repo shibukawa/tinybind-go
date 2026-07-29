@@ -64,11 +64,13 @@ A run that finds a SQL template must name its target database. There is no defau
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
 ```
 
-`postgresql` and `mysql` are the accepted values, and omitting the flag is a generation error rather than a quiet PostgreSQL default. The reason is that the wrong placeholder token produces SQL the target engine simply rejects, while nothing in the templates hints at the mistake. A package holding only HTML templates needs no dialect.
+`postgresql`, `mysql`, and `sqlite` are the accepted values, and omitting the flag is a generation error rather than a quiet PostgreSQL default. The reason is that the wrong placeholder token produces SQL the target engine simply rejects, while nothing in the templates hints at the mistake. A package holding only HTML templates needs no dialect.
 
-Placeholders follow the selection: `$1`, `$2`, and so on for PostgreSQL, `?` for MySQL. Generated runtime APIs accept no dialect or placeholder argument, so switching engines changes the emitted SQL text and nothing about the signatures you call. The dialect is fixed when the code is generated, not chosen when it runs.
+Placeholders follow the selection: `$1`, `$2`, and so on for PostgreSQL, `?` for MySQL and SQLite. SQLite reads several placeholder spellings, and `?` is the positional one, which is what matches how arguments are bound. Generated runtime APIs accept no dialect or placeholder argument, so switching engines changes the emitted SQL text and nothing about the signatures you call. The dialect is fixed when the code is generated, not chosen when it runs.
 
-The placeholder token is the only thing the dialect changes. Everything else you write reaches the generated SQL verbatim: tinybind will not rewrite `||` into `CONCAT`, translate `ON CONFLICT` into `ON DUPLICATE KEY UPDATE`, or work around MySQL's missing `RETURNING`. A translation layer of that kind looks correct and fails subtly — `||` is string concatenation in PostgreSQL but logical OR in MySQL, so rewriting it can invert a predicate — and it would make the SQL you read in the template different from the SQL that runs. Write for the engine you selected. One generated package therefore serves one engine; run the generator twice to serve two.
+The placeholder token is the only thing the dialect changes. Everything else you write reaches the generated SQL verbatim: tinybind will not rewrite `||` into `CONCAT`, translate `ON CONFLICT` into `ON DUPLICATE KEY UPDATE`, or work around MySQL's missing `RETURNING`. A translation layer of that kind looks correct and fails subtly — `||` is string concatenation in PostgreSQL and SQLite but logical OR in MySQL, so rewriting it can invert a predicate — and it would make the SQL you read in the template different from the SQL that runs. Write for the engine you selected. One generated package therefore serves one engine; run the generator twice to serve two.
+
+That last point is worth weighing before you reach for SQLite in tests against a PostgreSQL production database. The two share `RETURNING` and `ON CONFLICT`, so plain CRUD often does port, but nothing checks that it did, and the generated package you exercise is not the one you ship. Selecting the dialect per generated directory is what makes running both deliberate.
 
 ## Minimal query
 
@@ -248,7 +250,9 @@ That check only holds if the shape is knowable statically. Runtime conditions th
 
 The table stops at the Go type; the driver has to agree as well. Your SQL driver must be able to scan returned values into these types, so choose types that match both the schema and the driver, and use optional types wherever NULL is possible.
 
-Two entries need more than the driver's agreement. A `url` column is carried as text in both directions: a `url.URL` parameter binds as its string form, and a returned column is parsed back through a runtime adapter, because `database/sql` can neither bind nor scan a struct. An optional `url` leaves a nil pointer for NULL; a required one reports an error, exactly as a required `string` does. Separately, `datetime`, `date`, and `time` need `parseTime=true` in a MySQL DSN — without it the driver returns bytes and the scan fails. That is driver configuration, not something the dialect selection can set for you.
+Two entries need more than the driver's agreement. A `url` column is carried as text in both directions: a `url.URL` parameter binds as its string form, and a returned column is parsed back through a runtime adapter, because `database/sql` can neither bind nor scan a struct. An optional `url` leaves a nil pointer for NULL; a required one reports an error, exactly as a required `string` does.
+
+Separately, `datetime`, `date`, and `time` require the driver to hand back a `time.Time`; text and bytes do not scan into one. With MySQL that means `parseTime=true` in the DSN. With SQLite it depends on your driver and on the column's declared type, since SQLite stores no date type of its own. Either way it is driver configuration, not something the dialect selection can set for you.
 
 ## Conditional SQL
 

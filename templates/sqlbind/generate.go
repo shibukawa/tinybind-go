@@ -16,18 +16,21 @@ import (
 const (
 	DialectPostgreSQL = "postgresql"
 	DialectMySQL      = "mysql"
+	DialectSQLite     = "sqlite"
 )
 
 // SupportedDialects lists every accepted Dialect value, in the order error
 // messages report them.
-var SupportedDialects = []string{DialectPostgreSQL, DialectMySQL}
+var SupportedDialects = []string{DialectPostgreSQL, DialectMySQL, DialectSQLite}
 
 // placeholderStyles maps each supported dialect to the runtime PlaceholderStyle
 // constant it emits. It is also the set ValidateDialect accepts, so a dialect
-// cannot be added without choosing a style for it.
+// cannot be added without choosing a style for it. SQLite reads several
+// placeholder forms; ? is the positional one, matching how arguments are bound.
 var placeholderStyles = map[string]string{
 	DialectPostgreSQL: "Dollar",
 	DialectMySQL:      "Question",
+	DialectSQLite:     "Question",
 }
 
 // ValidateDialect reports whether name selects a supported database. It is

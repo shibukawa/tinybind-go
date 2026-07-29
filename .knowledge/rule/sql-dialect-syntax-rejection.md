@@ -28,6 +28,9 @@ rejection_candidates:
     - RETURNING, which MySQL does not implement
     - ON CONFLICT, whose MySQL form is ON DUPLICATE KEY UPDATE
     - dollar-quoted string literals
+  sqlite:
+    - dollar-quoted string literals
+    - note: SQLite implements RETURNING and ON CONFLICT and accepts every common identifier quote, so it has the shortest list
   postgresql:
     - backtick-quoted identifiers
   note: candidates, not a committed set; each costs a keyword check and must not reject valid SQL
@@ -48,7 +51,7 @@ driver_layer:
     - a url field cannot cross database/sql at all; requirement:sql-url-column-boundary converts it, and that conversion is dialect-independent
   treatment: document the DSN requirement; do not encode driver configuration in a dialect value
 acceptance:
-  - a mysql target emits the author SQL byte for byte apart from placeholders
+  - every non-postgresql target emits the author SQL byte for byte apart from placeholders
   - no generated file contains a rewritten operator, function, or clause
   - a rejected construct names both the construct and the dialect
   - a construct inside a string literal or comment is never rejected

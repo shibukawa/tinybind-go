@@ -68,6 +68,7 @@ func TestSQLDialectReachesGeneratedPlaceholders(t *testing.T) {
 	for dialect, want := range map[string]string{
 		"postgresql": "_tinybindsql.NewBuilder(_tinybindsql.Dollar)",
 		"mysql":      "_tinybindsql.NewBuilder(_tinybindsql.Question)",
+		"sqlite":     "_tinybindsql.NewBuilder(_tinybindsql.Question)",
 	} {
 		t.Run(dialect, func(t *testing.T) {
 			dir := sqlTemplateDir(t)
