@@ -5,6 +5,7 @@ package configbindfixture
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/cliparser"
 	"github.com/shibukawa/tinybind-go/configbind"
@@ -23,19 +24,33 @@ func registerWebServerConfigDefinition0() {
 		KnownKeys: []string{
 			"webserver.port",
 			"webserver.host",
+			"webserver.read_timeout",
 			"webserver.cors_origins",
+			"webserver.tracing",
+			"webserver.tracing_url",
 			"webserver.tls.enabled",
 			"webserver.tls.cert_path",
 		},
 		Defaults: map[string]string{
-			"webserver.port":        "8080",
-			"webserver.host":        "localhost",
-			"webserver.tls.enabled": "false",
+			"webserver.port":         "8080",
+			"webserver.host":         "localhost",
+			"webserver.read_timeout": "5s",
+			"webserver.tls.enabled":  "false",
+		},
+		DependsOn: map[string]string{
+			"webserver.tracing_url":   "webserver.tracing",
+			"webserver.tls.cert_path": "webserver.tls.enabled",
+		},
+		Falsy: map[string]string{
+			"webserver.tracing": "off",
 		},
 		FlagMetas: []cliparser.FieldMeta{
 			{Prefix: "webserver", Key: "port", Opt: "port,p", Help: "HTTP listen port"},
 			{Prefix: "webserver", Key: "host", Help: "listen host"},
+			{Prefix: "webserver", Key: "read_timeout", Help: "request read timeout"},
 			{Prefix: "webserver", Key: "cors_origins", Help: "CORS origins", Kind: cliparser.KindArray},
+			{Prefix: "webserver", Key: "tracing", Help: "tracing exporter"},
+			{Prefix: "webserver", Key: "tracing_url", Help: "tracing collector URL"},
 			{Prefix: "webserver", Key: "tls.enabled", Help: "enable TLS", Kind: cliparser.KindBool},
 			{Prefix: "webserver", Key: "tls.cert_path", Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
 		},
@@ -43,7 +58,10 @@ func registerWebServerConfigDefinition0() {
 		Scaffold: []configbind.ScaffoldField{
 			{Key: "port", Kind: configbind.ScaffoldInt, Default: "8080", Opt: "port,p", Help: "HTTP listen port"},
 			{Key: "host", Kind: configbind.ScaffoldString, Default: "localhost", Help: "listen host"},
+			{Key: "read_timeout", Kind: configbind.ScaffoldDuration, Default: "5s", Help: "request read timeout"},
 			{Key: "cors_origins", Kind: configbind.ScaffoldStringSlice, Help: "CORS origins"},
+			{Key: "tracing", Kind: configbind.ScaffoldString, Help: "tracing exporter"},
+			{Key: "tracing_url", Kind: configbind.ScaffoldString, Help: "tracing collector URL"},
 			{Key: "tls.enabled", Kind: configbind.ScaffoldBool, Default: "false", Help: "enable TLS"},
 			{Key: "tls.cert_path", Kind: configbind.ScaffoldString, Env: "TLS_CERT_FILE", Help: "TLS certificate path"},
 		},
@@ -69,8 +87,23 @@ func applyWebServerConfigDefinition0(dst any, o *configbind.Overlay) error {
 	} else {
 		p.Host = "localhost"
 	}
+	if v, ok := o.GetString("webserver.read_timeout"); ok {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("configbind: webserver.read_timeout: %w", err)
+		}
+		p.ReadTimeout = d
+	} else {
+		p.ReadTimeout = 5000000000 // 5s
+	}
 	if v, ok := o.GetMulti("webserver.cors_origins"); ok {
 		p.CorsOrigins = v
+	}
+	if v, ok := o.GetString("webserver.tracing"); ok {
+		p.Tracing = v
+	}
+	if v, ok := o.GetString("webserver.tracing_url"); ok {
+		p.TracingURL = v
 	}
 	if v, ok := o.GetString("webserver.tls.enabled"); ok {
 		bb, err := strconv.ParseBool(v)

@@ -353,6 +353,8 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 		env := structTagGet(tag, "env")
 		help := c.help(f, tag)
 		arg := structTagGet(tag, "arg")
+		dependsOn := structTagGet(tag, "dependon")
+		falsy := structTagGet(tag, "falsy")
 
 		ft := f.Type()
 		if named, ok := ft.(*types.Named); ok {
@@ -362,15 +364,17 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 					return nil, err
 				}
 				fields = append(fields, cbcg.Field{
-					GoName:  f.Name(),
-					Key:     key,
-					Kind:    cbcg.FieldStruct,
-					Nested:  nested,
-					Default: def,
-					Opt:     opt,
-					Env:     env,
-					Help:    help,
-					Arg:     arg,
+					GoName:    f.Name(),
+					Key:       key,
+					Kind:      cbcg.FieldStruct,
+					Nested:    nested,
+					Default:   def,
+					Opt:       opt,
+					Env:       env,
+					Help:      help,
+					Arg:       arg,
+					DependsOn: dependsOn,
+					Falsy:     falsy,
 				})
 				continue
 			}
@@ -380,20 +384,27 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 			return nil, fmt.Errorf("%s: %w", f.Name(), err)
 		}
 		fields = append(fields, cbcg.Field{
-			GoName:  f.Name(),
-			Key:     key,
-			Kind:    kind,
-			Default: def,
-			Opt:     opt,
-			Env:     env,
-			Help:    help,
-			Arg:     arg,
+			GoName:    f.Name(),
+			Key:       key,
+			Kind:      kind,
+			Default:   def,
+			Opt:       opt,
+			Env:       env,
+			Help:      help,
+			Arg:       arg,
+			DependsOn: dependsOn,
+			Falsy:     falsy,
 		})
 	}
 	return fields, nil
 }
 
 func configFieldKind(t types.Type) (cbcg.FieldKind, error) {
+	// time.Duration must be matched by name: its underlying type is int64, so
+	// the basic switch below would bind it as an int and reject "5s".
+	if isTimeDuration(t) {
+		return cbcg.FieldDuration, nil
+	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		switch u.Kind() {
@@ -415,6 +426,16 @@ func configFieldKind(t types.Type) (cbcg.FieldKind, error) {
 	default:
 		return 0, fmt.Errorf("unsupported field type %s", t)
 	}
+}
+
+// isTimeDuration reports whether t is exactly time.Duration. A locally defined
+// named type whose underlying type is time.Duration does not qualify.
+func isTimeDuration(t types.Type) bool {
+	named, ok := t.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return false
+	}
+	return named.Obj().Pkg().Path() == "time" && named.Obj().Name() == "Duration"
 }
 
 func fieldKeyFromName(name string) string {

@@ -24,6 +24,13 @@ type Definition struct {
 	FlagMetas []cliparser.FieldMeta
 	// Defaults maps stable keys to default raw strings applied when absent.
 	Defaults map[string]string
+	// DependsOn maps a stable key to the parent key from its dependon tag.
+	// An empty parent hides the key from provenance output; nothing else.
+	DependsOn map[string]string
+	// Falsy maps a stable key to the choice from its falsy tag. The key resolves
+	// to that value when nothing sets it and it has no default, and the value
+	// counts as empty when other keys depend on this one.
+	Falsy map[string]string
 	// Apply writes overlay values into *T (dst must be *T).
 	Apply ApplyFunc
 	// Scaffold contains the leaf fields used to render example configuration.

@@ -24,6 +24,9 @@ notes:
   - hide mode drops the record instead of returning empty Value
   - mask mode sets Value to asterisks with length jitter
   - show mode sets Value to string form of the effective value
+  - rule:dependent-key-visibility can drop the record before redaction runs
+  - duration Value is the time.Duration String() form
+  - slice position follows rule:config-output-ordering
 used_by:
   - concept:provenance-callback
   - concept:provenance-log-helper

@@ -13,7 +13,12 @@ modes:
   mask:
     action: replace Value with asterisks
     mask_form: '*****'
-    length_jitter: random +/- 2 around base length 5
+    fixed_width: true
+    why_not_jittered: >
+      an earlier design randomized the width by +/- 2, which would break the
+      byte-identical output that requirement:deterministic-config-output-order
+      requires; a fixed width leaks no length either, so the jitter bought
+      nothing
   show:
     action: include raw Value
 auto_policy_when_tag_absent:
@@ -27,6 +32,10 @@ sensitive_key_tokens:
   - credential
   - access_key
   - accesskey
+  - token
+implementation_state:
+  - the tag-free auto policy is live in api:configbind-provenance
+  - the explicit secret tag is not read yet; every key follows the auto policy
 scope:
   - Bind provenance / log helpers only
   - does not change values written into config structs

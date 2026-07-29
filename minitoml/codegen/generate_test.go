@@ -117,3 +117,34 @@ func TestGeneratedApplyUsesDefaultsWhenKeysAbsent(t *testing.T) {
 		t.Fatalf("default TLS.Enabled should be false")
 	}
 }
+
+func TestGenerateEmitsDurationField(t *testing.T) {
+	src, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []codegen.Field{{GoName: "ReadTimeout", Key: "read_timeout", Kind: codegen.FieldDuration, Default: "250ms"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"time"`,
+		"time.ParseDuration(s)",
+		"dst.ReadTimeout = 250000000 // 250ms",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("generated duration field %q missing:\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsUnparsableDurationDefault(t *testing.T) {
+	_, err := codegen.Generate("fixture", []codegen.Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []codegen.Field{{GoName: "ReadTimeout", Key: "read_timeout", Kind: codegen.FieldDuration, Default: "250"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration default") {
+		t.Fatalf("err=%v want a rejected bare-number default", err)
+	}
+}

@@ -19,6 +19,9 @@ fields:
     description: winning source layer
 operations:
   - Set(key, raw, place): overwrite prior entry for key
+ordering:
+  - entries carry no order of their own
+  - output order comes from generated definitions via rule:config-output-ordering
 used_by:
   - concept:config-overlay
   - decision:configbind-runtime-architecture

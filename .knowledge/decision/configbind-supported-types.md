@@ -27,6 +27,20 @@ go_type_hints:
   url: net/url.URL or string-parsed URL type TBD
   array: '[]T where T is a supported scalar'
   nested_struct: named Go struct fields
+codegen_field_kinds:
+  - FieldString
+  - FieldBool
+  - FieldInt
+  - FieldDuration
+  - FieldStringSlice
+  - FieldStruct
+duration:
+  requirement: requirement:duration-config-fields
+  value_form: rule:duration-value-parsing
+  detection_hazard: >
+    time.Duration has underlying int64, so kind detection must match the named
+    type first or duration silently binds as int
+  array_of_duration: out of scope in v1
 out_of_scope_v1:
   - file paths as first-class config value types
   - multipart or file upload handling
@@ -45,6 +59,8 @@ rationale:
 related:
   - requirement:configbind-product-goals
   - requirement:configbind-tinygo
+  - requirement:duration-config-fields
+  - rule:duration-value-parsing
   - concept:config-struct-mapping
   - decision:toml-shape-constraints
   - rule:toml-shape-validation

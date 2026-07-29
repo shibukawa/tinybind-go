@@ -66,6 +66,8 @@ func WriteScaffoldEnv(w io.Writer) error
 
 The TOML output uses the supported restricted subset. Both formats use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
 
+Within a `[prefix]` table the keys follow the declaration order of the struct. The tables themselves are ordered by prefix and type name, so scaffold output never depends on package initialization order. The environment scaffold stays sorted by variable name, since it has no table grouping to hang declaration order on.
+
 For example, this definition:
 
 ```go
@@ -185,6 +187,8 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | Override the environment variable with an exact name | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
+| `falsy:"value"` | The choice that means "off" for a string option | `falsy:"off"` |
+| `dependon:"key"` | Hide this field from provenance while that key is empty | `dependon:"webserver.tls.enabled"` |
 
 ### Godoc as the help source
 
@@ -552,7 +556,47 @@ Call every `Bind` before `Load`. The returned pointers contain their final value
 
 ## Inspecting provenance
 
-`LoadResult.Overlay` contains the merged values and each winning source:
+`LoadResult.Provenance()` returns the effective configuration ready to log:
+
+```go
+result, err := configbind.Load(options)
+if err != nil {
+	return err
+}
+
+for _, entry := range result.Provenance() {
+	log.Printf("%s = %s (%s)", entry.Key, entry.Value, entry.Place)
+}
+```
+
+The slice is ordered rather than sorted: bindings appear in `Bind` call order, and the keys of one binding in the declaration order of its struct, nested structs expanded where they are declared. Keys that belong to no registered binding — a stray entry in someone's TOML file — trail the known ones in alphabetical order.
+
+Two filters run before you see the slice. A key whose path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, or `access_key` reports `*****` instead of its value. And a field with a `dependon` tag disappears while its parent is empty, which the next section covers.
+
+### Hiding settings of a disabled feature
+
+An unconfigured subsystem otherwise prints its whole block of defaults, burying the settings actually in use. `dependon` names the parent that decides whether this field matters:
+
+```go
+type WebServerConfig struct {
+	Tracing    string `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
+	TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
+}
+```
+
+The parent is a full config key including its prefix, so a field can depend on one bound by another package. While `webserver.tracing` reads as empty, `webserver.tracing_url` is absent from the provenance slice; `webserver.tracing` itself still appears, since an empty parent is the reason its dependents vanished. A hidden parent hides its own dependents in turn.
+
+"Empty" means the empty string or `false` — an `int` of 0, an empty list, and a zero duration are deliberate settings, not absent ones. An enum-style option needs a third form, which is what `falsy` supplies: it names the choice that means "off". That choice then counts as empty for anything depending on the field, and it also fills the field in when nothing sets it:
+
+- No `default` tag and no source sets the key: the field resolves to `off`.
+- A source sets the key to `""`: it resolves to `off`, keeping that source as its `Place`.
+- A `default` tag is present: the default wins and `falsy` never substitutes.
+
+None of this reaches the bound struct. `TracingURL` is still populated from its sources, CLI flags and help are unchanged, and scaffolds still list every field so the options stay discoverable before a first load.
+
+### The raw overlay
+
+`LoadResult.Overlay` holds the merged values and each winning source, unfiltered:
 
 ```go
 result, err := configbind.Load(options)
@@ -573,7 +617,9 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found at all. Nothing in the overlay is masked automatically, so logging raw overlay values wholesale will log your credentials with them.
+`Overlay.All()` iterates every entry in sorted key order when you want the whole table.
+
+`LoadResult.ConfigPath` is the selected file path, and `FoundFile` reports whether a TOML file was found at all. Nothing in the overlay is masked, so logging raw overlay values wholesale will log your credentials with them — use `Provenance()` for anything that reaches a log.
 
 ## Public APIs
 
@@ -594,18 +640,30 @@ The practical v1 field types are:
 - `string`
 - `bool`
 - `int`
+- `time.Duration`
 - `[]string`
 - Named nested structs containing those types
 
-Floats, maps, arbitrary slices, pointers, and `time.Duration` cannot be bound directly. Receive them in a supported representation and convert after `Load`:
+Floats, maps, arbitrary slices, and pointers cannot be bound directly. Receive them in a supported representation and convert after `Load`.
+
+### Durations
+
+A `time.Duration` field accepts the Go duration syntax and nothing else, in every source:
 
 ```go
-type RawConfig struct {
-	ReadTimeout string `default:"5s"`
+type ServerConfig struct {
+	ReadTimeout time.Duration `default:"5s" help:"request read timeout"`
 }
-
-timeout, err := time.ParseDuration(cfg.ReadTimeout)
 ```
+
+```toml
+[webserver]
+read_timeout = "1h30m"
+```
+
+A bare number is rejected, because `5` cannot say whether it means seconds or nanoseconds. That applies to the `default` tag as well, where an unparsable value fails `go generate` rather than `Load`. Scaffolds emit durations as quoted strings, and a `default`-less field starts at `"0s"`.
+
+Only `time.Duration` itself is treated this way. A named type of your own whose underlying type is `time.Duration` binds as an integer.
 
 ## Troubleshooting
 

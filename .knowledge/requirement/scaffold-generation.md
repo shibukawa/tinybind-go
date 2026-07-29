@@ -16,7 +16,7 @@ mechanism:
   - application owns any CLI command and destination file
 inputs:
   - api:configbind-bind registrations only
-  - decision:struct-field-tags for default, help, enum
+  - decision:struct-field-tags for default, help, enum, dependon
   - data:cli-flag-def help text for comments
   - requirement:godoc-config-descriptions for struct and field doc text
   - decision:prefix-table-binding
@@ -36,13 +36,20 @@ constraints:
   - final application generation does not rescan framework or module dependency source
   - registry key includes the Go type and Bind prefix
   - diagnostic identity includes the Go package path and Bind type identity
-  - output order does not depend on package init order
+  - table order does not depend on package init order; see rule:config-output-ordering
+  - fields inside one table follow struct declaration order
+  - dependon never removes a field from a scaffold; see rule:dependent-key-visibility
   - do not emit inline tables, arrays of tables, or quoted keys
   - nested structs become nested tables or dotted bare keys
   - do not include subcommand options or positionals
   - opt CLI renames do not change TOML key names in the scaffold
 related:
   - requirement:modular-package-generation
+  - requirement:deterministic-config-output-order
+  - requirement:dependent-field-visibility
+  - requirement:duration-config-fields
+  - rule:config-output-ordering
+  - rule:dependent-key-visibility
   - data:config-scaffold-fragment
   - api:config-scaffold-output
   - flow:configbind-codegen
@@ -60,6 +67,9 @@ acceptance:
   - same-named config types in different packages coexist
   - application-owned code can call public configbind output functions
   - scaffold TOML contains [prefix] tables for each Bind
+  - scaffold TOML lists a table's keys in struct declaration order
+  - a field with dependon still appears in both scaffolds
+  - scaffold TOML quotes duration defaults such as "5s"
   - scaffold TOML lines include help as comments when help tag present
   - scaffold TOML shows the struct doc comment above its [prefix] header
   - scaffold env shows field help comments and no struct doc

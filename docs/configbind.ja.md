@@ -66,6 +66,8 @@ func WriteScaffoldEnv(w io.Writer) error
 
 TOML 出力は対応 subset 内の文法を使います。どちらの形式も `default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
 
+`[prefix]` table 内の key は構造体の定義順に並びます。table 自体は prefix と型名の順なので、雛形の出力順が package の初期化順に左右されることはありません。環境変数の雛形は table による grouping がないため、従来どおり変数名順のままです。
+
 たとえば次の定義がある場合:
 
 ```go
@@ -185,6 +187,8 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"NAME"` | 環境変数名を正確な名前で上書き | `env:"OTEL_SERVICE_NAME"` |
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
+| `falsy:"value"` | string option において「off」を意味する選択肢 | `falsy:"off"` |
+| `dependon:"key"` | 指定 key が空の間、この field を provenance から隠す | `dependon:"webserver.tls.enabled"` |
 
 ### godoc を説明の source にする
 
@@ -552,7 +556,47 @@ _ = database.URL
 
 ## 入力元を確認する
 
-`LoadResult.Overlay` には、merge 後の値と勝った入力元が入っています。
+`LoadResult.Provenance()` は、そのまま log に流せる形の実効設定を返します。
+
+```go
+result, err := configbind.Load(options)
+if err != nil {
+	return err
+}
+
+for _, entry := range result.Provenance() {
+	log.Printf("%s = %s (%s)", entry.Key, entry.Value, entry.Place)
+}
+```
+
+この slice は sort されているのではなく、順番が保たれています。binding は `Bind` を呼んだ順、その中の key は構造体の定義順で、nested struct は宣言された位置に展開されます。どの binding にも属さない key — たとえば誰かの TOML file に紛れ込んだ entry — は、既知の key のあとに辞書順で続きます。
+
+slice を受け取る前に filter が 2 つ走ります。key path に `password`、`secret`、`token`、`apikey`、`api_key`、`credential`、`access_key` を含む key は、値の代わりに `*****` を返します。もう 1 つが `dependon` tag による抑制で、次節で説明します。
+
+### 無効な機能の設定を隠す
+
+使っていない subsystem も、放っておけば default 値の塊をそのまま出力し、実際に効いている設定を埋もれさせます。`dependon` は、その field が意味を持つかどうかを決める親を指定します。
+
+```go
+type WebServerConfig struct {
+	Tracing    string `enum:"off,otlp,jaeger" falsy:"off" help:"tracing exporter"`
+	TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
+}
+```
+
+親は prefix を含む完全な設定 key なので、別 package が bind した key にも依存できます。`webserver.tracing` が空と読める間、`webserver.tracing_url` は provenance の slice に現れません。`webserver.tracing` 自身は出力されます。親が空であること自体が、子が消えた理由だからです。親が隠れている場合は、その親に依存する field も連鎖して隠れます。
+
+「空」とは空文字と `false` です。`int` の 0、空の list、0 秒の duration は「設定されていない」ではなく意図した設定なので、空とは扱いません。enum 型の option にはもう 1 つの形が要り、それが `falsy` です。「off」を意味する選択肢を宣言すると、その値は依存 field にとって空として扱われ、さらに何も値を設定しなかった場合の値としても使われます。
+
+- `default` tag がなく、どの入力元も key を設定しない場合: `off` になります。
+- 入力元が key を `""` に設定した場合: `off` になり、`Place` はその入力元のままです。
+- `default` tag がある場合: default が優先され、`falsy` は使われません。
+
+いずれも bind 先の構造体には影響しません。`TracingURL` は入力元の値で populate されますし、CLI flag や help も変わりません。雛形も全 field を出力し続けます。初回 load より前に option を発見できなくなっては困るためです。
+
+### 生の overlay
+
+`LoadResult.Overlay` には、filter を通していない merge 後の値と勝った入力元が入っています。
 
 ```go
 result, err := configbind.Load(options)
@@ -573,7 +617,9 @@ if ok {
 - `configbind.PlaceEnv`
 - `configbind.PlaceCLI`
 
-`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file がそもそも見つかったかを示します。overlay の値は何も自動 mask されないため、raw value をまとめて log すれば credential も一緒に log されます。
+table 全体を走査したい場合は `Overlay.All()` が key の辞書順で entry を返します。
+
+`LoadResult.ConfigPath` は選ばれた file path、`FoundFile` は TOML file がそもそも見つかったかを示します。overlay の値は mask されないため、raw value をまとめて log すれば credential も一緒に log されます。log に出すものは `Provenance()` を使ってください。
 
 ## 利用する API
 
@@ -594,18 +640,30 @@ func Load(opts LoadOptions) (*LoadResult, error)
 - `string`
 - `bool`
 - `int`
+- `time.Duration`
 - `[]string`
 - 上記を持つ named nested struct
 
-float、map、任意の slice、pointer、`time.Duration` などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
+float、map、任意の slice、pointer などは直接 bind できません。必要な場合は対応型で受け、`Load` 後にアプリケーション側で変換してください。
+
+### duration
+
+`time.Duration` の field は、どの入力元でも Go の duration 文法のみを受け付けます。
 
 ```go
-type RawConfig struct {
-	ReadTimeout string `default:"5s"`
+type ServerConfig struct {
+	ReadTimeout time.Duration `default:"5s" help:"request read timeout"`
 }
-
-timeout, err := time.ParseDuration(cfg.ReadTimeout)
 ```
+
+```toml
+[webserver]
+read_timeout = "1h30m"
+```
+
+裸の数値は拒否します。`5` では秒なのか nanosecond なのか判断できないためです。これは `default` tag も同じで、parse できない値は `Load` ではなく `go generate` で失敗します。雛形は duration を quote された文字列として出力し、`default` のない field は `"0s"` から始まります。
+
+この扱いを受けるのは `time.Duration` そのものだけです。underlying type が `time.Duration` の独自 named type は整数として bind されます。
 
 ## よくある問題
 

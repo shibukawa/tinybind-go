@@ -2,6 +2,7 @@
 package configbind
 
 import (
+	"iter"
 	"sort"
 	"strings"
 )
@@ -100,6 +101,22 @@ func (o *Overlay) Keys() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// All iterates entries in sorted key order. Callers get a stable sequence
+// instead of the map iteration order behind the overlay.
+func (o *Overlay) All() iter.Seq2[string, Entry] {
+	return func(yield func(string, Entry) bool) {
+		for _, k := range o.Keys() {
+			e, ok := o.Get(k)
+			if !ok {
+				continue
+			}
+			if !yield(k, e) {
+				return
+			}
+		}
+	}
 }
 
 // MergeMap merges scalar string values from m with the given place.

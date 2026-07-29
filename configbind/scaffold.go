@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/cliparser"
 )
@@ -18,6 +19,7 @@ const (
 	ScaffoldString ScaffoldKind = iota
 	ScaffoldBool
 	ScaffoldInt
+	ScaffoldDuration
 	ScaffoldStringSlice
 )
 
@@ -176,12 +178,10 @@ func scaffoldEntries() ([]scaffoldEntry, map[string]string, error) {
 			entries = append(entries, scaffoldEntry{definition: definition, field: field, fullKey: fullKey})
 		}
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].definition.Prefix != entries[j].definition.Prefix {
-			return entries[i].definition.Prefix < entries[j].definition.Prefix
-		}
-		return entries[i].field.Key < entries[j].field.Key
-	})
+	// registered is already sorted by (prefix, TypeName) and each definition's
+	// scaffold fields are generated in struct declaration order, so entries are
+	// grouped by table and ordered by declaration without a further sort. Table
+	// order stays independent of package init order.
 	return entries, docs, nil
 }
 
@@ -210,6 +210,20 @@ func scaffoldValue(field ScaffoldField, toml bool) (string, error) {
 			return "", fmt.Errorf("invalid int default %q", field.Default)
 		}
 		return strconv.FormatInt(value, 10), nil
+	case ScaffoldDuration:
+		// A duration is always a quoted string; a bare number has no unit.
+		value := time.Duration(0)
+		if field.Default != "" {
+			parsed, err := time.ParseDuration(field.Default)
+			if err != nil {
+				return "", fmt.Errorf("invalid duration default %q", field.Default)
+			}
+			value = parsed
+		}
+		if toml {
+			return quoteTOMLString(value.String()), nil
+		}
+		return strconv.Quote(value.String()), nil
 	case ScaffoldStringSlice:
 		if toml {
 			return "[]", nil

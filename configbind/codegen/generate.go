@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/cliparser"
 	"github.com/shibukawa/tinybind-go/minitoml/codegen"
@@ -36,6 +37,7 @@ const (
 	FieldString      = codegen.FieldString
 	FieldBool        = codegen.FieldBool
 	FieldInt         = codegen.FieldInt
+	FieldDuration    = codegen.FieldDuration
 	FieldStringSlice = codegen.FieldStringSlice
 	FieldStruct      = codegen.FieldStruct
 )
@@ -63,6 +65,9 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 	if specsNeedStrconv(specs) {
 		b.WriteString("\t\"strconv\"\n")
 	}
+	if specsNeedTime(specs) {
+		b.WriteString("\t\"time\"\n")
+	}
 	b.WriteString("\n")
 	b.WriteString("\t\"github.com/shibukawa/tinybind-go/cliparser\"\n")
 	b.WriteString("\t\"github.com/shibukawa/tinybind-go/configbind\"\n")
@@ -74,6 +79,9 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 	}
 	b.WriteString("}\n\n")
 
+	// known lets dependon parents be checked against the keys generated in this
+	// run. A parent bound in another package is invisible here and passes.
+	known := knownFieldKinds(specs)
 	for i, s := range specs {
 		if s.PackagePath == "" {
 			s.PackagePath = packageName
@@ -83,7 +91,7 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 		if s.SubCommand {
 			err = emitSubCommandType(&b, s, registerName)
 		} else {
-			err = emitType(&b, s, registerName)
+			err = emitType(&b, s, registerName, known)
 		}
 		if err != nil {
 			return nil, err
@@ -116,7 +124,26 @@ func specsNeedStrconv(specs []Spec) bool {
 	return false
 }
 
-func emitType(b *bytes.Buffer, s Spec, registerName string) error {
+func specsNeedTime(specs []Spec) bool {
+	var fieldsNeedTime func([]Field) bool
+	fieldsNeedTime = func(fields []Field) bool {
+		for _, field := range fields {
+			if field.Kind == FieldDuration ||
+				(field.Kind == FieldStruct && fieldsNeedTime(field.Nested)) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, spec := range specs {
+		if fieldsNeedTime(spec.Fields) {
+			return true
+		}
+	}
+	return false
+}
+
+func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]FieldKind) error {
 	if s.TypeName == "" || s.Prefix == "" {
 		return fmt.Errorf("configbind/codegen: TypeName and Prefix required")
 	}
@@ -127,6 +154,14 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 	}
 	keys := collectKeys(s.Prefix, s.Fields)
 	defaults := collectDefaults(s.Prefix, s.Fields)
+	dependsOn, err := collectDependsOn(s.Prefix, s.Fields, known)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
+	falsy, err := collectFalsy(s.Prefix, s.Fields)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 	flagMetas := collectFlagMetas(s.Prefix, s.Fields)
 	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
@@ -154,6 +189,24 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 		for _, k := range keys {
 			if v, ok := defaults[k]; ok {
 				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(v))
+			}
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(dependsOn) > 0 {
+		b.WriteString("\t\tDependsOn: map[string]string{\n")
+		for _, k := range keys {
+			if parent, ok := dependsOn[k]; ok {
+				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(parent))
+			}
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(falsy) > 0 {
+		b.WriteString("\t\tFalsy: map[string]string{\n")
+		for _, k := range keys {
+			if value, ok := falsy[k]; ok {
+				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(value))
 			}
 		}
 		b.WriteString("\t\t},\n")
@@ -225,6 +278,20 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 	}
 	if strings.ContainsAny(s.Name, " \t\r\n") || strings.HasPrefix(s.Name, "-") {
 		return fmt.Errorf("configbind/codegen: invalid subcommand name %q", s.Name)
+	}
+	for _, field := range flattenFields("", s.Fields) {
+		for _, tag := range []struct {
+			name string
+			set  bool
+		}{
+			{"dependon", field.Field.DependsOn != ""},
+			{"falsy", field.Field.Falsy != ""},
+		} {
+			if tag.set {
+				return fmt.Errorf("configbind/codegen: subcommand %s: field %s cannot use %s; subcommand fields are not overlay-backed",
+					s.Name, field.Field.GoName, tag.name)
+			}
+		}
 	}
 	flagMetas := collectFlagMetas("", s.Fields)
 	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
@@ -394,6 +461,8 @@ func scaffoldKindName(kind FieldKind) string {
 		return "configbind.ScaffoldBool"
 	case FieldInt:
 		return "configbind.ScaffoldInt"
+	case FieldDuration:
+		return "configbind.ScaffoldDuration"
 	case FieldStringSlice:
 		return "configbind.ScaffoldStringSlice"
 	default:
@@ -452,6 +521,24 @@ func emitApplyFields(b *bytes.Buffer, recv, prefix string, fields []Field) error
 			} else {
 				b.WriteString("\t}\n")
 			}
+		case FieldDuration:
+			fmt.Fprintf(b, "\tif v, ok := o.GetString(%q); ok {\n", full)
+			b.WriteString("\t\td, err := time.ParseDuration(v)\n")
+			b.WriteString("\t\tif err != nil {\n")
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", full)
+			b.WriteString("\t\t}\n")
+			fmt.Fprintf(b, "\t\t%s = d\n", access)
+			if f.Default != "" {
+				value, err := time.ParseDuration(f.Default)
+				if err != nil {
+					return fmt.Errorf("invalid duration default %q for %s", f.Default, f.GoName)
+				}
+				b.WriteString("\t} else {\n")
+				fmt.Fprintf(b, "\t\t%s = %d // %s\n", access, int64(value), value)
+				b.WriteString("\t}\n")
+			} else {
+				b.WriteString("\t}\n")
+			}
 		case FieldStringSlice:
 			fmt.Fprintf(b, "\tif v, ok := o.GetMulti(%q); ok {\n", full)
 			fmt.Fprintf(b, "\t\t%s = v\n", access)
@@ -482,6 +569,85 @@ func collectKeys(prefix string, fields []Field) []string {
 	}
 	walk(prefix, fields)
 	return keys
+}
+
+// knownFieldKinds indexes every Bind key emitted in this generation run by kind.
+func knownFieldKinds(specs []Spec) map[string]FieldKind {
+	known := map[string]FieldKind{}
+	for _, spec := range specs {
+		if spec.SubCommand {
+			continue
+		}
+		for _, field := range flattenFields(spec.Prefix, spec.Fields) {
+			known[field.Key] = field.Field.Kind
+		}
+	}
+	return known
+}
+
+// collectDependsOn maps each dependon-tagged key to its parent key, rejecting
+// the mistakes that are visible at generation time. A parent that belongs to
+// another package is absent from known and is accepted as-is.
+func collectDependsOn(prefix string, fields []Field, known map[string]FieldKind) (map[string]string, error) {
+	out := map[string]string{}
+	for _, field := range flattenFields(prefix, fields) {
+		parent := strings.TrimSpace(field.Field.DependsOn)
+		if parent == "" {
+			continue
+		}
+		if strings.Contains(parent, ",") {
+			return nil, fmt.Errorf("field %s: dependon takes one parent key, got %q", field.Field.GoName, parent)
+		}
+		if parent == field.Key {
+			return nil, fmt.Errorf("field %s: dependon refers to itself", field.Field.GoName)
+		}
+		if kind, ok := known[parent]; ok && kind != FieldString && kind != FieldBool {
+			return nil, fmt.Errorf("field %s: dependon parent %q must be a string or bool field", field.Field.GoName, parent)
+		}
+		out[field.Key] = parent
+	}
+	if err := checkDependencyCycles(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// collectFalsy maps each falsy-tagged key to the choice that means "off". The
+// tag is written for enum-like string options, so other kinds are rejected:
+// bool already has false, and a number or duration has no such choice.
+func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
+	out := map[string]string{}
+	for _, field := range flattenFields(prefix, fields) {
+		value := field.Field.Falsy
+		if value == "" {
+			continue
+		}
+		if field.Field.Kind != FieldString {
+			return nil, fmt.Errorf("field %s: falsy applies to string fields only", field.Field.GoName)
+		}
+		out[field.Key] = value
+	}
+	return out, nil
+}
+
+// checkDependencyCycles rejects a dependon chain that loops back on itself.
+// Only same-run edges are visible, which is where an author-written cycle lives.
+func checkDependencyCycles(edges map[string]string) error {
+	for start := range edges {
+		seen := map[string]bool{start: true}
+		for key := start; ; {
+			parent, ok := edges[key]
+			if !ok {
+				break
+			}
+			if seen[parent] {
+				return fmt.Errorf("dependon cycle through %q", parent)
+			}
+			seen[parent] = true
+			key = parent
+		}
+	}
+	return nil
 }
 
 func collectDefaults(prefix string, fields []Field) map[string]string {

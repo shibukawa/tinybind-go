@@ -35,6 +35,10 @@ type LoadResult struct {
 	Overlay    *Overlay
 	ConfigPath string
 	FoundFile  bool
+	// definitions keeps the bound definitions in Bind registration order so
+	// Provenance can report keys in registration then declaration order even
+	// after the process registry is reset.
+	definitions []Definition
 }
 
 // Load merges default → TOML → env → CLI into Bind targets and applies without reflection.
@@ -113,10 +117,13 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 
 	o := NewOverlay()
 
-	// Defaults (lowest priority).
+	// Defaults (lowest priority). KnownKeys drives the walk so the overlay is
+	// filled in declaration order rather than Go map order.
 	for _, t := range ts {
-		for k, v := range t.meta.Defaults {
-			o.Set(k, v, PlaceDefault)
+		for _, k := range t.meta.KnownKeys {
+			if v, ok := t.meta.Defaults[k]; ok {
+				o.Set(k, v, PlaceDefault)
+			}
 		}
 	}
 
@@ -147,6 +154,27 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 	// Process key must not be applied onto structs.
 	o.Delete(configpath.ProcessKey)
 
+	// A falsy choice fills in for an empty value, so an undeclared setting reads
+	// as "off" rather than "". A default tag outranks it and is left alone.
+	for _, t := range ts {
+		for _, k := range t.meta.KnownKeys {
+			falsy, ok := t.meta.Falsy[k]
+			if !ok {
+				continue
+			}
+			if _, hasDefault := t.meta.Defaults[k]; hasDefault {
+				continue
+			}
+			entry, present := o.Get(k)
+			switch {
+			case !present:
+				o.Set(k, falsy, PlaceDefault)
+			case !entry.IsMulti && entry.Raw == "":
+				o.Set(k, falsy, entry.Place)
+			}
+		}
+	}
+
 	// Apply to each target.
 	for _, t := range ts {
 		if err := t.meta.Apply(t.dst, o); err != nil {
@@ -164,7 +192,11 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		}
 	}
 
-	return &LoadResult{Overlay: o, ConfigPath: cfgPath, FoundFile: found}, nil
+	bound := make([]Definition, 0, len(ts))
+	for _, t := range ts {
+		bound = append(bound, t.meta)
+	}
+	return &LoadResult{Overlay: o, ConfigPath: cfgPath, FoundFile: found, definitions: bound}, nil
 }
 
 func applySubcommand(name string, args []string, definition SubCommandDefinition) error {

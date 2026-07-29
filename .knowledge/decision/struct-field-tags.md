@@ -3,7 +3,7 @@ id: decision:struct-field-tags
 type: decision
 title: Config Struct Field Tags
 ---
-Struct field tags declare defaults, help, CLI names, enum allowlists, secret disclosure, and positional arg roles.
+Struct field tags declare defaults, help, CLI names, enum allowlists, secret disclosure, parent dependencies, and positional arg roles.
 
 ```yaml
 status: accepted
@@ -39,6 +39,18 @@ option_tags:
       show: emit raw value
     default_without_tag: rule:secret-redaction auto policy
     redaction: rule:secret-redaction
+  falsy:
+    form: 'falsy:"off"'
+    meaning: the enum choice that means "off" for this string option
+    resolution: rule:falsy-value-resolution
+    applies_to: string fields, normally ones with an enum tag
+    detail: decision:falsy-tag-form
+  dependon:
+    form: 'dependon:"prefix.parent_key"'
+    meaning: hide this field from provenance and scaffold output while the named parent is empty
+    parent_key: one absolute term:config-key; see decision:dependon-tag-form
+    visibility: rule:dependent-key-visibility
+    scope: output only; apply, CLI flags, and validation are unaffected
 arg_tags:
   required:
     form: 'arg:"required"'
@@ -50,7 +62,7 @@ arg_tags:
     form: 'arg:"*"'
     meaning: remaining positional arguments as array or multi-value
 rules:
-  - Bind option fields use default, help, optional opt, optional enum, optional secret
+  - Bind option fields use default, help, optional opt, optional enum, optional secret, optional dependon, optional falsy
   - SubCommand fields are CLI-only; no TOML or env mapping; may use opt and help
   - positional arg fields use arg tags on subcommand option structs only
   - help text seeds generated CLI --help and Bind TOML scaffold comments
@@ -59,6 +71,8 @@ rules:
   - enum allowlist is enforced after parse from every source that sets the field
   - default value must be in enum when both tags are present
   - secret tag affects log helpers only, not runtime stored values
+  - dependon affects output visibility only; the field is still applied
+  - falsy affects the resolved value and dependent visibility; a default outranks it
   - opt changes CLI surface only; overlay config_key stays prefix.field_key
 example:
   go: |
@@ -67,8 +81,12 @@ example:
       // TOML [webserver] port; CLI --port -p; no --webserver-port
       ReadTimeout time.Duration `default:"5s" help:"read timeout"`
       // CLI default --webserver-read_timeout (or normalized key form)
+      // duration form per rule:duration-value-parsing
       LogLevel string `default:"info" enum:"debug,info,warn,error" help:"log level"`
       APIToken string `secret:"hide" help:"API token"`
+      TLSCertPath string `dependon:"webserver.tls.enabled" help:"TLS certificate path"`
+      Tracing string `enum:"off,otlp" falsy:"off" help:"tracing exporter"`
+      TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
     }
   default_flag_without_opt:
     - '[webserver] port -> --webserver-port'
@@ -77,6 +95,13 @@ example:
 related:
   - requirement:struct-field-metadata
   - requirement:source-provenance-logging
+  - requirement:dependent-field-visibility
+  - requirement:duration-config-fields
+  - decision:dependon-tag-form
+  - decision:falsy-tag-form
+  - rule:dependent-key-visibility
+  - rule:falsy-value-resolution
+  - rule:duration-value-parsing
   - requirement:cli-subcommands
   - requirement:cli-option-codegen
   - requirement:scaffold-generation
