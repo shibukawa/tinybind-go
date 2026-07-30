@@ -52,6 +52,15 @@ type CallPattern struct {
 // Config provides the authoritative semantic calls explored by the parser.
 type Config struct {
 	Calls []CallPattern
+	// GeneratedHeaders names header prefixes, beside this module's own, whose
+	// files discovery must skip. A framework generating routes with tinybind and
+	// branding the output writes a header nothing here recognizes, and an
+	// unrecognized generated registry is read as if a user had written it: its
+	// page registrations become routes, and an HTML page enters an OpenAPI
+	// document. Naming the prefix here is what prevents that.
+	//
+	// Each entry still requires the conventional "DO NOT EDIT." ending.
+	GeneratedHeaders []string
 }
 
 func DefaultConfig() Config {
@@ -208,7 +217,7 @@ func configuredCall(obj types.Object, patterns []CallPattern) (CallPattern, bool
 // framework's own output setting is skipped too. That matters for the generated
 // registry of a route tree: it registers every page, and discovering those
 // registrations would document an HTML page as an API route.
-func orderedSyntaxFiles(pkg *packages.Package) []*ast.File {
+func orderedSyntaxFiles(pkg *packages.Package, generatedHeaders []string) []*ast.File {
 	if pkg == nil {
 		return nil
 	}
@@ -236,7 +245,7 @@ func orderedSyntaxFiles(pkg *packages.Package) []*ast.File {
 			base == "httpbind_openapi_gen.go" ||
 			base == "tinybind_gen.go" ||
 			base == "tinybind_openapi_gen.go" ||
-			gensource.IsGenerated(f) {
+			gensource.IsGenerated(f, generatedHeaders...) {
 			continue
 		}
 		pairs = append(pairs, pair{name: name, file: f})

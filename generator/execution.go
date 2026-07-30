@@ -28,8 +28,8 @@ type GenerateRequest struct {
 	// retains it.
 	SQLDialect     string
 	ConfigBindName string
-	Check               bool
-	GenerateAll         bool
+	Check          bool
+	GenerateAll    bool
 	// Force regenerates even when the generated files record the current input
 	// hash. Use it after a change the hash does not cover, such as an edit in
 	// another package of the module.

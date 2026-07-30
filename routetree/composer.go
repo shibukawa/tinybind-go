@@ -169,7 +169,7 @@ func (e *Emitter) composerModel(route Route, layouts []ComponentSignature) (Comp
 	}
 
 	model := ComposerModel{
-		Header:       GeneratedHeader,
+		Header:       e.header(),
 		Package:      route.Package,
 		Pattern:      route.Pattern(),
 		ParamsType:   e.ParamsType,
