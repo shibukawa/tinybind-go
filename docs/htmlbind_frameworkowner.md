@@ -22,6 +22,7 @@ dependency, writes no headers, serves no files, and makes no routing decision.
 | Response status, content type, encoding, flushing policy | you |
 | Navigation, history, and any SPA behavior | you |
 | Framing of every completion, and the client script that applies it | you |
+| When to open a live connection, how to re-establish it, and what to do when it cannot be | you |
 
 That last row is broader than it may look. `htmlbind.Content` carries a boundary
 id and rendered HTML, and nothing else — deliberately, so that a framework can
@@ -215,6 +216,70 @@ sequence anyway.
 
 Once the initial pass flushes, the status code is committed. A later failure is
 for logging, not for rewriting the response.
+
+## Live boundaries
+
+A boundary that binds a `live` source replaces the same region every time its
+source yields. Two things about the wire protocol change, and one thing you have
+to decide.
+
+The framing changes first. A completion on the initial response is markup an
+HTML parser is consuming, which is why the template-and-marker shape exists at
+all. A delivery after the document is complete has no parser reading it, so the
+marker rule has nothing to trigger and the framing buys nothing. Send a record
+instead:
+
+```go
+_, err := w.Write(content.AppendJSON(nil))
+```
+
+which produces `{"id":"tb-1","html":"…"}` with the fragment escaped for a script
+context as well as a JSON one. Appending is what lets you build a framed record
+without a second buffer — `content.AppendJSON([]byte("data: "))` for an event
+stream, for instance. The framing around the record is still yours, because it
+has to match the client that reads it.
+
+The identifiers change second. Boundary ids name a position in the render tree,
+not an allocation order: a boundary nested inside another one is `tb-1-1`, and a
+live boundary's subtree hands out the same ids on every delivery rather than
+minting new ones. Your client therefore replaces the same element repeatedly, and
+a long-lived subscription does not accumulate placeholders nothing will ever
+fill. The runtime cancels a superseded delivery's nested work before those ids
+are handed out again, so a slow nested boundary cannot settle into the
+replacement's placeholder.
+
+What you decide is what a live connection does when it is re-established. The
+same page executed again produces the same ids, so an id your client does not
+already hold means the structure itself changed — a panel added to a dashboard
+someone has been watching, say. Reconciling that correctly means placing a new
+boundary in a document your client did not render, which is the navigation
+problem rather than the reconnect one; doing it approximately puts the panel in
+the wrong place. Stop the connection and tell the user to reload. A plain
+`alert()` is a defensible first implementation, because the case is rare and
+being wrong on screen is worse than being blunt.
+
+Two behaviours are worth knowing before you write that client.
+
+A boundary on `RenderAsync` takes one delivery and unsubscribes, so an initial
+load with live regions still finishes and still shows real content rather than a
+loading state. Nothing about the initial response tells your client that more is
+coming, though — `htmlbind.HasLiveBlock` does, over the same chain and before
+rendering starts:
+
+```go
+if htmlbind.HasLiveBlock(wrappers, page) {
+	// this screen will keep changing; the client should open a live connection
+}
+```
+
+Ask it, and a screen that will never change again costs no speculative request.
+It is a subset of `HasAwaitBlock`, which stays the question of whether the
+response needs the boundary runtime at all.
+
+And a quiet source cannot hold a response open. `WithAsyncTimeout` bounds how
+long a boundary may show nothing on the entries that must answer, and running out
+leaves the committed fallback rather than rendering `recover`, because a source
+with nothing to say yet has not failed. `RenderChainLive` applies no such bound.
 
 ## When a boundary without recover fails
 

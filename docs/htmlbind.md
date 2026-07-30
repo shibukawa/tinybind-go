@@ -16,6 +16,7 @@ Each component becomes an immutable instruction list typed by its parameter stru
 - Filling named and unnamed slots
 - Scoping component styles and merging head contributions into the document
 - Running `await` boundaries concurrently and streaming them as they settle
+- Re-rendering one region per delivery when a boundary binds a `live` source
 - Reusing the output of `@cache` components through a store you supply
 - Reporting type and unsafe-context errors with file, line, and column
 
@@ -892,6 +893,88 @@ A cached component cannot declare an `async` parameter, or a record that reaches
 an `async` field. Stored bytes stand in for a fresh render, and a pending value
 belongs to the one request that started it.
 
+### Live sources
+
+An `external async` function answers once. A gauge, a chat log, and a feed all
+want the opposite: the value changes on the server's clock, and the region that
+shows it should change with it. Declare the source `live` and it returns a
+sequence instead of a value:
+
+```text
+external live WatchMetrics(id: string): Point
+```
+
+```go
+func WatchMetrics(ctx context.Context, id string) iter.Seq2[Point, error]
+```
+
+Bind it in an ordinary `await` block. There is no second clause keyword, because
+the clause never constrained a boundary to one change — it says which values the
+subtree waits for, and the declaration says how often each arrives:
+
+```text
+{await point = WatchMetrics(id)}
+  <p class="value">{point.label}: {point.value}</p>
+{fallback}
+  <p class="pending">waiting…</p>
+{recover err}
+  <p class="failed">{err.code}</p>
+{/await}
+```
+
+The fallback commits first, exactly as it would for a settle-once binding. After
+that the primary subtree is rendered again for every value the source yields,
+and each render replaces the same region.
+
+The leading `context.Context` is required here rather than optional. An endless
+source has to be stoppable, and without a context there is nothing to make it
+return when the subscription ends.
+
+Every value carries the whole state of the region, not an increment. A source
+watching a chat channel yields the current message list; a source sampling a
+gauge yields the current window. That is what keeps a render repeatable and lets
+a missed value cost nothing, and it means whoever owns the source holds the
+accumulated state, because the template holds nothing between deliveries.
+
+Delivery is pull-based, so the source blocks in its own `yield` until the
+boundary is ready for the next value. A source producing faster than the screen
+can use it misses ticks rather than filling a queue, and there is no buffer to
+size. Breaking out of the range is the unsubscribe.
+
+A yielded error is a delivery of a failure, not the end of the source. The
+boundary renders `recover` and a later value replaces it, so a transient fault
+shows and then clears. The sequence returning is the only terminal signal. A
+block that declared no `recover` clause ends its subscription on the first
+failure, the same rule a settle-once binding follows.
+
+One clause may bind both kinds:
+
+```text
+{await title = LoadTitle(id), point = WatchMetrics(id)}
+  <h1>{title}</h1>
+  <p>{point.label}: {point.value}</p>
+{fallback}
+  <p>waiting…</p>
+{/await}
+```
+
+`LoadTitle` settles once and `WatchMetrics` keeps delivering. Every render reads
+both, which is why nothing has to say which source moved. The first render waits
+until every binding has a value — the subtree reads them all, so rendering
+earlier would show a zero one — and values that arrive while another binding is
+still pending are coalesced, since the newest one is sufficient by construction.
+
+A live region renders output, not input. A `<form>`, `<input>`, `<textarea>`, or
+`<select>` inside the primary subtree is a generation error: a delivery arrives
+while the user is typing, and replacing the subtree discards what they typed with
+nothing to signal it. Put the control outside the boundary and let the live data
+inside it change. The rule follows the boundary, so one live binding is enough to
+apply it to the whole block, and `fallback` and `recover` are exempt because no
+delivery replaces them.
+
+Focus, scroll position, and media playback have the same exposure and no static
+rule can forbid them, so keep them out of a region that re-renders on a timer.
+
 ### Rendering an async component
 
 `Render` blocks on the bindings and writes the settled subtree in place, so a
@@ -949,6 +1032,36 @@ func profile(w http.ResponseWriter, r *http.Request) {
 hides this loop: how many boundaries a render produces is not knowable up front,
 least of all for a chain assembled at request time, so a streaming handler has
 to be written against the sequence anyway.
+
+A live boundary on either of those entries takes its first delivery and
+unsubscribes. That is what puts real content on the first paint instead of a
+loading state while still letting the response finish, and it is what a crawler
+or a browser with no JavaScript receives. `RenderLive` and `RenderChainLive` are
+the entries that keep the subscription open:
+
+```go
+for content, err := range htmlbind.RenderLive(ctx, io.Discard, page) {
+	if err != nil {
+		log.Printf("delivery failed: %v", err)
+		break
+	}
+	// deliver content to the client
+}
+```
+
+The sequence ends when every source has ended, when you stop ranging, or when
+the context is cancelled — not when the boundaries have settled, because a live
+boundary never does. Pass `io.Discard` when you want the deliveries alone: the
+document bytes are still produced, since evaluating a source's arguments means
+executing the component that holds them, but nothing is transferred. Boundary
+ids are allocated by position, so the same chain rendered again produces the same
+ids and a client can address the placeholders already on its screen.
+
+`WithAsyncTimeout` bounds how long a boundary may show nothing on the entries
+that must produce a response. Running out is not a failure of the source, so the
+fallback stays rather than being replaced by `recover` content: a fallback is
+honest about a value that has not arrived. `RenderLive` applies no such bound,
+because a live source is allowed to be quiet for as long as its data is quiet.
 
 Only the ranging caller writes the response, and stopping the range early ends
 the render without waiting for the outstanding boundaries. The render flushes
