@@ -54,7 +54,7 @@ func ParsePackageFiles(files []string) (*Result, error) {
 
 func parseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
 	fset := fileSetFromPackage(pkg)
-	files := orderedSyntaxFiles(pkg)
+	files := orderedSyntaxFiles(pkg, config.GeneratedHeaders)
 	p := &packageParser{
 		fset:     fset,
 		pkg:      pkg,

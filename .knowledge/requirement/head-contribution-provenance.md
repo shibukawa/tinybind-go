@@ -13,7 +13,7 @@ source:
 review_gate: approved 2026-07-30
 status: shipped; Plan.HeadSources, the two accessors, and per-tag Head granularity are implemented
 problem:
-  caller: a response with no document shell has no head to merge into, so a contribution is rejected rather than dropped; petitweb-go decision:fragment-head-rejection is that caller
+  caller: a response with no document shell has no head to merge into, so a contribution is rejected rather than dropped; the petitweb-go fragment head rejection decision is that caller, recorded in that project's catalog rather than this one
   message: the rejection could only print the head markup, so an author grepped their templates to find which component's style block was responsible
   available_but_discarded: generation already knows the declaring component and the tag position, and threw both away when it rendered the contribution to a string
 surface:

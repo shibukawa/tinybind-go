@@ -57,6 +57,15 @@ implementation_findings:
   render_block_argument:
     found: the documented override wrote an empty argument for a page with no ancestor layout
     fixed: a chain field on the render call, reading nil in that case, so an entry taking a chain needs no branch
+downstream_verification:
+  when: 2026-07-30, against the shipped release rather than the plan
+  confirmed: all five accepted items, with the integration collapsing to symbol settings plus one render block; the handler, composer, and registry templates all stay built-in
+  withdrew_generics: the downstream retracted its own type-parameter request, because a verbatim MuxType lets it name an exported Router interface and a type parameter would require the whole registry template for one avoided boxing
+  withdrew_error_block: the default decoder error value already fits a framework whose Problem type matches, so the error block override the earlier reading assumed is unnecessary
+  found_two_gaps:
+    branded_header: the header filter recognized this module's prefix only, so a framework branding its generated files reproduced the OpenAPI leak; closed by registered prefixes and Emitter.GeneratedHeader, per rule:generated-source-not-discovered
+    write_error: the failure entry was still a fixed name beside two symbols; closed by Symbols.WriteError, per requirement:framework-render-entry
+  reading: both gaps are the same finding as the original one, found one layer further in; a seam is only as wide as its narrowest fixed string
 confirmed_unchanged:
   reported_as_sufficient:
     - generated file naming through the component suffix, decoder output, and registry output settings

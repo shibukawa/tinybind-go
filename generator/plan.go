@@ -204,9 +204,9 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 			base == "httpbind_openapi_gen.go" ||
 			base == "tinybind_gen.go" ||
 			base == "tinybind_openapi_gen.go" ||
-			// Nothing this tool wrote is an input to what it reads, whatever the
-			// output file was named.
-			gensource.IsGenerated(f) {
+			// Nothing a generation run wrote is an input to what it reads,
+			// whatever the output file was named or headed with.
+			gensource.IsGenerated(f, normalized.parserConfig.GeneratedHeaders...) {
 			continue
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)

@@ -80,6 +80,13 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// GeneratedHeaders names header prefixes, beside this module's own, whose
+	// files every discovery pass must skip. A framework generating with tinybind
+	// and branding its output writes a header nothing here recognizes on its own,
+	// and an unrecognized generated registry is analyzed as if a user had written
+	// it: its page registrations become routes, and an HTML page enters an OpenAPI
+	// document. Each entry still requires the conventional "DO NOT EDIT." ending.
+	GeneratedHeaders []string
 	// PreserveTemplateWhitespace keeps the authoring indentation and newlines of
 	// HTML templates in generated static output instead of collapsing each run
 	// to one space. The default collapses, which renders identically and drops
@@ -193,6 +200,8 @@ func (o Options) normalized() (normalizedOptions, error) {
 			n.parserConfig.Calls = append(n.parserConfig.Calls, parserPattern)
 		}
 	}
+
+	n.parserConfig.GeneratedHeaders = o.GeneratedHeaders
 
 	if !o.FileTypes.Disabled && !disabled[FeatureMultipartFile] {
 		n.fileTypes = append(n.fileTypes, o.FileTypes.Set...)

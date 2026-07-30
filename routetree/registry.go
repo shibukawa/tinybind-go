@@ -124,7 +124,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 	}
 
 	model := RegistryModel{
-		Header:         GeneratedHeader,
+		Header:         e.header(),
 		Package:        rootPackage,
 		RegisterFunc:   e.RegisterFunc,
 		MuxFunc:        e.MuxFunc,

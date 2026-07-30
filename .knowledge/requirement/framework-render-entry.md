@@ -37,6 +37,11 @@ implemented:
     settings: RenderWriterType and RenderRequestParam on the emitter
     default: io.Writer and no request parameter, so default output is byte-identical
     imports: the composer imports what its own signature names, so a writer qualified by io, by the request package, or by the runtime needs no further configuration
+failure_entry:
+  reported: downstream verification 2026-07-30
+  gap: BadRequest and Problem were symbols while the call writing the failure was the fixed name WriteError, so a framework spelling it otherwise needed the handler block
+  implemented: Symbols.WriteError, defaulting to the current name
+  scope: a name, not a shape; the entry already took the request, which is the asymmetry this requirement was named for
 fixed:
   writer_default: io.Writer stays the default writer type
   why: buffer rendering is load-bearing, per the buffering rule of decision:script-free-render-mode, static export, and the func(io.Writer, Params) error shape of requirement:html-component-api

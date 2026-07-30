@@ -89,14 +89,14 @@ type ActionInfo struct {
 func(w {{ $t.Symbols.HTTPAlias }}.ResponseWriter, r *{{ $t.Symbols.HTTPAlias }}.Request) {
 		route, err := {{ $r.Selector }}{{ $t.DecodeFunc }}(r)
 		if err != nil {
-			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
+			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.WriteError }}(w, r, err)
 			return
 		}
 		_ = route // a route with no dynamic segment and no query input reads nothing
 {{- if $r.Call }}
 		{{ $r.CallResults }}{{ $r.Selector }}Load({{ $r.CallArgs }})
 		if err != nil {
-			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
+			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.WriteError }}(w, r, err)
 			return
 		}
 {{- end }}
@@ -117,7 +117,7 @@ func(w {{ $t.Symbols.HTTPAlias }}.ResponseWriter, r *{{ $t.Symbols.HTTPAlias }}.
 		}
 {{- end }}
 		if err := {{ template "render" ($t.Render $r) }}; err != nil {
-			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
+			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.WriteError }}(w, r, err)
 		}
 	}
 {{- end }}

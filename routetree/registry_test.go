@@ -208,11 +208,14 @@ func TestRegistryRepointsSymbols(t *testing.T) {
 	e.Symbols.RuntimeAlias = "render"
 	e.Symbols.ErrorImport = "example.com/fw/web"
 	e.Symbols.ErrorAlias = "web"
+	// The failure entry is a name like the error constructors beside it, so a
+	// framework spelling it WriteProblem needs no template of its own.
+	e.Symbols.WriteError = "WriteProblem"
 
 	home, analysis := templateOnly("/", "", "pages", "example.com/m/pages", nil, nil)
 	source := registry(t, e, &Tree{Routes: []Route{home}}, []Analysis{analysis}, nil)
 
-	mustContain(t, source, "render.Render(w,", "web.WriteError(w, r, err)")
+	mustContain(t, source, "render.Render(w,", "web.WriteProblem(w, r, err)")
 	if strings.Contains(source, "htmlbind.") || strings.Contains(source, "httpbind.") {
 		t.Errorf("default runtime still referenced:\n%s", source)
 	}
