@@ -1,0 +1,64 @@
+package pages
+
+type Point {
+  label: string
+  value: int
+}
+
+external live WatchMetrics(id: string): Point
+external live WatchMessages(room: string): string[]
+external async LoadTitle(id: string): string
+
+export component Gauge(id: string): html {
+<section>
+{await point = WatchMetrics(id)}
+  <p class="value">{point.label}: {point.value}</p>
+{fallback}
+  <p class="pending">waiting…</p>
+{recover err}
+  <p class="failed">{err.code}</p>
+{/await}
+</section>
+}
+
+export component Chat(room: string): html {
+{await messages = WatchMessages(room)}
+  <ul>
+  {for message in messages}
+    <li>{message}</li>
+  {/for}
+  </ul>
+{fallback}
+  <p>connecting…</p>
+{/await}
+}
+
+export component Dashboard(id: string): html {
+{await point = WatchMetrics(id), messages = WatchMessages(id)}
+  <p class="value">{point.label}: {point.value}</p>
+  <ul>
+  {for message in messages}
+    <li>{message}</li>
+  {/for}
+  </ul>
+{fallback}
+  <p class="pending">waiting…</p>
+{recover err}
+  <p class="failed">{err.code}</p>
+{/await}
+}
+
+export component Mixed(id: string): html {
+{await title = LoadTitle(id), point = WatchMetrics(id)}
+  <h1>{title}</h1>
+  <p class="value">{point.label}: {point.value}</p>
+{fallback}
+  <p class="pending">waiting…</p>
+{recover err}
+  <p class="failed">{err.code}</p>
+{/await}
+}
+
+export component Static(id: string): html {
+<p>{id}</p>
+}

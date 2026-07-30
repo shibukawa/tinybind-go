@@ -124,6 +124,12 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if e.c.reachesAwait(component.Name, map[string]bool{}) != "" {
 		await = "\tHasAwaitBlock: true,\n"
 	}
+	// Same rule for the live flag, over the same call graph. It is a subset of
+	// the await flag, so a component reporting this one always reports that one
+	// too, and a project with no live boundary regenerates unchanged.
+	if e.c.reachesLive(component.Name, map[string]bool{}) != "" {
+		await += "\tHasLiveBlock: true,\n"
+	}
 	// The Check field is written only for a component with a required async
 	// parameter, so every other component keeps its previous output.
 	check := ""
@@ -656,9 +662,22 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 	primary := p.scope.child(scopeType, scopeType+"Ops")
 	recovery := p.scope.child(recoverType, recoverType+"Ops")
 
+	// live boundaries bind at least one source that keeps delivering, so their
+	// bindings become subscription pumps rather than tasks joined once. A
+	// settle-once binding in such a clause is a pump that delivers once and
+	// returns, which is what lets one clause mix the two.
+	live := e.c.liveBoundaries[node]
 	// The bindings run concurrently and each assigns its own scope field, so
 	// they share no memory and need no lock.
 	var fields, tasks, checks []string
+	// liveBindings holds one subscription pump per binding. Each writes its own
+	// scope field and the boundary re-renders whenever any of them moves, so
+	// nothing has to select between them.
+	var liveBindings []string
+	// pump wraps one binding's body in the LiveBinding shape.
+	pump := func(body string) string {
+		return fmt.Sprintf("func(deliver func(func(*%s), error) bool) error {\n%s\n}", scopeType, body)
+	}
 	for _, binding := range node.Bindings {
 		t := e.c.exprTypes[binding.Call].awaited()
 		field := goPublicName(binding.Name)
@@ -674,7 +693,13 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 			if err != nil {
 				return err
 			}
-			tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s.Wait(ctx); scope.%s = value; return err },", code, field))
+			if live {
+				liveBindings = append(liveBindings, pump(fmt.Sprintf(
+					"\tvalue, err := %s.Wait(ctx)\n\tdeliver(func(scope *%s) { scope.%s = value }, err)\n\treturn nil",
+					code, scopeType, field)))
+			} else {
+				tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s.Wait(ctx); scope.%s = value; return err },", code, field))
+			}
 			if !t.optional {
 				// Absence is legal only where the template declared the
 				// settled type optional. Everywhere else an unset handle is a
@@ -708,8 +733,30 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 		// call that can abort gets what it needs without a second declaration
 		// form in the template.
 		callee := call.Callee.(*IdentifierExpr).Name
+		if e.c.externals[callee].live {
+			// A live external's context is mandatory rather than discovered:
+			// an endless source with no context has nothing to make it return
+			// when the subscription ends.
+			source := fmt.Sprintf("%s(%s)", callee, strings.Join(append([]string{"ctx"}, args...), ", "))
+			// The pump mirrors the source's own loop: one range, one deliver
+			// per value, and the error travels beside the value exactly as the
+			// sequence yields it.
+			liveBindings = append(liveBindings, pump(fmt.Sprintf(
+				"\tfor value, err := range %s {\n\t\tif !deliver(func(scope *%s) { scope.%s = value }, err) {\n\t\t\treturn nil\n\t\t}\n\t}\n\treturn nil",
+				source, scopeType, field)))
+			continue
+		}
 		if e.contextExternals[callee] {
 			args = append([]string{"ctx"}, args...)
+		}
+		if live {
+			// A settle-once source beside a live one: it delivers its value,
+			// which satisfies the boundary's wait for every binding, and then
+			// returns without holding the subscription open.
+			liveBindings = append(liveBindings, pump(fmt.Sprintf(
+				"\tvalue, err := %s(%s)\n\tdeliver(func(scope *%s) { scope.%s = value }, err)\n\treturn nil",
+				callee, strings.Join(args, ", "), scopeType, field)))
+			continue
 		}
 		tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s(%s); scope.%s = value; return err },",
 			callee, strings.Join(args, ", "), field))
@@ -740,6 +787,16 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 		handler = recoverOps.literal()
 	}
 
+	if live {
+		return e.finishLiveOp(p, liveOpParts{
+			scopeType:   scopeType,
+			recoverType: recoverType,
+			bindings:    liveBindings,
+			primary:     primaryOps.literal(),
+			fallback:    fallbackOps.literal(),
+			handler:     handler,
+		})
+	}
 	// On failure the scope is discarded rather than returned: a cancelled wait
 	// leaves its abandoned tasks still writing those fields.
 	resolve := fmt.Sprintf("func(ctx context.Context, %s %s) (%s, error) {\n\tscope := %s{Outer: %s}\n\tif err := htmlbind.Concurrent(ctx,\n%s\n\t); err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n\treturn scope, nil\n}",
@@ -1090,4 +1147,41 @@ func (c *compiler) calledComponents(info *componentInfo) []string {
 		walk(body)
 	}
 	return names
+}
+
+// liveOpParts carries the pieces emitAwaitOp already built, so the live tail
+// reads as one call rather than threading several positional arguments.
+type liveOpParts struct {
+	scopeType   string
+	recoverType string
+	bindings    []string
+	primary     string
+	fallback    string
+	handler     string
+}
+
+// finishLiveOp writes the htmlbind.Live call. It differs from the await tail in
+// what it hands the runtime: subscriptions rather than a join, and a scope the
+// runtime fills field by field as deliveries arrive rather than one built once
+// from a settled set of results.
+func (e *goEmitter) finishLiveOp(p *planEmitter, parts liveOpParts) error {
+	pumps := make([]string, len(parts.bindings))
+	for index, binding := range parts.bindings {
+		pumps[index] = indentBlock(binding, "\t\t") + ","
+	}
+	bindings := fmt.Sprintf("func(ctx context.Context, %s %s) []htmlbind.LiveBinding[%s] {\n\treturn []htmlbind.LiveBinding[%s]{\n%s\n\t}\n}",
+		receiverIdent, p.scope.goType, parts.scopeType, parts.scopeType, strings.Join(pumps, "\n"))
+	// The scope starts with the outer parameters alone. Each binding fills its
+	// own field as it delivers, and the first render waits until every one has.
+	scope := fmt.Sprintf("func(%s %s) %s { return %s{Outer: %s} }",
+		receiverIdent, p.scope.goType, parts.scopeType, parts.scopeType, receiverIdent)
+	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
+		receiverIdent, p.scope.goType, parts.recoverType, parts.recoverType, receiverIdent)
+	p.flush()
+	p.raw(fmt.Sprintf("htmlbind.Live(\n%s,\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		indentBlock(bindings, "\t"), scope, build,
+		indentBlock(parts.primary, "\t"),
+		indentBlock(parts.fallback, "\t"),
+		indentBlock(parts.handler, "\t")))
+	return nil
 }

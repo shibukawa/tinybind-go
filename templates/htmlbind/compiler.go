@@ -84,6 +84,9 @@ type functionSig struct {
 	// async marks a function that takes a context and returns an error. It may
 	// only be called in an await binding.
 	async bool
+	// live marks a function returning a sequence of deliveries. It may only be
+	// called in a live binding.
+	live bool
 }
 
 // cachePolicy is the validated form of a component's cache annotation.
@@ -111,6 +114,11 @@ type componentInfo struct {
 	// component may not reach one, because a boundary is emitted in two pieces
 	// and cannot be stored as one byte range.
 	await bool
+	// live marks a component that owns at least one live boundary. Every live
+	// boundary is also an await boundary, so this is a subset of await: it
+	// exists so a caller can tell a screen that keeps changing from one that is
+	// merely progressive.
+	live bool
 }
 
 type compiler struct {
@@ -123,6 +131,11 @@ type compiler struct {
 	externals   map[string]functionSig
 	components  map[string]*componentInfo
 	exprTypes   map[Expr]valueType
+	// liveBoundaries marks the await boundaries that bind at least one live
+	// source, and therefore re-render per delivery instead of settling once.
+	// It is derived from the bindings rather than written at the wait site,
+	// because how often a value arrives is what its declaration says.
+	liveBoundaries map[*syntax.AwaitNode]bool
 
 	// collapseWhitespace enables requirement:static-whitespace-normalization.
 	// It is on unless the run asked for byte-identical output.
@@ -173,6 +186,7 @@ func newCompiler(filename, source string, module *Module, collapseWhitespace boo
 		records: map[string]*TypeDecl{}, enums: map[string]*EnumDecl{},
 		enumMembers: map[string]valueType{}, externals: map[string]functionSig{},
 		components: map[string]*componentInfo{}, exprTypes: map[Expr]valueType{},
+		liveBoundaries:     map[*syntax.AwaitNode]bool{},
 		collapseWhitespace: collapseWhitespace,
 	}
 }
@@ -238,6 +252,7 @@ func (c *compiler) analyze() error {
 			}
 			sig.result = result
 			sig.async = declaration.Async
+			sig.live = declaration.Live
 			c.externals[declaration.Name] = sig
 		case *TemplateDecl:
 			if declaration.Kind != "html:component" || declaration.Output.Name != "html" {
@@ -388,6 +403,31 @@ func (c *compiler) validateCachedComponents() error {
 		}
 	}
 	return nil
+}
+
+// reachesLive returns the name of the first component in the call graph that
+// owns a live boundary. It walks the same graph as reachesAwait and answers the
+// other half of the question a caller asks before rendering: not whether this
+// response needs the boundary runtime, but whether the screen will keep
+// changing once the document has finished.
+func (c *compiler) reachesLive(name string, seen map[string]bool) string {
+	if seen[name] {
+		return ""
+	}
+	seen[name] = true
+	info, ok := c.components[name]
+	if !ok {
+		return ""
+	}
+	if info.live {
+		return name
+	}
+	for _, called := range c.calledComponents(info) {
+		if owner := c.reachesLive(called, seen); owner != "" {
+			return owner
+		}
+	}
+	return ""
 }
 
 // reachesAwait returns the name of the first component in the call graph that
@@ -764,8 +804,18 @@ func (c *compiler) analyzeAwait(node *syntax.AwaitNode, scope map[string]valueTy
 		if !ok {
 			return c.error(binding.Pos, "unknown function "+identifier.Name)
 		}
-		if !sig.async {
-			return c.error(binding.Pos, identifier.Name+" is not async; declare it as external async to await it")
+		if !sig.async && !sig.live {
+			return c.error(binding.Pos, identifier.Name+" is not async; declare it as external async or external live to await it")
+		}
+		if sig.live {
+			// The boundary re-renders per delivery rather than settling once.
+			// Nothing about the clause changes: whether a value arrives once or
+			// many times is what its declaration says, not what the wait site
+			// asks for.
+			c.liveBoundaries[node] = true
+			if c.current != nil {
+				c.current.live = true
+			}
 		}
 		outerCall := c.awaitCall
 		c.awaitCall = call
@@ -775,6 +825,11 @@ func (c *compiler) analyzeAwait(node *syntax.AwaitNode, scope map[string]valueTy
 			return err
 		}
 		primaryScope[binding.Name] = t
+	}
+	if c.liveBoundaries[node] {
+		if err := c.rejectStatefulControls(node.Primary); err != nil {
+			return err
+		}
 	}
 	c.awaitDepth++
 	defer func() { c.awaitDepth-- }()
@@ -1250,6 +1305,9 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	}
 	// An async result exists only inside the boundary that waits for it, so the
 	// only legal call site is that boundary's own binding.
+	if sig.live && c.awaitCall != call {
+		return valueType{}, c.error(call.Pos, "live function "+identifier.Name+" can only be called in an await binding")
+	}
 	if sig.async && c.awaitCall != call {
 		return valueType{}, c.error(call.Pos, "async function "+identifier.Name+" can only be called in an await binding")
 	}
@@ -1473,4 +1531,70 @@ func exprPos(expr Expr) Position {
 		return expr.Pos
 	}
 	return Position{Line: 1, Col: 1}
+}
+
+// statefulControls are the elements whose state the browser owns rather than the
+// markup: what the user typed, where the caret is, what is selected. Replacing
+// one discards all of it.
+var statefulControls = map[string]bool{
+	"input":    true,
+	"textarea": true,
+	"select":   true,
+	"form":     true,
+}
+
+// rejectStatefulControls reports a form control in a live boundary's primary
+// subtree, which is the one subtree a delivery replaces.
+//
+// A navigation already had this exposure once per page transition. A live
+// boundary turns it into once every few seconds, arriving on the server's clock
+// while the user is typing, so a warning would be read as noise and the loss is
+// silent. The rule is therefore an error, and a control that genuinely should
+// reset says so with an annotation.
+//
+// It does not walk the fallback or recover subtrees: neither is re-rendered by a
+// delivery, so a control there is as safe as one outside the boundary. It also
+// does not follow component calls, because a component's own body is checked
+// where it is declared only if that body holds the boundary; a control reached
+// through a call stays authoring guidance rather than a diagnostic.
+func (c *compiler) rejectStatefulControls(nodes []Node) error {
+	for _, node := range nodes {
+		switch node := node.(type) {
+		case *ElementNode:
+			if statefulControls[node.Name] {
+				return c.error(node.Pos, "<"+node.Name+"> cannot appear in a live boundary; a delivery replaces this subtree and discards what the user typed. Put the control outside the boundary and update it through its parameters instead")
+			}
+			if err := c.rejectStatefulControls(node.Children); err != nil {
+				return err
+			}
+		case *syntax.IfNode:
+			if err := c.rejectStatefulControls(node.Then); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Else); err != nil {
+				return err
+			}
+		case *syntax.ForNode:
+			if err := c.rejectStatefulControls(node.Body); err != nil {
+				return err
+			}
+		case *syntax.AwaitNode:
+			// A nested boundary's own subtrees are replaced by that boundary,
+			// which this delivery also re-runs, so they are in scope too.
+			if err := c.rejectStatefulControls(node.Primary); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Fallback); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Recover); err != nil {
+				return err
+			}
+		case *SlotNode:
+			if err := c.rejectStatefulControls(node.Default); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

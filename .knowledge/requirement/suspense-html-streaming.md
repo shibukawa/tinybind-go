@@ -36,6 +36,7 @@ ordering:
   - replacements may be yielded in completion order
   - each boundary updates at most once
   - the returned sequence stays open until all request-owned boundaries finish or cancel
+  - proposed requirement:live-boundary-rendering is the one boundary kind that updates repeatedly, and it does so on a separate request rather than by extending this one
 safety:
   - generated IDs are unique, opaque, and safe for HTML and script use
   - proposed requirement:client-managed-head raises that uniqueness to the document lifetime, because a navigation inserts boundaries into a document that may still hold earlier ones
@@ -58,6 +59,7 @@ markup:
   placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
   completion: an inert template element referencing the same boundary ID, written after the initial document; the caller writes this framing around the fragment the module yields
   commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
+  terminal_marker: one inert element written as the last bytes of the response when the sequence exits, naming whether anything more is coming, per rule:stream-termination-marker
   runtime: a client script defining the marker element and applying a boundary from its connected callback; decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
   no_runtime: a response whose client never loads that script keeps its committed fallback as the final content
 commit_marker_rationale:
@@ -68,6 +70,7 @@ commit_marker_rationale:
   promptness: the marker's connected callback runs during parsing, so the swap is as immediate as an inline script would be
   csp: the completion chunk still carries no script, so no nonce and no unsafe-inline is required
   truncated_stream: a completion whose marker never arrives is simply not applied, leaving the committed fallback
+  truncation_is_invisible: the page cannot detect that outcome, because a truncated chunked document parses to end of file and fires DOMContentLoaded and load with no error; rule:stream-termination-marker adds the terminal marker precisely so its absence is the signal
 no_javascript:
   behavior: the committed fallback stays visible and completions are inert templates
   alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients

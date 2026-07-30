@@ -204,22 +204,27 @@ func (c *BodyContext) parseFor(header string, headerOffset int, pos Position, co
 // parseAwait reads one boundary. The clause binds its own asynchronous calls,
 // so the primary subtree's dependencies are readable at the wait site instead
 // of inferred from everything the subtree reaches.
+//
+// One clause covers a settle-once source and a live one alike, because how often
+// a value arrives is what the source declares rather than what the wait site
+// asks for.
 func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, context string) (*AwaitNode, error) {
+	keyword, end := "await", TerminatorEndAwait
 	node := &AwaitNode{Kind: "template:await", Pos: pos, Context: context}
 	for _, part := range splitTopLevel(header, ',') {
 		text := strings.TrimSpace(part.text)
 		offset := headerOffset + part.offset + (len(part.text) - len(strings.TrimLeftFunc(part.text, unicode.IsSpace)))
 		name, callText, found := strings.Cut(text, "=")
 		if !found {
-			return nil, c.ErrorAt(offset, "await binding syntax is {await name = Call(args)}")
+			return nil, c.ErrorAt(offset, keyword+" binding syntax is {"+keyword+" name = Call(args)}")
 		}
 		name = strings.TrimSpace(name)
 		if !lowerCamelIdentifier(name) {
-			return nil, c.ErrorAt(offset, "await binding name must be lowerCamelCase")
+			return nil, c.ErrorAt(offset, keyword+" binding name must be lowerCamelCase")
 		}
 		for _, existing := range node.Bindings {
 			if existing.Name == name {
-				return nil, c.ErrorAt(offset, "duplicate await binding "+name)
+				return nil, c.ErrorAt(offset, "duplicate "+keyword+" binding "+name)
 			}
 		}
 		callBody := strings.TrimSpace(callText)
@@ -231,7 +236,7 @@ func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, 
 		node.Bindings = append(node.Bindings, AwaitBinding{Pos: c.Position(offset), Name: name, Call: call})
 	}
 	if len(node.Bindings) == 0 {
-		return nil, c.ErrorAt(headerOffset, "await needs at least one binding")
+		return nil, c.ErrorAt(headerOffset, keyword+" needs at least one binding")
 	}
 
 	primary, terminator, err := c.format.ParseBody(c, context)
@@ -242,7 +247,7 @@ func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, 
 	// The fallback subtree is what commits first, so a boundary without one
 	// would have nothing to show while its bindings run.
 	if terminator == nil || terminator.Kind != TerminatorFallback {
-		return nil, c.ErrorAt(c.offset, "expected {fallback} inside {await}")
+		return nil, c.ErrorAt(c.offset, "expected {fallback} inside {"+keyword+"}")
 	}
 	fallback, terminator, err := c.format.ParseBody(c, context)
 	if err != nil {
@@ -250,10 +255,10 @@ func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, 
 	}
 	node.Fallback = fallback
 	if terminator == nil {
-		return nil, c.ErrorAt(c.offset, "expected {recover} or {/await}")
+		return nil, c.ErrorAt(c.offset, "expected {recover} or {/"+keyword+"}")
 	}
 	switch terminator.Kind {
-	case TerminatorEndAwait:
+	case end:
 		return node, nil
 	case TerminatorRecover:
 		if terminator.Header != "" {
@@ -264,17 +269,17 @@ func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, 
 			node.ErrorPos = c.Position(terminator.HeaderOffset)
 		}
 		node.HasRecover = true
-		recovery, end, err := c.format.ParseBody(c, context)
+		recovery, closing, err := c.format.ParseBody(c, context)
 		if err != nil {
 			return nil, err
 		}
-		if end == nil || end.Kind != TerminatorEndAwait {
-			return nil, c.ErrorAt(c.offset, "expected {/await} after {recover}")
+		if closing == nil || closing.Kind != end {
+			return nil, c.ErrorAt(c.offset, "expected {/"+keyword+"} after {recover}")
 		}
 		node.Recover = recovery
 		return node, nil
 	default:
-		return nil, c.ErrorAt(c.offset, "expected {recover} or {/await}")
+		return nil, c.ErrorAt(c.offset, "expected {recover} or {/"+keyword+"}")
 	}
 }
 

@@ -61,7 +61,13 @@ type ExternalDecl struct {
 	// Async marks a function that runs concurrently and may fail. It is a
 	// keyword rather than an annotation because it changes the Go signature the
 	// package must provide.
-	Async      bool        `json:"async,omitempty"`
+	Async bool `json:"async,omitempty"`
+	// Live marks a function that yields many values over time rather than
+	// settling once. It is a keyword for the same reason Async is: the Go
+	// signature becomes an iter.Seq2 over the result type, with a leading
+	// context that is mandatory rather than optional, because an endless source
+	// has to be stoppable.
+	Live       bool        `json:"live,omitempty"`
 	Parameters []Parameter `json:"parameters,omitempty"`
 	Result     TypeRef     `json:"result"`
 }
@@ -158,6 +164,12 @@ func (n *ForNode) NodeType() string { return n.Kind }
 // AwaitNode is one asynchronous boundary. Its bindings run concurrently; the
 // primary subtree reads them, the fallback subtree is emitted while they are
 // pending, and the optional recover subtree replaces the fallback on failure.
+//
+// How many times the boundary renders is a property of what its bindings name,
+// not of the clause: a binding on a settle-once source produces one render, and
+// a binding on a live source produces one per delivery. The clause says which
+// values the subtree waits for, and the declarations say how those values
+// arrive, so nothing here has to be repeated at the wait site.
 type AwaitNode struct {
 	Kind     string         `json:"kind"`
 	Pos      Position       `json:"pos"`

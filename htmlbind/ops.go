@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Builder constructs instructions for one component. Generated code declares
@@ -158,7 +160,7 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 		return o.execBlocking(r, params)
 	}
 	coordinator := r.async
-	id := coordinator.nextID()
+	id := r.nextBoundaryID()
 	// display:contents keeps the placeholder out of layout, so a boundary
 	// cannot change how its fallback or its replacement is positioned.
 	if err := r.Write(`<tb-boundary id="` + id + `" style="display:contents">`); err != nil {
@@ -170,12 +172,14 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 	if err := r.Write(`</tb-boundary>`); err != nil {
 		return err
 	}
-	coordinator.start(func(ctx context.Context) (Content, bool, error) {
+	boundaryCtx := r.boundaryContext()
+	coordinator.start(boundaryCtx, func(ctx context.Context) (Content, bool, error) {
 		var buffer bytes.Buffer
 		// The subtree renders into its own buffer, so boundary work never
 		// touches the response writer. A boundary nested in this subtree
-		// registers with the same coordinator and streams like any other.
-		sub := r.buffered(&buffer)
+		// registers with the same coordinator, under this boundary's own
+		// identifier namespace, and streams like any other.
+		sub := r.subtree(&buffer, id, ctx)
 		value, err := o.resolve(ctx, params)
 		if err != nil {
 			if coordinator.ctx.Err() != nil {
@@ -297,4 +301,320 @@ func Escape(value string) string {
 		}
 	}
 	return out.String()
+}
+
+// LiveBinding pumps one binding of a live clause. It ranges its own source and
+// calls deliver once per value, passing a function that writes that value into
+// the boundary scope. A non-nil err is a failure delivery rather than the end of
+// the source, mirroring the (value, error) pair the source itself yields.
+//
+// deliver reports false when the boundary is gone, which is the signal to stop
+// ranging. Returning ends this binding; the boundary lives until every binding
+// has returned.
+type LiveBinding[S any] func(deliver func(assign func(*S), err error) bool) error
+
+// Live opens a live boundary. bindings subscribes each of the clause's sources,
+// scope builds the boundary scope the primary subtree reads, and recovery builds
+// the recover subtree's scope from the outer parameters and the safe error.
+// handler is nil when the clause declared no recover subtree.
+//
+// Where Await settles once, this renders the primary subtree again for every
+// delivery, for as long as the subscription lives. The sequence ending is the
+// only terminal signal: a yielded error is a delivery of a failure, so a
+// transient fault shows the recover subtree and the next value replaces it.
+//
+// A clause with several bindings holds the latest value of each and re-renders
+// whenever any of them moves. Nothing has to say which source fired, because the
+// subtree reads them all: putting every current value on every render is what
+// removes the need for a selector. The first render waits until every binding
+// has produced a value, since the subtree would otherwise read a zero one.
+//
+// Delivery is pull-based on purpose. A source blocks in its own yield until the
+// boundary is ready for its next value, so a source producing faster than the
+// screen can use it simply misses ticks. That is the coalescing rule with no
+// queue to size and nothing to discard, and it is why a source is a sequence
+// rather than a channel.
+//
+// On the document entries the boundary takes its first delivery and
+// unsubscribes, so the first paint shows real content rather than a loading
+// state and the response still finishes. Only the live entries keep the
+// subscription open.
+func Live[P, S, R any](
+	bindings func(context.Context, P) []LiveBinding[S],
+	scope func(P) S,
+	recovery func(P, AsyncError) R,
+	primary []Op[S],
+	fallback []Op[P],
+	handler []Op[R],
+) Op[P] {
+	return liveOp[P, S, R]{
+		bindings: bindings,
+		scope:    scope,
+		recovery: recovery,
+		primary:  primary,
+		fallback: fallback,
+		handler:  handler,
+	}
+}
+
+type liveOp[P, S, R any] struct {
+	bindings func(context.Context, P) []LiveBinding[S]
+	scope    func(P) S
+	recovery func(P, AsyncError) R
+	primary  []Op[S]
+	fallback []Op[P]
+	handler  []Op[R]
+}
+
+func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
+	if r.async == nil {
+		return o.execBlocking(r, params)
+	}
+	coordinator := r.async
+	id := r.nextBoundaryID()
+	// display:contents keeps the placeholder out of layout, so a boundary
+	// cannot change how its fallback or its replacement is positioned.
+	if err := r.Write(`<tb-boundary id="` + id + `" style="display:contents">`); err != nil {
+		return err
+	}
+	if err := execOps(r, o.fallback, params); err != nil {
+		return err
+	}
+	if err := r.Write(`</tb-boundary>`); err != nil {
+		return err
+	}
+	keepOpen := coordinator.liveMode()
+	// The document response has to finish, so a boundary that has shown nothing
+	// stops waiting at the boundary deadline. The live entry passes none: a
+	// source there is allowed to be quiet for as long as its data is quiet.
+	var firstDelivery time.Duration
+	if !keepOpen {
+		firstDelivery = coordinator.opts.timeout
+	}
+	coordinator.startStream(func(ctx context.Context, emit func(Content) bool) error {
+		delivery := &deliveryScope{}
+		defer delivery.stop()
+		return o.pump(ctx, params, firstDelivery, func(scope S, deliveryErr error) (bool, error) {
+			var buffer bytes.Buffer
+			// The subtree renders into its own buffer, so a subscription never
+			// touches the response writer. A boundary nested in this subtree
+			// registers with the same coordinator, under this boundary's own
+			// identifier namespace, and is cancelled when the next delivery
+			// reuses those identifiers.
+			sub := r.subtree(&buffer, id, delivery.next(ctx))
+			if deliveryErr != nil {
+				if ctx.Err() != nil {
+					// Expected cancellation. The boundary's current content is
+					// its final content and nothing is left to read a delivery.
+					return false, nil
+				}
+				r.reportError(deliveryErr)
+				if o.handler == nil {
+					// Same rule as an await clause with no recover subtree:
+					// nothing here can render the failure, so it leaves the
+					// boundary rather than being dropped.
+					return false, &UnrecoveredError{BoundaryID: id, Err: deliveryErr}
+				}
+				if err := execOps(sub, o.handler, o.recovery(params, normalizeAsyncError(deliveryErr))); err != nil {
+					return false, err
+				}
+			} else if err := execOps(sub, o.primary, scope); err != nil {
+				return false, err
+			}
+			if !emit(Content{BoundaryID: id, HTML: buffer.Bytes()}) {
+				return false, nil
+			}
+			return keepOpen, nil
+		})
+	})
+	return nil
+}
+
+// deliveryScope hands each delivery its own renderer context and cancels the
+// previous delivery's. A live boundary's subtree hands out the same placeholder
+// identifiers every time it renders, so a nested boundary left over from the
+// superseded delivery would otherwise settle into the replacement's placeholder
+// and put stale content on screen.
+type deliveryScope struct {
+	cancel context.CancelFunc
+}
+
+func (d *deliveryScope) next(parent context.Context) context.Context {
+	d.stop()
+	ctx, cancel := context.WithCancel(parent)
+	d.cancel = cancel
+	return ctx
+}
+
+func (d *deliveryScope) stop() {
+	if d.cancel != nil {
+		d.cancel()
+	}
+}
+
+// execBlocking renders the first complete delivery in place and stops watching,
+// which is what the synchronous entries do. One template therefore serves a live
+// client and a client that will never ask for updates, including one with no
+// JavaScript.
+//
+// A source that ends without delivering leaves the fallback: a document holding
+// a loading state is worse than a settled one only while something is still
+// coming, and here nothing is.
+func (o liveOp[P, S, R]) execBlocking(r *Renderer, params P) error {
+	ctx := r.context()
+	delivered := false
+	failure := o.pump(ctx, params, r.boundaryTimeout(), func(scope S, deliveryErr error) (bool, error) {
+		if deliveryErr != nil {
+			if ctx.Err() != nil {
+				// The wait ran out, or the request went away. Neither is a
+				// failure of the source, so nothing is rendered here and the
+				// caller falls back below.
+				return false, nil
+			}
+			delivered = true
+			r.reportError(deliveryErr)
+			if o.handler == nil {
+				return false, &UnrecoveredError{Err: deliveryErr}
+			}
+			return false, execOps(r, o.handler, o.recovery(params, normalizeAsyncError(deliveryErr)))
+		}
+		delivered = true
+		return false, execOps(r, o.primary, scope)
+	})
+	if failure != nil {
+		return failure
+	}
+	if !delivered {
+		return execOps(r, o.fallback, params)
+	}
+	return nil
+}
+
+// pump subscribes every binding and calls render for each delivery the boundary
+// should show. It returns when every binding has ended, when render reports that
+// the boundary is gone, or with the first failure render reported.
+//
+// render is called with the whole boundary scope rather than with the value that
+// moved, which is what lets a clause hold several sources without anything
+// having to select between them.
+// firstDelivery bounds how long the boundary may show nothing. Zero means no
+// bound beyond the request context, which is what the live entry passes.
+func (o liveOp[P, S, R]) pump(ctx context.Context, params P, firstDelivery time.Duration, render func(S, error) (bool, error)) error {
+	ctx, cancel := context.WithCancel(ctx)
+	// Cancelling on the way out is what stops the other bindings once one has
+	// ended the boundary, and what makes an abandoned source observe the stop
+	// through the context it was handed.
+	defer cancel()
+	if firstDelivery > 0 {
+		// The entries that must answer give a boundary this long to produce
+		// something. Running out is not a failure of the source, so it leaves
+		// the fallback rather than rendering recover: a fallback is honest
+		// about a value that has not arrived, where a recover subtree would
+		// claim one went wrong.
+		//
+		// It bounds the wait alone. The entry stops watching after its first
+		// render anyway, so the deadline is only ever live while the boundary
+		// still has nothing to show.
+		timed, stop := context.WithTimeout(ctx, firstDelivery)
+		defer stop()
+		ctx = timed
+	}
+	bindings := o.bindings(ctx, params)
+	if len(bindings) == 0 {
+		return nil
+	}
+	state := &liveState[S]{scope: o.scope(params), ready: make([]bool, len(bindings)), pending: len(bindings)}
+	var wg sync.WaitGroup
+	for index, binding := range bindings {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			deliver := func(assign func(*S), err error) bool {
+				keep := state.deliver(index, assign, err, render)
+				if !keep {
+					cancel()
+				}
+				return keep
+			}
+			if err := runBinding(binding, deliver); err != nil {
+				// A binding only returns when its source panicked: generated
+				// pumps report a source's own failures through deliver and
+				// return nil. Delivering it here is what makes a panic travel
+				// the same path as a returned error, so the clause shows its
+				// recover subtree instead of the whole render ending.
+				deliver(nil, err)
+			}
+		}()
+	}
+	wg.Wait()
+	return state.failure()
+}
+
+// runBinding executes one binding, turning a panic in the source into an
+// ordinary error so it travels the same path as a returned one.
+func runBinding[S any](binding LiveBinding[S], deliver func(func(*S), error) bool) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = &panicError{value: recovered}
+		}
+	}()
+	return binding(deliver)
+}
+
+// liveState is one live boundary's shared scope. Bindings run in their own
+// goroutines and write their own fields, but unlike an await clause's tasks they
+// keep writing while the subtree is being rendered, so the scope needs a lock
+// rather than a join.
+type liveState[S any] struct {
+	mu      sync.Mutex
+	scope   S
+	ready   []bool
+	pending int
+	stopped bool
+	err     error
+}
+
+// deliver applies one binding's value and renders once every binding has one.
+//
+// The lock is held across the render and the emit. That serializes deliveries,
+// so two bindings moving at once cannot put an older render on screen after a
+// newer one, and a consumer that is not reading blocks the sources instead of
+// queueing behind them — which is the same coalescing the pull sequence gives
+// one source, extended to several.
+func (s *liveState[S]) deliver(index int, assign func(*S), err error, render func(S, error) (bool, error)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return false
+	}
+	if err == nil {
+		assign(&s.scope)
+		if !s.ready[index] {
+			s.ready[index] = true
+			s.pending--
+		}
+		if s.pending > 0 {
+			// The primary subtree reads every binding, so rendering now would
+			// show a zero value for one that has not arrived.
+			return true
+		}
+	}
+	// A failure decides the boundary whether or not the others have arrived:
+	// there is nothing to wait for once the clause is going to show recover.
+	keep, failure := render(s.scope, err)
+	if failure != nil {
+		s.stopped, s.err = true, failure
+		return false
+	}
+	if !keep {
+		s.stopped = true
+		return false
+	}
+	return true
+}
+
+func (s *liveState[S]) failure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
