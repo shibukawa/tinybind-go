@@ -49,6 +49,7 @@ execution:
   error: yield zero Content with the error; the sequence ends
   stop: early consumer stop cancels remaining request-owned work through ctx
   end: sequence ends when all request-owned boundaries settle or ctx cancels
+  live_exception: proposed concept:live-boundary-updates keeps this signature and lets the sequence never end, which is why decision:live-transport-boundary moves an endless sequence off the document response and onto its own request
 caller:
   route_handler: requirement:generated-route-registration ranges the merged sequence, writes each item, and flushes
   loop: the caller ranges, writes each item, and flushes; nothing in the runtime does it on the caller's behalf

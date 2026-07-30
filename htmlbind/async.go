@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 )
 
@@ -155,6 +154,29 @@ type Content struct {
 	HTML []byte
 }
 
+// AppendJSON appends this delivery as a JSON object with an id and an html
+// field, and returns the extended slice.
+//
+// It exists because past the initial document there is no parser to feed. The
+// template-and-marker framing requirement:suspense-html-streaming defines is for
+// bytes the HTML parser is consuming; a client reading a fetch stream is not
+// parsing markup, so a record is the natural form and JSON is the ordinary
+// record. A caller streaming completions into a live document wants this; a
+// caller writing into the document response still writes markup.
+//
+// The fragment is escaped for a script context as well as a JSON one, using the
+// same rules as the generated encoders, so the result stays safe to embed in an
+// inline script element as well as to send as a body. Framing around the record
+// — newline-delimited, an event stream, a length prefix — is still the caller's
+// to choose, because it has to match the client that reads it.
+func (c Content) AppendJSON(dst []byte) []byte {
+	dst = append(dst, `{"id":`...)
+	dst = append(dst, JSONString(c.BoundaryID)...)
+	dst = append(dst, `,"html":`...)
+	dst = append(dst, JSONString(string(c.HTML))...)
+	return append(dst, '}')
+}
+
 // WriteTo writes the settled fragment and nothing else: no wrapper element, no
 // marker, no script.
 //
@@ -175,9 +197,6 @@ type asyncCoordinator struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	opts   *renderOptions
-
-	mu      sync.Mutex
-	counter int
 
 	wg      sync.WaitGroup
 	results chan boundaryResult
@@ -208,21 +227,15 @@ func newAsyncCoordinator(ctx context.Context, opts *renderOptions) *asyncCoordin
 	return coordinator
 }
 
-// nextID returns a placeholder identifier unique within this render. Boundary
-// IDs from every chain member come from this one namespace, so a layout
-// boundary and a page boundary can never collide.
-func (c *asyncCoordinator) nextID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.counter++
-	return "tb-" + strconv.Itoa(c.counter)
-}
-
 // start launches one boundary. run settles the boundary and renders its
 // replacement; it reports present=false without an error only for a cancelled
 // request, where the committed fallback is the final content and nobody is left
 // to read anything else.
-func (c *asyncCoordinator) start(run func(ctx context.Context) (Content, bool, error)) {
+// boundaryCtx bounds this boundary's work. It is the render's context for an
+// ordinary boundary, and a per-delivery one for a boundary nested inside a live
+// subtree, so a superseded delivery's work stops rather than racing the
+// replacement that reuses its placeholder.
+func (c *asyncCoordinator) start(boundaryCtx context.Context, run func(ctx context.Context) (Content, bool, error)) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -230,11 +243,11 @@ func (c *asyncCoordinator) start(run func(ctx context.Context) (Content, bool, e
 			select {
 			case c.sem <- struct{}{}:
 				defer func() { <-c.sem }()
-			case <-c.ctx.Done():
+			case <-boundaryCtx.Done():
 				return
 			}
 		}
-		ctx := c.ctx
+		ctx := boundaryCtx
 		if c.opts.timeout > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, c.opts.timeout)
@@ -242,6 +255,12 @@ func (c *asyncCoordinator) start(run func(ctx context.Context) (Content, bool, e
 		}
 		content, present, err := run(ctx)
 		if err == nil && !present {
+			return
+		}
+		if boundaryCtx.Err() != nil {
+			// Superseded or cancelled while rendering. Its placeholder either
+			// no longer exists or now belongs to a later delivery, so sending
+			// this would overwrite fresher content with staler content.
 			return
 		}
 		select {
@@ -265,3 +284,40 @@ func (c *asyncCoordinator) wait() {
 // goroutines write only their own buffers, and an external that ignores its
 // context must not be able to block the handler's return.
 func (c *asyncCoordinator) stop() { c.cancel() }
+
+// startStream launches a live subscription. Unlike start, run may emit many
+// times for one boundary: it calls emit once per delivery and keeps going until
+// its source ends, emit reports that nobody is reading, or ctx is cancelled.
+//
+// Two things start does are deliberately skipped here. The boundary timeout does
+// not apply, because a live source is allowed to be quiet for as long as its
+// data is quiet, and a deadline would end a healthy subscription. The
+// concurrency limit does not apply either: it bounds work that finishes, and a
+// subscription that holds a slot for the life of the screen would starve every
+// await boundary behind it.
+func (c *asyncCoordinator) startStream(run func(ctx context.Context, emit func(Content) bool) error) {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		emit := func(content Content) bool {
+			select {
+			case c.results <- boundaryResult{content: content, present: true}:
+				return true
+			case <-c.ctx.Done():
+				return false
+			}
+		}
+		if err := run(c.ctx, emit); err != nil {
+			select {
+			case c.results <- boundaryResult{err: err}:
+			case <-c.ctx.Done():
+			}
+		}
+	}()
+}
+
+// live reports whether this render keeps live subscriptions open. The document
+// entries leave it false, so a live boundary contributes its first delivery like
+// a settled await boundary and then stops watching; that is what lets a document
+// response finish instead of staying open for the life of the screen.
+func (c *asyncCoordinator) liveMode() bool { return c.opts.live }

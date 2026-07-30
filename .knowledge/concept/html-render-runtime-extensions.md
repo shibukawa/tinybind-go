@@ -41,6 +41,8 @@ boundary_update_flow: flow:boundary-parameter-update
 component_analysis: decision:component-capability-lowering
 client_runtime: decision:client-runtime-ownership
 route_generation: concept:filesystem-html-routing
+follow_on:
+  live_updates: concept:live-boundary-updates extends the one-shot await boundary into a repeatedly re-rendered one, and depends on both the async and partial-update halves of this concept
 scope:
   - preserve generated, statically checked rendering
   - add request-time composition without runtime template parsing

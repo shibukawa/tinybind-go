@@ -282,12 +282,21 @@ func (p *moduleParser) parseEnumDecl(start int) (*EnumDecl, error) {
 }
 
 func (p *moduleParser) parseExternalDecl(start int) (*ExternalDecl, error) {
-	// An external name must be PascalCase, so a lowercase `async` here can only
-	// be the modifier.
+	// An external name must be PascalCase, so a lowercase `async` or `live` here
+	// can only be the modifier.
 	async := p.peekIdentifier() == "async"
 	if async {
 		if _, err := p.identifier(); err != nil {
 			return nil, err
+		}
+	}
+	live := p.peekIdentifier() == "live"
+	if live {
+		if _, err := p.identifier(); err != nil {
+			return nil, err
+		}
+		if async {
+			return nil, p.errAt(start, "external cannot be both async and live; a live source already reports failures per delivery")
 		}
 	}
 	name, err := p.identifier()
@@ -309,7 +318,7 @@ func (p *moduleParser) parseExternalDecl(start int) (*ExternalDecl, error) {
 		return nil, err
 	}
 	p.optionalSemicolon()
-	return &ExternalDecl{Kind: "template:external", Pos: positionAt(p.source, start), Name: name, Async: async, Parameters: params, Result: result}, nil
+	return &ExternalDecl{Kind: "template:external", Pos: positionAt(p.source, start), Name: name, Async: async, Live: live, Parameters: params, Result: result}, nil
 }
 
 func (p *moduleParser) parseTemplateDecl(root RootDeclaration, exported bool, start int, annotations []Annotation) (*TemplateDecl, error) {

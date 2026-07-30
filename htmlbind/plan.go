@@ -14,6 +14,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strconv"
+	"time"
 )
 
 // Op is one instruction of a render plan. P is the parameter struct of the
@@ -48,6 +50,16 @@ type Plan[P any] struct {
 	// the client runtime that applies settled boundaries, instead of that
 	// decision being made for it inside the render entry points.
 	HasAwaitBlock bool
+	// HasLiveBlock reports whether this component, or any component it calls,
+	// owns a live boundary. It is computed over the call graph exactly as
+	// HasAwaitBlock is.
+	//
+	// A live boundary is also an await boundary as far as the client runtime is
+	// concerned, so HasAwaitBlock is true wherever this is. The separate flag
+	// exists because a caller decides two different things: whether a response
+	// needs the runtime that applies boundaries, and whether this screen has
+	// anything that will keep updating after the document finishes.
+	HasLiveBlock bool
 	// Check rejects parameters this component cannot render, before it writes
 	// anything. Generation emits it for a required async parameter, whose
 	// absence has to be reported while the response can still carry an error
@@ -124,6 +136,7 @@ type Fragment struct {
 	head        []string
 	headSources []string
 	hasAwait    bool
+	hasLive     bool
 	validate    func() error
 	render      func(*Renderer) error
 }
@@ -134,6 +147,7 @@ func Bind[P any](plan *Plan[P], params P) Fragment {
 		head:        plan.Head,
 		headSources: plan.HeadSources,
 		hasAwait:    plan.HasAwaitBlock,
+		hasLive:     plan.HasLiveBlock,
 		render:      func(r *Renderer) error { return plan.Exec(r, params) },
 	}
 	if plan.Check != nil {
@@ -179,6 +193,16 @@ func (f Fragment) HeadSources() []string { return f.headSources }
 // ordinary document, layout, and page shape.
 func (f Fragment) HasAwaitBlock() bool { return f.hasAwait }
 
+// HasLiveBlock reports whether rendering this fragment can open a live
+// boundary: a region the server keeps re-rendering after the document has
+// finished. It follows the same rules as HasAwaitBlock, including that a
+// fragment arriving through a parameter is counted by whoever holds it.
+//
+// A caller reads it to decide whether this screen is worth a live request at
+// all. A document whose render owns no live boundary will never produce another
+// delivery, so asking for one costs a page execution and returns nothing.
+func (f Fragment) HasLiveBlock() bool { return f.hasLive }
+
 // Renderer is the coordinator walking plans. It owns the output stream and the
 // merged head, so instructions never touch either directly.
 type Renderer struct {
@@ -189,6 +213,43 @@ type Renderer struct {
 	// async is set only by the streaming render entries. When it is nil an
 	// await boundary blocks and renders its settled subtree in place.
 	async *asyncCoordinator
+	// idPrefix and idCount name boundary placeholders by their position in the
+	// render tree rather than by when they happened to be allocated.
+	//
+	// Each boundary's subtree is its own namespace, so rendering that subtree
+	// again — which is what a live boundary does on every delivery — hands out
+	// the same identifiers instead of new ones. Without that a long-lived
+	// subscription would mint a placeholder per delivery forever, and a client
+	// would accumulate ones nothing will ever replace.
+	//
+	// It also makes a nested boundary's id independent of the order sibling
+	// boundaries happen to settle in, which is what lets the same chain,
+	// executed again for a reconnect, address the placeholders already on
+	// screen.
+	//
+	// The counter is only ever touched by the one goroutine rendering its
+	// subtree, so it needs no lock.
+	idPrefix string
+	idCount  *int
+	// boundaryCtx bounds work started while rendering this subtree. A live
+	// boundary gives each delivery its own, so the previous delivery's nested
+	// boundaries are cancelled before their placeholders are reused.
+	boundaryCtx context.Context
+}
+
+// nextBoundaryID allocates the next placeholder identifier in this subtree's
+// namespace.
+func (r *Renderer) nextBoundaryID() string {
+	if r.idCount == nil {
+		count := 0
+		r.idCount = &count
+	}
+	*r.idCount++
+	prefix := r.idPrefix
+	if prefix == "" {
+		prefix = "tb"
+	}
+	return prefix + "-" + strconv.Itoa(*r.idCount)
 }
 
 // context returns the context this render runs under. The async entries take
@@ -205,10 +266,40 @@ func (r *Renderer) context() context.Context {
 }
 
 // buffered returns a renderer writing into w and sharing this render's merged
-// head, options, and boundary coordinator. A boundary opened while rendering a
-// completed boundary's subtree therefore streams like any other.
+// head, options, boundary coordinator, and identifier namespace.
 func (r *Renderer) buffered(w io.Writer) *Renderer {
-	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async}
+	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async,
+		idPrefix: r.idPrefix, idCount: r.idCount, boundaryCtx: r.boundaryCtx}
+}
+
+// subtree returns a renderer for one boundary's contents: it writes into w and
+// opens a fresh identifier namespace under that boundary's id, so the same
+// subtree rendered again produces the same placeholders.
+//
+// ctx bounds whatever that subtree starts. A live boundary passes a new one per
+// delivery so the previous delivery's nested boundaries stop before their
+// identifiers are handed out again; a settle-once boundary passes its own.
+func (r *Renderer) subtree(w io.Writer, id string, ctx context.Context) *Renderer {
+	count := 0
+	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async,
+		idPrefix: id, idCount: &count, boundaryCtx: ctx}
+}
+
+// boundaryContext returns the context bounding work this subtree starts.
+func (r *Renderer) boundaryContext() context.Context {
+	if r.boundaryCtx != nil {
+		return r.boundaryCtx
+	}
+	return r.context()
+}
+
+// boundaryTimeout returns the configured per-boundary deadline, or zero when
+// the caller set none.
+func (r *Renderer) boundaryTimeout() time.Duration {
+	if r.opts == nil {
+		return 0
+	}
+	return r.opts.timeout
 }
 
 // reportError hands a failure to the caller's reporter. It is how a normalized

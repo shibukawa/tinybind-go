@@ -15,6 +15,7 @@ type Wrapper struct {
 	head        []string
 	headSources []string
 	hasAwait    bool
+	hasLive     bool
 	validate    func() error
 	render      func(*Renderer, Fragment) error
 }
@@ -35,6 +36,7 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 		head:        plan.Head,
 		headSources: plan.HeadSources,
 		hasAwait:    plan.HasAwaitBlock,
+		hasLive:     plan.HasLiveBlock,
 		render: func(r *Renderer, children Fragment) error {
 			local := params
 			setChildren(&local, children)
@@ -63,6 +65,10 @@ func (w Wrapper) HeadSources() []string { return w.headSources }
 // bound before it is told what it wraps.
 func (w Wrapper) HasAwaitBlock() bool { return w.hasAwait }
 
+// HasLiveBlock reports whether rendering this wrapper can open a live boundary.
+// It is the Wrapper form of the accessor documented on Fragment.
+func (w Wrapper) HasLiveBlock() bool { return w.hasLive }
+
 // ErrNoLeaf reports a chain assembled without an innermost component.
 var ErrNoLeaf = errors.New("htmlbind: chain needs a leaf component")
 
@@ -79,6 +85,9 @@ type renderOptions struct {
 	report      func(error)
 	timeout     time.Duration
 	concurrency int
+	// live keeps live subscriptions open instead of taking one delivery and
+	// unsubscribing. Only the live render entries set it.
+	live bool
 }
 
 // WithCache supplies the store used by components declared with the cache
@@ -211,6 +220,13 @@ func RenderAsync(ctx context.Context, w io.Writer, leaf Fragment, options ...Opt
 // The sequence is single-use and single-consumer. Stopping the range early ends
 // the render without waiting for the outstanding boundaries.
 func RenderChainAsync(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) iter.Seq2[Content, error] {
+	return renderStreaming(ctx, w, wrappers, leaf, options)
+}
+
+// renderStreaming is the body shared by the async and live entries. The only
+// difference between them is whether the options keep live boundaries
+// subscribed, which the coordinator reads.
+func renderStreaming(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf Fragment, options []Option) iter.Seq2[Content, error] {
 	return func(yield func(Content, error) bool) {
 		composed, head, err := assemble(wrappers, leaf)
 		if err != nil {
@@ -276,6 +292,7 @@ func assemble(wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []strin
 		wrapper, inner := wrappers[i], next
 		next = Fragment{
 			hasAwait: wrapper.hasAwait || inner.hasAwait,
+			hasLive:  wrapper.hasLive || inner.hasLive,
 			render:   func(r *Renderer) error { return wrapper.render(r, inner) },
 		}
 	}
@@ -338,4 +355,67 @@ func HasAwaitBlock(wrappers []Wrapper, leaf Fragment) bool {
 		}
 	}
 	return leaf.hasAwait
+}
+
+// HasLiveBlock reports whether any member of a chain can open a live boundary.
+//
+// It answers a different question from HasAwaitBlock. That one decides whether
+// this response needs the client runtime that applies boundaries at all; this
+// one decides whether the screen will keep changing once the document has
+// finished, and so whether a live request is worth issuing. A document with
+// await boundaries and no live ones is complete when its sequence ends.
+func HasLiveBlock(wrappers []Wrapper, leaf Fragment) bool {
+	for _, wrapper := range wrappers {
+		if wrapper.hasLive {
+			return true
+		}
+	}
+	return leaf.hasLive
+}
+
+// WithLiveSubscriptions keeps live boundaries subscribed instead of taking one
+// delivery and unsubscribing. RenderChainLive sets it; it is exported so a
+// caller assembling its own options can be explicit about which behaviour it is
+// asking for.
+func WithLiveSubscriptions() Option {
+	return func(o *renderOptions) { o.live = true }
+}
+
+// RenderLive renders one component and keeps yielding its live boundaries'
+// deliveries.
+func RenderLive(ctx context.Context, w io.Writer, leaf Fragment, options ...Option) iter.Seq2[Content, error] {
+	return RenderChainLive(ctx, w, nil, leaf, options...)
+}
+
+// RenderChainLive renders a composed document to w and yields one Content per
+// delivery, for as long as the live boundaries keep producing.
+//
+// It is RenderChainAsync with one difference: a live boundary stays subscribed.
+// The returned sequence therefore does not end when the await boundaries have
+// settled. It ends when every live source has ended, when the consumer stops
+// ranging, or when ctx is cancelled — which is the shape a screen that updates
+// on the server's clock needs, and the reason the entry is named for the
+// subscription rather than for the transport carrying it.
+//
+// Pass io.Discard as w to run the render for its deliveries alone. The document
+// bytes are still produced, because evaluating a live clause's source arguments
+// means executing the component that holds them, but nothing is transferred.
+// Boundary ids are allocated in render order, so the same chain rendered again
+// for the same request produces the same ids as the document render did, and a
+// client can address the placeholders already on its screen without being told
+// what they are.
+//
+// Everything else matches RenderChainAsync: rendering starts on the first pull,
+// only the ranging caller writes the response, and the framing around each
+// Content is the caller's to choose. Deliveries from two boundaries interleave
+// in completion order and carry no ordering guarantee between them.
+//
+// A source that keeps producing while nobody reads is not a problem here: the
+// sequence pulls, so the source blocks in its own yield until this boundary is
+// ready for the next value. A fast source misses ticks rather than filling a
+// queue.
+//
+// The sequence is single-use and single-consumer.
+func RenderChainLive(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) iter.Seq2[Content, error] {
+	return renderStreaming(ctx, w, wrappers, leaf, append([]Option{WithLiveSubscriptions()}, options...))
 }

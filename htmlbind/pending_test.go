@@ -102,6 +102,10 @@ func TestPendingPrefersASettledResultOverACancelledContext(t *testing.T) {
 }
 
 func TestPendingTurnsAPanicIntoTheError(t *testing.T) {
+	if !panicRecovery {
+		t.Log("recover does not run on this target, so a panicking worker ends the program instead")
+		return
+	}
 	value := Go(context.Background(), func(context.Context) (int, error) {
 		panic("nil map write")
 	})
