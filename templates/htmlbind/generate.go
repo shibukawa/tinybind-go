@@ -36,6 +36,13 @@ type GenerateOptions struct {
 	// A reference with no entry here is a compile error, so a template naming a
 	// handler nobody resolved never silently emits a dead element.
 	ServerActions map[string]string
+	// ServerActionResolver answers a name ServerActions does not hold. It is what
+	// lets a framework address a handler from its own route table, for a template
+	// that sits outside the tree route discovery walks.
+	//
+	// The map wins, so configuring a resolver cannot retarget an action a
+	// discovered package already declares.
+	ServerActionResolver func(name string) (url string, ok bool)
 	// ServerActionAttr is the attribute the lowering writes. Empty uses
 	// [DefaultActionAttr]. A framework driving an existing client library points
 	// it at that library's vocabulary, such as hx-post.
@@ -103,8 +110,11 @@ type goEmitter struct {
 	checks []string
 	// actions and actionAttr mirror the ServerActions and ServerActionAttr
 	// options, which together decide what a server-action attribute lowers to.
-	actions    map[string]string
-	actionAttr string
+	// resolveAction mirrors ServerActionResolver and answers what actions does
+	// not hold.
+	actions       map[string]string
+	resolveAction func(string) (string, bool)
+	actionAttr    string
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
@@ -112,6 +122,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 		c:                c,
 		contextExternals: options.ContextExternals,
 		actions:          options.ServerActions,
+		resolveAction:    options.ServerActionResolver,
 		actionAttr:       options.ServerActionAttr,
 	}
 	if e.actionAttr == "" {

@@ -27,6 +27,7 @@ input_rule:
     check: a missing, reordered, or extra leading path parameter is a generation error naming the route and the declaration
     reason: position carries the mapping, so no per-parameter annotation is needed
   query_tail: every remaining parameter is a query parameter, keyed by its own name
+  optional_query: requirement:optional-query-parameter spells one as a pointer, closing the question of how an always-present Go parameter expresses an absent value
   types:
     allowed: scalars the generated decoder can bind, per requirement:typed-html-route-parameters
     rejected: a struct or other complex type is a generation error, because a page input is a URL value and a URL carries no object
@@ -78,7 +79,7 @@ customization:
     template_pattern: requirement:configurable-template-file-patterns already covers the template file glob
     component_name: the reserved page component name, defaulting to Page
     function_name: the reserved Go function name, defaulting to Page
-    render_call: the composer and render entry a generated handler emits, so a framework can substitute its own
+    render_call: the composer and render entry a generated handler emits, so a framework can substitute its own, through the render block and composer entry settings of requirement:framework-render-entry
     bind_call: the binding operation used for path and query decoding, through the existing Calls pattern set
     error_call: the error response operation, so a framework's own writer is used
     generated_suffix: the generated file naming, per requirement:per-source-generation-artifacts
@@ -109,6 +110,5 @@ acceptance:
 open_questions:
   - whether a typed Page may take a leading context.Context before the path parameters
   - whether a layout has the same ladder or only the first two rungs
-  - how an optional query parameter is spelled, given that a Go parameter is always present
   - whether the generator can scaffold a rung 2 file from a rung 1 template
 ```

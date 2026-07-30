@@ -218,6 +218,113 @@ func TestRegistryRepointsSymbols(t *testing.T) {
 	}
 }
 
+func TestRegistryRenderBlockReceivesTheRequest(t *testing.T) {
+	e := NewEmitter()
+	if err := e.Parse(TemplateRender, frameworkRenderBlock); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	layout := Layout{RelDir: "", Package: "pages", ImportPath: "example.com/m/pages", File: "pages/layout.tb.html"}
+	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil, layout)
+
+	source := registry(t, e, &Tree{Routes: []Route{about}}, []Analysis{analysis},
+		map[string]ComponentSignature{"": slotOnly("Layout")})
+
+	// The request is already in scope in a generated handler, so an override
+	// reaches it with no setting at all. This is the whole reason the block
+	// exists: the error entry took (w, r) and the render entry could not.
+	mustContain(t, source,
+		"if err := web.WriteHTML(w, r, wrappers, about.Page(params)); err != nil {",
+		"httpbind.WriteError(w, r, err)",
+	)
+	if strings.Contains(source, "htmlbind.RenderChain") {
+		t.Errorf("the default render call survived the override:\n%s", source)
+	}
+}
+
+func TestRegistryRenderBlockSeesNoChainWithoutLayouts(t *testing.T) {
+	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil)
+	tree := &Tree{Routes: []Route{about}}
+
+	// An entry that always takes a chain reads Chain, which is nil for a page
+	// with no ancestor layout, so the override needs no branch of its own.
+	chained := NewEmitter()
+	if err := chained.Parse(TemplateRender, frameworkRenderBlock); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	mustContain(t, registry(t, chained, tree, []Analysis{analysis}, nil),
+		"web.WriteHTML(w, r, nil, about.Page(params))")
+
+	// An override that would rather branch reads Wrappers, which is empty here.
+	branching := NewEmitter()
+	if err := branching.Parse(TemplateRender, `web.WriteHTML({{ .Writer }}, {{ .Request }}{{ with .Wrappers }}, {{ . }}{{ end }}, {{ .Leaf }})`); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	mustContain(t, registry(t, branching, tree, []Analysis{analysis}, nil),
+		"web.WriteHTML(w, r, about.Page(params))")
+}
+
+func TestRegistryTakesAFrameworkRouter(t *testing.T) {
+	e := NewEmitter()
+	e.Symbols.MuxImport = "example.com/fw/web"
+	e.Symbols.MuxAlias = "web"
+	e.Symbols.MuxType = "web.Router"
+	e.Symbols.MuxConstructor = "web.NewRouter"
+
+	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil)
+	source := registry(t, e, &Tree{Routes: []Route{about}}, []Analysis{analysis}, nil)
+
+	mustContain(t, source,
+		"func Register(mux web.Router,",
+		"func NewServeMux(options ...htmlbind.Option) web.Router",
+		"mux := web.NewRouter()",
+		`"example.com/fw/web"`,
+		// The handler body still declares the stdlib request pair, so moving the
+		// router does not move the request package with it.
+		`"net/http"`,
+		"func(w http.ResponseWriter, r *http.Request)",
+	)
+}
+
+func TestRegistryOmitsTheRequestImportWhenNoHandlerIsGenerated(t *testing.T) {
+	e := NewEmitter()
+	e.Symbols.MuxImport = "example.com/fw/web"
+	e.Symbols.MuxAlias = "web"
+	e.Symbols.MuxType = "web.Router"
+	e.Symbols.MuxConstructor = "web.NewRouter"
+
+	route := Route{
+		Path: "/stream", RelDir: "stream", Package: "stream",
+		ImportPath: "example.com/m/pages/stream",
+		PageFile:   "pages/stream/page.tb.html",
+	}
+	analysis := Analysis{Route: route, Page: &PageFunc{Rung: RungHandlerPage}}
+
+	source := registry(t, e, &Tree{Routes: []Route{route}}, []Analysis{analysis}, nil)
+	// A raw handler owns its response, so nothing in this registry names Request;
+	// importing it anyway would not compile.
+	if strings.Contains(source, `"net/http"`) {
+		t.Errorf("unused request import emitted:\n%s", source)
+	}
+}
+
+func TestRegistryOmitsTheConstructorWithoutOne(t *testing.T) {
+	e := NewEmitter()
+	e.Symbols.MuxType = "web.Router"
+	e.Symbols.MuxConstructor = ""
+	e.Symbols.MuxImport = "example.com/fw/web"
+	e.Symbols.MuxAlias = "web"
+
+	about, analysis := templateOnly("/about", "about", "about", "example.com/m/pages/about", nil, nil)
+	source := registry(t, e, &Tree{Routes: []Route{about}}, []Analysis{analysis}, nil)
+
+	mustContain(t, source, "func Register(mux web.Router,")
+	// A router needing arguments cannot be built by generated code, so the
+	// constructor is left out rather than emitted broken.
+	if strings.Contains(source, "func NewServeMux(") {
+		t.Errorf("constructor emitted without a constructor symbol:\n%s", source)
+	}
+}
+
 func TestRegistryTemplateIsReplaceable(t *testing.T) {
 	e := NewEmitter()
 	if err := e.Parse(TemplateRegistry, `{{ .Header }}

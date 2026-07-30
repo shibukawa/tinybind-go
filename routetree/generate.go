@@ -40,6 +40,11 @@ type GenerateOptions struct {
 	ComponentSuffix string
 	DecoderOutput   string
 	RegistryOutput  string
+	// ActionResolver supplies the endpoint URL of a server action this tree does
+	// not declare, so a framework can address a handler from its own route table.
+	// A handler exported by the template's own route package always wins, which is
+	// what keeps a resolver from silently retargeting a discovered action.
+	ActionResolver func(name string) (url string, ok bool)
 }
 
 // Generate discovers the tree and emits every file it needs: the compiled
@@ -112,7 +117,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 			}
 			layoutSignatures[layout.RelDir] = signature
 			discoverActions(filepath.Dir(layout.File), layout.RelDir, layout.Package, layout.ImportPath)
-			source, err := compileTemplate(layout.File, layout.Package, emitter, actionsByDir[layout.RelDir])
+			source, err := compileTemplate(layout.File, layout.Package, emitter, actionsByDir[layout.RelDir], options.ActionResolver)
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -133,7 +138,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 
 		pagePath := componentPath(route.PageFile, componentSuffix)
 		if !alreadyEmitted(out, pagePath) {
-			source, err := compileTemplate(route.PageFile, route.Package, emitter, actionsByDir[route.RelDir])
+			source, err := compileTemplate(route.PageFile, route.Package, emitter, actionsByDir[route.RelDir], options.ActionResolver)
 			if err != nil {
 				errs = append(errs, err)
 			} else {
@@ -184,15 +189,16 @@ func componentPath(templatePath, suffix string) string {
 	return filepath.Join(filepath.Dir(templatePath), base+suffix)
 }
 
-func compileTemplate(path, pkg string, emitter *Emitter, actions []Action) ([]byte, error) {
+func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, resolver func(string) (string, bool)) ([]byte, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	return htmlbind.Generate(path, source, htmlbind.GenerateOptions{
-		Package:          pkg,
-		ServerActions:    actionURLs(actions),
-		ServerActionAttr: emitter.ActionAttr,
+		Package:              pkg,
+		ServerActions:        actionURLs(actions),
+		ServerActionResolver: resolver,
+		ServerActionAttr:     emitter.ActionAttr,
 	})
 }
 

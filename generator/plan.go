@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/shibukawa/tinybind-go/internal/gensource"
 	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
@@ -202,7 +203,10 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 			base == "httpbind_gen.go" ||
 			base == "httpbind_openapi_gen.go" ||
 			base == "tinybind_gen.go" ||
-			base == "tinybind_openapi_gen.go" {
+			base == "tinybind_openapi_gen.go" ||
+			// Nothing this tool wrote is an input to what it reads, whatever the
+			// output file was named.
+			gensource.IsGenerated(f) {
 			continue
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)

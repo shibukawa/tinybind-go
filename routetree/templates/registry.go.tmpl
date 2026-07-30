@@ -12,7 +12,7 @@ package {{ .Package }}
 //
 // Options are passed to the runtime on each render, so a caller supplies its
 // per-request cache, timeout, and error hook here.
-func {{ .RegisterFunc }}(mux *{{ .Symbols.HTTPAlias }}.ServeMux, options ...{{ .Symbols.RuntimeAlias }}.Option) {
+func {{ .RegisterFunc }}(mux {{ .Symbols.MuxType }}, options ...{{ .Symbols.RuntimeAlias }}.Option) {
 {{- range .Routes }}
 	mux.HandleFunc({{ .Pattern | quote }}, {{ template "handler" dict "Route" . "Top" $ }})
 {{- end }}
@@ -26,12 +26,14 @@ func {{ .RegisterFunc }}(mux *{{ .Symbols.HTTPAlias }}.ServeMux, options ...{{ .
 {{- end }}
 }
 
-// {{ .MuxFunc }} returns a ServeMux carrying every discovered route.
-func {{ .MuxFunc }}(options ...{{ .Symbols.RuntimeAlias }}.Option) *{{ .Symbols.HTTPAlias }}.ServeMux {
-	mux := {{ .Symbols.HTTPAlias }}.NewServeMux()
+{{ if .Symbols.MuxConstructor }}
+// {{ .MuxFunc }} returns a router carrying every discovered route.
+func {{ .MuxFunc }}(options ...{{ .Symbols.RuntimeAlias }}.Option) {{ .Symbols.MuxType }} {
+	mux := {{ .Symbols.MuxConstructor }}()
 	{{ .RegisterFunc }}(mux, options...)
 	return mux
 }
+{{ end }}
 
 // {{ .TableVar }} lists what the filesystem knows about each route, so a
 // framework can build a sitemap or an inspector without a metadata format.
@@ -113,14 +115,10 @@ func(w {{ $t.Symbols.HTTPAlias }}.ResponseWriter, r *{{ $t.Symbols.HTTPAlias }}.
 			}),
 {{- end }}
 		}
-		if err := {{ $t.Symbols.RuntimeAlias }}.RenderChain(w, wrappers, {{ $r.Selector }}Page(params), options...); err != nil {
-			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
-		}
-{{- else }}
-		if err := {{ $t.Symbols.RuntimeAlias }}.Render(w, {{ $r.Selector }}Page(params), options...); err != nil {
-			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
-		}
 {{- end }}
+		if err := {{ template "render" ($t.Render $r) }}; err != nil {
+			{{ $t.Symbols.ErrorAlias }}.WriteError(w, r, err)
+		}
 	}
 {{- end }}
 {{- end }}

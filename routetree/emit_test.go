@@ -70,6 +70,57 @@ func TestEmitDecoderPathAndQuery(t *testing.T) {
 	)
 }
 
+func TestEmitDecoderBindsAnOptionalQueryParameter(t *testing.T) {
+	source := emit(t, decoderRoute("/list", "list"), []Value{{Name: "page", Type: "*int"}})
+
+	mustContain(t, source,
+		"Page *int",
+		`if raw := query.Get("page"); raw != ""`,
+		"strconv.Atoi(raw)",
+		"value := v",
+		"out.Page = &value",
+		// The diagnostic names the scalar the value failed to be, not the pointer.
+		`Message: "query parameter page is not a valid int"`,
+	)
+}
+
+func TestEmitDecoderBindsAnOptionalStringQueryParameter(t *testing.T) {
+	source := emit(t, decoderRoute("/list", "list"), []Value{{Name: "q", Type: "*string"}})
+
+	mustContain(t, source, "Q *string", "value := raw", "out.Q = &value")
+	if strings.Contains(source, "strconv") {
+		t.Errorf("optional string decoder imports strconv:\n%s", source)
+	}
+}
+
+func TestEmitDecoderNarrowsAnOptionalSizedInteger(t *testing.T) {
+	source := emit(t, decoderRoute("/list", "list"), []Value{{Name: "limit", Type: "*int32"}})
+
+	mustContain(t, source, "Limit *int32", "strconv.ParseInt(raw, 10, 32)", "value := int32(v)", "out.Limit = &value")
+}
+
+func TestEmitDecoderRejectsAnOptionalPathParameter(t *testing.T) {
+	route := decoderRoute("/users/{id}", "id_", dyn("id"))
+	_, err := EmitDecoder(route, []Value{{Name: "id", Type: "*string"}})
+	if err == nil {
+		t.Fatal("optional path parameter accepted, want rejection")
+	}
+	if !strings.Contains(err.Error(), "always present") {
+		t.Errorf("error = %v, want it to say why a segment cannot be optional", err)
+	}
+}
+
+func TestEmitDecoderRejectsAnOptionalCatchAll(t *testing.T) {
+	route := decoderRoute("/files/{rest...}", "rest__", catchAll("rest"))
+	_, err := EmitDecoder(route, []Value{{Name: "rest", Type: "*string"}})
+	if err == nil {
+		t.Fatal("optional catch-all accepted, want rejection")
+	}
+	if !strings.Contains(err.Error(), "empty remainder") {
+		t.Errorf("error = %v, want it to name the catch-all reason", err)
+	}
+}
+
 func TestEmitDecoderStringOnlyRouteSkipsStrconv(t *testing.T) {
 	route := decoderRoute("/users/{id}", "id_", dyn("id"))
 	source := emit(t, route, []Value{{Name: "id", Type: "string"}})

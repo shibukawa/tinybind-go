@@ -12,7 +12,7 @@ package {{ .Package }}
 //
 // route supplies the values scoped layouts declare; params supplies the page's
 // own inputs. Options are passed through to the runtime unchanged.
-func {{ .RenderFunc }}(w io.Writer, route {{ .ParamsType }}, params {{ .Component }}Params, options ...{{ .Symbols.RuntimeAlias }}.Option) error {
+func {{ .RenderFunc }}(w {{ .WriterType }}{{ if .RequestParam }}, {{ .RequestParam }} *{{ .Symbols.HTTPAlias }}.Request{{ end }}, route {{ .ParamsType }}, params {{ .Component }}Params, options ...{{ .Symbols.RuntimeAlias }}.Option) error {
 {{- if .Layouts }}
 	wrappers := []{{ .Symbols.RuntimeAlias }}.Wrapper{
 {{- range .Layouts }}
@@ -23,11 +23,11 @@ func {{ .RenderFunc }}(w io.Writer, route {{ .ParamsType }}, params {{ .Componen
 		}),
 {{- end }}
 	}
-	return {{ .Symbols.RuntimeAlias }}.RenderChain(w, wrappers, {{ .Component }}(params), options...)
+	return {{ template "render" .Render }}
 {{- else }}
 	// No ancestor layout declares a wrapper, so the page renders on its own.
 	_ = route
-	return {{ .Symbols.RuntimeAlias }}.Render(w, {{ .Component }}(params), options...)
+	return {{ template "render" .Render }}
 {{- end }}
 }
 

@@ -428,6 +428,16 @@ package the template belongs to, and hand the answers back through
 `ServerActions`. A reference you leave unresolved is a compile error rather than
 a silently dead element.
 
+`ServerActionResolver` answers what the map does not hold, for a name you would
+rather resolve on demand than enumerate:
+
+```go
+	ServerActionResolver: func(name string) (string, bool) { ... },
+```
+
+The map wins over the resolver, so adding one cannot retarget a name you already
+supplied, and the unresolved-name diagnostic names both sources once it is set.
+
 The lowering is deliberately thin. `server-action` becomes one attribute carrying
 the URL, and every other attribute on that element survives unread — which is
 what leaves `data-target`, `hx-swap`, or anything else to mean whatever your

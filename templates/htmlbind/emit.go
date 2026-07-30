@@ -444,9 +444,18 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 func (e *goEmitter) emitServerAction(p *planEmitter, attribute Attribute) error {
 	name, _ := staticAttributeText(attribute)
 	url, ok := e.actions[name]
+	if !ok && e.resolveAction != nil {
+		url, ok = e.resolveAction(name)
+	}
 	if !ok {
-		return e.c.error(attribute.Pos, "no server action was resolved for "+quoteName(name)+
-			"; it must be an exported handler in the Go package beside this template")
+		where := "it must be an exported handler in the Go package beside this template"
+		if e.resolveAction != nil {
+			// With a resolver configured the handler may legitimately live
+			// anywhere, so the message names both sources rather than asserting
+			// the one that happens to be built in.
+			where = "no exported handler in the Go package beside this template declares it, and the configured resolver did not answer for it"
+		}
+		return e.c.error(attribute.Pos, "no server action was resolved for "+quoteName(name)+"; "+where)
 	}
 	p.static(" " + e.actionAttr + `="` + escapeAttributeValue(url) + `"`)
 	return nil

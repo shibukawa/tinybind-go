@@ -81,6 +81,34 @@ var scalarTypes = map[string]bool{
 	"float32": true, "float64": true,
 }
 
+// bindableType splits a declared input type into the scalar a decoder parses and
+// whether it arrives as a pointer.
+//
+// A pointer is how an optional query parameter tells an absent value from a zero
+// one, which a Go parameter cannot otherwise express. It is also what the
+// template language already generates for an optional declaration such as
+// `page: int?`, so the spelling is the compiler's rather than this package's.
+func bindableType(declared string) (base string, optional bool, ok bool) {
+	base = declared
+	if rest, found := strings.CutPrefix(base, "*"); found {
+		base, optional = rest, true
+	}
+	return base, optional, scalarTypes[base]
+}
+
+// optionalPathError explains why an optional path parameter is rejected. A
+// single dynamic segment is always present when the route matches at all, and a
+// catch-all legally matches an empty remainder, so neither has an absent value
+// to report.
+func optionalPathError(name, declared string, catchAll bool) string {
+	if catchAll {
+		return fmt.Sprintf("path parameter %q has type %s; a catch-all matches an empty remainder rather than being absent, so it binds a string",
+			name, declared)
+	}
+	return fmt.Sprintf("path parameter %q has type %s; a dynamic segment is always present when the route matches, so only a query parameter can be optional",
+		name, declared)
+}
+
 // InspectLogic reads one page.go and classifies its Page declaration. An empty
 // path, or a file declaring no Page, yields RungTemplateOnly.
 func InspectLogic(path string) (*PageFunc, error) {
@@ -152,13 +180,18 @@ func Validate(route Route, fn *PageFunc, componentParams []Value) []error {
 		}
 	}
 	for i, param := range fn.Params {
-		if !scalarTypes[param.Type] {
+		_, optional, ok := bindableType(param.Type)
+		if !ok {
 			kind := "query parameter"
 			if i < len(route.Params) {
 				kind = "path parameter"
 			}
 			fail("%s %q has type %s; a page input must be a scalar the decoder can bind from a URL",
 				kind, param.Name, param.Type)
+			continue
+		}
+		if optional && i < len(route.Params) {
+			fail("%s", optionalPathError(param.Name, param.Type, route.Params[i].Kind == CatchAllSegment))
 		}
 	}
 

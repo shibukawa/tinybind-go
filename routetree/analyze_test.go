@@ -85,6 +85,36 @@ export component Page(id: string, user: User): html { <p>{user.name}</p> }
 	}
 }
 
+func TestAnalyzeTemplateOnlyAcceptsAnOptionalQueryParameter(t *testing.T) {
+	route := routeDir(t, map[string]string{
+		"users/id_/page.tb.html": `export component Page(id: string, page: int?): html { <p>{id}</p> }`,
+	}, "/users/{id}")
+
+	analysis, err := Analyze(route)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	// The optional marker already lowers to a pointer in the generated parameter
+	// struct, so the decoder binds the same type the component declares.
+	if got := analysis.Inputs[1].Type; got != "*int" {
+		t.Errorf("query input type = %q, want *int", got)
+	}
+}
+
+func TestAnalyzeTemplateOnlyRejectsAnOptionalPathParameter(t *testing.T) {
+	route := routeDir(t, map[string]string{
+		"users/id_/page.tb.html": `export component Page(id: string?): html { <p>x</p> }`,
+	}, "/users/{id}")
+
+	_, err := Analyze(route)
+	if err == nil {
+		t.Fatal("optional path parameter accepted, want rejection")
+	}
+	if !strings.Contains(err.Error(), "always present") {
+		t.Errorf("error = %v, want it to say why a segment cannot be optional", err)
+	}
+}
+
 func TestAnalyzeTypedPageUsesFunctionParameters(t *testing.T) {
 	route := routeDir(t, map[string]string{
 		"users/id_/page.tb.html": `
@@ -297,6 +327,45 @@ func TestGenerateEmitsEveryFileForATree(t *testing.T) {
 		if !byBase[want] {
 			t.Errorf("no %s emitted; got %v", want, byBase)
 		}
+	}
+}
+
+func TestGenerateAsksTheResolverForAnActionTheTreeDoesNotDeclare(t *testing.T) {
+	root := tree(t, map[string]string{
+		"page.tb.html": `export component Page(): html { <button server-action="Publish">go</button> }`,
+	})
+
+	asked := ""
+	files, err := Generate(GenerateOptions{
+		Config: Config{Root: root, ImportBase: "example.com/m/pages"},
+		ActionResolver: func(name string) (string, bool) {
+			asked = name
+			return "/app/publish", true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if asked != "Publish" {
+		t.Errorf("resolver asked for %q, want Publish", asked)
+	}
+	found := false
+	for _, file := range files {
+		if strings.Contains(string(file.Source), "/app/publish") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the resolved URL reached no generated file")
+	}
+}
+
+func TestGenerateWithoutAResolverStillRejectsAnUnknownAction(t *testing.T) {
+	root := tree(t, map[string]string{
+		"page.tb.html": `export component Page(): html { <button server-action="Publish">go</button> }`,
+	})
+	if _, err := Generate(GenerateOptions{Config: Config{Root: root}}); err == nil {
+		t.Fatal("unresolved action accepted, want rejection")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"sort"
 	"strings"
 )
 
@@ -71,6 +72,23 @@ type RegistryModel struct {
 	Symbols        Symbols
 }
 
+// Render describes the render call of one route's generated handler, which the
+// registry template hands to the [TemplateRender] block. The request is always
+// in scope here, so an override reaches it without any setting.
+func (m RegistryModel) Render(route RegistryRoute) RenderCall {
+	call := RenderCall{
+		Writer:  "w",
+		Request: "r",
+		Leaf:    route.Selector + PageComponentName + "(params)",
+		Options: "options",
+		Symbols: m.Symbols,
+	}
+	if len(route.Layouts) > 0 {
+		call.Wrappers = "wrappers"
+	}
+	return call
+}
+
 // Registry renders the integrated ServeMux for a whole tree, into the route
 // root package.
 //
@@ -117,8 +135,13 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 	}
 
 	aliases := newAliasSet(rootPackage)
-	imports := []Import{{Path: e.Symbols.HTTPImport, Alias: aliasFor(e.Symbols.HTTPImport, e.Symbols.HTTPAlias)}}
-	runtimeGroup := true
+	// The route packages and the runtime are collected apart from the standard
+	// library head, because whether the request package belongs in that head is
+	// not known until every route has been read: only a generated handler body
+	// names ResponseWriter and Request, so a tree of nothing but raw handlers
+	// imports the router alone.
+	var tail []Import
+	needsRequest := false
 	addImport := func(path, preferred string) string {
 		if path == "" {
 			// Without an ImportBase there is nothing to import; the symbol is
@@ -130,13 +153,12 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		if alias == rootPackage && preferred == rootPackage {
 			return ""
 		}
-		for _, existing := range imports {
+		for _, existing := range tail {
 			if existing.Path == path {
 				return alias + "."
 			}
 		}
-		imports = append(imports, Import{Path: path, Alias: aliasFor(path, alias), Group: runtimeGroup})
-		runtimeGroup = false
+		tail = append(tail, Import{Path: path, Alias: aliasFor(path, alias)})
 		return alias + "."
 	}
 
@@ -162,6 +184,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 			model.Routes = append(model.Routes, entry)
 			continue
 		}
+		needsRequest = true
 
 		fields, callArgs, callResults, err := pageBinding(route, analysis)
 		if err != nil {
@@ -232,14 +255,50 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 	}
 
 	if e.Symbols.ErrorImport != "" {
-		imports = append(imports, Import{Path: e.Symbols.ErrorImport, Alias: aliasFor(e.Symbols.ErrorImport, e.Symbols.ErrorAlias), Group: runtimeGroup})
-		runtimeGroup = false
+		tail = append(tail, Import{Path: e.Symbols.ErrorImport, Alias: aliasFor(e.Symbols.ErrorImport, e.Symbols.ErrorAlias)})
 	}
 	if e.Symbols.RuntimeImport != "" {
-		imports = append(imports, Import{Path: e.Symbols.RuntimeImport, Alias: aliasFor(e.Symbols.RuntimeImport, e.Symbols.RuntimeAlias), Group: runtimeGroup})
+		tail = append(tail, Import{Path: e.Symbols.RuntimeImport, Alias: aliasFor(e.Symbols.RuntimeImport, e.Symbols.RuntimeAlias)})
 	}
-	model.Imports = imports
+	model.Imports = groupImports(e.registryHead(needsRequest), tail)
 	return model, nil
+}
+
+// registryHead lists the standard library packages the registry itself names:
+// the router of every registration, and the request pair a generated handler
+// body declares. The two are separate symbols, so one may move without the
+// other, and the default points both at net/http and emits one line.
+func (e *Emitter) registryHead(needsRequest bool) []Import {
+	var head []Import
+	add := func(path, alias string) {
+		if path == "" {
+			return
+		}
+		for _, existing := range head {
+			if existing.Path == path {
+				return
+			}
+		}
+		head = append(head, Import{Path: path, Alias: aliasFor(path, alias)})
+	}
+	add(e.Symbols.MuxImport, e.Symbols.MuxAlias)
+	if needsRequest {
+		add(e.Symbols.HTTPImport, e.Symbols.HTTPAlias)
+	}
+	sort.Slice(head, func(i, j int) bool { return head[i].Path < head[j].Path })
+	return head
+}
+
+// groupImports concatenates the two import groups, starting a new group at the
+// first entry of the second so the standard library stays separated from the
+// generated packages and the runtime.
+func groupImports(head, tail []Import) []Import {
+	out := append([]Import(nil), head...)
+	for i, entry := range tail {
+		entry.Group = i == 0 && len(head) > 0
+		out = append(out, entry)
+	}
+	return out
 }
 
 // pageBinding works out how the page component's parameter struct is filled.

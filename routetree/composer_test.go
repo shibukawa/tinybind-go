@@ -212,6 +212,88 @@ func TestComposerRepointsTheRuntime(t *testing.T) {
 	}
 }
 
+// The framework entry a render override targets: a writer, a request, the chain,
+// and the leaf, which is the shape Symbols alone could never reach.
+const frameworkRenderBlock = `web.WriteHTML({{ .Writer }}, {{ .Request }}, {{ .Chain }}, {{ .Leaf }})`
+
+func TestComposerRenderBlockIsReplaceable(t *testing.T) {
+	e := NewEmitter()
+	e.RenderRequestParam = "r"
+	if err := e.Parse(TemplateRender, frameworkRenderBlock); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	route := Route{
+		Path:     "/",
+		Package:  "app",
+		PageFile: "app/page.tb.html",
+		Layouts:  []Layout{{RelDir: "", Package: "app", File: "app/layout.tb.html"}},
+	}
+	source, err := e.Composer(route, []ComponentSignature{slotOnly("Layout")})
+	if err != nil {
+		t.Fatalf("Composer: %v", err)
+	}
+	got := string(source)
+	mustContain(t, got,
+		"func Render(w io.Writer, r *http.Request, route RouteParams,",
+		"return web.WriteHTML(w, r, wrappers, Page(params))",
+		`"net/http"`,
+	)
+	if strings.Contains(got, "htmlbind.RenderChain") {
+		t.Errorf("the default render call survived the override:\n%s", got)
+	}
+}
+
+func TestComposerWithoutARequestParameterLeavesItOutOfTheBlock(t *testing.T) {
+	e := NewEmitter()
+	if err := e.Parse(TemplateRender, `web.WriteHTML({{ .Writer }}{{ with .Request }}, {{ . }}{{ end }}, {{ .Leaf }})`); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	source, err := e.Composer(Route{Path: "/x", Package: "x", PageFile: "app/x/page.tb.html"}, nil)
+	if err != nil {
+		t.Fatalf("Composer: %v", err)
+	}
+	got := string(source)
+	// The default composer takes a writer only, so an override must be able to
+	// see that no request is in scope rather than emitting a name that is not.
+	mustContain(t, got, "return web.WriteHTML(w, Page(params))")
+	if strings.Contains(got, `"net/http"`) {
+		t.Errorf("request package imported without a request parameter:\n%s", got)
+	}
+}
+
+func TestComposerTakesAConfiguredWriterType(t *testing.T) {
+	e := NewEmitter()
+	e.RenderWriterType = "http.ResponseWriter"
+
+	source, err := e.Composer(Route{Path: "/x", Package: "x", PageFile: "app/x/page.tb.html"}, nil)
+	if err != nil {
+		t.Fatalf("Composer: %v", err)
+	}
+	got := string(source)
+	mustContain(t, got, "func Render(w http.ResponseWriter, route RouteParams,", `"net/http"`)
+	// The writer no longer comes from io, so importing it would not compile.
+	if strings.Contains(got, `"io"`) {
+		t.Errorf("unused io import emitted:\n%s", got)
+	}
+}
+
+func TestComposerWriterTypeFromTheRuntimeNeedsNoExtraImport(t *testing.T) {
+	e := NewEmitter()
+	e.Symbols.RuntimeImport = "example.com/fw/render"
+	e.Symbols.RuntimeAlias = "render"
+	e.RenderWriterType = "render.Response"
+
+	source, err := e.Composer(Route{Path: "/x", Package: "x", PageFile: "app/x/page.tb.html"}, nil)
+	if err != nil {
+		t.Fatalf("Composer: %v", err)
+	}
+	got := string(source)
+	mustContain(t, got, `import "example.com/fw/render"`, "func Render(w render.Response, route RouteParams,")
+	if strings.Contains(got, `"io"`) || strings.Contains(got, `"net/http"`) {
+		t.Errorf("unused import emitted:\n%s", got)
+	}
+}
+
 func TestComposerTemplateIsReplaceable(t *testing.T) {
 	e := NewEmitter()
 	if err := e.Parse(TemplateComposer, `{{ .Header }}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -12,8 +13,30 @@ import (
 // Pass it to [Emitter.Parse] to replace the emitted shape.
 const TemplateComposer = "composer"
 
+// TemplateRender is the name of the block that writes the render call itself,
+// in both the composer and the registry handler. Pass it to [Emitter.Parse] to
+// send the request, or anything else in scope, to a framework's own entry:
+//
+//	e.Parse(routetree.TemplateRender,
+//		`web.WriteHTML({{ .Writer }}, {{ .Request }}, {{ .Chain }}, {{ .Leaf }})`)
+//
+// The block writes an expression of type error, so the caller keeps deciding
+// what a failure does. Its data is [RenderCall].
+//
+// An override may only name packages the generated file already imports: the
+// runtime and error packages of [Symbols], the request package, and io. Pointing
+// Symbols.RuntimeImport at the package holding the entry is what covers the usual
+// case, where the entry and the option type ship together.
+const TemplateRender = "render"
+
 // RenderFunc is the name of the generated composer.
 const RenderFunc = "Render"
+
+// DefaultRenderWriterType is the writer the generated composer takes when
+// [Emitter.RenderWriterType] is empty. It is an io.Writer rather than a
+// ResponseWriter because a handler that renders into a buffer can still choose
+// its status, which is what the script-free mode and a static export need.
+const DefaultRenderWriterType = "io.Writer"
 
 // SlotParamName is the parameter a layout must declare to become a chain
 // wrapper. The template compiler emits a Bind wrapper only for an exported
@@ -43,6 +66,40 @@ type ComposerArg struct {
 	From string
 }
 
+// RenderCall is the data the [TemplateRender] block renders. Every field but
+// Symbols is the name of something already in scope at the call, so an override
+// composes its own call out of them rather than guessing what it may reference.
+type RenderCall struct {
+	// Writer is the writer identifier, always present.
+	Writer string
+	// Request is the request identifier, empty where none is in scope. The
+	// registry handler always has one; the composer has one only when
+	// [Emitter.RenderRequestParam] declared it.
+	Request string
+	// Wrappers is the layout chain slice identifier, empty when the page has no
+	// ancestor layout and renders on its own.
+	Wrappers string
+	// Leaf is the expression building the page fragment, such as Page(params).
+	Leaf string
+	// Options is the render option slice identifier, empty where none is in
+	// scope.
+	Options string
+	// Symbols are the identities generated code calls.
+	Symbols Symbols
+}
+
+// Chain is Wrappers, or nil when the page has no ancestor layout. It is what an
+// entry point that always takes a chain argument writes, so such an override
+// needs no branch of its own:
+//
+//	web.WriteHTML({{ .Writer }}, {{ .Request }}, {{ .Chain }}, {{ .Leaf }})
+func (c RenderCall) Chain() string {
+	if c.Wrappers == "" {
+		return "nil"
+	}
+	return c.Wrappers
+}
+
 // ComposerModel is the data the composer template renders.
 type ComposerModel struct {
 	Header     string
@@ -51,11 +108,32 @@ type ComposerModel struct {
 	Imports    []Import
 	ParamsType string
 	RenderFunc string
+	// WriterType is the writer the generated composer takes.
+	WriterType string
+	// RequestParam is the request parameter name, empty when the composer
+	// declares none.
+	RequestParam string
 	// Component is the page component name, which also prefixes its generated
 	// parameter struct.
 	Component string
 	Layouts   []ComposerLayout
 	Symbols   Symbols
+}
+
+// Render describes the render call for this composer, which the template hands
+// to the [TemplateRender] block.
+func (m ComposerModel) Render() RenderCall {
+	call := RenderCall{
+		Writer:  "w",
+		Request: m.RequestParam,
+		Leaf:    m.Component + "(params)",
+		Options: "options",
+		Symbols: m.Symbols,
+	}
+	if len(m.Layouts) > 0 {
+		call.Wrappers = "wrappers"
+	}
+	return call
 }
 
 // Composer renders the per-route Render function.
@@ -91,19 +169,21 @@ func (e *Emitter) composerModel(route Route, layouts []ComponentSignature) (Comp
 	}
 
 	model := ComposerModel{
-		Header:     GeneratedHeader,
-		Package:    route.Package,
-		Pattern:    route.Pattern(),
-		ParamsType: e.ParamsType,
-		RenderFunc: e.RenderFunc,
-		Component:  PageComponentName,
-		Symbols:    e.Symbols,
+		Header:       GeneratedHeader,
+		Package:      route.Package,
+		Pattern:      route.Pattern(),
+		ParamsType:   e.ParamsType,
+		RenderFunc:   e.RenderFunc,
+		WriterType:   orDefault(e.RenderWriterType, DefaultRenderWriterType),
+		RequestParam: e.RenderRequestParam,
+		Component:    PageComponentName,
+		Symbols:      e.Symbols,
 	}
 
 	// Two ancestors may share a directory base name, so selectors are made
 	// unique before any of them reaches the import block.
 	aliases := newAliasSet(route.Package)
-	imports := []Import{{Path: "io"}}
+	var imports []Import
 	var errs []error
 
 	for i, layout := range route.Layouts {
@@ -124,7 +204,7 @@ func (e *Emitter) composerModel(route Route, layouts []ComponentSignature) (Comp
 		if layout.ImportPath != "" && layout.RelDir != route.RelDir {
 			alias := aliases.add(layout.Package, layout.ImportPath)
 			entry.Selector = alias + "."
-			imports = append(imports, Import{Path: layout.ImportPath, Alias: aliasFor(layout.ImportPath, alias), Group: len(imports) == 1})
+			imports = append(imports, Import{Path: layout.ImportPath, Alias: aliasFor(layout.ImportPath, alias)})
 		}
 		args, argErrs := composerArgs(layout, signature)
 		errs = append(errs, argErrs...)
@@ -139,11 +219,41 @@ func (e *Emitter) composerModel(route Route, layouts []ComponentSignature) (Comp
 		imports = append(imports, Import{
 			Path:  e.Symbols.RuntimeImport,
 			Alias: aliasFor(e.Symbols.RuntimeImport, e.Symbols.RuntimeAlias),
-			Group: len(imports) == 1,
 		})
 	}
-	model.Imports = imports
+	model.Imports = groupImports(e.composerHead(model), imports)
 	return model, nil
+}
+
+// composerHead lists the standard library packages the composer's own signature
+// names. The writer type is configurable, so what it needs is read off the type
+// rather than assumed: a framework whose writer lives in the runtime package
+// needs no head import at all, because the runtime is imported anyway.
+func (e *Emitter) composerHead(model ComposerModel) []Import {
+	var head []Import
+	qualifier := typeQualifier(model.WriterType)
+	if qualifier == "io" {
+		head = append(head, Import{Path: "io"})
+	}
+	needsRequest := model.RequestParam != "" || qualifier == e.Symbols.HTTPAlias
+	if needsRequest && e.Symbols.HTTPImport != "" {
+		head = append(head, Import{
+			Path:  e.Symbols.HTTPImport,
+			Alias: aliasFor(e.Symbols.HTTPImport, e.Symbols.HTTPAlias),
+		})
+	}
+	sort.Slice(head, func(i, j int) bool { return head[i].Path < head[j].Path })
+	return head
+}
+
+// typeQualifier reports the package selector a type expression begins with, so a
+// generated signature can be matched against the packages a file imports.
+func typeQualifier(expr string) string {
+	expr = strings.TrimPrefix(expr, "*")
+	if index := strings.IndexByte(expr, '.'); index > 0 {
+		return expr[:index]
+	}
+	return ""
 }
 
 // composerArgs matches each declared layout input to a route parameter. A

@@ -192,6 +192,30 @@ func Load() (User, error) { return User{}, nil }
 	}
 }
 
+func TestValidateAcceptsAnOptionalQueryParameter(t *testing.T) {
+	fn := inspect(t, `package id_
+
+func Load(id string, page *int) (User, error) { return User{}, nil }
+`)
+	if errs := Validate(routeWithParams("/users/{id}", "id"), fn, nil); len(errs) != 0 {
+		t.Fatalf("Validate = %v, want none", errs)
+	}
+}
+
+func TestValidateRejectsAnOptionalPathParameter(t *testing.T) {
+	fn := inspect(t, `package id_
+
+func Load(id *string) (User, error) { return User{}, nil }
+`)
+	errs := Validate(routeWithParams("/users/{id}", "id"), fn, nil)
+	if len(errs) != 1 {
+		t.Fatalf("errs = %v, want one", errs)
+	}
+	if !strings.Contains(errs[0].Error(), "always present") {
+		t.Errorf("error = %v, want it to say why a segment cannot be optional", errs[0])
+	}
+}
+
 func TestValidateRejectsComplexInputTypes(t *testing.T) {
 	fn := inspect(t, `package id_
 

@@ -18,6 +18,7 @@ motive:
 customizable:
   render_mode: decision:script-free-render-mode, which selects a lowering set rather than renaming anything, and is therefore a different kind of setting from the names below
   url_prefix: the entry point prefix of requirement:template-server-functions, defaulting to /_action
+  name_resolution: requirement:external-action-resolution, so a framework's own route table can address a handler the route tree does not hold
   element_attribute: the URL attribute of the other_element lowering, defaulting to data-tb-action
   hidden_fields: the selector and token field names of the form lowering
   selector_channel: whether the form lowering carries the selector in a hidden field or in the action query

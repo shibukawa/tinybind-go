@@ -43,6 +43,23 @@ type Symbols struct {
 	// PathValue. The alias is what generated source writes.
 	HTTPImport string
 	HTTPAlias  string
+	// MuxImport and MuxAlias name the package providing the router the registry
+	// installs on. They are separate from the pair above because the same alias
+	// would otherwise supply both the router and Request: a framework wanting
+	// only its own router would drag the request package along with it and be
+	// left replacing the whole registry template.
+	MuxImport string
+	MuxAlias  string
+	// MuxType is the router type the generated registration function takes, and
+	// MuxConstructor the call that builds one. Both are written verbatim, so a
+	// framework whose router is an interface writes no pointer. An empty
+	// MuxConstructor omits the constructor function, which is what a router
+	// needing arguments generated code cannot supply wants.
+	//
+	// Generated code registers through HandleFunc alone, so a one-method
+	// interface is enough to satisfy either.
+	MuxType        string
+	MuxConstructor string
 	// ErrorImport and ErrorAlias name the package providing the constructors
 	// below. An empty ErrorImport suppresses the import, which is what a
 	// template that reports errors some other way wants.
@@ -64,8 +81,13 @@ type Symbols struct {
 // DefaultSymbols targets the httpbind runtime this module ships.
 func DefaultSymbols() Symbols {
 	return Symbols{
-		HTTPImport:    "net/http",
-		HTTPAlias:     "http",
+		HTTPImport:     "net/http",
+		HTTPAlias:      "http",
+		MuxImport:      "net/http",
+		MuxAlias:       "http",
+		MuxType:        "*http.ServeMux",
+		MuxConstructor: "http.NewServeMux",
+
 		ErrorImport:   defaultErrorImport,
 		ErrorAlias:    "httpbind",
 		BadRequest:    "BadRequest",
@@ -90,6 +112,19 @@ type Emitter struct {
 	RegisterFunc string
 	MuxFunc      string
 	TableVar     string
+	// RenderWriterType is the writer the generated composer takes. Empty uses
+	// [DefaultRenderWriterType], which is what keeps a rung 3 handler free to
+	// render into a buffer. It must be qualified by io, by Symbols.HTTPAlias, or
+	// by Symbols.RuntimeAlias, because those are the packages the composer
+	// imports.
+	RenderWriterType string
+	// RenderRequestParam adds a request parameter to the generated composer under
+	// this name, so a "render" block override has the request in scope there as
+	// well as in the registry handler. Empty declares none.
+	//
+	// It is off by default because the composer's contract is a writer: a handler
+	// rendering into a buffer to choose its status has no response to hand over.
+	RenderRequestParam string
 	// ActionPrefix is the reserved path every server function endpoint hangs
 	// below. Empty uses [DefaultActionPrefix]. A framework mounting under a
 	// sub-path or owning its own URL namespace sets it, which is why it is not
@@ -120,16 +155,17 @@ func NewEmitter() *Emitter {
 		tmpl = template.Must(tmpl.AddParseTree(stable, tmpl.Lookup(file).Tree))
 	}
 	return &Emitter{
-		Symbols:        DefaultSymbols(),
-		ParamsType:     RouteParamsType,
-		DecodeFunc:     DecodeRouteFunc,
-		RenderFunc:     RenderFunc,
-		RegisterFunc:   RegisterFunc,
-		MuxFunc:        MuxFunc,
-		TableVar:       TableVar,
-		ActionPrefix:   DefaultActionPrefix,
-		ActionTableVar: ActionTableVar,
-		tmpl:           tmpl,
+		Symbols:          DefaultSymbols(),
+		ParamsType:       RouteParamsType,
+		DecodeFunc:       DecodeRouteFunc,
+		RenderFunc:       RenderFunc,
+		RenderWriterType: DefaultRenderWriterType,
+		RegisterFunc:     RegisterFunc,
+		MuxFunc:          MuxFunc,
+		TableVar:         TableVar,
+		ActionPrefix:     DefaultActionPrefix,
+		ActionTableVar:   ActionTableVar,
+		tmpl:             tmpl,
 	}
 }
 
@@ -138,7 +174,7 @@ func NewEmitter() *Emitter {
 //
 // The replacement is compiled into a copy of the template set, so a framework
 // may override the whole file shape with [TemplateDecoder] or only one nested
-// block such as "error" or "convert".
+// block such as "error", "convert", or [TemplateRender].
 func (e *Emitter) Parse(name, text string) error {
 	clone, err := e.tmpl.Clone()
 	if err != nil {
@@ -203,8 +239,15 @@ type DecoderField struct {
 	Go string
 	// Key is the path wildcard or query key it reads.
 	Key string
-	// Type is the declared Go type.
+	// Type is the declared Go type, which is a pointer when the input is
+	// optional.
 	Type string
+	// Base is Type with the optional pointer removed, so it is the scalar the
+	// parse call and the diagnostics name.
+	Base string
+	// Optional binds a pointer, left nil when the key is absent or its value is
+	// empty. It is set for a query parameter only.
+	Optional bool
 	// IsQuery reads from the query string rather than the path.
 	IsQuery bool
 	// Required rejects an empty value. A catch-all is not required, because an
@@ -275,27 +318,36 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 
 	fields := make([]DecoderField, 0, len(inputs))
 	for i, input := range inputs {
+		base, optional, _ := bindableType(input.Type)
 		field := DecoderField{
-			Go:   ExportedName(input.Name),
-			Type: input.Type,
+			Go:       ExportedName(input.Name),
+			Type:     input.Type,
+			Base:     base,
+			Optional: optional,
 		}
 		if i < len(route.Params) {
 			segment := route.Params[i]
+			if optional {
+				return DecoderModel{}, &Error{
+					Path:    route.PageFile,
+					Message: optionalPathError(input.Name, input.Type, segment.Kind == CatchAllSegment),
+				}
+			}
 			field.Key = segment.Name
 			// A catch-all matches an empty remainder, so only a single-element
 			// wildcard is required to be present.
 			field.Required = segment.Kind != CatchAllSegment
 			field.ErrCode = CodeInvalidPath
-			field.ErrMessage = "path parameter " + field.Key + " is not a valid " + field.Type
+			field.ErrMessage = "path parameter " + field.Key + " is not a valid " + base
 			field.MissingMessage = "missing path parameter " + field.Key
 		} else {
 			field.Key = input.Name
 			field.IsQuery = true
 			field.ErrCode = CodeInvalidQuery
-			field.ErrMessage = "query parameter " + field.Key + " is not a valid " + field.Type
+			field.ErrMessage = "query parameter " + field.Key + " is not a valid " + base
 		}
-		if input.Type != "string" {
-			parse, ok := parseCall(e.Symbols.StrconvAlias, input.Type)
+		if base != "string" {
+			parse, ok := parseCall(e.Symbols.StrconvAlias, base)
 			if !ok {
 				return DecoderModel{}, &Error{
 					Path: route.PageFile,
@@ -304,7 +356,7 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 				}
 			}
 			field.Parse = parse
-			field.Convert, _ = resultConversion(input.Type)
+			field.Convert, _ = resultConversion(base)
 		}
 		fields = append(fields, field)
 	}

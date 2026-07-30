@@ -47,6 +47,12 @@ switch_placement:
 cache_identity:
   rule: the mode participates in the component version that validates requirement:component-output-cache and requirement:layout-reuse-boundaries entries
   reason: the same component emits different markup in each mode, so output cached in one is invalid in the other
+downstream_dependency:
+  reported: 2026-07-30, through decision:framework-integration-seams
+  fact: a downstream framework carries an acceptance condition requiring pages to work with no browser runtime
+  effect: a route adopting the server actions of requirement:template-server-functions cannot meet that condition until this mode's form phase is implemented
+  status: design decided here and unimplemented, so the gap is sequencing rather than shape
+  stated_because: a complete-reading design hides the fact that adopting one feature suspends someone else's acceptance condition
 unaffected:
   framework_script: requirement:framework-script-contribution and requirement:render-time-script-contribution stay available; the mode suppresses the tinybind runtime, not whatever the application ships
 authoring_rule:

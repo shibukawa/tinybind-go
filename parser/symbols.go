@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/internal/gensource"
 )
 
 const (
@@ -200,7 +202,12 @@ func configuredCall(obj types.Object, patterns []CallPattern) (CallPattern, bool
 }
 
 // orderedSyntaxFiles returns package syntax files sorted by filename, excluding
-// generated binders/openapi embeds and _test.go when present.
+// _test.go and anything tinybind generated.
+//
+// The generated header is what settles the exclusion, so a file named by a
+// framework's own output setting is skipped too. That matters for the generated
+// registry of a route tree: it registers every page, and discovering those
+// registrations would document an HTML page as an API route.
 func orderedSyntaxFiles(pkg *packages.Package) []*ast.File {
 	if pkg == nil {
 		return nil
@@ -228,7 +235,8 @@ func orderedSyntaxFiles(pkg *packages.Package) []*ast.File {
 			base == "httpbind_gen.go" ||
 			base == "httpbind_openapi_gen.go" ||
 			base == "tinybind_gen.go" ||
-			base == "tinybind_openapi_gen.go" {
+			base == "tinybind_openapi_gen.go" ||
+			gensource.IsGenerated(f) {
 			continue
 		}
 		pairs = append(pairs, pair{name: name, file: f})

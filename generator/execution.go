@@ -123,7 +123,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	load := newPackageLoad(request.Dir)
 	result.BinderPath, err = runner.generate(load, request.Out, request.Name)
 	if err != nil {
-		if !strings.Contains(err.Error(), "no generatable structs") {
+		if !errors.Is(err, ErrNothingToGenerate) {
 			return GenerateResult{}, fmt.Errorf("generate mapping: %w", err)
 		}
 		result.BinderPath = ""

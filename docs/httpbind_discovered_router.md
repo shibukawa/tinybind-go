@@ -52,6 +52,19 @@ parameter list; with it, the `Load` parameter list. Moving a page up the ladder
 therefore never changes how its inputs are spelled. Only scalars are accepted,
 because a URL carries no object.
 
+A query parameter may be optional, spelled as the pointer the template's own
+optional marker already produces:
+
+```text
+export component Page(topic: string, page: int?): html { ... }
+```
+
+`page` arrives as `*int`: nil when the key is absent or its value is empty, and a
+pointer to the parsed number otherwise. That is the only way to tell `?page=0`
+from no page at all, and an unparsable `?page=x` still fails before rendering. A
+path segment cannot be optional — a single segment is always present when the
+route matches, and a catch-all binds an empty remainder as a string.
+
 One thing does change. At the typed rung the component's parameter list becomes
 `Load`'s return list, and generation checks it: a mismatch in count, order, or
 type fails, naming both lists.
@@ -165,6 +178,44 @@ The handler is an ordinary `http.HandlerFunc`, so it is testable with `httptest`
 and needs no registration to exercise. Nothing is generated around it: what it
 writes is the response, verbatim.
 
+It reads its input the way any other handler does:
+
+```go
+func Rename(w http.ResponseWriter, r *http.Request) {
+	in, err := httpbind.Bind[RenameRequest](r)
+	if err != nil {
+		httpbind.WriteError(w, r, err)
+		return
+	}
+	// ...
+}
+```
+
+`Bind` dispatches through a binder generated for the package that declares the
+request type, so the route package has to be one the generator was run over. The
+loop for that is under [Running it](#running-it).
+
+### Naming a handler the tree does not hold
+
+A template outside the route tree — a classic-side page a framework compiles
+itself — names a handler discovery never walks to. Supply the address and it
+lowers like any other:
+
+```go
+files, err := routetree.Generate(routetree.GenerateOptions{
+	Config: cfg,
+	ActionResolver: func(name string) (string, bool) {
+		url, ok := myRouteTable[name]
+		return url, ok
+	},
+})
+```
+
+A handler exported by the template's own route package always wins, so adding a
+resolver cannot silently retarget an action that already has an endpoint. A name
+neither source answers is still a generation error, and it names both sources it
+tried.
+
 ### What is reachable
 
 Every exported handler-shaped function in a route package gets an endpoint,
@@ -224,6 +275,31 @@ reveal its position inside a module. `Generate` itself writes nothing — it ret
 the files and `Write` is a convenience — which is what leaves post-processing and
 output redirection in your hands.
 
+If any page or server action calls `httpbind.Bind`, generate the binders too. A
+binder is generated per package from the `Bind` call sites inside it, so the tree
+reports its packages and you loop over them:
+
+```go
+tree, err := routetree.Discover(cfg)   // or reuse the one you already discovered
+// ... write the files from Generate first
+for _, pkg := range tree.Packages() {
+	_, err := generator.Generate(pkg.Dir, "", "tinybind_gen.go")
+	if err != nil && !errors.Is(err, generator.ErrNothingToGenerate) {
+		return err
+	}
+}
+```
+
+Order matters: analysis type-checks each package, so the tree's own generated
+files have to be on disk first. Most route packages have nothing to bind — a
+template-only page declares no request type at all — and that is the
+`ErrNothingToGenerate` above rather than an empty generated file.
+
+None of this puts a page into an OpenAPI document. The only registrations in the
+tree are in the generated registry, and discovery skips what tinybind generated —
+by header, so your own output name is skipped too. An HTML page is not a published
+API contract, and an action endpoint is an implementation detail of one page.
+
 An application then touches one symbol:
 
 ```go
@@ -282,6 +358,20 @@ The generated declarations rename the same way, through `ParamsType`,
 `ActionTableVar`. `ActionPrefix` and `ActionAttr` move the action URL space and
 the attribute it is written into.
 
+The router is its own pair of symbols, separate from the request package:
+
+```go
+e.Symbols.MuxImport = "example.com/framework/web"
+e.Symbols.MuxAlias = "web"
+e.Symbols.MuxType = "web.Router"          // written verbatim, so an interface needs no pointer
+e.Symbols.MuxConstructor = "web.NewRouter" // empty omits the constructor function
+```
+
+They are separate because one alias supplying both the router and `Request` would
+drag the request package along with the router, and a framework wanting only its
+own router would be left replacing the whole registry. Generated code registers
+through `HandleFunc` alone, so a one-method interface satisfies `MuxType`.
+
 **Replace one block.** The built-in templates are compositions of named blocks,
 so you can change one without owning the rest:
 
@@ -290,11 +380,47 @@ so you can change one without owning the rest:
 | `imports` | the import statement of any generated file |
 | `convert` | one scalar read out of a raw string |
 | `error` | every error value a decoder produces |
+| `render` | the render call itself, in the registry and the composer |
 | `handler` | one route's handler body in the registry |
 
 ```go
 err := e.Parse("error", `web.Invalid(web.Fault{Code: {{ .Code | quote }}})`)
 ```
+
+`render` is the one to reach for when your entry point takes more than a writer.
+A `Symbols` change repoints a package but never a signature, so a framework whose
+response entry needs the request — for bot-mode selection, compression, a document
+shell, an error page — changes the call rather than its name:
+
+```go
+err := e.Parse(routetree.TemplateRender,
+	`web.WriteHTML({{ .Writer }}, {{ .Request }}, {{ .Chain }}, {{ .Leaf }})`)
+```
+
+Everything in scope arrives by name — `Writer`, `Request`, `Chain`, `Leaf`,
+`Options` — and the block writes an expression of type `error`, so what a failure
+does stays with the caller. `Chain` is the layout chain, or `nil` for a page with
+no ancestor layout; `Wrappers` is the same value left empty in that case, for an
+override that would rather branch than pass `nil`.
+
+`Request` is empty where none is in scope, which is the case in the composer:
+its contract is a writer, because a handler rendering into a buffer to choose its
+status has no response to hand over. Two settings change that when you want it:
+
+```go
+e.RenderWriterType = "http.ResponseWriter" // default io.Writer
+e.RenderRequestParam = "r"                 // default: no request parameter
+```
+
+The composer imports what its own signature names, so a writer type qualified by
+`io`, by the request package, or by your runtime needs no further configuration.
+The same limit applies to the block itself: it may only name packages the file
+already imports — your runtime and error packages, the request package, and `io`.
+Pointing `Symbols.RuntimeImport` at the package holding your entry covers the
+usual case, where that entry and the option type ship together.
+
+This is the same argument the `error` block already made: the entry that writes a
+failure took `(w, r)`, and now the entry that writes the page can too.
 
 **Replace a whole file.** `TemplateDecoder`, `TemplateComposer`, and
 `TemplateRegistry` each render one file end to end:
@@ -319,12 +445,6 @@ makes; `htmlbind.Signatures` and `htmlbind.ActionRefs` are documented in
 
 ## What is not there yet
 
-- `httpbind.Bind` inside a server action finds no binder. Binder generation is
-  driven by user-written route registrations, and these are registered by
-  generated code, so the request model is never discovered. Read the request
-  through the standard library until that discovery reaches route packages. The
-  same boundary is what keeps these endpoints out of your OpenAPI document, which
-  is deliberate — one gap, one feature, the same cause.
 - CSRF is not wired. These are `POST` endpoints reachable with ambient
   credentials, so wrap them yourself until it is.
 - The script-free mode is designed but unimplemented. Today a `<form
@@ -336,8 +456,6 @@ makes; `htmlbind.Signatures` and `htmlbind.ActionRefs` are documented in
 - Route groups that contribute no URL segment have no notation, because the
   parenthesis spelling other frameworks use is an illegal import path character.
 - A catch-all binds as a string; richer typing is undecided.
-- An optional query parameter has no spelling, because a Go parameter is always
-  present.
 
-The last three are one collision seen three times: where a Go rule and a routing
+The last two are one collision seen twice: where a Go rule and a routing
 convention disagree, the Go rule wins.
