@@ -8,6 +8,7 @@ import (
 
 type PageParams struct {
 	Topic string
+	Page  *int
 }
 
 var planPageOps = htmlbind.Builder[PageParams]{}
@@ -18,6 +19,21 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 		planPageOps.Static(" <h1>about "),
 		planPageOps.Text(func(p PageParams) string { return p.Topic }),
 		planPageOps.Static("</h1> "),
+		planPageOps.If(func(p PageParams) bool { return (p.Page == nil) },
+			[]htmlbind.Op[PageParams]{
+				planPageOps.Static(" <p>every page</p> "),
+			},
+			[]htmlbind.Op[PageParams]{
+				planPageOps.Static(" <p>page "),
+				planPageOps.Text(func(p PageParams) string {
+					if p.Page == nil {
+						return ""
+					}
+					return htmlbind.FormatInt(*(p.Page))
+				}),
+				planPageOps.Static("</p> "),
+			}),
+		planPageOps.Static(" "),
 	},
 }
 

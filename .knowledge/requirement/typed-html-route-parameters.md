@@ -34,9 +34,10 @@ validation:
   - declaration name must match an in-scope dynamic segment
   - duplicate parameter names in one route are generation errors
   - missing required declaration inputs and incompatible types are generation errors
+optional_query:
+  spelling: requirement:optional-query-parameter, which closes the declaration question below with the pointer the optional type marker already generates
 open_questions:
   - supported non-string scalar decoders
-  - declaration form for optional page search parameters
   - generated decoder name and whether it returns one struct or individual values
   - catch-all segment typing, given that it binds a path remainder rather than one segment
 ```

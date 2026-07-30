@@ -57,6 +57,14 @@ customization:
   scope: which symbols the generated handler calls to bind, render, and report errors
   owner: data:generator-options and api:generator-call-registration
   reason: requirement:custom-framework-generation-profile forbids a downstream framework from rewriting generated source to get its own surface
+  levels:
+    symbols: the packages and declaration names generated code writes
+    blocks: the named pieces of a built-in template, being imports, convert, error, handler, and the render block of requirement:framework-render-entry
+    files: the decoder, composer, and registry templates end to end
+  signature_axis:
+    gap: a symbol repoints a package but never the shape of a call, so a framework needing the request at the render entry had to replace whole files
+    closed_by: requirement:framework-render-entry for the render call and requirement:router-type-independence for the router parameter
+    source: decision:framework-integration-seams
 route_table_purpose:
   consumer: a downstream framework, per decision:route-feature-ownership
   supplies: what the filesystem knows, meaning patterns and which segments are dynamic

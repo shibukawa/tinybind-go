@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/shibukawa/tinybind-go/generator"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages"
 	"github.com/shibukawa/tinybind-go/routetree"
 )
@@ -54,6 +56,68 @@ func TestGeneratedFilesAreUpToDate(t *testing.T) {
 			t.Errorf("%s is stale; rerun with REGEN=1.\n--- committed ---\n%s\n--- emitted ---\n%s",
 				file.Path, committed, file.Source)
 		}
+	}
+}
+
+// TestBindersAreGeneratedForEveryRoutePackage covers the second half of a
+// generation run: a page or a server action may call httpbind.Bind, and the
+// binder that dispatches it is generated per package, so the tree's package list
+// is what a caller loops over.
+//
+// It runs on the committed tree rather than a temporary copy, because analysis
+// type-checks each package and that needs the tree's own generated files in
+// place. Set REGEN=1 to rewrite the binders.
+func TestBindersAreGeneratedForEveryRoutePackage(t *testing.T) {
+	tree, err := routetree.Discover(options().Config)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	packages := tree.Packages()
+	if len(packages) == 0 {
+		t.Fatal("the tree reports no packages")
+	}
+
+	generated := 0
+	for _, pkg := range packages {
+		plan, err := generator.New(generator.DefaultOptions()).Analyze(pkg.Dir)
+		if err != nil {
+			t.Fatalf("%s: %v", pkg.RelDir, err)
+		}
+		var used bool
+		for _, typePlan := range plan.Types {
+			if typePlan.Usage != 0 {
+				used = true
+			}
+		}
+		if !used {
+			// A package with no bound request needs no binder, which is why the
+			// loop generates rather than requiring one per package.
+			continue
+		}
+		generated++
+		source, err := generator.Emit(plan)
+		if err != nil {
+			t.Fatalf("%s: %v", pkg.RelDir, err)
+		}
+		path := filepath.Join(pkg.Dir, "tinybind_gen.go")
+		if os.Getenv("REGEN") != "" {
+			if err := os.WriteFile(path, source, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		committed, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s: %v", path, err)
+			continue
+		}
+		if string(committed) != string(source) {
+			t.Errorf("%s is stale; rerun with REGEN=1.\n--- committed ---\n%s\n--- emitted ---\n%s",
+				path, committed, source)
+		}
+	}
+	if generated == 0 {
+		t.Error("no route package needed a binder, so this fixture proves nothing")
 	}
 }
 
@@ -117,6 +181,36 @@ func TestAbsentQueryParameterRendersItsZeroValue(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "about") {
 		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+// TestOptionalQueryParameterSeparatesAbsentFromZero covers the one thing a
+// non-pointer query parameter cannot express: page=0 is a value the author
+// chose, and no page at all is not.
+func TestOptionalQueryParameterSeparatesAbsentFromZero(t *testing.T) {
+	mux := pages.NewServeMux()
+	cases := map[string]string{
+		"/about":         "every page",
+		"/about?page=0":  "page 0",
+		"/about?page=":   "every page",
+		"/about?page=12": "page 12",
+	}
+	for target, want := range cases {
+		rec := get(t, mux, target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, body = %s", target, rec.Code, rec.Body)
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s: body = %q, want it to contain %q", target, rec.Body, want)
+		}
+	}
+}
+
+func TestUnparsableOptionalQueryParameterIsStillRejected(t *testing.T) {
+	rec := get(t, pages.NewServeMux(), "/about?page=x")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body = %s", rec.Code, rec.Body)
 	}
 }
 
@@ -208,6 +302,40 @@ func TestServerActionEndpointReachesTheHandler(t *testing.T) {
 	// The handler owns the whole response, so what it wrote is what came back.
 	if got := rec.Body.String(); got != "renamed to CAROL" {
 		t.Errorf("body = %q", got)
+	}
+}
+
+// TestServerActionBindsATypedRequest proves the binder is what read the form:
+// the check tag rejects an empty name before the handler writes anything, which
+// r.PostFormValue could not do.
+func TestServerActionBindsATypedRequest(t *testing.T) {
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, actionPath(t, "Rename"), strings.NewReader("name="))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pages.NewServeMux().ServeHTTP(rec, request)
+
+	if rec.Code != http.StatusUnprocessableEntity && rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want a rejection; body = %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "renamed to") {
+		t.Errorf("the handler ran on an invalid request: %s", rec.Body)
+	}
+}
+
+// TestOpenAPIExcludesPageRoutesAndActions holds the line the binder work could
+// have crossed: the generated registry registers every page, so analyzing the
+// route root must not turn an HTML page into a documented API operation.
+func TestOpenAPIExcludesPageRoutesAndActions(t *testing.T) {
+	doc, err := generator.BuildOpenAPI("pages")
+	if err != nil {
+		t.Fatalf("BuildOpenAPI: %v", err)
+	}
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("paths = %T", doc["paths"])
+	}
+	if len(paths) != 0 {
+		t.Errorf("page routes and action endpoints entered the document: %v", paths)
 	}
 }
 

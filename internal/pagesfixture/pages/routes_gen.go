@@ -42,6 +42,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			_ = route // a route with no dynamic segment and no query input reads nothing
 			params := about.PageParams{
 				Topic: route.Topic,
+				Page:  route.Page,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
@@ -79,7 +80,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)
 }
 
-// NewServeMux returns a ServeMux carrying every discovered route.
+// NewServeMux returns a router carrying every discovered route.
 func NewServeMux(options ...htmlbind.Option) *http.ServeMux {
 	mux := http.NewServeMux()
 	Register(mux, options...)

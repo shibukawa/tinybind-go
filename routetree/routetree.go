@@ -122,10 +122,77 @@ func (r Route) Pattern() string {
 type Tree struct {
 	// Root is the absolute route root directory.
 	Root string
+	// ImportBase is the Go import path of Root, copied from the Config so a
+	// caller reading the tree back needs no second source for it. It is empty
+	// unless Config.ImportBase was set.
+	ImportBase string
 	// DocumentFile is the absolute path of the root document shell, or empty.
 	DocumentFile string
 	// Routes are the discovered pages, ordered by path.
 	Routes []Route
+}
+
+// Package is one Go package a route tree contains.
+type Package struct {
+	// RelDir is the directory relative to the route root, using slashes. The
+	// route root package itself has an empty RelDir.
+	RelDir string
+	// Dir is the absolute directory.
+	Dir string
+	// Name is the Go package name.
+	Name string
+	// ImportPath is the Go import path. It is empty unless Config.ImportBase was
+	// set.
+	ImportPath string
+}
+
+// Packages lists every Go package the tree contains: the route root, every route
+// directory, and every layout directory. The root comes first and the rest are
+// ordered by directory.
+//
+// It is what a caller runs the binder generator over, which is what makes
+// httpbind.Bind work inside a page or a server action. A binder is generated per
+// package from the Bind call sites inside it, so a route package nobody analyzes
+// has nothing to dispatch through at runtime. Run it after the tree's own
+// generated files are on disk, because analysis type-checks the package.
+//
+// Doing so puts no page route and no action endpoint into an OpenAPI document:
+// the only registrations are in the generated registry, and discovery skips what
+// tinybind generated.
+func (t *Tree) Packages() []Package {
+	seen := map[string]bool{}
+	out := []Package{{
+		Dir:        t.Root,
+		Name:       PackageName(filepath.Base(t.Root)),
+		ImportPath: t.ImportBase,
+	}}
+	seen[t.Root] = true
+	add := func(pkg Package) {
+		if seen[pkg.Dir] {
+			return
+		}
+		seen[pkg.Dir] = true
+		out = append(out, pkg)
+	}
+	for _, route := range t.Routes {
+		for _, layout := range route.Layouts {
+			add(Package{
+				RelDir:     layout.RelDir,
+				Dir:        filepath.Dir(layout.File),
+				Name:       layout.Package,
+				ImportPath: layout.ImportPath,
+			})
+		}
+		add(Package{
+			RelDir:     route.RelDir,
+			Dir:        route.Dir,
+			Name:       route.Package,
+			ImportPath: route.ImportPath,
+		})
+	}
+	rest := out[1:]
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Dir < rest[j].Dir })
+	return out
 }
 
 // Config selects the route root and the reserved file names. A zero Config
@@ -196,7 +263,7 @@ func Discover(cfg Config) (*Tree, error) {
 		return nil, &Error{Path: root, Message: "route root is not a directory"}
 	}
 
-	tree := &Tree{Root: root}
+	tree := &Tree{Root: root, ImportBase: cfg.ImportBase}
 	if documentPath := filepath.Join(root, cfg.DocumentFile); fileExists(documentPath) {
 		tree.DocumentFile = documentPath
 	}

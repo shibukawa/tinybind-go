@@ -16,21 +16,23 @@ func Load(id string) (string, error) {
 	return strings.ToUpper(id), nil
 }
 
+// RenameRequest is what the rename form submits. It is bound by the generated
+// binder of this package, which exists because the generator was run over the
+// route packages the tree reports.
+type RenameRequest struct {
+	Name string `input:"name" check:"required"`
+}
+
 // Rename is a server function: an ordinary http.HandlerFunc that a template
 // names instead of a URL. It owns its whole response, so it reads its own input
 // and writes whatever it wants.
-//
-// It reads the form directly rather than through httpbind.Bind because binder
-// generation is driven by user-written route registrations, and a server
-// function is registered by generated code. Until that discovery covers a route
-// package, Bind inside a server function finds no registered binder.
 func Rename(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpbind.WriteError(w, r, httpbind.BadRequest(
-			httpbind.Problem{Code: "form_parse", Message: "invalid form body"}, err))
+	in, err := httpbind.Bind[RenameRequest](r)
+	if err != nil {
+		httpbind.WriteError(w, r, err)
 		return
 	}
-	_, _ = w.Write([]byte("renamed to " + strings.ToUpper(r.PostFormValue("name"))))
+	_, _ = w.Write([]byte("renamed to " + strings.ToUpper(in.Name)))
 }
 
 // unexported handlers stay private, because generated code in another package

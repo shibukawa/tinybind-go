@@ -2,11 +2,17 @@
 
 package about
 
-import "net/http"
+import (
+	"net/http"
+	"strconv"
+
+	httpbind "github.com/shibukawa/tinybind-go"
+)
 
 // RouteParams holds the URL inputs of GET /about.
 type RouteParams struct {
 	Topic string
+	Page  *int
 }
 
 // DecodeRoute reads the path and query values of GET /about.
@@ -16,6 +22,14 @@ func DecodeRoute(r *http.Request) (RouteParams, error) {
 	query := r.URL.Query()
 	if raw := query.Get("topic"); raw != "" {
 		out.Topic = raw
+	}
+	if raw := query.Get("page"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter page is not a valid int"}, err)
+		}
+		value := v
+		out.Page = &value
 	}
 	return out, nil
 }

@@ -36,7 +36,10 @@ func (g *Generator) generate(load *packageLoad, outDir, outName string) (string,
 		return "", err
 	}
 	if len(plan.Types) == 0 {
-		return "", fmt.Errorf("no generatable structs in %s", dir)
+		// Wrapped so a caller generating over a whole set of packages can skip the
+		// ones with nothing to bind, which is what the route tree of
+		// routetree.Tree.Packages leaves it holding.
+		return "", fmt.Errorf("%w: no generatable structs in %s", ErrNothingToGenerate, dir)
 	}
 	src, err := Emit(plan)
 	if err != nil {

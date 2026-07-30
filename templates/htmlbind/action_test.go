@@ -157,3 +157,57 @@ func TestGenerateRejectsAnUnresolvedServerAction(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+func TestGenerateAsksTheResolverForAnUnknownAction(t *testing.T) {
+	source := `export component Page(): html { <button server-action="Rename">go</button> }`
+	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
+		Package: "handlers",
+		ServerActionResolver: func(name string) (string, bool) {
+			return "/app/rename", name == "Rename"
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	// This is the whole point of the hook: a template with no route package
+	// beside it still lowers to an address its framework owns.
+	if out := string(got); !strings.Contains(out, `data-tb-action=\"/app/rename\"`) {
+		t.Errorf("resolver URL not emitted:\n%s", out)
+	}
+}
+
+func TestGenerateLetsADeclaredActionWinOverTheResolver(t *testing.T) {
+	source := `export component Page(): html { <button server-action="Rename">go</button> }`
+	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
+		Package:              "id_",
+		ServerActions:        map[string]string{"Rename": "/_action/9f3c2ab1e4d7/Rename"},
+		ServerActionResolver: func(string) (string, bool) { return "/app/rename", true },
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	// Adding a resolver must not retarget an action the declaring package owns.
+	out := string(got)
+	if !strings.Contains(out, `data-tb-action=\"/_action/9f3c2ab1e4d7/Rename\"`) {
+		t.Errorf("the declared endpoint lost to the resolver:\n%s", out)
+	}
+	if strings.Contains(out, "/app/rename") {
+		t.Errorf("resolver answered a declared action:\n%s", out)
+	}
+}
+
+func TestGenerateNamesBothSourcesWhenNothingResolves(t *testing.T) {
+	source := `export component Page(): html { <button server-action="Rename">go</button> }`
+	_, err := Generate("page.tb.html", []byte(source), GenerateOptions{
+		Package:              "id_",
+		ServerActionResolver: func(string) (string, bool) { return "", false },
+	})
+	if err == nil {
+		t.Fatal("expected an error for an unresolved action")
+	}
+	// With a resolver configured the handler may live anywhere, so the message
+	// must not claim it has to sit beside the template.
+	if !strings.Contains(err.Error(), "configured resolver") {
+		t.Errorf("error = %v, want it to name both attempted sources", err)
+	}
+}

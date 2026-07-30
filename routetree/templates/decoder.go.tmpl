@@ -29,7 +29,7 @@ func {{ .DecodeFunc }}(r *{{ .Symbols.HTTPAlias }}.Request) ({{ .ParamsType }}, 
 {{- template "convert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
 	}
 {{- else }}
-{{- if and (eq .Type "string") (not .Required) }}
+{{- if and (eq .Base "string") (not .Required) }}
 	out.{{ .Go }} = r.PathValue({{ .Key | quote }})
 {{- else }}
 	raw{{ .Go }} := r.PathValue({{ .Key | quote }})
@@ -38,7 +38,7 @@ func {{ .DecodeFunc }}(r *{{ .Symbols.HTTPAlias }}.Request) ({{ .ParamsType }}, 
 		return out, {{ template "error" dict "Symbols" $.Symbols "Code" $.MissingCode "Message" .MissingMessage "Cause" "" }}
 	}
 {{- end }}
-{{- if eq .Type "string" }}
+{{- if eq .Base "string" }}
 	out.{{ .Go }} = raw{{ .Go }}
 {{- else }}
 	{
@@ -68,17 +68,27 @@ import (
 
 {{- /*
 convert reads one already-bound raw string into its field. A string needs no
-call at all, which is why the parse step is data rather than a branch here.
+call at all, which is why the parse step is data rather than a branch here. An
+optional field takes the address of a local, so an absent key leaves nil rather
+than a zero value.
 */ -}}
 {{- define "convert" }}
-{{- if eq .Field.Type "string" }}
+{{- if eq .Field.Base "string" }}
+{{- if .Field.Optional }}
+{{ .Indent }}value := raw
+{{ .Indent }}out.{{ .Field.Go }} = &value
+{{- else }}
 {{ .Indent }}out.{{ .Field.Go }} = raw
+{{- end }}
 {{- else }}
 {{ .Indent }}v, err := {{ .Field.Parse }}
 {{ .Indent }}if err != nil {
 {{ .Indent }}	return out, {{ template "error" dict "Symbols" .Symbols "Code" .Field.ErrCode "Message" .Field.ErrMessage "Cause" "err" }}
 {{ .Indent }}}
-{{- if .Field.Convert }}
+{{- if .Field.Optional }}
+{{ .Indent }}value := {{ if .Field.Convert }}{{ .Field.Convert }}(v){{ else }}v{{ end }}
+{{ .Indent }}out.{{ .Field.Go }} = &value
+{{- else if .Field.Convert }}
 {{ .Indent }}out.{{ .Field.Go }} = {{ .Field.Convert }}(v)
 {{- else }}
 {{ .Indent }}out.{{ .Field.Go }} = v

@@ -419,6 +419,16 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 答えを `ServerActions` で返す。解決しなかった参照はコンパイルエラーになる。黙って
 死んだ要素が出ることはない。
 
+マップが持たない名前には `ServerActionResolver` が答える。列挙するよりオンデマンドで
+解決したい名前のための口である。
+
+```go
+	ServerActionResolver: func(name string) (string, bool) { ... },
+```
+
+マップがリゾルバより優先されるので、リゾルバを足しても既に供給した名前が別の宛先に
+向くことはない。設定した時点から、未解決の診断は試した両方の供給元を名指しする。
+
 下げ方は意図的に薄い。`server-action` は URL を運ぶ属性1つになり、その要素の
 それ以外の属性は読まれずに残る。だから `data-target` や `hx-swap` の意味は実装者の
 クライアントランタイムが決められる。`ServerActionAttr` があるのは、生成された

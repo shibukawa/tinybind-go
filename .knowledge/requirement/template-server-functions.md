@@ -44,6 +44,7 @@ syntax:
     why_not: requirement:colocated-route-logic already resolves its func Page from the package Go sources without a template declaration, and a server function is found the same way in the same package
 resolution:
   location: an exported function in the route package, beside the template that references it
+  outside_tree: requirement:external-action-resolution lets a framework supply the URL for a name no route package exports, with the declaring package still winning
   identity: resolved at generation through rule:go-types-symbol-identity, never by name lookup at runtime
   unresolved: a reference with no matching function is a generation error naming the template position and the symbol
   exposure:
@@ -67,11 +68,11 @@ signature:
   input: the handler calls api:bind itself, exactly as a flat-mode handler does today
   binder_gap:
     discovered: implementation 2026-07-29
-    problem: api:bind dispatches through a generated binder, and concept:handler-discovery finds handlers from user-written registration call sites; a server function is registered by generated code, so its request model is never discovered and no binder is generated
-    effect: api:bind inside a server function fails at runtime with no registered binder, so a handler must read its input through the standard library instead
-    same_cause_as: the not_published exclusion below, which relies on that discovery boundary deliberately
-    fix: extend rule:request-model-discovery to reach the exported handlers of a route package, while leaving the OpenAPI exclusion in place
-    status: open; the rest of this requirement does not depend on it
+    reported_cause: binder generation is driven by user-written route registrations, so a handler registered by generated code is never discovered
+    actual_cause: found 2026-07-30; rule:request-model-discovery reads every api:bind call site in the package it analyzes and never consults a registration, so nothing was filtering the handler out. No run analyzed the route package at all.
+    effect: api:bind inside a server function fails at runtime with no registered binder, so a handler reads its input through the standard library instead
+    fix: requirement:action-request-binding, which reports the tree's packages so a run covers them
+    status: implemented 2026-07-30; a server function binds a typed request through the binder of its own route package
   one_function: the same handler serves both entry points below and needs no knowledge of which one was used
   reason:
     - a form action legitimately needs redirects, conditional statuses, downloads, and streaming, which no fixed typed return could cover
@@ -190,8 +191,10 @@ not_published:
   openapi:
     rule: neither entry point ever enters an OpenAPI document
     reason: OpenAPI describes a published API contract, and these are implementation details of one page
-    mechanism: concept:openapi-generation discovers routes from user-written registration call sites, and these are registered by generated code, so exclusion is the natural outcome rather than a filter
-    stated_anyway: relying on that side effect would leave the exclusion undefined the moment discovery changes
+    mechanism: rule:generated-source-not-discovered; route discovery skips the generated registry, so the only registrations of a page or an endpoint are invisible to it
+    was_believed: exclusion followed from a handler registered by generated code never being discovered
+    corrected: 2026-07-30; the registry itself is a discoverable call site, so analyzing the route root did put every page route and action endpoint into a document until the filter above was added
+    stated_anyway: relying on a side effect would have left the exclusion undefined, which is exactly how it broke
   page_routes: the same reasoning excludes the GET page routes of the route tree, because an HTML page is not an API surface
   framework_override: a downstream framework that wants either documented adds it through its own artifacts, per decision:route-feature-ownership
 non_goals:
