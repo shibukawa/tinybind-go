@@ -29,7 +29,7 @@ bounds:
     fix: spread each response's lifetime around the configured value, per response, so the first cycle desynchronizes the population permanently
     not_client_fixable: a client cannot choose when the server closes it, so this cannot be delegated to backoff
     status: deferred with the rest of this requirement
-  cost_of_max_duration: each rollover re-executes the page, per decision:live-transport-boundary execution_is_the_reconstruction, so the lifetime is a tradeoff against that cost rather than a free knob; a live-mode plan slice would make it cheaper
+  cost_of_max_duration: each rollover re-executes the page, per decision:live-transport-boundary execution_is_the_reconstruction, so the lifetime is a tradeoff against that cost rather than a free knob; requirement:live-mode-plan-slice would make it cheaper, and until it ships every bound here can only relocate the cost
 authorization:
   on_open: full authentication and authorization, never inherited from the document request
   on_resume: the page's own checks run again because the page runs again, which is what makes max_response_duration a security control rather than only a resource one

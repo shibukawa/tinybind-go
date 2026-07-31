@@ -27,11 +27,13 @@ status:
     - ids are positional: each boundary's subtree is its own namespace, so a nested boundary is tb-1-1 rather than a number from a shared counter
     - a live boundary's subtree hands out the same ids on every delivery instead of minting new ones
     - a superseded delivery's nested boundaries are cancelled before their ids are reused, so stale content cannot land in the replacement's placeholder
+    - the error reporter is called after the delivery lock is released, per requirement:live-error-report-off-lock, so a reporter that blocks no longer holds the clause's other bindings
   known_gaps:
     - no bound on live subscriptions: the await concurrency limit deliberately excludes them, so nothing caps how many one render opens; the useful unit is per process, which requirement:live-boundary-lifecycle owns
     - the live entry does not enforce that the body is discarded, so a caller passing a real writer gets the endless document response decision:live-transport-boundary rejected
-    - the error reporter is called while the boundary lock is held, so a reporter that blocks stalls the subscription; the await path calls it from the boundary goroutine with no lock
+    - a live boundary is indistinguishable from a settle-once one, both in the placeholder it writes and in the delivery record it yields, so a client cannot classify a region and a live-mode consumer cannot separate the two kinds of delivery; requirement:live-boundary-liveness-signal owns it
     - a source must not mutate a value it already yielded, since the boundary renders from the scope it was written into; that contract is not stated in the Go documentation
+  downstream_round: decision:live-integration-seams records the 2026-07-31 findings against this shipped runtime and the order they are taken in
 tinygo:
   covered: the htmlbind suite runs under TinyGo natively and on wasip1, plus a smoke command that renders a live boundary on both, so the goroutines, the context selects, and the pull sequences are exercised on the cooperative scheduler
   panic_limitation:

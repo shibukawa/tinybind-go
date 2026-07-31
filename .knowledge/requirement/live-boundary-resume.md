@@ -31,7 +31,8 @@ reconstruction:
   no_continuation: no capability token, no server-side input rebuild, and no client-held arguments, per decision:live-transport-boundary execution_is_the_reconstruction
   identity: rule:component-instance-identity is deterministic across executions, so boundary IDs match what is on screen with nothing sent to align them
   changed_inputs: a page whose data changed since the document render produces a different first delivery, which is correct rather than a mismatch; the client applies it like any other delivery
-  cost: the page's work runs again per reconnect, which requirement:live-boundary-lifecycle counts and decision:live-transport-boundary proposes to narrow with a live-mode plan slice
+  cost: the page's work runs again per reconnect, which requirement:live-boundary-lifecycle counts and requirement:live-mode-plan-slice proposes to narrow
+  identity_depends_on_it: a sliced live-mode render must allocate the same positional ids the document render did, so the id rule above is a constraint on that optimization rather than a consequence of it
 stateless_v1:
   decided: the live-mode request carries no per-boundary revision or validator in the first milestone
   consequence: every restarted subscription sends its first delivery, even when it matches what the client displays

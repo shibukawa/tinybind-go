@@ -32,7 +32,7 @@ execution_is_the_reconstruction:
   identity_matches: rule:component-instance-identity is deterministic for the same logical instance across executions, so the boundary IDs line up with the ones on screen without the client sending anything to prove it
   why_this_is_better: the reconstruction path is the render path, so there is no second way to compute a boundary's inputs that can disagree with the first
   cost: the page's own work runs again on every reconnect, and its await boundaries would run for nothing
-  optimization_later: generation knows statically which values feed a live binding's arguments, so a live-mode plan can compute that slice and skip the rest; decision:generated-render-plan already carries per-plan ops, so this is a plan variant rather than a new mechanism
+  optimization_later: requirement:live-mode-plan-slice, which generation can compute because it knows statically which values feed a live binding's arguments; decision:generated-render-plan already carries per-plan ops, so this is a plan variant rather than a new mechanism
   idempotence: decision:response-mode-header states the handler-reuse constraint this depends on
 first_delivery_inline:
   behavior: the document-mode render may treat a live boundary's first delivery as an await completion, committing real content instead of fallback when it arrives within the ordinary boundary deadline
@@ -90,6 +90,6 @@ security:
 open_questions:
   - whether the module ships a reference live client as an opt-in requirement:framework-script-contribution, as decision:client-runtime-ownership plans for the streaming one
   - the media type of a chunked delivery stream, and whether it reuses the navigation delta media type
-  - whether the live-mode plan slice is in the first milestone or the full page render is accepted per reconnect
+  - whether requirement:live-mode-plan-slice is in the first milestone or the full page render is accepted per reconnect; decision:live-integration-seams ranks it first by value and last in execution order
   - whether the protocol version for this mode is separate from the one data:html-client-bootstrap already carries
 ```
