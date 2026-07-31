@@ -26,6 +26,7 @@ const (
 	ArtifactSQLTemplate  ArtifactKind = "sql_template"
 	ArtifactBinding      ArtifactKind = "binding"
 	ArtifactConfigBind   ArtifactKind = "configbind"
+	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
 	ArtifactOpenAPI      ArtifactKind = "openapi"
 )
 
@@ -88,6 +89,14 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, fmt.Errorf("generate configbind: %w", err)
 	}
 	artifacts = append(artifacts, config...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	items, err := runner.dynamoItemArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate dynamobind: %w", err)
+	}
+	artifacts = append(artifacts, items...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -352,6 +361,54 @@ func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {
 			GoSource:    code,
 		})
 		start = end
+	}
+	return artifacts, nil
+}
+
+// dynamoItemArtifacts emits one item codec artifact per source file that
+// declares a bound type, so a package with two DynamoDB sources generates two
+// files and neither owns the other's declarations.
+func (g *Generator) dynamoItemArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.featureDisabled(FeatureItemCodec) {
+		return nil, nil
+	}
+	plan, err := analyzeDynamoItems(load, g.Options)
+	if err != nil {
+		return nil, err
+	}
+	grouped := map[string][]string{}
+	var order []string
+	for _, item := range plan.Items {
+		if item.Usage == 0 {
+			continue
+		}
+		if _, seen := grouped[item.SourcePath]; !seen {
+			order = append(order, item.SourcePath)
+		}
+		grouped[item.SourcePath] = append(grouped[item.SourcePath], item.Name)
+	}
+	sort.Strings(order)
+	emitTable := !g.Options.featureDisabled(FeatureItemTable)
+	artifacts := make([]Artifact, 0, len(order))
+	for _, source := range order {
+		selected := make(map[string]bool, len(grouped[source]))
+		for _, name := range grouped[source] {
+			selected[name] = true
+		}
+		code, err := emitDynamoSelected(plan, selected, emitTable)
+		if err != nil {
+			return nil, err
+		}
+		if len(code) == 0 {
+			continue
+		}
+		artifacts = append(artifacts, Artifact{
+			SourcePath:  source,
+			Kind:        ArtifactDynamoItem,
+			OutputBase:  artifactBase(source),
+			PackageName: plan.Package,
+			GoSource:    code,
+		})
 	}
 	return artifacts, nil
 }

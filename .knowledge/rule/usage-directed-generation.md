@@ -13,6 +13,12 @@ mapping:
   DecodeJSON: document decoder helpers
   EncodeJSON: document encoder helpers
   ScanRows: SQL scanner plus nested grouping helpers
+  Store / StoreAll: requirement:dynamobind-generated-item-codec EncodeItem plus nested item encoders
+  Load / LoadAll / Query / QueryPage / Scan: DecodeItem plus nested item decoders
+  Remove / Update: ItemKey
+  StoreReturning: EncodeItem plus DecodeItem
+  RemoveReturning: ItemKey plus DecodeItem
+  item_key_exception: a type with a partitionkey tag gets ItemKey and its table definition without a discovered call, per requirement:dynamobind-generated-item-codec
 closure: nested model helpers inherit only operations required by the parent
 registration: only directly used root models register public dispatch entries
 imports: derive from emitted paths; JSON-only output must not import net/http
@@ -20,6 +26,7 @@ runtime_imports:
   DecodeJSON / EncodeJSON only: jsonbind
   Bind / Write: httpbind
   ScanRows only: sqlbind
+  DynamoDB item operations only: the driver, for dynamodb.Item and dynamodb.Key; dynamobind is imported by the call site, not by the emitted methods
 boundary: decision:runtime-package-boundaries
 unused_models: emit no mapping functions
 compatibility: explicit generate-all option may emit every supported path
@@ -32,4 +39,5 @@ related:
   - api:scan-rows
   - rule:generator-feature-disable
   - decision:runtime-package-boundaries
+  - requirement:dynamobind-generated-item-codec
 ```

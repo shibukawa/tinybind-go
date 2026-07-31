@@ -136,7 +136,14 @@ const (
 	UsageDecodeJSON
 	UsageEncodeJSON
 	UsageScanRows
+	UsageEncodeItem
+	UsageDecodeItem
+	UsageItemKey
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
+	// UsageItem is every DynamoDB item entry point. It stays out of UsageAll:
+	// the item codec has its own generate-all rule, which requires a dynamo tag,
+	// so an unrelated request struct never acquires one.
+	UsageItem = UsageEncodeItem | UsageDecodeItem | UsageItemKey
 )
 
 // DiscoverySymbol identifies a generic function and the entry point it needs.
@@ -325,7 +332,7 @@ func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoveryS
 			args := genericTypeArgExprs(call.Fun)
 			if symbol.ArgumentType != nil {
 				if len(call.Args) > *symbol.ArgumentType {
-					if name := namedTypeName(info.TypeOf(call.Args[*symbol.ArgumentType])); name != "" {
+					if name := argumentTypeName(info.TypeOf(call.Args[*symbol.ArgumentType])); name != "" {
 						out[name] |= symbol.Usage
 					}
 				}
@@ -394,6 +401,22 @@ func instantiatedTypeArgAt(info *types.Info, fun ast.Expr, index int) types.Type
 			return nil
 		}
 	}
+}
+
+// argumentTypeName is namedTypeName through one slice or array, so a call that
+// takes a batch of values discovers the element type. A scalar argument behaves
+// exactly as before.
+func argumentTypeName(t types.Type) string {
+	if name := namedTypeName(t); name != "" {
+		return name
+	}
+	switch collection := types.Unalias(t).(type) {
+	case *types.Slice:
+		return namedTypeName(collection.Elem())
+	case *types.Array:
+		return namedTypeName(collection.Elem())
+	}
+	return ""
 }
 
 func namedTypeName(t types.Type) string {

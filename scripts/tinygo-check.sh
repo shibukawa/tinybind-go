@@ -30,6 +30,10 @@ echo "==> tinygo test (runtime + generated mapping)"
 # remain covered by go test and are intentionally excluded from TinyGo runtime.
 tinygo test -run 'Test(Bind|Decode|Write|RoundTrip|GeneratedFile)' ./internal/mappingfixture
 tinygo test ./internal/tinycheck .
+# The DynamoDB item codec. Only the codec tests build here: the ones beside them
+# drive the driver over an httptest server, and TinyGo has no net/http server,
+# so those carry a !tinygo tag.
+tinygo test ./internal/dynamofixture
 # htmlbind is a rendering runtime with no net/http dependency, so it is a TinyGo
 # target like the rest. It is listed separately because its await and live
 # boundaries are the only place the package starts goroutines and selects on a

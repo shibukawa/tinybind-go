@@ -45,6 +45,13 @@ const (
 	FeatureStreaming      Feature = "streaming"
 	FeatureScanRows       Feature = "scan-rows"
 	FeatureMultipartFile  Feature = "multipart-file"
+	// FeatureItemCodec turns off DynamoDB item codec generation entirely.
+	FeatureItemCodec Feature = "item-codec"
+	// FeatureItemTable turns off only the generated table definition, leaving
+	// the codec and the key builder in place. Emitting it is the default,
+	// because it is what makes a key name single-source; a project that manages
+	// tables with IaC and never creates one in Go can drop it.
+	FeatureItemTable Feature = "item-table"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
 	// structs. Disable it to keep hand-written sources untouched.
 	FeatureHelpBackfill Feature = "help-backfill"
@@ -108,7 +115,7 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:     PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath}},
+		RuntimePackages:     PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath}},
 		FileTypes:           PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
 		HTMLTemplatePattern: DefaultHTMLTemplatePattern,
 		SQLTemplatePattern:  DefaultSQLTemplatePattern,
@@ -247,6 +254,22 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
 		RowsScanCall(Function(path, "ScanRows"), GenericType("row", 0)),
+		ItemDecodeCall(Function(path, "Load"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "LoadAll"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "Query"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "QueryPage"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "Scan"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "ScanPage"), GenericType("item", 0)),
+		// The write side reads its type from the value argument, not from the
+		// type parameter. Its constraints are the generated interfaces, so
+		// before the first generation the call does not type-check and no
+		// instantiation is recorded; the argument's own type resolves anyway.
+		ItemEncodeCall(Function(path, "Store"), ArgumentType("item", 3)),
+		ItemEncodeCall(Function(path, "StoreAll"), ArgumentType("item", 3)),
+		ItemEncodeDecodeCall(Function(path, "StoreReturning"), ArgumentType("item", 3)),
+		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 3)),
+		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 3)),
+		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 3)),
 	}
 	statuses := map[string]int{
 		"BadRequest": 400, "Validation": 400, "Unauthorized": 401, "Forbidden": 403,
@@ -272,6 +295,16 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageDecodeJSON
 	case OperationRowsScan:
 		return UsageScanRows
+	case OperationItemEncode:
+		return UsageEncodeItem
+	case OperationItemDecode:
+		return UsageDecodeItem
+	case OperationItemKey:
+		return UsageItemKey
+	case OperationItemEncodeDecode:
+		return UsageEncodeItem | UsageDecodeItem
+	case OperationItemKeyDecode:
+		return UsageItemKey | UsageDecodeItem
 	default:
 		return 0
 	}
@@ -293,13 +326,16 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureEncodeJSON]
 	case OperationRowsScan:
 		return disabled[FeatureScanRows]
+	case OperationItemEncode, OperationItemDecode, OperationItemKey,
+		OperationItemEncodeDecode, OperationItemKeyDecode:
+		return disabled[FeatureItemCodec]
 	default:
 		return false
 	}
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "decode", "encode", "row", "config"}
+	roles := []string{"request", "response", "stream", "decode", "encode", "row", "item", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source

@@ -2,9 +2,9 @@
 
 [English](README.md)
 
-TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL のランタイム依存を別パッケージに分離しています。
+TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL・DynamoDB のランタイム依存を別パッケージに分離しています。
 
-利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md)
+利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md)
 
 この上にフレームワークを作る方へ: [htmlbind フレームワーク実装者向けガイド](docs/htmlbind_frameworkowner.ja.md)
 
@@ -116,6 +116,7 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / NewStream / OpenAPI 配信 / SwaggerUI |
 | `jsonbind/` | 単独の DecodeJSON / EncodeJSON。`net/http` と `database/sql` を import しない |
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
+| `dynamobind/` | `tinygodriver/nosql/dynamodb` 上の DynamoDB item runtime。`net/http` も `database/sql` も import しない |
 | `generator/` | フィールド計画に基づくバインダ／ライタ + OpenAPI 3.1 埋め込み生成 |
 | `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`NewStream`、エラー） |
 | `templates/htmlbind/` | 型付きで文脈安全な HTML template compiler |
