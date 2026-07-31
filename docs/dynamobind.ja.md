@@ -184,6 +184,8 @@ statement readingsForSensor(sensor: Sensor): dynamo.many<Reading> {
   正しく、片方だけだと黙って rename されるのではなく生成 error になります。
 - 引数の型は package で書かれているとおりの Go の型です。named type や `[]byte` も
   使えます。
+- 節はどちらも必須です。`table` はこのアクセスパターンが対象にする table を指し、その結果
+  として生成される関数は table を引数に取りません。
 - 節の順序は自由で、1 行に並べるときは `;` で区切ります。
 - `//` から行末までは comment です。
 
@@ -206,14 +208,22 @@ sort key の述語は 1 宣言につき高々 1 つです。
 partition key の述語は必須で、先頭に置き、常に `=` です。DynamoDB がそれ以外を許さない
 ためです。
 
-### `table` 節
-
-`table <名前>` は statement の本体に必須で、生成される関数は table を引数に取りません。
+### 生成されるシグネチャ
 
 ```go
 func ReadingsSince(ctx context.Context, c *dynamodb.Client,
 	sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
 ```
+
+table は引数にありません。`table` 節が与えるからです。可変長 option は driver に届くので、
+`dynamodb.WithLimit`、`WithScanForward`、`WithConsistentRead`、`WithIndex` はそのまま
+使えます。生成された式の名前と値は最後に追加されるので、呼び出し側の option が宣言した
+条件を置き換えることはありません。
+
+`-dynamo-context-api` を付けると、client も table も取らない関数がこの隣に生成されます。
+[client を Context から解決する](#client-を-context-から解決する)を参照してください。
+
+### `table` 節が本体にある理由
 
 型ではなく statement が持つのは、**型が 1 つの table とは限らない**からです。同じ構造体を
 test 用の table と本番の table に置けるので、型に table を持たせると事実でないことを宣言
@@ -229,17 +239,9 @@ service が拒否する名前は最初の呼び出しでの `ValidationException
 なります。
 
 deployment prefix はここには書きません。実行時に Context から解決します。
-[client を Context から解決する](#client-を-context-から解決する)を参照してください。
 
 item 操作は table 引数を保ちます。読み取る宣言が無いためで、不整合ではなく宣言が無いだけ
 です。
-
-### 生成されるシグネチャ
-
-可変長 option は driver に届くので、`dynamodb.WithLimit`、
-`WithScanForward`、`WithConsistentRead`、`WithIndex` はそのまま使えます。生成された
-式の名前と値は最後に追加されるので、呼び出し側の option が宣言した条件を置き換えることは
-ありません。
 
 ### すべて tag と照合されます
 
@@ -466,6 +468,10 @@ func ReadingTable(name string) dynamodb.TableDefinition
 table 作成に必要ですし、`CreateTable` を一度も呼ばない program でも key 名の出所が
 1 箇所にまとまります。driver の `CreateTable` 自体は約 22 KB で、呼ばなければ linker が
 落とします。
+
+これは table の**形**であって名前ではありません。`name` が引数なのはそのためです。型は
+1 つの table とは限らず、同じ定義から test 用の table も本番の table も作れます。名前を
+決めるのは宣言の `table` 節で、こちらはそのどれもがどういう形かを述べます。
 
 ## 生成
 

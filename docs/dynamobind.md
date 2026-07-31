@@ -187,6 +187,8 @@ statement readingsForSensor(sensor: Sensor): dynamo.many<Reading> {
   silent rename.
 - Parameter types are Go types as your package spells them, including named types
   and `[]byte`.
+- Both clauses are required. `table` names the table this pattern runs against,
+  and the generated function takes no table parameter as a result.
 - Clauses may appear in either order, and `;` separates them on one line.
 - `//` starts a comment to end of line.
 
@@ -210,15 +212,23 @@ Sort key predicates, at most one per declaration:
 The partition key predicate is mandatory, comes first, and is always `=`, because
 DynamoDB allows nothing else there.
 
-### The `table` clause
-
-`table <name>` is required in every statement body, and the generated function
-takes no table parameter:
+### Generated signature
 
 ```go
 func ReadingsSince(ctx context.Context, c *dynamodb.Client,
 	sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
 ```
+
+There is no table parameter: the `table` clause supplies it. The variadic options
+reach the driver, so `dynamodb.WithLimit`, `WithScanForward`, `WithConsistentRead`
+and `WithIndex` all work. The generated expression names and values are appended
+last, so a caller option cannot replace the condition the declaration describes.
+
+With `-dynamo-context-api`, a second function is generated beside this one that
+takes neither the client nor the table. See
+[Resolving the client from a Context](#resolving-the-client-from-a-context).
+
+### Why the `table` clause is in the body
 
 It belongs to the statement rather than to the type, because a type is not one
 table: the same struct can be stored in a test table and a production one, so a
@@ -236,17 +246,10 @@ letters, digits, `_`, `-` and `.` — so a name the service would reject is a
 generation error rather than a `ValidationException` on the first call.
 
 A deployment prefix is not written here. It is resolved at run time, from the
-Context; see [Resolving the client from a Context](#resolving-the-client-from-a-context).
+Context.
 
 Item operations keep their table parameter. They have no declaration to read one
 from; that is the absence of a declaration rather than an inconsistency.
-
-### Generated signature
-
-The variadic options reach the driver, so `dynamodb.WithLimit`, `WithScanForward`,
-`WithConsistentRead` and `WithIndex` all work. The generated expression names and
-values are appended last, so a caller option cannot replace the condition the
-declaration describes.
 
 ### Everything is checked against your tags
 
@@ -483,6 +486,11 @@ Generated whenever the type declares a `partitionkey`, from the same tags as the
 codec. Tests need it to create tables, and even a program that never calls
 `CreateTable` gets the key names from one place. The driver's `CreateTable` is
 about 22 KB and the linker drops it when nothing calls it.
+
+This is the table's *shape*, not its name, which is why `name` is a parameter: a
+type is not one table, and the same definition creates the test table and the
+production one. The `table` clause of a declaration names one; this describes
+what any of them looks like.
 
 ## Generation
 
