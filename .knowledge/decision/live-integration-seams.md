@@ -47,6 +47,7 @@ principle:
   applies: the decision:framework-integration-seams rule, widen a seam whose default output stays identical and whose contract stays the caller's
   fits: all three are additive or internal; none changes a shape an author's own template or Go is written against
   new_reading: a cost the caller cannot relocate outranks a cost the caller has already absorbed, even when the absorbed one is cheaper to fix
+same_day_round: decision:library-component-seams, the component and asset seams from the same reporter; its assets item cites the live runtime this round shipped, because a delivery can insert a component whose script the first render did not carry
 related:
   - requirement:live-boundary-rendering
   - requirement:live-boundary-resume

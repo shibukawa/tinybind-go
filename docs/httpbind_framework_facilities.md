@@ -1,0 +1,377 @@
+# Framework Facilities
+
+This document is the index of what tinybind offers a framework built **on top of**
+it, organized as requirements: what each facility is for, what it costs, whether
+it is built, and what is still specified rather than shipped.
+
+The other framework guides are task-shaped — routing in
+[httpbind_frameworkowner.md](httpbind_frameworkowner.md), the page router in
+[httpbind_discovered_router.md](httpbind_discovered_router.md), the boundary
+protocol and client runtime in
+[htmlbind_frameworkowner.md](htmlbind_frameworkowner.md). This one is
+inventory-shaped. Read it when you are deciding whether a seam exists before you
+work around one that does not.
+
+## The rule every facility here follows
+
+A seam is widened when its default output stays identical and its contract stays
+the caller's. A change to the shape an application author writes against is
+refused.
+
+That is the whole policy, and it has two consequences worth stating plainly:
+
+**Unused is free.** A project using none of a facility generates byte-identical
+Go and writes byte-identical bytes. Every item below was measured against that,
+not merely intended to satisfy it.
+
+**The module decides what is needed; you decide where it comes from.** tinybind
+computes which assets a page requires, which head tags merge, and which client
+runtime a response needs. It never chooses a URL, serves a file, sets a header,
+or decides a route.
+
+## Facilities at a glance
+
+| Facility | For | Status |
+| --- | --- | --- |
+| Generation symbols and emitter overrides | naming what generated code calls | shipped |
+| Router type independence | naming your own router type | shipped |
+| Generated-source exclusion | keeping your generated files out of discovery | shipped |
+| Server action resolution | addressing a handler from your own route table | shipped |
+| Render context for a synchronous external | a per-request value rendered inline | **shipped 2026-07-31** |
+| Caller head contributions | a head tag decided per response | **shipped 2026-07-31** |
+| `noscript` in the head | telling a scriptless client something | **shipped 2026-07-31** |
+| Head contribution provenance | naming the component behind a contribution | shipped |
+| Static asset extraction | component style and script as served files | shipped |
+| Fragment capability introspection | deciding what runtime a response needs | shipped |
+| Live boundary rendering | a region re-rendered per delivery from a source | shipped |
+| Live reconnection mode | resuming a subscription on the page's own route | specified, not built |
+| Registered components (`<csrf-token/>`) | markup your framework implements | specified, not built |
+| Component assets | a library shipping a component plus its `.js` | specified, not built |
+| Render-time script contribution | selecting a script per response by name | specified, not built |
+
+The rest of this document covers the three rows marked with a date in depth,
+then states what the unbuilt ones would give you and why they are not built yet.
+
+## Per-request values in markup
+
+### The problem
+
+A component never receives an `http.Request`, and a `Fragment` is immutable and
+reusable across requests. So a value that belongs to the request — a CSRF token,
+a request id, a nonce, a cookie test — has nowhere obvious to live.
+
+Passing it through the parameter struct works and is what most frameworks do
+first. It has two costs. Every page that needs the value repeats the plumbing
+from handler to `Params` to template. And the value becomes an ordinary template
+variable, which means a rule like *never put this in a URL, an attribute, or a
+log line* can only be asked for, never enforced.
+
+### What shipped: a synchronous external that takes the context
+
+An `external async` function's Go implementation may declare a leading
+`context.Context`, and an `external live` one must. As of 2026-07-31 a plain
+`external` may too.
+
+Nothing changes in the template. The declaration says what it always said:
+
+```
+external CSRFToken(): string
+external CSRFField(): html
+```
+
+The choice belongs to whoever writes the Go, function by function:
+
+```go
+// Takes the render context, because the token belongs to the request.
+func CSRFToken(ctx context.Context) string {
+	return tokenFrom(ctx)
+}
+
+// Takes none, and is called exactly as it was before.
+func SiteName() string { return "example" }
+```
+
+Generation reads your package's Go sources and passes the context to the
+functions that accept one. The detection is syntactic — it runs before the
+package compiles, so an unparsable file is skipped rather than failing
+generation, and a call shape that then does not match is an ordinary Go compile
+error at the generated call site.
+
+If you drive generation through the generator command, this is automatic. If you
+call the compiler yourself, it is `GenerateOptions.ContextExternals`, the same
+map you already pass for async externals:
+
+```go
+out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
+	ContextExternals: map[string]bool{"CSRFToken": true},
+})
+```
+
+**Return a fragment, not a string, when the value is markup.** An external
+declared `: html` renders as a subtree rather than as escaped text or trusted
+raw bytes — so a framework can return a whole hidden input instead of a bare
+token, and it goes through the ordinary context checks:
+
+```
+<form method="post">
+  {CSRFField()}
+  <input name="title" value="{title}">
+</form>
+```
+
+```go
+func CSRFField(ctx context.Context) htmlbind.Fragment {
+	return forms.CSRF(forms.CSRFParams{Token: tokenFrom(ctx)})
+}
+```
+
+That half already worked before this round; only the context was missing.
+
+#### Where the context comes from
+
+It is the render's own context — the `ctx` argument of an async entry, or what
+`WithContext` supplied to a synchronous one — read at the position the call
+occupies. Inside an await or live boundary subtree that is the boundary's
+context, so work started by a live delivery is bounded by that delivery rather
+than by the original render.
+
+A render that supplied no context still has one, so unlike a registered
+component's provider, a context-taking external can never fail for want of it.
+
+#### What it costs in generated code
+
+Nothing, unless you use it. A plan instruction holding such a call takes the
+context as a leading closure parameter and is named for it:
+
+```go
+// Without a context-taking external — unchanged from before this existed:
+planPageOps.Text(func(p PageParams) string { return SiteName() }),
+
+// With one:
+planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return CSRFToken(ctx) }),
+```
+
+The forms are `TextCtx`, `RawCtx`, `AttrCtx`, `BoolAttrCtx`, `IfCtx`, `SlotCtx`,
+`ComponentCtx`, and the package-level `ForCtx`. Selection is per expression, so a
+template mixing both kinds emits both kinds.
+
+#### The one position that refuses it
+
+Awaiting a value the caller started — `{await v = handles[Which()].count}` —
+lowers its unset check to a `Require` instruction, which runs before anything is
+written precisely so a caller who left a value unset still gets an error status.
+A check that could call out is a different thing, so a context-taking external
+there is a generation error naming the position.
+
+#### What this is not
+
+It is not the registered-component seam described later, and it does not replace
+it. An external hands the value to the template, which may then interpolate it
+anywhere; a registered component renders it and never puts it in template scope.
+The first is cheap and general, the second is checkable. A framework that wants
+both is asking for the right thing.
+
+## The document head
+
+Component head declarations are merged into the single root head before the first
+body byte, deduplicated by tag, with the declaring component recorded for each.
+None of that changed. What changed is who else may contribute, and what a
+contribution may be.
+
+### What shipped: contributions from the render call
+
+A component declares what it can know at generation time. A caller knows things a
+template cannot: a title taken from the record the page just loaded, a marker
+emitted only while some cookie is absent.
+
+```go
+err := htmlbind.RenderChain(w, chain, page,
+	htmlbind.WithHead(
+		htmlbind.HeadTitle(order.Customer),
+		htmlbind.HeadMeta(
+			htmlbind.HeadAttr{Name: "name", Value: "description"},
+			htmlbind.HeadAttr{Name: "content", Value: order.Summary},
+		),
+	),
+)
+```
+
+Five node kinds are available — `HeadTitle`, `HeadMeta`, `HeadLink`,
+`HeadScript`, `HeadNoScript` — and they are values, not markup. A caller cannot
+introduce an element by supplying a string, and every value is escaped for its
+position.
+
+Four properties are worth pinning down:
+
+**They arrive strictly before the head pass.** That is the same ordering
+component contributions already satisfy, so nothing about streaming changes and
+no body byte is buffered.
+
+**They merge as the innermost contributor.** Component contributions come first,
+so a caller's tag may depend on one. A tag a component already declared is not
+written twice.
+
+**A malformed node fails before the first byte**, so the response can still carry
+an error status.
+
+**`HeadScript` requires a `src`.** An asset is a reference to something served.
+No path through this package writes inline script, which is what lets a policy
+keep `script-src 'self'` with no nonce.
+
+This is a channel for the caller, not a way into the byte stream. Nothing
+supplied here reaches template scope, and a component cannot read it. An author's
+document shell stays an author's document.
+
+#### On a response with no shell
+
+A fragment response has no head to merge into. Rather than discover that in a
+browser, ask:
+
+```go
+tags, err := htmlbind.RenderHeadNodes(nodes)
+```
+
+You get the same ready-to-write tags without a render, so you can put them in
+your navigation payload, reject the response, or drop them deliberately.
+
+### What shipped: `noscript` in the head
+
+A browser with scripting disabled is not a crawler and no `User-Agent` says so,
+so a page that wants to hand such a client to a scriptless path has one
+conforming place to say it: a `noscript` refresh in the head.
+
+Head contributions previously accepted `link`, `meta`, `style`, `script`, and
+`title`. `noscript` is now accepted in both the authored set and the caller set:
+
+```html
+<head>
+  <noscript><meta http-equiv="refresh" content="0; url=/_handoff"></noscript>
+</head>
+```
+
+```go
+htmlbind.WithHead(htmlbind.HeadNoScript(htmlbind.HeadMeta(
+	htmlbind.HeadAttr{Name: "http-equiv", Value: "refresh"},
+	htmlbind.HeadAttr{Name: "content", Value: "0; url=/_handoff"},
+)))
+```
+
+Its children are `link`, `style`, and `meta` only — anything else there is body
+content. It is the only contributed element with element children; every other
+one accepts static text alone.
+
+The authored form is unconditional, which is right for a page that always wants
+it and wrong for a handoff that should stop once its cookie is set. That
+conditional case is exactly what the caller channel above is for.
+
+### Attribution
+
+`Head` and `HeadSources` are parallel lists on both `Fragment` and `Wrapper`:
+index *i* of either describes the same tag, and a source reads
+`ComponentName (file:line:col)`. When you reject a contribution you cannot
+deliver, name the component instead of printing the markup.
+
+## Assets
+
+Component `<style>` is scoped and hoisted; component `<script>` is extracted to a
+content-hashed file and referenced from the merged head. Both are written under
+`PublicDir` and referenced under `PublicURLBase`, and both are deterministic:
+identical input regenerates identical names and bytes.
+
+You serve the directory. tinybind ships no static file server, so one route for
+the whole generated asset directory is the manual step.
+
+This covers a component declared in a template file of the generation unit being
+compiled. It does not cover a component a *library* supplies — see below.
+
+## What is specified but not built
+
+These are designed, agreed, and unimplemented. They are listed with what each
+would give you so you can decide whether to wait or work around.
+
+### Registered components
+
+Markup your framework implements, callable by name from any template in the
+generation unit, with no import and no per-page declaration:
+
+```html
+<csrf-token />
+<pw-noscript-handoff />
+```
+
+Registration is a whitelist passed to the generate command — a name-to-Go-symbol
+map, static, needing no reflection and no init ordering — so a project that
+registers none generates what it generates today. An element with no per-request
+value folds entirely into static bytes and costs nothing at render time; one with
+a value calls a context-taking provider function at its plan step.
+
+Three properties are only available this way, and are the reason it is not sugar
+over an external:
+
+- **The value never enters template scope.** The component renders the token; an
+  external hands it to the template.
+- **Placement is checkable.** A head-only contribution written in the body
+  becomes a generation error rather than a page that half works.
+- **The dependency is declared.** An element that reads a cookie makes the whole
+  response vary on it. A declared vary axis is what lets you build a `Vary`
+  header for something no template mentions, and what lets an output cache refuse
+  to store what it cannot key.
+
+### Component assets
+
+A component library is a template plus a script plus some Go. Two of the three
+have a home. A library owns no route, no scaffold, and no shell, so it cannot
+reference its own file the way a framework references its runtime.
+
+What this would add:
+
+- an **embedded asset table** — bytes, digest, media type, emitted as generated
+  Go, so nothing reads a filesystem at runtime and a TinyGo or wasm target works;
+- a **statically known required-asset set**, folded through a chain the way
+  `HasAwaitBlock` already is, so a document can carry every script a later
+  delivery might need and nothing is fetched mid-swap;
+- a **caller-supplied URL function**, generalizing the pattern where only you
+  know the mount path, the cache policy, and whether you serve from memory or
+  from disk.
+
+With deduplication by digest, order independent of registration order, and no
+inline delivery anywhere.
+
+The middle item is the one that matters most and is hardest. A live delivery or a
+fragment swap can insert a component whose script was not in the first render. If
+the required set is only discoverable while rendering, you have to load scripts at
+swap time — which is client design this module deliberately does not own.
+
+### Render-time script contribution
+
+Selecting a registered script by name for one response. The caller-head channel
+above covers the external-URL case in the meantime: `HeadScript` with a `src` is
+a per-response script tag today. What is missing is the registry that would let
+you name a contribution the generator already hashed and wrote.
+
+## Constraints the whole surface preserves
+
+- **Escaping is unchanged.** Reading the request changes nothing about how a
+  value is written. A context-taking external's result is escaped for its
+  position exactly as any other expression is.
+- **No inline script, anywhere.** Neither extraction, nor a contribution, nor a
+  caller-supplied node ever emits an inline script block.
+- **No cloaking.** Reading the request decides delivery, never content. The mode
+  header never reaches template scope, and no template can branch on it.
+- **No reflection, no filesystem read at runtime, no init-order dependency.**
+  TinyGo and wasm targets stay viable.
+- **No `net/http` in `htmlbind`.** The rendering side has no opinion about
+  transport, and gained none from any facility here.
+
+## Reporting a gap
+
+Three rounds of downstream requests are recorded in this repository's
+`.knowledge` catalog: generation seams, live integration, and the component seams
+this document's shipped items came from. Each round was checked against the
+released source before it was accepted, and each recorded what was refused and
+why alongside what was taken.
+
+The most useful report names the feature that hit the seam, not only the seam.
+Two of the four asks in the last round turned out to be designs this catalog
+already held; what moved them was that a framework arrived at them from three
+features in one week.

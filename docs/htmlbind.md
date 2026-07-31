@@ -345,6 +345,20 @@ JavaScript braces are not template syntax. Contributions must be static markup;
 the merged head is written before the first body byte, so it cannot depend on
 request data.
 
+A contribution may be a `link`, `meta`, `style`, `script`, `title`, or
+`noscript`. `noscript` is the only one that may hold elements — `link`, `style`,
+and `meta` — because everything else there would be body content:
+
+```html
+<head>
+<noscript><meta http-equiv="refresh" content="0; url=/no-script"></noscript>
+</head>
+```
+
+A contribution written this way is unconditional, which is right for a page that
+always wants it. A tag that should appear only for some responses is supplied at
+the render call instead, through `htmlbind.WithHead`.
+
 Every component reachable from the rendered chain contributes, including
 components called from a body, and identical tags are emitted once. Identity is
 per tag, so two components that both link `/shared.css` and then declare their
@@ -416,6 +430,44 @@ rewriting the matching `class` attributes in the same component:
 
 The suffix is derived from the template path and component name, so unrelated
 edits do not change generated class names.
+
+### Extracted static files
+
+A `style` block and a `script` block carrying inline content never reach the
+response. Generation writes them as files and puts a reference tag in the merged
+head instead, so the bytes are cached by the client and a Content Security
+Policy may forbid inline script:
+
+```html
+<link rel="stylesheet" href="/public/generated/card.style.1f0a3c9d4b21.css">
+<script src="/public/generated/card.script.7c62e0b1d938.js" defer></script>
+```
+
+- Style blocks of one template file bundle into one stylesheet; each component
+  script becomes its own file, so `defer`, `async`, `type`, and any other author
+  attribute survive on its tag.
+- The file name carries a hash of the content, so the URL is immutably
+  cacheable and an unchanged project regenerates identical names.
+- A `script` or `link` that already names an external URL contributes its tag
+  unchanged and produces no file.
+- Extraction happens at generation time. Nothing is assembled per request, and
+  the reference tag needs no per-request collection because the composition
+  cannot change it.
+
+Two generator options decide where the files go and how they are named:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `PublicDir` | `public/generated` | directory receiving the generated files |
+| `PublicURLBase` | `/public/generated` | prefix of the reference URL |
+
+The generate command exposes them as `-public-dir` and `-public-url-base`.
+Neither is derived from the other: the file path is `PublicDir` joined with the
+file name, the reference is `PublicURLBase` joined with the same name, and no
+path segment is ever added, stripped, or inferred. `PublicURLBase` is used
+verbatim, so a full URL such as `https://cdn.example.com/assets` emits absolute
+references without changing where files are written. Setting one option
+requires setting the other; configuring only one fails generation.
 
 ## Attributes
 
@@ -722,6 +774,36 @@ func Decorate(value string, tone Tone) string {
 	}
 	return value
 }
+```
+
+### Reading the request
+
+Declare a leading `context.Context` and your function receives the context the
+page is rendering under — the `ctx` you passed to an async entry, or the one
+`WithContext` supplied to a synchronous one:
+
+```go
+func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+```
+
+The template declaration is unchanged — `external CSRFToken(): string` either way
+— so this is a decision for whoever writes the Go, function by function. Leave
+the parameter out and the function is called plainly, exactly as before.
+
+This is how a value that belongs to the request rather than to the page — a CSRF
+token, a request id, a nonce — reaches markup without travelling through the
+parameter struct of every page that needs it. It is a read: a function called
+this way must not write the response.
+
+An external declared `: html` returns an `htmlbind.Fragment` and renders as a
+subtree, so a whole hidden input can come back instead of a bare token:
+
+```text
+external CSRFField(): html
+```
+
+```go
+func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
 ```
 
 ## Async components

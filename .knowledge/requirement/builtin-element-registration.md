@@ -11,7 +11,13 @@ source:
   - concept:framework-template-extensions
   - user design discussion 2026-07-27
   - user whitelist decision 2026-07-27
+  - downstream framework component seam report 2026-07-31
 review_gate: proposed
+downstream_confirmation:
+  when: 2026-07-31, per decision:library-component-seams
+  reached_independently: the reporter asked for components a library implements and callable by name, naming csrf-token first, without having read this requirement; no part of it is implemented, so it could not have been found in the source
+  their_reasons: the value never enters template scope, placement is checkable, and an author can find it, move it, and delete it
+  not_sugar_over_an_external: agreed on both sides; requirement:render-context-externals is the other half and neither replaces the other
 surface:
   timing: passed to the generate command; nothing is registered at runtime
   model: data:builtin-element-definition for a builtin entry, a name or pattern for a passthrough entry
@@ -32,6 +38,17 @@ resolution:
   lookup: the element name, with passthrough patterns matched after exact names
   disjoint: a whitelist entry never shadows a real HTML element, because standard HTML element names carry no hyphen
   ordering: resolution happens during HTML parsing, before requirement:builtin-element-lowering
+declared_per_entry:
+  placement:
+    values: head, body, or either
+    why: a head-only contribution used in the body becomes a generation error rather than a page that half works
+    relation: narrower than the data:builtin-element-definition insertion context, which says where the markup parses and not which region owns it
+  vary_axis:
+    what: the request property the element's output depends on, such as a cookie or a header
+    why: an element reading a cookie makes the whole response vary on it, and nothing in the template says so; the caller cannot build a Vary header for what it cannot see, and an output cache cannot refuse to store what it cannot key
+    surface: reported with the rest of the composition's capabilities, so a caller reads it from the value it holds
+    added: 2026-07-31, per decision:library-component-seams
+  assets: requirement:component-asset-requirements
 validation:
   registration_time:
     - duplicate element name, or one name declared as both kinds
@@ -55,6 +72,8 @@ acceptance:
   - an application-declared Web Component is emitted verbatim and produces no plan step
   - a component library declared by pattern needs no per-element entry
   - two contributors declaring the same element name fail registration rather than one silently winning
+  - a head-only element written in the body fails generation, naming the element and the position
+  - an element whose output varies on a cookie reports that axis to the caller, so a shared cache can key or refuse the response
 related:
   - requirement:custom-framework-generation-profile
   - requirement:configurable-generator-discovery

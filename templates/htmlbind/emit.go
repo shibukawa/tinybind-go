@@ -35,6 +35,116 @@ func (s *emitScope) child(goType, builder string) *emitScope {
 
 const receiverIdent = "p"
 
+// contextIdent is the name a plan closure gives the render context. It matches
+// the name an await clause already uses, so a template author reading generated
+// code sees one spelling.
+const contextIdent = "ctx"
+
+// takesRenderContext reports whether a synchronous external's Go implementation
+// declared a leading context.Context. An async or live external is excluded:
+// those already receive the boundary context through their own call shape, and
+// they can only be called in an await binding, where ctx is in scope anyway.
+func (e *goEmitter) takesRenderContext(name string) bool {
+	if !e.contextExternals[name] {
+		return false
+	}
+	signature, ok := e.c.externals[name]
+	return ok && !signature.async && !signature.live
+}
+
+// usesSyncRenderContext reports whether the module calls such an external
+// anywhere. Imports are written before any plan is emitted, so the answer has to
+// come from the typed expressions rather than from what emission produced.
+func (e *goEmitter) usesSyncRenderContext() bool {
+	for expr := range e.c.exprTypes {
+		call, ok := expr.(*CallExpr)
+		if !ok {
+			continue
+		}
+		identifier, ok := call.Callee.(*IdentifierExpr)
+		if ok && e.takesRenderContext(identifier.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// usesRenderContext reports whether evaluating expr calls such an external, so
+// the closure holding it has to be given the context.
+func (e *goEmitter) usesRenderContext(expr Expr) bool {
+	found := false
+	walkExpr(expr, func(node Expr) {
+		call, ok := node.(*CallExpr)
+		if !ok {
+			return
+		}
+		identifier, ok := call.Callee.(*IdentifierExpr)
+		if ok && e.takesRenderContext(identifier.Name) {
+			found = true
+		}
+	})
+	return found
+}
+
+// attributeUsesRenderContext is usesRenderContext over every expression part of
+// one attribute value, which may mix literal text with several expressions.
+func (e *goEmitter) attributeUsesRenderContext(attribute Attribute) bool {
+	for _, part := range attribute.Value {
+		if part.Expression != nil && e.usesRenderContext(part.Expression) {
+			return true
+		}
+	}
+	return false
+}
+
+// walkExpr visits expr and every expression inside it.
+func walkExpr(expr Expr, visit func(Expr)) {
+	if expr == nil {
+		return
+	}
+	visit(expr)
+	switch expr := expr.(type) {
+	case *MemberExpr:
+		walkExpr(expr.Object, visit)
+	case *IndexExpr:
+		walkExpr(expr.Object, visit)
+		walkExpr(expr.Index, visit)
+	case *CallExpr:
+		for _, argument := range expr.Arguments {
+			walkExpr(argument, visit)
+		}
+	case *UnaryExpr:
+		walkExpr(expr.Operand, visit)
+	case *BinaryExpr:
+		walkExpr(expr.Left, visit)
+		walkExpr(expr.Right, visit)
+	case *ConditionalExpr:
+		walkExpr(expr.Condition, visit)
+		walkExpr(expr.Then, visit)
+		walkExpr(expr.Else, visit)
+	}
+}
+
+// closureParams writes the parameter list of a plan closure. A closure whose
+// body reaches a context-taking external is given the render context as a
+// leading parameter, which is what the matching Ctx instruction supplies.
+func closureParams(goType string, withContext bool) string {
+	if withContext {
+		return contextIdent + " context.Context, " + receiverIdent + " " + goType
+	}
+	return receiverIdent + " " + goType
+}
+
+// ctxOp names the instruction matching closureParams. Without the context the
+// name is unchanged, so a template calling no such external emits exactly the
+// instructions it emitted before this existed.
+func ctxOp(name string, withContext bool) string {
+	if withContext {
+		return name + "Ctx"
+	}
+	return name
+}
+
 // planEmitter accumulates the instruction list of one plan.
 type planEmitter struct {
 	e       *goEmitter
@@ -429,8 +539,10 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 				condition = "(" + code + " != nil && *(" + code + "))"
 			}
 			p.flush()
-			p.op(fmt.Sprintf("BoolAttr(%s, func(%s %s) bool { return %s })",
-				strconv.Quote(attribute.Name), receiverIdent, p.scope.goType, condition))
+			withContext := e.usesRenderContext(attribute.Value[0].Expression)
+			p.op(fmt.Sprintf("%s(%s, func(%s) bool { return %s })",
+				ctxOp("BoolAttr", withContext), strconv.Quote(attribute.Name),
+				closureParams(p.scope.goType, withContext), condition))
 			return nil
 		}
 	}
@@ -439,8 +551,10 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 		return err
 	}
 	p.flush()
-	p.op(fmt.Sprintf("Attr(%s, func(%s %s) (string, bool) { %s })",
-		strconv.Quote(attribute.Name), receiverIdent, p.scope.goType, optional(value)))
+	withContext := e.attributeUsesRenderContext(attribute)
+	p.op(fmt.Sprintf("%s(%s, func(%s) (string, bool) { %s })",
+		ctxOp("Attr", withContext), strconv.Quote(attribute.Name),
+		closureParams(p.scope.goType, withContext), optional(value)))
 	return nil
 }
 
@@ -527,9 +641,11 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 	if err != nil {
 		return err
 	}
+	withContext := e.usesRenderContext(expr)
 	if t.kind == kindHTML {
 		p.flush()
-		p.op(fmt.Sprintf("Slot(func(%s %s) htmlbind.Fragment { return %s }, nil)", receiverIdent, p.scope.goType, code))
+		p.op(fmt.Sprintf("%s(func(%s) htmlbind.Fragment { return %s }, nil)",
+			ctxOp("Slot", withContext), closureParams(p.scope.goType, withContext), code))
 		return nil
 	}
 	// JsonForScript is lowered rather than called: the encoding is generated per
@@ -545,8 +661,9 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 				return err
 			}
 			p.flush()
-			p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
-				receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
+			p.op(fmt.Sprintf("%s(func(%s) string { return %s })",
+				ctxOp("Raw", withContext), closureParams(p.scope.goType, withContext),
+				jsonEncodeCall(e.c.exprTypes[argument], argCode)))
 			return nil
 		}
 	}
@@ -560,7 +677,8 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 		body = "if " + code + " == nil { return \"\" }; return " + valueString("*("+code+")", t.required())
 	}
 	p.flush()
-	p.op(fmt.Sprintf("%s(func(%s %s) string { %s })", kind, receiverIdent, p.scope.goType, body))
+	p.op(fmt.Sprintf("%s(func(%s) string { %s })",
+		ctxOp(kind, withContext), closureParams(p.scope.goType, withContext), body))
 	return nil
 }
 
@@ -592,8 +710,9 @@ func (e *goEmitter) emitIfOp(p *planEmitter, node *syntax.IfNode) error {
 		return err
 	}
 	p.flush()
-	p.op(fmt.Sprintf("If(func(%s %s) bool { return %s },\n%s,\n%s)",
-		receiverIdent, p.scope.goType, condition,
+	withContext := e.usesRenderContext(node.Condition)
+	p.op(fmt.Sprintf("%s(func(%s) bool { return %s },\n%s,\n%s)",
+		ctxOp("If", withContext), closureParams(p.scope.goType, withContext), condition,
 		indentBlock(then.literal(), "\t"), indentBlock(otherwise.literal(), "\t")))
 	return nil
 }
@@ -622,8 +741,9 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 		return err
 	}
 	p.flush()
-	p.raw(fmt.Sprintf("htmlbind.For(\n\tfunc(%s %s) []%s { return %s },\n\tfunc(%s %s, item %s, index int) %s { return %s{Outer: %s, Item: item, Index: index} },\n%s)",
-		receiverIdent, p.scope.goType, goType(elem), iterable,
+	withContext := e.usesRenderContext(node.Iterable)
+	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) []%s { return %s },\n\tfunc(%s %s, item %s, index int) %s { return %s{Outer: %s, Item: item, Index: index} },\n%s)",
+		ctxOp("For", withContext), closureParams(p.scope.goType, withContext), goType(elem), iterable,
 		receiverIdent, p.scope.goType, goType(elem), scopeType, scopeType, receiverIdent,
 		indentBlock(body.literal(), "\t")))
 	return nil
@@ -689,6 +809,16 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 			// A value the caller started. Waiting for it is the same join as a
 			// call, so it settles beside one in the same clause and the first
 			// failure in declaration order still decides the boundary.
+			//
+			// The unset check below runs as a plan-level Require, which is the
+			// one instruction with no context-carrying form: it exists to fail
+			// before anything is written, and a check that could call out is a
+			// different thing. Naming a context-taking external here is
+			// therefore a generation error rather than a broken call.
+			if e.usesRenderContext(binding.Call) {
+				return e.c.error(exprPos(binding.Call),
+					"an await binding over a caller-supplied value cannot call an external that takes the render context")
+			}
 			code, err := e.exprCode(binding.Call, p.scope)
 			if err != nil {
 				return err
@@ -875,8 +1005,16 @@ func (e *goEmitter) emitComponentOp(p *planEmitter, node *ComponentNode) error {
 		}
 	}
 	p.flush()
-	p.op(fmt.Sprintf("Component(func(%s %s) htmlbind.Fragment { return %s(%s{%s}) })",
-		receiverIdent, p.scope.goType, e.c.componentGoName(node.Name),
+	withContext := false
+	for _, argument := range node.Arguments {
+		if e.attributeUsesRenderContext(argument) {
+			withContext = true
+			break
+		}
+	}
+	p.op(fmt.Sprintf("%s(func(%s) htmlbind.Fragment { return %s(%s{%s}) })",
+		ctxOp("Component", withContext), closureParams(p.scope.goType, withContext),
+		e.c.componentGoName(node.Name),
 		e.c.paramsGoName(node.Name), strings.Join(fields, ", ")))
 	return nil
 }
@@ -977,6 +1115,12 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 			}
 			args = append(args, code)
 		}
+		// An implementation that declared a leading context.Context receives the
+		// render context. The enclosing closure was given it by the instruction
+		// this expression is emitted into, so the name is always in scope here.
+		if e.takesRenderContext(callee.Name) {
+			args = append([]string{contextIdent}, args...)
+		}
 		if _, intrinsic := intrinsicResult(callee.Name); intrinsic {
 			return args[0], nil
 		}
@@ -1075,23 +1219,12 @@ func (c *compiler) transitiveHead(name string) []headTag {
 	return out
 }
 
-// headTags splits one component's head contribution into its individual tags.
+// headTags is one component's head contribution split into its individual tags.
 // Whitespace between tags is dropped, because the merged head is assembled from
-// the tags rather than from the authored block.
-func (c *compiler) headTags(info *componentInfo) []headTag {
-	var out []headTag
-	for _, node := range info.head {
-		if _, ok := node.(*TextNode); ok {
-			continue
-		}
-		html := renderStaticHTML([]Node{node})
-		if strings.TrimSpace(html) == "" {
-			continue
-		}
-		out = append(out, headTag{html: html, source: c.headSource(info, node)})
-	}
-	return out
-}
+// the tags rather than from the authored block. extractAssets fills the list, so
+// a style or inline script block appears here as its reference tag rather than
+// as the block itself.
+func (c *compiler) headTags(info *componentInfo) []headTag { return info.headTags }
 
 // headSource names the declaring component and the position of the tag, in the
 // form a diagnostic can print directly.

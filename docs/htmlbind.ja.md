@@ -316,6 +316,16 @@ export component Card(label: string): html {
 
 この `head` の中では `style` と `script` の中身が生テキストとして扱われるので、CSS や JavaScript の波括弧がテンプレート構文と衝突しません。寄与は静的なマークアップである必要があります。マージ済み head は body の最初の1バイトより前に書かれるため、リクエストデータに依存できないからです。
 
+寄与にできるのは `link`、`meta`、`style`、`script`、`title`、`noscript` です。要素の子を持てるのは `noscript` だけで、その子は `link`、`style`、`meta` に限られます。それ以外はボディの内容だからです。
+
+```html
+<head>
+<noscript><meta http-equiv="refresh" content="0; url=/no-script"></noscript>
+</head>
+```
+
+この書き方の寄与は無条件です。常に出したいページには正しく、一部のレスポンスにだけ出したいタグは、代わりに render 呼び出しで `htmlbind.WithHead` から渡します。
+
 描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。同一性はタグ単位なので、2 つの component が両方 `/shared.css` をリンクしてそれぞれ独自の style を宣言した場合、link は 1 つ、style ブロックは 2 つになります。
 
 その寄与には行き先が必要です。ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素が出力先になります。
@@ -365,6 +375,29 @@ component の style ブロックは、宣言されたクラス名をリネーム
 - 式から与えられるクラスは書き換えられないため、生成時エラーになります。
 
 サフィックスはテンプレートのパスと component 名から導出されるので、無関係な編集で生成クラス名が変わることはありません。
+
+### 静的ファイルの切り出し
+
+`style` ブロックと、中身を持つ `script` ブロックはレスポンスには載りません。生成時にファイルとして書き出され、マージ済み head には参照タグだけが入ります。これによりクライアントキャッシュが効き、Content Security Policy でインラインスクリプトを禁止できます。
+
+```html
+<link rel="stylesheet" href="/public/generated/card.style.1f0a3c9d4b21.css">
+<script src="/public/generated/card.script.7c62e0b1d938.js" defer></script>
+```
+
+- 1つのテンプレートファイル内の style ブロックは1つのスタイルシートにまとまります。script は component ごとに1ファイルになるので、`defer`、`async`、`type` などの属性がタグにそのまま残ります。
+- ファイル名には内容のハッシュが入るので、URL は不変キャッシュ可能で、変更のないプロジェクトは同じ名前を再生成します。
+- すでに外部 URL を指している `script` や `link` は、タグがそのまま寄与し、ファイルは作られません。
+- 切り出しとハッシュ計算は生成時に行われます。リクエストごとの組み立ては一切なく、構成によって変化しないため参照タグの収集も不要です。
+
+出力先と名前は2つのジェネレータオプションで決まります。
+
+| オプション | デフォルト | 意味 |
+| --- | --- | --- |
+| `PublicDir` | `public/generated` | 生成ファイルを書き出すディレクトリ |
+| `PublicURLBase` | `/public/generated` | 参照 URL の前置き |
+
+generate コマンドでは `-public-dir` と `-public-url-base` です。両者は互いから導出されません。ファイルパスは `PublicDir` とファイル名の連結、参照は `PublicURLBase` と同じファイル名の連結で、パスの一部を推測したり付け足したり削ったりはしません。`PublicURLBase` はそのまま使われるので、`https://cdn.example.com/assets` のような完全 URL を指定すると、書き出し先を変えずに絶対 URL の参照になります。片方だけを設定すると生成は失敗します。必ず両方を設定してください。
 
 ## attribute
 
@@ -647,6 +680,35 @@ func Decorate(value string, tone Tone) string {
 	}
 	return value
 }
+```
+
+### リクエストを読む
+
+先頭に `context.Context` を宣言すると、ページが描画されている context — async 系
+エントリに渡した `ctx`、または同期系エントリに `WithContext` で渡した値 — を受け
+取ります。
+
+```go
+func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+```
+
+テンプレート側の宣言はどちらでも `external CSRFToken(): string` のままです。つま
+りこれは Go を書く人が関数ごとに決めることです。引数を書かなければ、これまでどお
+り素朴に呼ばれます。
+
+ページではなくリクエストに属する値 — CSRF トークン、リクエスト ID、nonce — を、
+必要なページすべてのパラメータ構造体を経由させずに markup へ届けるための仕組みで
+す。これは読み取りであって、この形で呼ばれる関数がレスポンスに書いてはいけません。
+
+`: html` と宣言した external は `htmlbind.Fragment` を返し、部分木として描画され
+ます。トークンだけでなく hidden input 全体を返せます。
+
+```text
+external CSRFField(): html
+```
+
+```go
+func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
 ```
 
 ## 非同期 component

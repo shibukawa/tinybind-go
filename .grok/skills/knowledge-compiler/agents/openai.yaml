@@ -1,0 +1,4 @@
+interface:
+  display_name: "Knowledge Compiler"
+  short_description: "Manage AI-first .knowledge catalogs"
+  default_prompt: "Use $knowledge-compiler to initialize and maintain an AI-first .knowledge catalog."

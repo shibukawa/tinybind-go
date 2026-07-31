@@ -101,6 +101,13 @@ type componentInfo struct {
 	// head holds the nodes contributed by head elements declared outside the
 	// document shell, already scoped and ready to merge.
 	head []Node
+	// headTags holds the same contributions as ready to write HTML, one entry
+	// per tag, with extracted assets replaced by their reference tags. It is
+	// filled by extractAssets.
+	headTags []headTag
+	// style is the scoped CSS of this component's style block, which
+	// requirement:static-asset-extraction moves into a generated stylesheet.
+	style string
 	// scope carries the requirement:scoped-component-style renaming applied to
 	// this component's style block, or nil when it declares none.
 	scope *styleScope
@@ -685,6 +692,10 @@ func (c *compiler) collectHead(info *componentInfo, body []Node) error {
 	return nil
 }
 
+// noscriptHeadChildren are the elements HTML allows inside a head noscript.
+// Anything else there is body content, which a head contribution never carries.
+var noscriptHeadChildren = map[string]bool{"link": true, "meta": true, "style": true}
+
 // validateHeadChild keeps head contributions static, because the merged head
 // is written before any body byte and cannot wait for request data.
 func (c *compiler) validateHeadChild(node Node) error {
@@ -694,13 +705,34 @@ func (c *compiler) validateHeadChild(node Node) error {
 	case *ElementNode:
 		switch node.Name {
 		case "link", "meta", "style", "script", "title":
+		case "noscript":
+			// The one contributed element with element children. It is what a
+			// page tells a browser with scripting disabled, and HTML permits it
+			// in the head around a link, a style, or a meta.
+			if err := c.validateHeadAttributes(node); err != nil {
+				return err
+			}
+			for _, child := range node.Children {
+				switch child := child.(type) {
+				case *TextNode, *CommentNode:
+					continue
+				case *ElementNode:
+					if !noscriptHeadChildren[child.Name] {
+						return c.error(child.Pos, "head noscript cannot contain "+child.Name)
+					}
+					if err := c.validateHeadChild(child); err != nil {
+						return err
+					}
+				default:
+					return c.error(node.Pos, "head noscript accepts static markup only")
+				}
+			}
+			return nil
 		default:
 			return c.error(node.Pos, "head contribution cannot contain "+node.Name)
 		}
-		for _, attribute := range node.Attributes {
-			if _, static := staticAttributeText(attribute); !static && !attribute.Boolean {
-				return c.error(attribute.Pos, "head contribution attributes must be static")
-			}
+		if err := c.validateHeadAttributes(node); err != nil {
+			return err
 		}
 		for _, child := range node.Children {
 			if _, ok := child.(*TextNode); !ok {
@@ -711,6 +743,15 @@ func (c *compiler) validateHeadChild(node Node) error {
 	default:
 		return c.error(Position{Line: 1, Col: 1}, "head contribution must be static markup")
 	}
+}
+
+func (c *compiler) validateHeadAttributes(node *ElementNode) error {
+	for _, attribute := range node.Attributes {
+		if _, static := staticAttributeText(attribute); !static && !attribute.Boolean {
+			return c.error(attribute.Pos, "head contribution attributes must be static")
+		}
+	}
+	return nil
 }
 
 // scopeHeadStyles rewrites the component's style block so its class and
@@ -734,6 +775,7 @@ func (c *compiler) scopeHeadStyles(info *componentInfo, head *HeadNode) error {
 		}
 		element.Children = []Node{&TextNode{Kind: "html:text", Pos: element.Pos, Text: rewritten}}
 		info.scope = scope
+		info.style = rewritten
 	}
 	return nil
 }

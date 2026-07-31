@@ -68,7 +68,13 @@ acceptance:
   - the same contribution supplied twice emits one tag
   - an inline-source registration is includable by name at render time with no per-request file writing
   - the root head is still written before any body byte
+downstream_confirmation:
+  when: 2026-07-31, per decision:library-component-seams
+  asked_for: head contributions from the caller rather than only from components, so a capability added after a project was scaffolded reaches an existing project whose shell the author now owns
+  their_failure_mode_today: a scaffolded reference to a framework runtime URL, whose documented failure is that the reference was removed and nothing says so
+  scope_note: they asked for the whole head, which requirement:render-time-head-metadata carries; this requirement is the script half and both share one channel
 related:
+  - requirement:render-time-head-metadata
   - requirement:html-runtime-bootstrap
   - requirement:chain-render-pipeline
   - concept:framework-template-extensions
