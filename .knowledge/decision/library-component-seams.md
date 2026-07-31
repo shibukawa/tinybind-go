@@ -48,6 +48,14 @@ accepted:
     covered_by: requirement:render-time-script-contribution for script, requirement:render-time-head-metadata for the rest of the head
     agreement: both already state the reporter's constraint, that a call argument is available strictly before the head pass so nothing about streaming changes
     added_this_round: the node-kind gap below, which is what actually blocks the handoff marker
+vocabulary_mismatch:
+  their_word: the report and its catalog say components for both the second and the third ask
+  our_words: concept:framework-template-extensions reserves component for the PascalCase, file-declared decision:template-declaration-kinds form, and calls the registered kebab-case form a builtin element
+  which_is_which:
+    second_ask: builtin elements; the report's own examples are csrf-token and pw-noscript-handoff, both hyphenated, and it asks for a name-to-Go-symbol registration rather than a template file
+    third_ask: actual components; a date picker or a chart is a template file plus a script, and reaching one across packages is still the open requirement:template-file-scope question
+  why_it_matters: the two have different actors, different declaration sites, and different scope rules, so reading them as one thing hides that the asset seam has to serve both while only the component half has no answer at all today
+  corrected: docs/httpbind_framework_facilities.md, which had inherited the reporter's word for the second ask
 new_findings:
   noscript_not_an_allowed_head_node:
     found: head contributions accept link, meta, style, script, and title; noscript is rejected, and every contributed attribute must be static
