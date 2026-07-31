@@ -35,15 +35,15 @@ size_measured_2026_08_01:
   raw_driver_hand_built_map_no_errors: 3,541,365
   driver_reflection_marshaler: 3,586,193
   hand_written_codec_driver_direct: 3,586,568
-  hand_written_codec_through_dynamobind: 3,625,798
-  generated_codec_through_dynamobind: 3,626,010
+  hand_written_codec_through_dynamobind: 3,625,639
+  generated_codec_through_dynamobind: 3,625,851
   codec_cost: +212 bytes against the same codec written by hand, which is the budget that matters and which holds
   context_client_cost:
-    measured: +37,971 bytes, by building the same program against the previous commit where the client was a parameter
+    measured: +37,812 bytes, by building the same program against the previous commit where the client was a parameter
     not_ours_to_fix: a bare context.WithValue plus one type assertion, with no dynamobind linked, costs 48,409 bytes in the same program; the assertion pulls in type-descriptor machinery TinyGo otherwise drops
     consequence: decision:dynamo-context-client-api buys a call-site property at a fixed per-binary price, and the price is the largest single number here
   against_reflection:
-    result: the generated path through dynamobind is 39,817 bytes LARGER than the driver reflection mapper, reversing the 2026-07-31 measurement
+    result: the generated path through dynamobind is 39,658 bytes LARGER than the driver reflection mapper, reversing the 2026-07-31 measurement
     why: a typed codec calling the driver directly is a wash against reflection at +375 bytes; the whole difference is the API surface, most of it the Context
     escape: the generated EncodeItem, DecodeItem and ItemKey are ordinary methods, so a size-critical program calls the driver directly and links none of this package
   drift_argument_unaffected: generating the codec is about names that cannot disagree, which holds at any size

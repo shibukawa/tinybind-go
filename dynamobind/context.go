@@ -8,49 +8,54 @@ import (
 )
 
 // ErrNoClient reports that a Context does not carry a DynamoDB client. It is
-// returned rather than panicking, so generated Context wrappers stay ordinary
-// error-returning functions.
+// returned rather than panicking, so every entry stays an ordinary
+// error-returning function.
 var ErrNoClient = errors.New("dynamobind: no DynamoDB client in context")
 
-// ErrNoTablePrefix reports that a Context carries a client but was never told
-// what to prepend to a declared table name.
+// TableResolver maps the name a declaration or a call site writes onto the name
+// this deployment uses.
 //
-// There is no empty-prefix default. A missing client cannot issue a request at
-// all, but a missing prefix would read the unprefixed table and answer with a
-// normal empty page, which is indistinguishable from a table that holds
-// nothing. A deployment with no prefix says so with WithTablePrefix("").
-var ErrNoTablePrefix = errors.New("dynamobind: no table prefix in context")
+// It takes the Context so the mapping can depend on the request as well as on
+// the process: a per-tenant table, or a name read from configuration bound to
+// the Context, is the same one function. Nothing here composes the name, so a
+// prefix, a suffix, a lookup table and a wholly unrelated name are equally
+// expressible:
+//
+//	dynamobind.WithTableNames(func(ctx context.Context, declared string) string {
+//		return "staging-" + declared
+//	})
+//
+//	dynamobind.WithTableNames(func(ctx context.Context, declared string) string {
+//		return config.Tables[declared] // whatever the IaC named it
+//	})
+type TableResolver func(ctx context.Context, declared string) string
 
 type clientContextKey struct{}
 
-// clientEntry is the client together with the deployment table prefix. Both are
-// facts of one deployment, fixed for the process, so they travel together: a
-// caller that set one and not the other would have a Context that resolves a
-// client and still cannot name a table.
+// clientEntry is the client and, optionally, the table naming of one deployment.
 type clientEntry struct {
 	client *dynamodb.Client
-	prefix string
-	// hasPrefix separates "the prefix is empty" from "no prefix was set". The
-	// string alone cannot: both are "".
-	hasPrefix bool
+	names  TableResolver
 }
 
 // ClientOption configures what a stored client is used with.
 type ClientOption func(*clientEntry)
 
-// WithTablePrefix records what a resolved table name begins with, so one
-// deployment can name its tables apart from another in the same account.
-// Pass "" to declare that this deployment uses the declared names unchanged.
-func WithTablePrefix(prefix string) ClientOption {
+// WithTableNames records how declared table names map onto this deployment's.
+// Without it the declared name is sent unchanged, which is what a deployment
+// whose tables are named as declared wants. A nil resolver is ignored, so a
+// mistaken nil behaves as no resolver rather than panicking on the first call.
+func WithTableNames(resolve TableResolver) ClientOption {
 	return func(entry *clientEntry) {
-		entry.prefix = prefix
-		entry.hasPrefix = true
+		if resolve != nil {
+			entry.names = resolve
+		}
 	}
 }
 
-// WithClient returns a child Context carrying a DynamoDB client, and the table
-// prefix when one is given. Framework middleware installs it once, and
-// generated Context wrappers resolve it.
+// WithClient returns a child Context carrying a DynamoDB client and, with
+// WithTableNames, how its tables are named. Framework middleware installs it
+// once, and every entry of this package resolves it.
 func WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption) context.Context {
 	entry := clientEntry{client: c}
 	for _, option := range options {
@@ -63,7 +68,7 @@ func WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption
 //
 // It is the escape hatch for reaching the driver directly, for an operation this
 // package does not wrap. Everything this package does wrap resolves through
-// TableFromContext instead, so the prefix is applied.
+// TableFromContext instead, so the name mapping is applied.
 func ClientFromContext(ctx context.Context) (*dynamodb.Client, error) {
 	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
 	if !ok || entry.client == nil {
@@ -73,15 +78,14 @@ func ClientFromContext(ctx context.Context) (*dynamodb.Client, error) {
 }
 
 // TableFromContext resolves a declared table name into the client and the name
-// to send. It is the resolver generated Context wrappers use, and it has the
-// signature a framework resolver must have to replace it.
+// to send. Every entry of this package calls it.
 func TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error) {
 	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
 	if !ok || entry.client == nil {
 		return nil, "", ErrNoClient
 	}
-	if !entry.hasPrefix {
-		return nil, "", ErrNoTablePrefix
+	if entry.names == nil {
+		return entry.client, table, nil
 	}
-	return entry.client, entry.prefix + table, nil
+	return entry.client, entry.names(ctx, table), nil
 }

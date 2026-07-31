@@ -43,7 +43,7 @@ table_clause:
     direction: the result type is the decode target, an output; the table is an input, and inputs belong in the body with the key clause and the parameters
   required_not_optional: one declaration form must yield one signature; an optional clause would produce two, which is the surprise this codebase avoids elsewhere
   item_operations: Load, Store and the rest keep their table parameter, having no declaration to read it from; that is the absence of a declaration rather than an inconsistency
-  deployment_prefix: resolved at run time by the runtime entry, per decision:dynamo-context-client-api
+  deployment_name: the declared name is mapped at run time by the runtime entry, per decision:dynamo-context-client-api
 generated:
   one_function_per_declaration: named by the declaration, returning the page or iterator form its result type selects
   signature: context, the declared parameters, then variadic driver query options, and nothing else; the generated names and values are appended last so a caller option cannot replace the condition

@@ -69,12 +69,12 @@ func newFakeDynamo(t *testing.T) (*dynamodb.Client, *fakeDynamo) {
 }
 
 // newFakeContext is what nearly every test wants: the client installed where
-// dynamobind looks for it, with no prefix. Nothing below passes a client, since
-// no entry of the package takes one.
+// dynamobind looks for it, and the declared table names used unchanged. Nothing
+// below passes a client, since no entry of the package takes one.
 func newFakeContext(t *testing.T) (context.Context, *fakeDynamo) {
 	t.Helper()
 	client, fake := newFakeDynamo(t)
-	return dynamobind.WithClient(context.Background(), client, dynamobind.WithTablePrefix("")), fake
+	return dynamobind.WithClient(context.Background(), client), fake
 }
 
 func (f *fakeDynamo) count(op string) int {

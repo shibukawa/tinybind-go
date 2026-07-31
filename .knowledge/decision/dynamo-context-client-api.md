@@ -3,7 +3,7 @@ id: decision:dynamo-context-client-api
 type: decision
 title: The Client Comes From The Context
 ---
-Carry the DynamoDB client and the deployment table prefix in one Context value, and give no entry of dynamobind a client parameter at all.
+Carry the DynamoDB client in the Context, give no entry of dynamobind a client parameter, and map declared table names onto the deployment's with an optional resolver function.
 
 ```yaml
 status: implemented
@@ -15,28 +15,32 @@ one_surface:
   rule: there is no client-taking form, no suffixed variant and no generation option
   reason: the client is a deployment fact fixed for a process, so a parameter repeats at every call site what one setup line already said
   second_client: a second Context, not a second signature, which is what a test or a second region uses
-carried_together:
-  what: the client and the table prefix travel in one Context value
-  why: both are deployment facts fixed for a process, and splitting them would make a caller set two things to get one working call
+table_names:
+  default: the declared name is sent unchanged, so a deployment named as declared configures nothing
+  resolver: "WithTableNames(func(ctx context.Context, declared string) string) ClientOption", optional
+  why_a_function_not_a_prefix:
+    prefix_is_only_a_convention: DynamoDB table names have no structure the API reads, unlike an S3 key prefix, which ListObjectsV2, IAM and lifecycle rules all understand; a table prefix is just a string deployment tooling happens to prepend
+    what_a_prefix_cannot_say: a CDK generated physical name carries a suffix, "orders-prod" puts the environment last, and a name read from an environment variable shares nothing with the declared one
+    one_function_covers_all: prefix, suffix, lookup table and unrelated name cost the same
+  why_it_takes_a_context: the mapping can depend on the request rather than only the process, so a per-tenant table is the same one function, and configuration bound to the Context is reachable from inside it
+  nil_resolver: ignored, so a mistaken nil behaves as no resolver rather than panicking
 runtime:
   setter: "WithClient(ctx, *dynamodb.Client, ...ClientOption) context.Context"
-  prefix_option: "WithTablePrefix(string) ClientOption"
+  names_option: "WithTableNames(TableResolver) ClientOption"
   table_resolver: "TableFromContext(ctx, table) (*dynamodb.Client, string, error)", which every entry of the package calls
   client_resolver: "ClientFromContext(ctx) (*dynamodb.Client, error)", the escape hatch for reaching the driver directly
   key: private typed key
-  table_resolution: the argument table name with the prefix prepended, whether it came from a declaration or from an item call
-  errors: ErrNoClient and ErrNoTablePrefix
+  table_resolution: the argument name through the resolver, or unchanged when none is installed, whether it came from a declaration or from an item call
+  errors: ErrNoClient
 signatures:
   item: "Load(ctx, table, key, opts...)" and the rest, still naming a table because they have no declaration to read one from
   declared_query: "<Name>(ctx, params..., opts...)", naming neither, per requirement:dynamo-typed-queries
   where_resolution_happens: inside the runtime entry, so generated code passes its declared table name and holds no resolver call
 errors_not_panics:
-  rule: a resolver returns an error, and a missing client or prefix fails loudly
-  why_the_prefix_matters: a missing client cannot issue a request at all, while a missing prefix would read the unprefixed table and answer with a normal empty page, so a silent fallback is indistinguishable from no data
-  consequence: no empty-prefix default; a deployment using the declared names says so with WithTablePrefix("")
+  rule: a missing client is ErrNoClient rather than a panic, so every entry stays an ordinary error-returning function
   reporting: a function returning an error returns it; an iterator yields it once with the zero value and stops, as a failed page already does
 cost:
-  binary: +37,971 bytes on tinygo wasip1, per requirement:dynamobind-verification
+  binary: +37,812 bytes on tinygo wasip1, per requirement:dynamobind-verification
   cause: context.WithValue and the type assertion that reads it back, which is inherent to the pattern rather than to this implementation
   accepted: the call-site property was the requirement; a size-critical program calls the driver directly with the generated methods and links none of this
 no_framework_resolver:

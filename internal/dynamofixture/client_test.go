@@ -326,13 +326,18 @@ func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
 	}
 }
 
-// TestDeployedPrefixReachesTheWire proves the declared table name is what the
-// prefix is applied to, in both result shapes. The calls name neither the
-// client nor the table.
-func TestDeployedPrefixReachesTheWire(t *testing.T) {
+// TestResolvedTableNameReachesTheWire proves the mapping installed once in the
+// Context is what the service sees, on every path. The calls name neither the
+// client nor the resolved table.
+func TestResolvedTableNameReachesTheWire(t *testing.T) {
 	client, fake := newFakeDynamo(t)
 	store(t, fake, 3)
-	ctx := dynamobind.WithClient(context.Background(), client, dynamobind.WithTablePrefix("staging-"))
+	// A suffix rather than a prefix, since a resolver is a function and the
+	// shape of the mapping costs nothing either way.
+	ctx := dynamobind.WithClient(context.Background(), client,
+		dynamobind.WithTableNames(func(_ context.Context, declared string) string {
+			return declared + "-staging"
+		}))
 
 	var seen []int64
 	for reading, err := range dynamofixture.ReadingsSince(ctx, "s", 0) {
@@ -344,7 +349,7 @@ func TestDeployedPrefixReachesTheWire(t *testing.T) {
 	if len(seen) != 3 {
 		t.Fatalf("iterated %d of 3: %v", len(seen), seen)
 	}
-	if name := fake.lastRequest().TableName; name != "staging-readings" {
+	if name := fake.lastRequest().TableName; name != "readings-staging" {
 		t.Fatalf("table name on the wire: %q", name)
 	}
 
@@ -355,75 +360,76 @@ func TestDeployedPrefixReachesTheWire(t *testing.T) {
 	if len(page.Items) != 2 {
 		t.Fatalf("page: %+v", page)
 	}
-	if name := fake.lastRequest().TableName; name != "staging-readings" {
+	if name := fake.lastRequest().TableName; name != "readings-staging" {
 		t.Fatalf("table name on the wire: %q", name)
 	}
 
-	// An item operation names its own table, so the prefix applies there too.
+	// An item operation names its own table, so the mapping applies there too.
 	if err := dynamofixture.Save(ctx, table, sample()); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if name := fake.lastRequest().TableName; name != "staging-readings" {
+	if name := fake.lastRequest().TableName; name != "readings-staging" {
 		t.Fatalf("table name on the wire: %q", name)
 	}
 }
 
-// TestUnresolvableContextReachesNothing proves every entry fails loudly rather
-// than reading the unprefixed table. An iterator cannot return the error, so it
-// yields it once and stops.
-func TestUnresolvableContextReachesNothing(t *testing.T) {
-	client, fake := newFakeDynamo(t)
+// TestNoResolverSendsTheDeclaredName is the default half: without
+// WithTableNames the name is sent as written.
+func TestNoResolverSendsTheDeclaredName(t *testing.T) {
+	ctx, fake := newFakeContext(t)
+	store(t, fake, 1)
+
+	for _, err := range dynamofixture.ReadingsSince(ctx, "s", 0) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if name := fake.lastRequest().TableName; name != "readings" {
+		t.Fatalf("table name on the wire: %q", name)
+	}
+}
+
+// TestClientlessContextReachesNothing proves every entry fails loudly rather
+// than issuing a request. An iterator cannot return the error, so it yields it
+// once and stops.
+func TestClientlessContextReachesNothing(t *testing.T) {
+	_, fake := newFakeDynamo(t)
 	store(t, fake, 3)
+	ctx := context.Background()
+	before := fake.count("Query") + fake.count("GetItem") + fake.count("PutItem")
 
-	for _, unresolvable := range []struct {
-		name string
-		ctx  context.Context
-		want error
-	}{
-		{name: "no client", ctx: context.Background(), want: dynamobind.ErrNoClient},
-		{
-			name: "no prefix",
-			ctx:  dynamobind.WithClient(context.Background(), client),
-			want: dynamobind.ErrNoTablePrefix,
-		},
-	} {
-		t.Run(unresolvable.name, func(t *testing.T) {
-			before := fake.count("Query") + fake.count("GetItem") + fake.count("PutItem")
+	yields := 0
+	for reading, err := range dynamofixture.ReadingsSince(ctx, "s", 0) {
+		yields++
+		if !errors.Is(err, dynamobind.ErrNoClient) {
+			t.Fatalf("iterator error = %v, want %v", err, dynamobind.ErrNoClient)
+		}
+		if reading.At != 0 || reading.Sensor != "" {
+			t.Fatalf("a failed resolution yielded an item: %+v", reading)
+		}
+	}
+	if yields != 1 {
+		t.Fatalf("the iterator yielded %d times, want 1", yields)
+	}
 
-			yields := 0
-			for reading, err := range dynamofixture.ReadingsSince(unresolvable.ctx, "s", 0) {
-				yields++
-				if !errors.Is(err, unresolvable.want) {
-					t.Fatalf("iterator error = %v, want %v", err, unresolvable.want)
-				}
-				if reading.At != 0 || reading.Sensor != "" {
-					t.Fatalf("a failed resolution yielded an item: %+v", reading)
-				}
-			}
-			if yields != 1 {
-				t.Fatalf("the iterator yielded %d times, want 1", yields)
-			}
+	if _, err := dynamofixture.ReadingsBetween(ctx, "s", 0, 10); !errors.Is(err, dynamobind.ErrNoClient) {
+		t.Fatalf("page error = %v", err)
+	}
+	// The item operations resolve through the same door.
+	if _, err := dynamofixture.Fetch(ctx, table, sample().ItemKey()); !errors.Is(err, dynamobind.ErrNoClient) {
+		t.Fatalf("Fetch error = %v", err)
+	}
+	if err := dynamofixture.Save(ctx, table, sample()); !errors.Is(err, dynamobind.ErrNoClient) {
+		t.Fatalf("Save error = %v", err)
+	}
+	if _, err := dynamofixture.SaveAll(ctx, table, []dynamofixture.Reading{sample()}); !errors.Is(err, dynamobind.ErrNoClient) {
+		t.Fatalf("SaveAll error = %v", err)
+	}
+	if _, _, err := dynamofixture.FetchAll(ctx, table, []dynamodb.Key{sample().ItemKey()}); !errors.Is(err, dynamobind.ErrNoClient) {
+		t.Fatalf("FetchAll error = %v", err)
+	}
 
-			if _, err := dynamofixture.ReadingsBetween(unresolvable.ctx, "s", 0, 10); !errors.Is(err, unresolvable.want) {
-				t.Fatalf("page error = %v, want %v", err, unresolvable.want)
-			}
-			// The item operations resolve through the same door.
-			if _, err := dynamofixture.Fetch(unresolvable.ctx, table, sample().ItemKey()); !errors.Is(err, unresolvable.want) {
-				t.Fatalf("Fetch error = %v, want %v", err, unresolvable.want)
-			}
-			if err := dynamofixture.Save(unresolvable.ctx, table, sample()); !errors.Is(err, unresolvable.want) {
-				t.Fatalf("Save error = %v, want %v", err, unresolvable.want)
-			}
-			if _, err := dynamofixture.SaveAll(unresolvable.ctx, table, []dynamofixture.Reading{sample()}); !errors.Is(err, unresolvable.want) {
-				t.Fatalf("SaveAll error = %v, want %v", err, unresolvable.want)
-			}
-			if _, _, err := dynamofixture.FetchAll(unresolvable.ctx, table, []dynamodb.Key{sample().ItemKey()}); !errors.Is(err, unresolvable.want) {
-				t.Fatalf("FetchAll error = %v, want %v", err, unresolvable.want)
-			}
-
-			if fake.count("Query")+fake.count("GetItem")+fake.count("PutItem") != before {
-				t.Fatal("an unresolvable Context still reached the service")
-			}
-		})
+	if fake.count("Query")+fake.count("GetItem")+fake.count("PutItem") != before {
+		t.Fatal("a Context with no client still reached the service")
 	}
 }

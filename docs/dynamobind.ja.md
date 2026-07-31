@@ -60,7 +60,7 @@ export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading
 client を一度だけ入れておけば、呼び出しはこうなります。
 
 ```go
-ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTablePrefix(""))
+ctx = dynamobind.WithClient(ctx, client)
 
 if err := dynamobind.Store(ctx, "readings", reading); err != nil {
 	return err
@@ -241,7 +241,8 @@ test 用の table と本番の table に置けるので、型に table を持た
 service が拒否する名前は最初の呼び出しでの `ValidationException` ではなく生成 error に
 なります。
 
-deployment prefix はここには書きません。実行時に Context から解決します。
+deployment 側が別の名前を使っている場合のことはここには書きません。宣言した名前は実行時に
+Context で写します。[deployment のテーブル名](#deployment-のテーブル名)を参照してください。
 
 item 操作は table 引数を保ちます。読み取る宣言が無いためで、不整合ではなく宣言が無いだけ
 です。
@@ -291,43 +292,58 @@ dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 
 ## client は Context から来ます
 
-client と deployment の table prefix は、process ごとに固定される事実です。どこも引数に
-取りません。一度入れておけば、呼び出し側にも生成されたシグネチャにも現れません。
+client は process ごとに固定される事実です。どこも引数に取りません。一度入れておけば、
+呼び出し側にも生成されたシグネチャにも現れません。
 
 ```go
-ctx := dynamobind.WithClient(r.Context(), client, dynamobind.WithTablePrefix("staging-"))
+ctx := dynamobind.WithClient(r.Context(), client)
 ```
 
 ```go
 WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption) context.Context
-WithTablePrefix(prefix string) ClientOption
 
-TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
+TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ```
 
-このパッケージの入口はすべて `TableFromContext` を通るので、実際に送られる table 名は
-書いた名前に prefix を前置したものになります。`Load(ctx, "readings", key)` は
-`staging-readings` を読みますし、`table readings` と宣言したクエリも同じです。
-`ClientFromContext` は escape hatch で、このパッケージが包んでいない操作のために driver へ
-直接届きます。
+このパッケージの入口はすべて `TableFromContext` を通ります。`ClientFromContext` は
+escape hatch で、このパッケージが包んでいない操作のために driver へ直接届きます。
+
+client の無い Context は `ErrNoClient` です。結果の形が許す方法で呼び出し側に届きます。
+error を返す関数はそのまま返し、iterator は zero value と一緒に 1 度 yield して終わります。
+page の失敗と同じ報告のしかたです。
 
 別の client でテストする、別 region に届く、といった場合は、別のシグネチャではなく別の
 Context を作ります。
 
-### prefix の未設定は error です
+### deployment のテーブル名
 
-空 prefix への fallback はありません。client はあるが prefix が設定されていない Context は
-`ErrNoTablePrefix` になり、宣言どおりの名前をそのまま使う deployment は
-`WithTablePrefix("")` と明示します。
+`table` 節に書いた名前と、item 操作に渡す名前は、コードが宣言する名前です。既定では
+それがそのまま送られます。deployment 側が別の名前を使っているときは resolver を入れます。
 
-理由は、そうしないと失敗が静かになるからです。client が無ければそもそも request を出せない
-ので `ErrNoClient` は避けようがありません。一方 prefix が無いと prefix 無しの table を読んで
-**正常な空 page**を返します。違う table を読んだ結果は、中身が空の table と区別できません。
+```go
+ctx := dynamobind.WithClient(r.Context(), client,
+	dynamobind.WithTableNames(func(ctx context.Context, declared string) string {
+		return config.Tables[declared]
+	}))
+```
 
-どちらの error も、結果の形が許す方法で呼び出し側に届きます。error を返す関数はそのまま
-返し、iterator は zero value と一緒に 1 度 yield して終わります。page の失敗と同じ報告の
-しかたです。
+```go
+type TableResolver func(ctx context.Context, declared string) string
+
+WithTableNames(resolve TableResolver) ClientOption
+```
+
+prefix ではなく関数にしてあるのは意図的です。prefix は deployment ツールがたまたま従って
+いる規約でしかなく、他の形を表せません。CDK が生成する物理名は接尾辞が付きますし、
+`orders-prod` は環境名が後ろに来ますし、環境変数から読む名前は宣言した名前と 1 文字も
+共有しません。ここではどれも同じ 1 つの関数です。
+
+Context を取るのは、写像が process だけでなく request にも依存しうるからです。テナント別の
+テーブルなら、Context からテナントを読む同じ関数で済みます。
+
+resolver を入れなければ宣言した名前がそのまま送られるので、宣言どおりの名前を使っている
+deployment は何も書きません。
 
 ## ランタイム操作
 
@@ -515,8 +531,8 @@ program 1 本を比較しています。属性単位の error 報告も含めて
 | driver 直、item map は手組み、error 報告なし | 3,541,365 |
 | driver の `MarshalItem`（reflection） | 3,586,193 |
 | 手書き codec、driver を直接呼ぶ | 3,586,568 |
-| 手書き codec + `dynamobind` | 3,625,798 |
-| **生成 codec + `dynamobind`** | **3,626,010** |
+| 手書き codec + `dynamobind` | 3,625,639 |
+| **生成 codec + `dynamobind`** | **3,625,851** |
 
 読み取るべきことは 2 つです。
 
@@ -525,7 +541,7 @@ program 1 本を比較しています。属性単位の error 報告も含めて
 
 **Context から client を取る方式が約 38 KB かかっていて**、ここでは他のすべてを圧倒して
 います。client が引数だった 1 つ前の API に対して同じ program を build すると 3,587,827 で、
-Context への移動は +37,971 byte です。これはこのパッケージ側で削れる分ではありません。
+Context への移動は +37,812 byte です。これはこのパッケージ側で削れる分ではありません。
 `dynamobind` を一切使わず `context.WithValue` と型 assertion を 1 回ずつ書くだけで、同じ
 program が 48,409 byte 増えます。assertion が、TinyGo なら本来落とせる型記述子の機構を
 引き込むからです。

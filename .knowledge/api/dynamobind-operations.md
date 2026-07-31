@@ -62,8 +62,8 @@ partial_update:
   contrast: Store is PutItem, which replaces the whole item, so it is not a partial update
 context_client:
   where: no entry takes a client; every one resolves through TableFromContext, per decision:dynamo-context-client-api
-  table_argument: an item operation still names its table, having no declaration to read one from, and the prefix applies to it
-  failure: an unresolvable Context reaches the service with nothing, in every entry
+  table_argument: an item operation still names its table, having no declaration to read one from, and the name resolver applies to it
+  failure: a Context with no client reaches the service with nothing, in every entry
 string_key_condition:
   status: the escape hatch, now that requirement:dynamo-typed-queries generates the declared form
   unchecked: keyCond and its expression values are untyped here, so a renamed attribute still compiles, and reserved words are the caller's to alias

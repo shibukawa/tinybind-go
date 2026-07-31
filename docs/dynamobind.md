@@ -60,7 +60,7 @@ Generation writes two files:
 and you call them, having installed the client once:
 
 ```go
-ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTablePrefix(""))
+ctx = dynamobind.WithClient(ctx, client)
 
 if err := dynamobind.Store(ctx, "readings", reading); err != nil {
 	return err
@@ -248,8 +248,9 @@ The name is checked against what DynamoDB accepts — three to 255 characters of
 letters, digits, `_`, `-` and `.` — so a name the service would reject is a
 generation error rather than a `ValidationException` on the first call.
 
-A deployment prefix is not written here. It is resolved at run time, from the
-Context.
+A deployment that names the table differently is not written here. The declared
+name is mapped at run time, from the Context; see
+[Deployment table names](#deployment-table-names).
 
 Item operations keep their table parameter. They have no declaration to read one
 from; that is the absence of a declaration rather than an inconsistency.
@@ -302,45 +303,62 @@ dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 
 ## The client comes from the Context
 
-A client and a deployment table prefix are facts of one process. Nothing takes
-them as a parameter: install them once, and no call site and no generated
-signature carries them.
+A client is a fact of one process. Nothing takes it as a parameter: install it
+once, and no call site and no generated signature carries it.
 
 ```go
-ctx := dynamobind.WithClient(r.Context(), client, dynamobind.WithTablePrefix("staging-"))
+ctx := dynamobind.WithClient(r.Context(), client)
 ```
 
 ```go
 WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption) context.Context
-WithTablePrefix(prefix string) ClientOption
 
-TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
+TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ```
 
-Every entry of this package resolves through `TableFromContext`, so the table
-name it sends is the one you wrote with the prefix prepended: `Load(ctx,
-"readings", key)` reads `staging-readings`, and so does a declared query whose
-`table` clause says `readings`. `ClientFromContext` is the escape hatch, for
-reaching the driver directly for something this package does not wrap.
+Every entry of this package resolves through `TableFromContext`.
+`ClientFromContext` is the escape hatch, for reaching the driver directly for
+something this package does not wrap.
 
-Testing against a second client, or reaching a second region, is a second
-Context rather than a second signature.
+A Context with no client is `ErrNoClient`, reported in whatever way the result
+shape allows: a function returning an error returns it, and an iterator yields it
+once with the zero value and stops, which is how a failed page already reports.
 
-### A missing prefix is an error
+Testing against a second client, or reaching a second region, is a second Context
+rather than a second signature.
 
-There is no empty-prefix default. A Context carrying a client and no prefix is
-`ErrNoTablePrefix`, and a deployment that uses the declared names unchanged says
-so with `WithTablePrefix("")`.
+### Deployment table names
 
-The reason is that the failure would otherwise be silent. A missing client
-cannot issue a request at all, so `ErrNoClient` is unavoidable. A missing prefix
-would read the unprefixed table and answer with a normal empty page — reading
-the wrong table is indistinguishable from a table holding nothing.
+The name in a `table` clause, and the name an item operation passes, are the
+names your code declares. By default they are what gets sent. When the
+deployment names its tables differently, install a resolver:
 
-Both errors reach the caller in whatever way its result shape allows: a function
-returning an error returns it, and an iterator yields it once with the zero value
-and stops, which is how a failed page already reports.
+```go
+ctx := dynamobind.WithClient(r.Context(), client,
+	dynamobind.WithTableNames(func(ctx context.Context, declared string) string {
+		return config.Tables[declared]
+	}))
+```
+
+```go
+type TableResolver func(ctx context.Context, declared string) string
+
+WithTableNames(resolve TableResolver) ClientOption
+```
+
+It is a function rather than a prefix on purpose. A prefix is a convention that
+deployment tooling happens to follow, and it cannot express the others: CDK's
+generated physical names carry a suffix, `orders-prod` puts the environment last,
+and a name read from an environment variable shares nothing with the declared one
+at all. All of those are the same one function here.
+
+It takes the Context because the mapping can depend on the request, not only on
+the process. A per-tenant table is the same function reading a tenant out of the
+Context.
+
+Without a resolver the declared name is sent unchanged, so a deployment whose
+tables are named as declared writes nothing.
 
 ## Runtime operations
 
@@ -541,8 +559,8 @@ mapped and how the client is reached.
 | raw driver, item map built by hand, no error reporting | 3,541,365 |
 | driver `MarshalItem` reflection | 3,586,193 |
 | hand-written codec, driver called directly | 3,586,568 |
-| hand-written codec through `dynamobind` | 3,625,798 |
-| **generated codec through `dynamobind`** | **3,626,010** |
+| hand-written codec through `dynamobind` | 3,625,639 |
+| **generated codec through `dynamobind`** | **3,625,851** |
 
 Two things to read out of it.
 
@@ -552,7 +570,7 @@ project set out to keep.
 
 **The Context-resolved client costs about 38 KB**, and it dominates everything
 else here. Building the same program against the previous API, where the client
-was a parameter, gives 3,587,827 — the move into the Context is +37,971 bytes.
+was a parameter, gives 3,587,827 — the move into the Context is +37,812 bytes.
 That is not this package's overhead to fix: a bare `context.WithValue` plus one
 type assertion, with no `dynamobind` involved at all, costs 48,409 bytes in the
 same program, because the assertion pulls in type-descriptor machinery TinyGo
