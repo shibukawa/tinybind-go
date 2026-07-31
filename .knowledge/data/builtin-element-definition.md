@@ -16,6 +16,9 @@ fields:
   Params: ordered parameter definitions; each carries a name, a declared template type, and a required flag
   Children: optional reserved children parameter of type html
   Context: the rule:template-context-safety insertion context this element may appear in
+  Placement: head, body, or either; checked against the region the element is written in, per requirement:builtin-element-registration
+  Vary: the request properties this element's output depends on, empty for one that depends on none
+  Assets: static files this element requires, per requirement:component-asset-requirements
   Shape: markup or opaque, per requirement:builtin-element-lowering
   Markup: for the markup shape, the fixed output template with named holes
   Provider: optional SymbolPattern for the requirement:render-value-provider function supplying hole values
@@ -25,6 +28,7 @@ capabilities_derivation:
   provider_present: implies per_request and needs_context
   provider_absent: no capability; the element folds entirely into static bytes
   scripts_present: contributes the named requirement:framework-script-contribution entries
+  vary_declared: not derived, because only the implementation knows what its provider reads; an undeclared axis is the invisible dependency decision:library-component-seams accepted this field to close
   conservative: a provider returning a process-constant value is still treated as per_request, because the safe direction is cache exclusion
 parameter_types: the template types of requirement:template-language-core, so an attribute expression is checked exactly as on an ordinary element
 markup_holes:

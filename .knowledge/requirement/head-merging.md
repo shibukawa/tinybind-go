@@ -17,6 +17,12 @@ allowed_content:
   - link, meta, style, script, and title nodes
   - nothing that belongs in the body
   - style and inline script blocks are authored here but leave through requirement:static-asset-extraction rather than merging inline
+  - every attribute of a contributed node is static text, which is what keeps the set writable before the first body byte
+  noscript:
+    status: accepted into both sets and shipped 2026-07-31, per decision:library-component-seams
+    found: a scriptless-client handoff is one noscript refresh in the head, and this set was what blocked it rather than the missing caller channel
+    children: link, style, and meta only; anything else there is body content
+    the_only_one_with_element_children: every other contributed node accepts static text alone
 static_requirement:
   rule: head contributions are statically known markup, not values computed from request data
   reason: the root head must be written before body streaming, so contributions cannot wait for render results

@@ -35,6 +35,43 @@ type rawOp[P any] struct{ value func(P) string }
 
 func (o rawOp[P]) Exec(r *Renderer, params P) error { return r.Write(o.value(params)) }
 
+// The Ctx forms below are the same instructions with one more argument: the
+// context this render runs under. Generation emits one only where a template
+// expression calls an external whose Go implementation declared a leading
+// context.Context, so a project using none produces exactly the instructions it
+// produced before these existed.
+//
+// The context is the render's own — the ctx argument of an async entry, or the
+// value WithContext supplied to a synchronous one — read at the position the
+// instruction occupies. Inside a boundary subtree that is the boundary's
+// context, so a live delivery's work is bounded by that delivery.
+
+// TextCtx is Text for a value that needs the render context.
+func (Builder[P]) TextCtx(value func(context.Context, P) string) Op[P] {
+	return textCtxOp[P]{value: value}
+}
+
+type textCtxOp[P any] struct {
+	value func(context.Context, P) string
+}
+
+func (o textCtxOp[P]) Exec(r *Renderer, params P) error {
+	return r.Write(Escape(o.value(r.boundaryContext(), params)))
+}
+
+// RawCtx is Raw for a value that needs the render context.
+func (Builder[P]) RawCtx(value func(context.Context, P) string) Op[P] {
+	return rawCtxOp[P]{value: value}
+}
+
+type rawCtxOp[P any] struct {
+	value func(context.Context, P) string
+}
+
+func (o rawCtxOp[P]) Exec(r *Renderer, params P) error {
+	return r.Write(o.value(r.boundaryContext(), params))
+}
+
 // Attr writes one attribute. The value arrives already escaped, because a
 // mixed value concatenates author literals with escaped expressions and only
 // the expressions may be escaped. present reports whether an optional value
@@ -50,6 +87,24 @@ type attrOp[P any] struct {
 
 func (o attrOp[P]) Exec(r *Renderer, params P) error {
 	value, present := o.value(params)
+	if !present {
+		return nil
+	}
+	return r.Write(" " + o.name + `="` + value + `"`)
+}
+
+// AttrCtx is Attr for a value that needs the render context.
+func (Builder[P]) AttrCtx(name string, value func(context.Context, P) (string, bool)) Op[P] {
+	return attrCtxOp[P]{name: name, value: value}
+}
+
+type attrCtxOp[P any] struct {
+	name  string
+	value func(context.Context, P) (string, bool)
+}
+
+func (o attrCtxOp[P]) Exec(r *Renderer, params P) error {
+	value, present := o.value(r.boundaryContext(), params)
 	if !present {
 		return nil
 	}
@@ -74,6 +129,23 @@ func (o boolAttrOp[P]) Exec(r *Renderer, params P) error {
 	return r.Write(" " + o.name)
 }
 
+// BoolAttrCtx is BoolAttr for a value that needs the render context.
+func (Builder[P]) BoolAttrCtx(name string, value func(context.Context, P) bool) Op[P] {
+	return boolAttrCtxOp[P]{name: name, value: value}
+}
+
+type boolAttrCtxOp[P any] struct {
+	name  string
+	value func(context.Context, P) bool
+}
+
+func (o boolAttrCtxOp[P]) Exec(r *Renderer, params P) error {
+	if !o.value(r.boundaryContext(), params) {
+		return nil
+	}
+	return r.Write(" " + o.name)
+}
+
 // If selects one of two instruction lists.
 func (Builder[P]) If(condition func(P) bool, then, otherwise []Op[P]) Op[P] {
 	return ifOp[P]{condition: condition, then: then, otherwise: otherwise}
@@ -91,11 +163,48 @@ func (o ifOp[P]) Exec(r *Renderer, params P) error {
 	return execOps(r, o.otherwise, params)
 }
 
+// IfCtx is If for a condition that needs the render context.
+func (Builder[P]) IfCtx(condition func(context.Context, P) bool, then, otherwise []Op[P]) Op[P] {
+	return ifCtxOp[P]{condition: condition, then: then, otherwise: otherwise}
+}
+
+type ifCtxOp[P any] struct {
+	condition       func(context.Context, P) bool
+	then, otherwise []Op[P]
+}
+
+func (o ifCtxOp[P]) Exec(r *Renderer, params P) error {
+	if o.condition(r.boundaryContext(), params) {
+		return execOps(r, o.then, params)
+	}
+	return execOps(r, o.otherwise, params)
+}
+
 // For repeats body once per item. scope builds the body's parameter value from
 // the enclosing parameters, the item, and its index, so the loop variable stays
 // statically typed instead of becoming an untyped lookup.
 func For[P, E, S any](items func(P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
 	return forOp[P, E, S]{items: items, scope: scope, body: body}
+}
+
+// ForCtx is For for an item list that needs the render context.
+func ForCtx[P, E, S any](items func(context.Context, P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
+	return forCtxOp[P, E, S]{items: items, scope: scope, body: body}
+}
+
+type forCtxOp[P, E, S any] struct {
+	items func(context.Context, P) []E
+	scope func(P, E, int) S
+	body  []Op[S]
+}
+
+func (o forCtxOp[P, E, S]) Exec(r *Renderer, params P) error {
+	for index, item := range o.items(r.boundaryContext(), params) {
+		if err := execOps(r, o.body, o.scope(params, item, index)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type forOp[P, E, S any] struct {
@@ -241,6 +350,23 @@ func (o componentOp[P]) Exec(r *Renderer, params P) error {
 	return fragment.render(r)
 }
 
+// ComponentCtx is Component for a binding that needs the render context.
+func (Builder[P]) ComponentCtx(bind func(context.Context, P) Fragment) Op[P] {
+	return componentCtxOp[P]{bind: bind}
+}
+
+type componentCtxOp[P any] struct {
+	bind func(context.Context, P) Fragment
+}
+
+func (o componentCtxOp[P]) Exec(r *Renderer, params P) error {
+	fragment := o.bind(r.boundaryContext(), params)
+	if !fragment.Present() {
+		return nil
+	}
+	return fragment.render(r)
+}
+
 // Slot inserts a bound slot argument. When the argument is absent the fallback
 // instructions run, which is how default slot content is expressed. An absent
 // slot with no fallback emits nothing at all.
@@ -255,6 +381,27 @@ type slotOp[P any] struct {
 
 func (o slotOp[P]) Exec(r *Renderer, params P) error {
 	fragment := o.value(params)
+	if !fragment.Present() {
+		return execOps(r, o.fallback, params)
+	}
+	return fragment.render(r)
+}
+
+// SlotCtx is Slot for a value that needs the render context. It is also what an
+// html-returning external lowers to when its implementation takes one, so a
+// framework fragment such as a hidden CSRF field renders as a subtree under the
+// ordinary context checks rather than as escaped text.
+func (Builder[P]) SlotCtx(value func(context.Context, P) Fragment, fallback []Op[P]) Op[P] {
+	return slotCtxOp[P]{value: value, fallback: fallback}
+}
+
+type slotCtxOp[P any] struct {
+	value    func(context.Context, P) Fragment
+	fallback []Op[P]
+}
+
+func (o slotCtxOp[P]) Exec(r *Renderer, params P) error {
+	fragment := o.value(r.boundaryContext(), params)
 	if !fragment.Present() {
 		return execOps(r, o.fallback, params)
 	}

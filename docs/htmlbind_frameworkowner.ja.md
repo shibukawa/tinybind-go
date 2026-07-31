@@ -407,6 +407,41 @@ tags := htmlbind.MergeHead([]htmlbind.Wrapper{document, layout}, page)
 す。修正されるまでは、その形でスロットを合成するフレームワークは、それらの
 Fragment の `Head()` を自分でマージしてください。
 
+### render 呼び出しから寄与する
+
+component が宣言できるのは生成時に分かることだけです。レスポンスごとに決めるタグ
+— 今読み込んだレコードから取ったタイトル、ある cookie が無いときだけ出すマーカー
+— は呼び出し時に渡してください。
+
+```go
+err := htmlbind.RenderChain(w, chain, page,
+	htmlbind.WithHead(
+		htmlbind.HeadTitle(order.Customer),
+		htmlbind.HeadNoScript(htmlbind.HeadMeta(
+			htmlbind.HeadAttr{Name: "http-equiv", Value: "refresh"},
+			htmlbind.HeadAttr{Name: "content", Value: "0; url=/_handoff"},
+		)),
+	),
+)
+```
+
+ノードは markup ではなく値なので、渡したものが要素になることはなく、値は位置に応
+じてエスケープされます。マージされるのは component の寄与すべての後で、重複排除は
+同じ仕組みです。head パスより前に手元にあるため、ストリーミングには影響せず、ボ
+ディのバイトもバッファされません。壊れたノードは最初の1バイトより前に render を
+失敗させます。
+
+`HeadScript` は `src` を要求します。このパッケージのどの経路もインラインスクリプ
+トを書きません。
+
+ドキュメントシェルの無いレスポンスにはマージ先の head がありません。
+`htmlbind.RenderHeadNodes(nodes)` は render せずに同じ「書き出せる状態のタグ」を返
+すので、ナビゲーションのペイロードに載せるか、レスポンスを拒否するかを、ブラウザ
+で気づく前に選べます。
+
+フレームワークが使えるものと、仕様はあるが未実装のものの全体像は
+[フレームワーク向け機能一覧](httpbind_framework_facilities.ja.md) にあります。
+
 ## ジェネレータとの統合
 
 フレームワークは tinybind のものを同梱するのではなく、自前の generate コマンドを

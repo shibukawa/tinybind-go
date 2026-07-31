@@ -85,6 +85,8 @@ type renderOptions struct {
 	report      func(error)
 	timeout     time.Duration
 	concurrency int
+	// head holds the caller's own contributions, merged after the components'.
+	head []HeadNode
 	// live keeps live subscriptions open instead of taking one delivery and
 	// unsubscribing. Only the live render entries set it.
 	live bool
@@ -164,11 +166,16 @@ func Render(w io.Writer, leaf Fragment, options ...Option) error {
 // holding a loading state is a document that lies. This path writes as it goes,
 // so render into a buffer when you want that failure to become an error status.
 func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) error {
+	opts := newRenderOptions(options)
 	composed, head, err := assemble(wrappers, leaf)
 	if err != nil {
 		return err
 	}
-	return composed(&Renderer{w: w, head: head, opts: newRenderOptions(options)})
+	head, err = mergeCallerHead(head, opts.head)
+	if err != nil {
+		return err
+	}
+	return composed(&Renderer{w: w, head: head, opts: opts})
 }
 
 // RenderAsync renders one component and yields each await boundary as it
@@ -235,6 +242,13 @@ func renderStreaming(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf 
 		}
 		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
 		defer coordinator.stop()
+		// The caller's own contributions join the merge here, before the head is
+		// written, so a malformed one still fails while the status can change.
+		head, err = mergeCallerHead(head, coordinator.opts.head)
+		if err != nil {
+			yield(Content{}, err)
+			return
+		}
 		// The head carries component contributions only. Nothing is injected on
 		// this path: the script that applies a completion belongs with the framing
 		// the caller writes around it, so both are the framework's to ship.
