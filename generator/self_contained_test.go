@@ -120,11 +120,11 @@ func TestGeneratedArtifactsAreSelfContained(t *testing.T) {
 				t.Fatal("no artifacts generated")
 			}
 			for _, artifact := range artifacts {
-				formatted, err := format.Source(artifact.GoSource)
+				formatted, err := format.Source(artifact.Content)
 				if err != nil {
-					t.Fatalf("%s is not valid Go: %v\n%s", artifact.OutputBase, err, artifact.GoSource)
+					t.Fatalf("%s is not valid Go: %v\n%s", artifact.OutputBase, err, artifact.Content)
 				}
-				if string(formatted) != string(artifact.GoSource) {
+				if string(formatted) != string(artifact.Content) {
 					t.Fatalf("%s is not gofmt-clean", artifact.OutputBase)
 				}
 			}

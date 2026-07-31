@@ -336,6 +336,29 @@ component の style ブロックは、宣言されたクラス名をリネーム
 
 ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素がマージ済み寄与の出力先になります。
 
+### 静的ファイルの切り出し
+
+`style` ブロックと、中身を持つ `script` ブロックはレスポンスには載りません。生成時にファイルとして書き出され、マージ済み head には参照タグだけが入ります。これによりクライアントキャッシュが効き、Content Security Policy でインラインスクリプトを禁止できます。
+
+```html
+<link rel="stylesheet" href="/public/generated/card.style.1f0a3c9d4b21.css">
+<script src="/public/generated/card.script.7c62e0b1d938.js" defer></script>
+```
+
+- 1つのテンプレートファイル内の style ブロックは1つのスタイルシートにまとまります。script は component ごとに1ファイルになるので、`defer`、`async`、`type` などの属性がタグにそのまま残ります。
+- ファイル名には内容のハッシュが入るので、URL は不変キャッシュ可能で、変更のないプロジェクトは同じ名前を再生成します。
+- すでに外部 URL を指している `script` や `link` は、タグがそのまま寄与し、ファイルは作られません。
+- 切り出しとハッシュ計算は生成時に行われます。リクエストごとの組み立ては一切なく、構成によって変化しないため参照タグの収集も不要です。
+
+出力先と名前は2つのジェネレータオプションで決まります。
+
+| オプション | デフォルト | 意味 |
+| --- | --- | --- |
+| `PublicDir` | `public/generated` | 生成ファイルを書き出すディレクトリ |
+| `PublicURLBase` | `/public/generated` | 参照 URL の前置き |
+
+generate コマンドでは `-public-dir` と `-public-url-base` です。両者は互いから導出されません。ファイルパスは `PublicDir` とファイル名の連結、参照は `PublicURLBase` と同じファイル名の連結で、パスの一部を推測したり付け足したり削ったりはしません。`PublicURLBase` はそのまま使われるので、`https://cdn.example.com/assets` のような完全 URL を指定すると、書き出し先を変えずに絶対 URL の参照になります。片方だけを設定すると生成は失敗します。必ず両方を設定してください。
+
 ## attribute
 
 ### 通常 attribute

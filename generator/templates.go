@@ -95,35 +95,48 @@ func discoverTemplateFiles(dir, htmlPattern, sqlPattern string) ([]templateFile,
 }
 
 // GenerateTemplates discovers files using the configured template patterns and
-// writes one Go file containing all generated declarations. It returns an empty
+// writes one Go file containing all generated declarations, plus the static
+// files extracted from component style and script blocks. It returns an empty
 // path when no templates exist.
 func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, error) {
+	path, _, err := g.generateTemplateFiles(dir, outDir, outName)
+	return path, err
+}
+
+// generateTemplateFiles writes the generated Go file and every extracted asset,
+// returning the Go path and the asset paths in generation order.
+func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, []string, error) {
 	files, err := discoverTemplateFiles(dir, g.Options.HTMLTemplatePattern, g.Options.SQLTemplatePattern)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(files) == 0 {
-		return "", nil
+		return "", nil, nil
+	}
+	if err := checkPublicAssetPairing(g.Options.PublicDir, g.Options.PublicURLBase); err != nil {
+		return "", nil, err
 	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var generated [][]byte
+	var assets []htmlbind.Asset
 	for _, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		code, err := g.generateTemplate(file, source, pkg)
+		code, extracted, err := g.generateTemplate(file, source, pkg)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		generated = append(generated, code)
+		assets = append(assets, extracted...)
 	}
 	combined, err := combineGeneratedTemplates(pkg, generated)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if outDir == "" {
 		outDir = dir
@@ -132,17 +145,52 @@ func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, erro
 		outName = DefaultTemplatesName
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	path := filepath.Join(outDir, outName)
 	if err := os.WriteFile(path, combined, 0o644); err != nil {
-		return "", err
+		return "", nil, err
+	}
+	assetPaths, err := g.writeAssets(assets)
+	if err != nil {
+		return "", nil, err
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return path, nil
+		return path, assetPaths, nil
 	}
-	return abs, nil
+	return abs, assetPaths, nil
+}
+
+// writeAssets writes extracted static files into the configured public
+// directory, exactly as the generator writes Go artifacts. A file name carries
+// no separator, so a written asset cannot escape that directory.
+func (g *Generator) writeAssets(assets []htmlbind.Asset) ([]string, error) {
+	if len(assets) == 0 {
+		return nil, nil
+	}
+	publicDir := g.Options.resolvedPublicDir()
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		return nil, err
+	}
+	written := map[string]bool{}
+	var paths []string
+	for _, asset := range assets {
+		name := asset.FileName()
+		if written[name] {
+			continue
+		}
+		written[name] = true
+		path := filepath.Join(publicDir, name)
+		if err := os.WriteFile(path, asset.Content, 0o644); err != nil {
+			return nil, err
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 // templatePackageName resolves the Go package the generated templates join:
@@ -191,25 +239,34 @@ func (g *Generator) templatePackageName(dir string, files []templateFile) (strin
 }
 
 // generateTemplate compiles one discovered template source with the configured
-// generated API shape. Diagnostics keep the discovered path, so custom input
-// suffixes are reported exactly as they exist on disk.
-func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string) ([]byte, error) {
+// generated API shape, returning the Go source and the static files extracted
+// from it. Diagnostics keep the discovered path, so custom input suffixes are
+// reported exactly as they exist on disk.
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string) ([]byte, []htmlbind.Asset, error) {
 	if file.kind == htmlTemplate {
 		module, err := htmlbind.Parse(file.path, source)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return htmlbind.Generate(file.path, source, htmlbind.GenerateOptions{Package: pkg})
+		result, err := htmlbind.GenerateModule(file.path, source, htmlbind.GenerateOptions{
+			Package:       pkg,
+			Unit:          artifactBase(file.path),
+			PublicURLBase: g.Options.resolvedPublicURLBase(),
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.GoSource, result.Assets, nil
 	}
 	module, err := templatesql.Parse(file.path, source)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	options := templatesql.GenerateOptions{
 		Package:     pkg,
@@ -219,7 +276,8 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 	if resolver := g.Options.SQLExecutorResolver; resolver != nil {
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
 	}
-	return templatesql.Generate(file.path, source, options)
+	code, err := templatesql.Generate(file.path, source, options)
+	return code, nil, err
 }
 
 func checkTemplatePackage(filename string, declaration *htmlbind.PackageDecl, pkg string) error {

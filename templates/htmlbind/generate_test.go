@@ -315,9 +315,16 @@ export component Card(label: string): html {
 <div class="box shadow"><span class="label">{label}</span></div>
 }
 `)
-	generated, err := htmlbind.Generate("sfc.pw.html", source, htmlbind.GenerateOptions{})
+	result, err := htmlbind.GenerateModule("sfc.pw.html", source, htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	generated := result.GoSource
+	if len(result.Assets) != 1 || result.Assets[0].Kind != htmlbind.AssetStyle {
+		t.Fatalf("want one extracted stylesheet, got %v", result.Assets)
+	}
+	if !strings.Contains(string(result.Assets[0].Content), "@keyframes fade_") {
+		t.Fatalf("scoped keyframes did not reach the stylesheet:\n%s", result.Assets[0].Content)
 	}
 	companion := []byte(`package pages
 
@@ -341,10 +348,13 @@ func TestScopedStyleReachesTheDocumentHead(t *testing.T) {
 	if !ok {
 		t.Fatalf("no head in %q", body)
 	}
-	for _, want := range []string{"<meta charset=\"utf-8\" />", "<link rel=\"stylesheet\" href=\"/shared.css\">", "@keyframes fade_"} {
+	for _, want := range []string{"<meta charset=\"utf-8\" />", "<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/sfc.style."} {
 		if !strings.Contains(head, want) {
 			t.Fatalf("head %q does not contain %q", head, want)
 		}
+	}
+	if strings.Contains(head, "<style") {
+		t.Fatalf("style block was not extracted: %q", head)
 	}
 	if strings.Contains(rest, "<style") || strings.Contains(rest, "<link") {
 		t.Fatalf("head contribution leaked into the body: %q", rest)
@@ -357,9 +367,6 @@ func TestScopedStyleReachesTheDocumentHead(t *testing.T) {
 	}
 	if !strings.Contains(rest, "A&amp;B") {
 		t.Fatalf("escaping regressed: %q", rest)
-	}
-	if strings.Contains(head, "animation: fade 1s") {
-		t.Fatalf("keyframes reference was not rewritten: %q", head)
 	}
 }
 

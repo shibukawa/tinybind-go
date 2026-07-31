@@ -25,9 +25,14 @@ type GenerateRequest struct {
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
 	ConfigBindName      string
-	Check               bool
-	GenerateAll         bool
-	SQLContextAPI       bool
+	// PublicDir and PublicURLBase override where extracted static assets are
+	// written and how they are referenced. Empty values retain the generator
+	// options; setting one requires setting the other.
+	PublicDir     string
+	PublicURLBase string
+	Check         bool
+	GenerateAll   bool
+	SQLContextAPI bool
 	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
 	// turn the option on, never off.
 	SQLContextOnlyAPI bool
@@ -39,13 +44,20 @@ type GenerateResult struct {
 	ConfigBindPath string
 	OpenAPIPath    string
 	TemplatesPath  string
-	Diagnostics    []parser.Diagnostic
+	// AssetPaths holds the static files extracted from component style and
+	// script blocks, in generation order.
+	AssetPaths  []string
+	Diagnostics []parser.Diagnostic
 }
 
 // Paths returns non-empty artifact paths in generation order.
 func (result GenerateResult) Paths() []string {
-	paths := make([]string, 0, 4)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.OpenAPIPath} {
+	paths := make([]string, 0, 4+len(result.AssetPaths))
+	if result.TemplatesPath != "" {
+		paths = append(paths, result.TemplatesPath)
+	}
+	paths = append(paths, result.AssetPaths...)
+	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -63,6 +75,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.Dir == "" {
 		request.Dir = "."
+	}
+	if err := request.validate(); err != nil {
+		return GenerateResult{}, err
 	}
 	if request.Name == "" {
 		request.Name = "tinybind_gen.go"
@@ -89,7 +104,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 
 	runner := New(options)
 	result := GenerateResult{}
-	if result.TemplatesPath, err = runner.GenerateTemplates(request.Dir, request.Out, request.TemplatesName); err != nil {
+	if result.TemplatesPath, result.AssetPaths, err = runner.generateTemplateFiles(request.Dir, request.Out, request.TemplatesName); err != nil {
 		return GenerateResult{}, fmt.Errorf("generate templates: %w", err)
 	}
 	if err := ctx.Err(); err != nil {

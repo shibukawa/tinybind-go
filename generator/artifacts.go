@@ -16,9 +16,10 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 
 	cbcg "github.com/shibukawa/tinybind-go/configbind/codegen"
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
-// ArtifactKind classifies one generated Go source unit.
+// ArtifactKind classifies one generated output unit.
 type ArtifactKind string
 
 const (
@@ -30,21 +31,51 @@ const (
 	ArtifactBinding       ArtifactKind = "binding"
 	ArtifactConfigBind    ArtifactKind = "configbind"
 	ArtifactOpenAPI       ArtifactKind = "openapi"
+	// ArtifactStylesheet is the component CSS extracted from one template.
+	ArtifactStylesheet ArtifactKind = "stylesheet"
+	// ArtifactScript is the component JavaScript extracted from one template.
+	ArtifactScript ArtifactKind = "script"
 )
 
-// Artifact is one formatted Go source unit and the source file that owns it.
-// The caller maps OutputBase to its own generated file name; nothing is written
-// to disk by the API that produces Artifacts.
+// ArtifactDestination says where an artifact is written, because a stylesheet
+// is served, not compiled.
+type ArtifactDestination string
+
+const (
+	DestinationGoPackage   ArtifactDestination = "go_package"
+	DestinationPublicAsset ArtifactDestination = "public_asset"
+)
+
+// Artifact extensions, without a leading dot.
+const (
+	ExtensionGo  = "go"
+	ExtensionCSS = "css"
+	ExtensionJS  = "js"
+)
+
+// Artifact is one generated output unit and the source file that owns it. The
+// caller maps OutputBase to its own generated file name; nothing is written to
+// disk by the API that produces Artifacts.
+//
+// Go formatting and import correctness apply to a go_package destination only;
+// a public asset is written verbatim.
 type Artifact struct {
 	// SourcePath is the real on-disk path of the owning source. It is empty for
 	// package-wide artifacts.
-	SourcePath string
-	Kind       ArtifactKind
+	SourcePath  string
+	Kind        ArtifactKind
+	Destination ArtifactDestination
 	// OutputBase is the suggested output base name, without directory,
 	// extension, or generated-file suffix.
-	OutputBase  string
+	OutputBase string
+	// Extension is the output file extension without a dot.
+	Extension string
+	// PackageName is meaningful for a go_package destination only.
 	PackageName string
-	GoSource    []byte
+	Content     []byte
+	// PublicPath is the URL a public asset is referenced by. It is empty for a
+	// go_package destination.
+	PublicPath string
 }
 
 // Base names for the package-wide artifacts.
@@ -65,6 +96,9 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	}
 	if request.Dir == "" {
 		request.Dir = "."
+	}
+	if err := request.validate(); err != nil {
+		return nil, err
 	}
 	runner := New(request.applyTo(g.Options))
 	normalized, err := runner.Options.normalized()
@@ -117,7 +151,19 @@ func (request GenerateRequest) applyTo(base Options) Options {
 	if request.SQLTemplatePattern != "" {
 		options.SQLTemplatePattern = request.SQLTemplatePattern
 	}
+	if request.PublicDir != "" {
+		options.PublicDir = request.PublicDir
+	}
+	if request.PublicURLBase != "" {
+		options.PublicURLBase = request.PublicURLBase
+	}
 	return options
+}
+
+// validate rejects a request that half-configures the public asset pair, which
+// the option defaults would otherwise silently complete.
+func (request GenerateRequest) validate() error {
+	return checkPublicAssetPairing(request.PublicDir, request.PublicURLBase)
 }
 
 // artifactBase strips every extension from a source base name, so
@@ -143,16 +189,51 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 		return nil, err
 	}
 	generated := make([][]byte, len(files))
+	assets := make([][]htmlbind.Asset, len(files))
 	for i, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
 			return nil, err
 		}
-		if generated[i], err = g.generateTemplate(file, source, pkg); err != nil {
+		if generated[i], assets[i], err = g.generateTemplate(file, source, pkg); err != nil {
 			return nil, err
 		}
 	}
-	return splitTemplateArtifacts(pkg, files, generated)
+	artifacts, err := splitTemplateArtifacts(pkg, files, generated)
+	if err != nil {
+		return nil, err
+	}
+	return append(artifacts, assetArtifacts(files, assets)...), nil
+}
+
+// assetArtifacts turns extracted static files into artifacts bound to the
+// template that produced them. Two templates emitting the same file name emit
+// identical bytes, so the duplicate is dropped rather than written twice.
+func assetArtifacts(files []templateFile, assets [][]htmlbind.Asset) []Artifact {
+	var artifacts []Artifact
+	seen := map[string]bool{}
+	for index, file := range files {
+		for _, asset := range assets[index] {
+			if seen[asset.FileName()] {
+				continue
+			}
+			seen[asset.FileName()] = true
+			kind := ArtifactStylesheet
+			if asset.Kind == htmlbind.AssetScript {
+				kind = ArtifactScript
+			}
+			artifacts = append(artifacts, Artifact{
+				SourcePath:  file.path,
+				Kind:        kind,
+				Destination: DestinationPublicAsset,
+				OutputBase:  asset.Base,
+				Extension:   asset.Extension,
+				Content:     asset.Content,
+				PublicPath:  asset.URL,
+			})
+		}
+	}
+	return artifacts
 }
 
 // splitTemplateArtifacts separates the template runtime helpers shared by a
@@ -221,9 +302,11 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 		}
 		artifacts = append(artifacts, Artifact{
 			Kind:        ArtifactPackageShared,
+			Destination: DestinationGoPackage,
 			OutputBase:  sharedArtifactBase,
+			Extension:   ExtensionGo,
 			PackageName: pkg,
-			GoSource:    source,
+			Content:     source,
 		})
 	}
 	for index, file := range files {
@@ -241,9 +324,11 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  file.path,
 			Kind:        kind,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(file.path),
+			Extension:   ExtensionGo,
 			PackageName: pkg,
-			GoSource:    source,
+			Content:     source,
 		})
 	}
 	return artifacts, nil
@@ -349,9 +434,11 @@ func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  source,
 			Kind:        ArtifactBinding,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
 			PackageName: plan.Package,
-			GoSource:    code,
+			Content:     code,
 		})
 	}
 	return artifacts, nil
@@ -384,9 +471,11 @@ func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  specs[start].SourcePath,
 			Kind:        ArtifactConfigBind,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(specs[start].SourcePath),
+			Extension:   ExtensionGo,
 			PackageName: pkgName,
-			GoSource:    code,
+			Content:     code,
 		})
 		start = end
 	}
@@ -408,8 +497,10 @@ func (g *Generator) openAPIArtifact(dir string) ([]Artifact, error) {
 	}
 	return []Artifact{{
 		Kind:        ArtifactOpenAPI,
+		Destination: DestinationGoPackage,
 		OutputBase:  openAPIArtifactBase,
+		Extension:   ExtensionGo,
 		PackageName: plan.Package,
-		GoSource:    code,
+		Content:     code,
 	}}, nil
 }

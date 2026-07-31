@@ -97,11 +97,12 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		return err
 	}
 	head := "nil"
-	if fragment := renderStaticHTML(info.head); strings.TrimSpace(fragment) != "" {
-		head = "[]string{" + strconv.Quote(fragment) + "}"
-	}
 	if transitive := e.c.transitiveHead(component.Name); len(transitive) > 0 {
-		head = "[]string{" + strings.Join(transitive, ", ") + "}"
+		quoted := make([]string, len(transitive))
+		for i, tag := range transitive {
+			quoted[i] = strconv.Quote(tag)
+		}
+		head = "[]string{" + strings.Join(quoted, ", ") + "}"
 	}
 	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n\tOps: %s,\n}\n\n",
 		prefix, params, head, indentBlock(plan.literal(), "\t"))
@@ -569,22 +570,28 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 
 // transitiveHead collects the head contributions of a component and every
 // component reachable from it, because a nested call renders after the shell
-// head is already written.
+// head is already written. Identical tags collapse, so two components sharing a
+// stylesheet contribute one link.
 func (c *compiler) transitiveHead(name string) []string {
 	var out []string
-	seen := map[string]bool{}
+	visited := map[string]bool{}
+	emitted := map[string]bool{}
 	var visit func(string)
 	visit = func(current string) {
-		if seen[current] {
+		if visited[current] {
 			return
 		}
-		seen[current] = true
+		visited[current] = true
 		info, ok := c.components[current]
 		if !ok {
 			return
 		}
-		if fragment := renderStaticHTML(info.head); strings.TrimSpace(fragment) != "" {
-			out = append(out, strconv.Quote(fragment))
+		for _, tag := range info.headTags {
+			if emitted[tag] {
+				continue
+			}
+			emitted[tag] = true
+			out = append(out, tag)
 		}
 		for _, called := range c.calledComponents(info) {
 			visit(called)
