@@ -8,6 +8,7 @@ import (
 	"io"
 	"iter"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,6 +165,117 @@ func TestLiveFailureDeliveryIsNotTerminal(t *testing.T) {
 		if string(got[index].HTML) != expected {
 			t.Errorf("delivery %d = %q, want %q", index, got[index].HTML, expected)
 		}
+	}
+}
+
+func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
+	// The delivery lock serializes renders, not reports. A reporter is the
+	// caller's code and may block — a full pipe, a synchronous exporter — and a
+	// failing source is exactly when it is most likely to. Holding the lock
+	// across it would freeze the boundary that is failing, which is the one
+	// whose remaining sources most need to keep delivering.
+	type scope struct{ A, B string }
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	aDelivered := make(chan struct{})
+	firstRender := make(chan struct{})
+
+	failing := func(deliver func(func(*scope), error) bool) error {
+		deliver(func(s *scope) { s.A = "a" }, nil)
+		close(aDelivered)
+		<-firstRender
+		// Renders recover, and then blocks in the reporter for as long as this
+		// test holds it there.
+		deliver(nil, errors.New("source failed"))
+		return nil
+	}
+	healthy := func(deliver func(func(*scope), error) bool) error {
+		<-aDelivered
+		deliver(func(s *scope) { s.B = "1" }, nil)
+		close(firstRender)
+		<-entered
+		// The reporter is blocked right now. This delivery can only be rendered
+		// if the lock was released before the report was made.
+		deliver(func(s *scope) { s.B = "2" }, nil)
+		return nil
+	}
+
+	plan := &Plan[struct{}]{
+		HasAwaitBlock: true,
+		HasLiveBlock:  true,
+		Ops: []Op[struct{}]{
+			Live(
+				func(context.Context, struct{}) []LiveBinding[scope] {
+					return []LiveBinding[scope]{failing, healthy}
+				},
+				func(struct{}) scope { return scope{} },
+				func(_ struct{}, err AsyncError) AsyncError { return err },
+				[]Op[scope]{Builder[scope]{}.Text(func(s scope) string { return s.A + s.B })},
+				[]Op[struct{}]{Builder[struct{}]{}.Static("pending")},
+				recoverHandler(),
+			),
+		},
+	}
+
+	var reports atomic.Int64
+	var once sync.Once
+	deliveries := make(chan string, 4)
+	finished := make(chan error, 1)
+	go func() {
+		var failure error
+		// Each delivery is forwarded as it arrives rather than collected, so the
+		// test can observe the third one while the reporter is still blocked.
+		for content, err := range RenderLive(t.Context(), io.Discard, Bind(plan, struct{}{}),
+			WithErrorReporter(func(error) {
+				reports.Add(1)
+				once.Do(func() { close(entered) })
+				<-release
+			})) {
+			if err != nil {
+				failure = err
+				break
+			}
+			deliveries <- string(content.HTML)
+		}
+		finished <- failure
+	}()
+
+	next := func(what string) string {
+		t.Helper()
+		select {
+		case html := <-deliveries:
+			return html
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+			return ""
+		}
+	}
+
+	if html := next("the first render"); html != "a1" {
+		t.Errorf("first delivery = %q, want %q", html, "a1")
+	}
+	if html := next("the recover render"); html != ErrorCodeInternal {
+		t.Errorf("failure delivery = %q, want %q", html, ErrorCodeInternal)
+	}
+	// This is the assertion: the healthy binding delivers while the reporter is
+	// still inside its call. Under the previous code it blocked on the lock the
+	// reporter was holding and this timed out.
+	if html := next("a delivery made while the reporter is blocked"); html != "a2" {
+		t.Errorf("delivery during the report = %q, want %q", html, "a2")
+	}
+	close(release)
+
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the subscription to end")
+	}
+	if reports.Load() != 1 {
+		t.Errorf("reports = %d, want 1: the failure is reported exactly once", reports.Load())
 	}
 }
 

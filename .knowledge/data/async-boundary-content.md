@@ -20,6 +20,8 @@ excluded:
   - initial document bytes; those are written to the io.Writer argument
   - raw Go error values and diagnostics; error travels as the iterator error value
   - transport framing; the caller wraps id and html into template element and update record
+gap:
+  liveness: the record is the same shape for a settled await boundary and for one delivery of a live boundary, so a live-mode consumer cannot tell them apart; requirement:live-boundary-liveness-signal proposes the field
 constraints:
   - id is unique per request, opaque, and safe in HTML and script contexts
   - html is already escaped and context-validated; consumers must not re-escape it

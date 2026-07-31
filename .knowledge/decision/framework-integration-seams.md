@@ -78,6 +78,7 @@ confirmed_unchanged:
 principle:
   widen: a seam whose default output stays identical and whose contract stays the caller's
   refuse: a change to the shape an author's own Go is written against, per the fixed set of decision:action-lowering-profile
+later_round: decision:live-integration-seams applies this principle to the live runtime, reported 2026-07-31
 related:
   - requirement:generated-route-registration
   - requirement:custom-framework-generation-profile

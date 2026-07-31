@@ -45,6 +45,13 @@ extensions:
   - requirement:live-boundary-rendering
   - requirement:live-boundary-resume
   - requirement:live-boundary-lifecycle
+gaps_found_downstream:
+  round: decision:live-integration-seams, reported 2026-07-31 by a framework running the shipped live runtime
+  items:
+    - requirement:live-boundary-liveness-signal
+    - requirement:live-error-report-off-lock
+    - requirement:live-mode-plan-slice
+  reading: all three are about what the module already knows and does not expose, or work it does that the response then discards, rather than about the language or the source signature
 syntax: decision:live-boundary-syntax
 go_source: decision:live-external-signature
 transport: decision:live-transport-boundary

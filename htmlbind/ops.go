@@ -394,7 +394,7 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 	coordinator.startStream(func(ctx context.Context, emit func(Content) bool) error {
 		delivery := &deliveryScope{}
 		defer delivery.stop()
-		return o.pump(ctx, params, firstDelivery, func(scope S, deliveryErr error) (bool, error) {
+		return o.pump(ctx, params, firstDelivery, r.reportError, func(scope S, deliveryErr error) deliveryResult {
 			var buffer bytes.Buffer
 			// The subtree renders into its own buffer, so a subscription never
 			// touches the response writer. A boundary nested in this subtree
@@ -402,29 +402,30 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 			// identifier namespace, and is cancelled when the next delivery
 			// reuses those identifiers.
 			sub := r.subtree(&buffer, id, delivery.next(ctx))
+			var report error
 			if deliveryErr != nil {
 				if ctx.Err() != nil {
 					// Expected cancellation. The boundary's current content is
 					// its final content and nothing is left to read a delivery.
-					return false, nil
+					return deliveryResult{}
 				}
-				r.reportError(deliveryErr)
+				report = deliveryErr
 				if o.handler == nil {
 					// Same rule as an await clause with no recover subtree:
 					// nothing here can render the failure, so it leaves the
 					// boundary rather than being dropped.
-					return false, &UnrecoveredError{BoundaryID: id, Err: deliveryErr}
+					return deliveryResult{report: report, failure: &UnrecoveredError{BoundaryID: id, Err: deliveryErr}}
 				}
 				if err := execOps(sub, o.handler, o.recovery(params, normalizeAsyncError(deliveryErr))); err != nil {
-					return false, err
+					return deliveryResult{report: report, failure: err}
 				}
 			} else if err := execOps(sub, o.primary, scope); err != nil {
-				return false, err
+				return deliveryResult{failure: err}
 			}
 			if !emit(Content{BoundaryID: id, HTML: buffer.Bytes()}) {
-				return false, nil
+				return deliveryResult{report: report}
 			}
-			return keepOpen, nil
+			return deliveryResult{keep: keepOpen, report: report}
 		})
 	})
 	return nil
@@ -463,23 +464,25 @@ func (d *deliveryScope) stop() {
 func (o liveOp[P, S, R]) execBlocking(r *Renderer, params P) error {
 	ctx := r.context()
 	delivered := false
-	failure := o.pump(ctx, params, r.boundaryTimeout(), func(scope S, deliveryErr error) (bool, error) {
+	failure := o.pump(ctx, params, r.boundaryTimeout(), r.reportError, func(scope S, deliveryErr error) deliveryResult {
 		if deliveryErr != nil {
 			if ctx.Err() != nil {
 				// The wait ran out, or the request went away. Neither is a
 				// failure of the source, so nothing is rendered here and the
 				// caller falls back below.
-				return false, nil
+				return deliveryResult{}
 			}
 			delivered = true
-			r.reportError(deliveryErr)
 			if o.handler == nil {
-				return false, &UnrecoveredError{Err: deliveryErr}
+				return deliveryResult{report: deliveryErr, failure: &UnrecoveredError{Err: deliveryErr}}
 			}
-			return false, execOps(r, o.handler, o.recovery(params, normalizeAsyncError(deliveryErr)))
+			return deliveryResult{
+				report:  deliveryErr,
+				failure: execOps(r, o.handler, o.recovery(params, normalizeAsyncError(deliveryErr))),
+			}
 		}
 		delivered = true
-		return false, execOps(r, o.primary, scope)
+		return deliveryResult{failure: execOps(r, o.primary, scope)}
 	})
 	if failure != nil {
 		return failure
@@ -499,7 +502,10 @@ func (o liveOp[P, S, R]) execBlocking(r *Renderer, params P) error {
 // having to select between them.
 // firstDelivery bounds how long the boundary may show nothing. Zero means no
 // bound beyond the request context, which is what the live entry passes.
-func (o liveOp[P, S, R]) pump(ctx context.Context, params P, firstDelivery time.Duration, render func(S, error) (bool, error)) error {
+// report hands a failure to the caller's reporter. It is called here rather than
+// inside render because render runs under the boundary lock, and a reporter that
+// blocks would otherwise stall the subscription it is reporting on.
+func (o liveOp[P, S, R]) pump(ctx context.Context, params P, firstDelivery time.Duration, report func(error), render func(S, error) deliveryResult) error {
 	ctx, cancel := context.WithCancel(ctx)
 	// Cancelling on the way out is what stops the other bindings once one has
 	// ended the boundary, and what makes an abandoned source observe the stop
@@ -530,7 +536,12 @@ func (o liveOp[P, S, R]) pump(ctx context.Context, params P, firstDelivery time.
 		go func() {
 			defer wg.Done()
 			deliver := func(assign func(*S), err error) bool {
-				keep := state.deliver(index, assign, err, render)
+				keep, reported := state.deliver(index, assign, err, render)
+				if reported != nil {
+					// Outside the lock, so a reporter that blocks costs this
+					// binding's next pull rather than the whole boundary.
+					report(reported)
+				}
 				if !keep {
 					cancel()
 				}
@@ -561,6 +572,25 @@ func runBinding[S any](binding LiveBinding[S], deliver func(func(*S), error) boo
 	return binding(deliver)
 }
 
+// deliveryResult is what one render of a live boundary produced besides its
+// output.
+//
+// report travels back out instead of being handed to the caller's reporter in
+// place, because a render runs under the boundary lock. Reporting there would
+// let a reporter that blocks — a full pipe, a synchronous exporter — hold the
+// lock, and the failure that most wants logging is exactly the one whose
+// boundary would then stop delivering.
+type deliveryResult struct {
+	// keep reports whether the subscription continues past this delivery.
+	keep bool
+	// report is the failure to hand to the caller's error reporter, or nil when
+	// this delivery is not one the caller is told about.
+	report error
+	// failure ends the subscription and reaches the caller as the error of the
+	// render sequence.
+	failure error
+}
+
 // liveState is one live boundary's shared scope. Bindings run in their own
 // goroutines and write their own fields, but unlike an await clause's tasks they
 // keep writing while the subtree is being rendered, so the scope needs a lock
@@ -575,17 +605,23 @@ type liveState[S any] struct {
 }
 
 // deliver applies one binding's value and renders once every binding has one.
+// It returns whether the subscription continues, and any failure the caller is
+// to report once this lock is released.
 //
 // The lock is held across the render and the emit. That serializes deliveries,
 // so two bindings moving at once cannot put an older render on screen after a
 // newer one, and a consumer that is not reading blocks the sources instead of
 // queueing behind them — which is the same coalescing the pull sequence gives
 // one source, extended to several.
-func (s *liveState[S]) deliver(index int, assign func(*S), err error, render func(S, error) (bool, error)) bool {
+//
+// It is deliberately not held across the report. Serialization is for the render
+// and the emit, which touch shared state; the reporter touches none of it and is
+// the caller's code, so its speed is not something this boundary can assume.
+func (s *liveState[S]) deliver(index int, assign func(*S), err error, render func(S, error) deliveryResult) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
-		return false
+		return false, nil
 	}
 	if err == nil {
 		assign(&s.scope)
@@ -596,21 +632,21 @@ func (s *liveState[S]) deliver(index int, assign func(*S), err error, render fun
 		if s.pending > 0 {
 			// The primary subtree reads every binding, so rendering now would
 			// show a zero value for one that has not arrived.
-			return true
+			return true, nil
 		}
 	}
 	// A failure decides the boundary whether or not the others have arrived:
 	// there is nothing to wait for once the clause is going to show recover.
-	keep, failure := render(s.scope, err)
-	if failure != nil {
-		s.stopped, s.err = true, failure
-		return false
+	result := render(s.scope, err)
+	if result.failure != nil {
+		s.stopped, s.err = true, result.failure
+		return false, result.report
 	}
-	if !keep {
+	if !result.keep {
 		s.stopped = true
-		return false
+		return false, result.report
 	}
-	return true
+	return true, result.report
 }
 
 func (s *liveState[S]) failure() error {
