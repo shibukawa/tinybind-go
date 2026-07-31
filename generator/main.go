@@ -27,6 +27,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
 	htmlTemplatePattern := flags.String("html-template-pattern", templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern), "HTML template file glob")
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
+	publicDir := flags.String("public-dir", "", "directory receiving extracted component assets (default: "+DefaultPublicDir+"; requires -public-url-base)")
+	publicURLBase := flags.String("public-url-base", "", "URL path or full URL prefixing extracted asset names (default: "+DefaultPublicURLBase+"; requires -public-dir)")
 	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
@@ -46,6 +48,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		if *out != "" && !filepath.IsAbs(*out) {
 			*out = filepath.Join(streams.WorkingDirectory, *out)
 		}
+		if *publicDir != "" && !filepath.IsAbs(*publicDir) {
+			*publicDir = filepath.Join(streams.WorkingDirectory, *publicDir)
+		}
 	}
 
 	result, err := New(options).GeneratePackage(ctx, GenerateRequest{
@@ -54,6 +59,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		TemplatesName:       *templatesName,
 		HTMLTemplatePattern: *htmlTemplatePattern,
 		SQLTemplatePattern:  *sqlTemplatePattern,
+		PublicDir:           *publicDir,
+		PublicURLBase:       *publicURLBase,
 		SQLDialect:          *sqlDialect,
 		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
 		SQLContextOnlyAPI: *sqlContextOnlyAPI,

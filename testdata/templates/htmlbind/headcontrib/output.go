@@ -28,7 +28,7 @@ type DocumentParams struct {
 var planBadgeOps = htmlbind.Builder[BadgeParams]{}
 
 var planBadgePlan = &htmlbind.Plan[BadgeParams]{
-	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<style>.badge_kr30dc { color: red }</style>"},
+	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
 	HeadSources: []string{"Badge (headcontrib/input.txt:5:1)", "Badge (headcontrib/input.txt:6:1)"},
 	Ops: []htmlbind.Op[BadgeParams]{
 		planBadgeOps.Static("<span class=\"badge_kr30dc\">"),
@@ -43,7 +43,7 @@ func Badge(params BadgeParams) htmlbind.Fragment { return htmlbind.Bind(planBadg
 var planNoteOps = htmlbind.Builder[NoteParams]{}
 
 var planNotePlan = &htmlbind.Plan[NoteParams]{
-	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<style>.note_x86lcf { color: blue }</style>"},
+	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
 	HeadSources: []string{"Note (headcontrib/input.txt:13:1)", "Note (headcontrib/input.txt:14:1)"},
 	Ops: []htmlbind.Op[NoteParams]{
 		planNoteOps.Static("<p class=\"note_x86lcf\">"),
@@ -58,8 +58,8 @@ func Note(params NoteParams) htmlbind.Fragment { return htmlbind.Bind(planNotePl
 var planPanelOps = htmlbind.Builder[PanelParams]{}
 
 var planPanelPlan = &htmlbind.Plan[PanelParams]{
-	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<style>.badge_kr30dc { color: red }</style>", "<style>.note_x86lcf { color: blue }</style>"},
-	HeadSources: []string{"Badge (headcontrib/input.txt:5:1)", "Badge (headcontrib/input.txt:6:1)", "Note (headcontrib/input.txt:14:1)"},
+	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
+	HeadSources: []string{"Badge (headcontrib/input.txt:5:1)", "Badge (headcontrib/input.txt:6:1)"},
 	Ops: []htmlbind.Op[PanelParams]{
 		planPanelOps.Static(" <div>"),
 		planPanelOps.Component(func(p PanelParams) htmlbind.Fragment { return Badge(BadgeParams{Label: p.Label}) }),

@@ -101,6 +101,13 @@ type componentInfo struct {
 	// head holds the nodes contributed by head elements declared outside the
 	// document shell, already scoped and ready to merge.
 	head []Node
+	// headTags holds the same contributions as ready to write HTML, one entry
+	// per tag, with extracted assets replaced by their reference tags. It is
+	// filled by extractAssets.
+	headTags []headTag
+	// style is the scoped CSS of this component's style block, which
+	// requirement:static-asset-extraction moves into a generated stylesheet.
+	style string
 	// scope carries the requirement:scoped-component-style renaming applied to
 	// this component's style block, or nil when it declares none.
 	scope *styleScope
@@ -734,6 +741,7 @@ func (c *compiler) scopeHeadStyles(info *componentInfo, head *HeadNode) error {
 		}
 		element.Children = []Node{&TextNode{Kind: "html:text", Pos: element.Pos, Text: rewritten}}
 		info.scope = scope
+		info.style = rewritten
 	}
 	return nil
 }

@@ -417,6 +417,44 @@ rewriting the matching `class` attributes in the same component:
 The suffix is derived from the template path and component name, so unrelated
 edits do not change generated class names.
 
+### Extracted static files
+
+A `style` block and a `script` block carrying inline content never reach the
+response. Generation writes them as files and puts a reference tag in the merged
+head instead, so the bytes are cached by the client and a Content Security
+Policy may forbid inline script:
+
+```html
+<link rel="stylesheet" href="/public/generated/card.style.1f0a3c9d4b21.css">
+<script src="/public/generated/card.script.7c62e0b1d938.js" defer></script>
+```
+
+- Style blocks of one template file bundle into one stylesheet; each component
+  script becomes its own file, so `defer`, `async`, `type`, and any other author
+  attribute survive on its tag.
+- The file name carries a hash of the content, so the URL is immutably
+  cacheable and an unchanged project regenerates identical names.
+- A `script` or `link` that already names an external URL contributes its tag
+  unchanged and produces no file.
+- Extraction happens at generation time. Nothing is assembled per request, and
+  the reference tag needs no per-request collection because the composition
+  cannot change it.
+
+Two generator options decide where the files go and how they are named:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `PublicDir` | `public/generated` | directory receiving the generated files |
+| `PublicURLBase` | `/public/generated` | prefix of the reference URL |
+
+The generate command exposes them as `-public-dir` and `-public-url-base`.
+Neither is derived from the other: the file path is `PublicDir` joined with the
+file name, the reference is `PublicURLBase` joined with the same name, and no
+path segment is ever added, stripped, or inferred. `PublicURLBase` is used
+verbatim, so a full URL such as `https://cdn.example.com/assets` emits absolute
+references without changing where files are written. Setting one option
+requires setting the other; configuring only one fails generation.
+
 ## Attributes
 
 ### Ordinary attributes

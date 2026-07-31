@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/shibukawa/tinybind-go/parser"
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 // ErrFeatureDisabled is returned when a disabled generator artifact is invoked directly.
@@ -103,8 +104,63 @@ type Options struct {
 	// every indentation byte from the generated source and the binary.
 	PreserveTemplateWhitespace bool
 
+	// PublicDir is the filesystem directory receiving the static files
+	// extracted from component style and script blocks. Empty uses
+	// DefaultPublicDir.
+	PublicDir string
+	// PublicURLBase is the URL prefix under which those files are served. It is
+	// either an absolute URL path or a full URL, and is used verbatim either
+	// way, so a CDN base changes the reference and nothing else. Empty uses
+	// DefaultPublicURLBase.
+	//
+	// Neither option is derived from the other, and setting one explicitly
+	// requires setting the other.
+	PublicURLBase string
+
 	DisableFeatures []Feature
 	GenerateAll     bool
+}
+
+const (
+	// DefaultPublicDir receives extracted static assets when a project
+	// configures no directory. Extraction always happens, so a
+	// zero-configuration project still gets working asset URLs.
+	DefaultPublicDir = "public/generated"
+	// DefaultPublicURLBase serves those files when a project configures no URL
+	// base.
+	DefaultPublicURLBase = htmlbind.DefaultPublicURLBase
+)
+
+// ErrPublicAssetPairing reports a public asset configuration that sets only one
+// of the two independent options.
+var ErrPublicAssetPairing = errors.New(
+	"generator: PublicDir and PublicURLBase must be set together; " +
+		"neither is derived from the other, so configure both or leave both empty for " +
+		DefaultPublicDir + " and " + DefaultPublicURLBase)
+
+// resolvedPublicDir is the directory extracted assets are written to.
+func (o Options) resolvedPublicDir() string {
+	if o.PublicDir == "" {
+		return DefaultPublicDir
+	}
+	return o.PublicDir
+}
+
+// resolvedPublicURLBase is the URL prefix extracted assets are referenced by.
+func (o Options) resolvedPublicURLBase() string {
+	if o.PublicURLBase == "" {
+		return DefaultPublicURLBase
+	}
+	return o.PublicURLBase
+}
+
+// checkPublicAssetPairing rejects a half-configured pair rather than inferring
+// the missing half from the other.
+func checkPublicAssetPairing(dir, urlBase string) error {
+	if (dir == "") != (urlBase == "") {
+		return ErrPublicAssetPairing
+	}
+	return nil
 }
 
 // DefaultOptions returns the standard tinybind runtime setup.
@@ -123,6 +179,8 @@ func DefaultOptions() Options {
 		HTMLTemplatePattern:   DefaultHTMLTemplatePattern,
 		SQLTemplatePattern:    DefaultSQLTemplatePattern,
 		DynamoTemplatePattern: DefaultDynamoTemplatePattern,
+		PublicDir:             DefaultPublicDir,
+		PublicURLBase:         DefaultPublicURLBase,
 	}
 }
 
@@ -145,6 +203,9 @@ func (o Options) featureDisabled(feature Feature) bool {
 }
 
 func (o Options) normalized() (normalizedOptions, error) {
+	if err := checkPublicAssetPairing(o.PublicDir, o.PublicURLBase); err != nil {
+		return normalizedOptions{}, err
+	}
 	disabled := make(map[Feature]bool, len(o.DisableFeatures))
 	for _, feature := range o.DisableFeatures {
 		disabled[feature] = true

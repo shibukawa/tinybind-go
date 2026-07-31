@@ -42,8 +42,13 @@ func TestSharedStylesheetCollapses(t *testing.T) {
 	if links != 1 {
 		t.Fatalf("head = %q, want exactly one shared.css link, got %d", head, links)
 	}
-	if len(head) != 3 {
-		t.Fatalf("head = %q, want the link plus both scoped styles", head)
+	// Both scoped styles were extracted into the one stylesheet of this
+	// generation unit, so they contribute a single link rather than two blocks.
+	if len(head) != 2 {
+		t.Fatalf("head = %q, want the shared link plus the extracted stylesheet", head)
+	}
+	if strings.Contains(strings.Join(head, ""), "<style") {
+		t.Fatalf("head = %q, want no inline style block", head)
 	}
 	if len(panel.HeadSources()) != len(head) {
 		t.Fatalf("sources = %q, want the same length as head %q", panel.HeadSources(), head)

@@ -11,10 +11,18 @@ import (
 	"unicode"
 )
 
-// GenerateOptions controls the generated Go file.
+// GenerateOptions controls the generated Go file and the static files
+// extracted alongside it.
 type GenerateOptions struct {
 	// Package overrides the template package/module declaration.
 	Package string
+	// Unit names the generation unit whose assets are extracted. Empty derives
+	// it from the template file name.
+	Unit string
+	// PublicURLBase prefixes generated asset file names in head references.
+	// Empty uses DefaultPublicURLBase. The value is used verbatim, so an
+	// absolute URL path and a full CDN URL behave the same.
+	PublicURLBase string
 	// ContextExternals names the external functions whose Go implementation
 	// takes a leading context.Context. Those calls receive the boundary's
 	// context; every other external is called as an ordinary function.
@@ -49,30 +57,51 @@ type GenerateOptions struct {
 	ServerActionAttr string
 }
 
-// Generate parses, validates, and compiles an HTML template module to Go.
+// Result is one compiled template module: the generated Go source and the
+// static files requirement:static-asset-extraction pulled out of it.
+type Result struct {
+	GoSource []byte
+	Assets   []Asset
+}
+
+// Generate compiles an HTML template module to Go, discarding the extracted
+// assets. Callers that write files use GenerateModule instead.
+func Generate(filename string, source []byte, options GenerateOptions) ([]byte, error) {
+	result, err := GenerateModule(filename, source, options)
+	return result.GoSource, err
+}
+
+// GenerateModule parses, validates, and compiles an HTML template module to Go
+// plus its extracted stylesheet and script files.
 //
 // Each component becomes an immutable render plan: an instruction list typed by
 // its parameter struct, executed by the shared htmlbind coordinator. Generated
 // code owns no response concerns, so it depends on neither net/http nor any
 // content negotiation.
-func Generate(filename string, source []byte, options GenerateOptions) ([]byte, error) {
+func GenerateModule(filename string, source []byte, options GenerateOptions) (Result, error) {
 	module, err := Parse(filename, source)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	compiler := newCompiler(filename, string(source), module, !options.PreserveWhitespace)
 	if err := compiler.analyze(); err != nil {
-		return nil, err
+		return Result{}, err
+	}
+	// Extraction runs before emission so a plan's head carries the reference
+	// tags rather than the style and script blocks themselves.
+	assets, err := compiler.extractAssets(options)
+	if err != nil {
+		return Result{}, err
 	}
 	generated, err := compiler.emit(options)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	formatted, err := format.Source(generated)
 	if err != nil {
-		return generated, fmt.Errorf("format generated HTML code: %w\n%s", err, generated)
+		return Result{GoSource: generated, Assets: assets}, fmt.Errorf("format generated HTML code: %w\n%s", err, generated)
 	}
-	return formatted, nil
+	return Result{GoSource: formatted, Assets: assets}, nil
 }
 
 type goEmitter struct {

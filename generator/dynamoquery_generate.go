@@ -136,9 +136,11 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  source,
 			Kind:        ArtifactDynamoQuery,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
 			PackageName: pkg,
-			GoSource:    code,
+			Content:     code,
 		})
 	}
 	return artifacts, nil

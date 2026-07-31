@@ -1075,23 +1075,12 @@ func (c *compiler) transitiveHead(name string) []headTag {
 	return out
 }
 
-// headTags splits one component's head contribution into its individual tags.
+// headTags is one component's head contribution split into its individual tags.
 // Whitespace between tags is dropped, because the merged head is assembled from
-// the tags rather than from the authored block.
-func (c *compiler) headTags(info *componentInfo) []headTag {
-	var out []headTag
-	for _, node := range info.head {
-		if _, ok := node.(*TextNode); ok {
-			continue
-		}
-		html := renderStaticHTML([]Node{node})
-		if strings.TrimSpace(html) == "" {
-			continue
-		}
-		out = append(out, headTag{html: html, source: c.headSource(info, node)})
-	}
-	return out
-}
+// the tags rather than from the authored block. extractAssets fills the list, so
+// a style or inline script block appears here as its reference tag rather than
+// as the block itself.
+func (c *compiler) headTags(info *componentInfo) []headTag { return info.headTags }
 
 // headSource names the declaring component and the position of the tag, in the
 // form a diagnostic can print directly.

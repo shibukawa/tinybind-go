@@ -126,9 +126,14 @@ func writeStamp(path, fingerprint string, outputs []string) error {
 	return os.WriteFile(path, stamped.Bytes(), 0o644)
 }
 
-// stampGeneration records one fingerprint in every file the run wrote.
+// stampGeneration records one fingerprint in every Go file the run wrote.
+//
+// An extracted public asset is left alone: its name already carries the hash of
+// its bytes, so inserting a comment would both contradict that name and put a
+// Go comment in a stylesheet. A cache hit therefore rewrites no asset; -force
+// restores one that was deleted by hand.
 func stampGeneration(fingerprint string, result GenerateResult) error {
-	paths := result.Paths()
+	paths := result.goPaths()
 	names := make([]string, len(paths))
 	for i, path := range paths {
 		names[i] = filepath.Base(path)
