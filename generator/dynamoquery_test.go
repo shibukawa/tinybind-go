@@ -9,19 +9,22 @@ func TestParseDynamoQueries(t *testing.T) {
 	source := `
 // Readings for one sensor, newest page first.
 export statement ReadingsBySensor(sensor: Sensor, from: int64): dynamo.many<Reading> {
+  table readings
   key sensor = {sensor} and at > {from}
 }
 
 statement readingsAround(sensor: Sensor, low: int64, high: int64): dynamo.page<Reading> {
+  table sensor-readings.v2
   key sensor = {sensor} and at between {low} and {high}
 }
 
 export statement ReadingsByPrefix(sensor: Sensor, prefix: string): dynamo.many<Reading> {
-  key sensor = {sensor} and begins_with(at, {prefix})
+  table readings; key sensor = {sensor} and begins_with(at, {prefix})
 }
 
 export statement ReadingsForSensor(sensor: Sensor): dynamo.many<Reading> {
   key sensor = {sensor}
+  table readings
 }
 `
 	decls, err := parseDynamoQueries("readings.tb.dynamo", []byte(source))
@@ -39,6 +42,9 @@ export statement ReadingsForSensor(sensor: Sensor): dynamo.many<Reading> {
 	if first.Shape != DynamoMany || first.ItemType != "Reading" {
 		t.Errorf("result type: %s<%s>", first.Shape, first.ItemType)
 	}
+	if first.Table != "readings" {
+		t.Errorf("table: %q", first.Table)
+	}
 	if len(first.Params) != 2 || first.Params[0].Name != "sensor" || first.Params[0].Type != "Sensor" ||
 		first.Params[1].Name != "from" || first.Params[1].Type != "int64" {
 		t.Errorf("params: %+v", first.Params)
@@ -55,6 +61,11 @@ export statement ReadingsForSensor(sensor: Sensor): dynamo.many<Reading> {
 
 	if decls[1].Exported || decls[1].Shape != DynamoPage {
 		t.Errorf("unexported page declaration: %+v", decls[1])
+	}
+	// A table name may hold the hyphens and dots DynamoDB allows, which no Go
+	// identifier does.
+	if decls[1].Table != "sensor-readings.v2" {
+		t.Errorf("table: %q", decls[1].Table)
 	}
 	if between := decls[1].Key[1]; between.Op != DynamoBetween || len(between.Params) != 2 ||
 		between.Params[0] != "low" || between.Params[1] != "high" {
@@ -76,42 +87,67 @@ func TestParseDynamoQueryErrors(t *testing.T) {
 	}{
 		{
 			name:   "missing statement keyword",
-			source: "export query Foo(): dynamo.many<Reading> { key a = {b} }",
+			source: "export query Foo(): dynamo.many<Reading> { table readings; key a = {b} }",
 			want:   `expected "statement" or "export statement"`,
 		},
 		{
 			name:   "unknown result shape",
-			source: "export statement Foo(): dynamo.one<Reading> { key a = {b} }",
+			source: "export statement Foo(): dynamo.one<Reading> { table readings; key a = {b} }",
 			want:   `expected "dynamo.many<T>" or "dynamo.page<T>"`,
 		},
 		{
 			name:   "no key clause",
-			source: "export statement Foo(): dynamo.many<Reading> { }",
+			source: "export statement Foo(): dynamo.many<Reading> { table readings }",
 			want:   "declares no key clause",
 		},
 		{
+			name:   "no table clause",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { key a = {a} }",
+			want:   `declares no table clause; write "table <name>" in its body`,
+		},
+		{
+			name:   "two table clauses",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings\n table others\n key a = {a} }",
+			want:   "more than one table clause",
+		},
+		{
+			name:   "a table name DynamoDB would reject",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table ab; key a = {a} }",
+			want:   "expected a table name",
+		},
+		{
 			name:   "filter is not supported yet",
-			source: "export statement Foo(a: string): dynamo.many<Reading> { key a = {a}\n filter b = {a} }",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings; key a = {a}\n filter b = {a} }",
 			want:   "filter clause is not supported yet",
 		},
 		{
 			name:   "two key clauses",
-			source: "export statement Foo(a: string): dynamo.many<Reading> { key a = {a}\n key a = {a} }",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings; key a = {a}\n key a = {a} }",
 			want:   "more than one key clause",
 		},
 		{
 			name:   "bad comparison",
-			source: "export statement Foo(a: string): dynamo.many<Reading> { key a != {a} }",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings; key a != {a} }",
 			want:   "expected a comparison after a",
 		},
 		{
 			name:   "unterminated",
-			source: "export statement Foo(a: string): dynamo.many<Reading> { key a = {a}",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings; key a = {a}",
 			want:   "unterminated statement Foo",
 		},
 		{
+			name:   "export with an unexported name",
+			source: "export statement foo(a: string): dynamo.many<Reading> { table readings; key a = {a} }",
+			want:   "declared export but its name is unexported",
+		},
+		{
+			name:   "exported name without export",
+			source: "statement Foo(a: string): dynamo.many<Reading> { table readings; key a = {a} }",
+			want:   `write "export statement Foo"`,
+		},
+		{
 			name:   "placeholder without braces",
-			source: "export statement Foo(a: string): dynamo.many<Reading> { key a = a }",
+			source: "export statement Foo(a: string): dynamo.many<Reading> { table readings; key a = a }",
 			want:   `expected "{"`,
 		},
 	}
@@ -147,52 +183,52 @@ func TestPlanDynamoQueryChecks(t *testing.T) {
 	}{
 		{
 			name:   "unknown item type",
-			source: "export statement Q(a: string): dynamo.many<Missing> { key sensor = {a} }",
+			source: "export statement Q(a: string): dynamo.many<Missing> { table readings; key sensor = {a} }",
 			want:   "no type Missing in this package carries dynamo tags",
 		},
 		{
 			name:   "attribute the type does not have",
-			source: "export statement Q(a: Sensor): dynamo.many<Reading> { key nope = {a} }",
+			source: "export statement Q(a: Sensor): dynamo.many<Reading> { table readings; key nope = {a} }",
 			want:   `Reading has no attribute "nope"`,
 		},
 		{
 			name:   "non-key attribute in the key clause",
-			source: "export statement Q(a: Sensor, b: string): dynamo.many<Reading> { key sensor = {a} and note = {b} }",
+			source: "export statement Q(a: Sensor, b: string): dynamo.many<Reading> { table readings; key sensor = {a} and note = {b} }",
 			want:   "note is not a key of Reading; a key condition reaches sensor and at",
 		},
 		{
 			name:   "partition key with an inequality",
-			source: "export statement Q(a: Sensor): dynamo.many<Reading> { key sensor > {a} }",
+			source: "export statement Q(a: Sensor): dynamo.many<Reading> { table readings; key sensor > {a} }",
 			want:   `the partition key sensor takes "=" only`,
 		},
 		{
 			name:   "sort key first",
-			source: "export statement Q(a: int64): dynamo.many<Reading> { key at > {a} }",
+			source: "export statement Q(a: int64): dynamo.many<Reading> { table readings; key at > {a} }",
 			want:   "a key condition starts with the partition key sensor",
 		},
 		{
 			name:   "two sort predicates",
-			source: "export statement Q(a: Sensor, b: int64, c: int64): dynamo.many<Reading> { key sensor = {a} and at > {b} and at < {c} }",
+			source: "export statement Q(a: Sensor, b: int64, c: int64): dynamo.many<Reading> { table readings; key sensor = {a} and at > {b} and at < {c} }",
 			want:   "at most one sort key predicate",
 		},
 		{
 			name:   "parameter type does not match the attribute",
-			source: "export statement Q(a: string): dynamo.many<Reading> { key sensor = {a} }",
+			source: "export statement Q(a: string): dynamo.many<Reading> { table readings; key sensor = {a} }",
 			want:   "parameter a is string, but attribute sensor is stored from Sensor",
 		},
 		{
 			name:   "undeclared parameter",
-			source: "export statement Q(a: Sensor): dynamo.many<Reading> { key sensor = {b} }",
+			source: "export statement Q(a: Sensor): dynamo.many<Reading> { table readings; key sensor = {b} }",
 			want:   "no parameter named b is declared",
 		},
 		{
 			name:   "unused parameter",
-			source: "export statement Q(a: Sensor, spare: int64): dynamo.many<Reading> { key sensor = {a} }",
+			source: "export statement Q(a: Sensor, spare: int64): dynamo.many<Reading> { table readings; key sensor = {a} }",
 			want:   "parameter spare is declared but never used",
 		},
 		{
 			name:   "begins_with on a number",
-			source: "export statement Q(a: Sensor, b: int64): dynamo.many<Reading> { key sensor = {a} and begins_with(at, {b}) }",
+			source: "export statement Q(a: Sensor, b: int64): dynamo.many<Reading> { table readings; key sensor = {a} and begins_with(at, {b}) }",
 			want:   "begins_with reads a string attribute, and at is stored as N",
 		},
 	}
@@ -224,7 +260,7 @@ func TestPlanDynamoQueryAliasesEveryName(t *testing.T) {
 		},
 	}
 	decls, err := parseDynamoQueries("q.tb.dynamo", []byte(
-		"export statement Q(s: string, t: int64): dynamo.many<Event> { key status = {s} and timestamp >= {t} }"))
+		"export statement Q(s: string, t: int64): dynamo.many<Event> { table events; key status = {s} and timestamp >= {t} }"))
 	if err != nil {
 		t.Fatal(err)
 	}

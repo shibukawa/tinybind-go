@@ -153,7 +153,16 @@ func analyzeDynamoItems(load *packageLoad, opts Options) (*DynamoPackagePlan, er
 	}
 	plan := &DynamoPackagePlan{Package: pkg.Name, PackagePath: pkg.PkgPath}
 	symbols := dynamoSymbols(normalized.symbols)
-	if len(symbols) == 0 && !opts.GenerateAll {
+	// A declared query is a use of its result type as surely as a call is: the
+	// generated function instantiates dynamobind.Query with it, which does not
+	// compile without the decoder. Reading the declarations here rather than at
+	// the query pass means the codec and the query agree on what is bound, and
+	// that a package whose only DynamoDB use is a declaration still gets one.
+	declared, err := declaredDynamoItemTypes(load.dir, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(symbols) == 0 && len(declared) == 0 && !opts.GenerateAll {
 		return plan, nil
 	}
 
@@ -189,6 +198,14 @@ func analyzeDynamoItems(load *packageLoad, opts Options) (*DynamoPackagePlan, er
 			if hasDynamoTag(pkg, name) {
 				usage[name] |= DynamoEncode | DynamoDecode | DynamoKey
 			}
+		}
+	}
+	// A name the package does not declare with dynamo tags is left out, so the
+	// query pass reports it against the declaration that named it rather than
+	// this pass failing on a type it cannot collect.
+	for _, name := range declared {
+		if _, ok := sources[name]; ok && hasDynamoTag(pkg, name) {
+			usage[name] |= DynamoDecode
 		}
 	}
 	// A bound type that declares a key always gets its key builder, whether or

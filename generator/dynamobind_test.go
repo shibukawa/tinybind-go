@@ -53,7 +53,7 @@ import (
 var _ = context.Background
 var _ = dynamodb.S
 
-func use(ctx context.Context, c *dynamodb.Client) {
+func use(ctx context.Context) {
 ` + calls + `
 }
 `
@@ -68,30 +68,30 @@ func TestDynamoUsageFollowsCallSites(t *testing.T) {
 	}{
 		{
 			name:    "load emits the decoder, not the encoder",
-			call:    `	_, _ = dynamobind.Load[Reading](ctx, c, "t", dynamodb.Key{})`,
+			call:    `	_, _ = dynamobind.Load[Reading](ctx, "t", dynamodb.Key{})`,
 			want:    []string{"func (v *Reading) DecodeItem("},
 			notWant: []string{"EncodeItem"},
 		},
 		{
 			name:    "store emits the encoder, not the decoder",
-			call:    `	_ = dynamobind.Store(ctx, c, "t", Reading{})`,
+			call:    `	_ = dynamobind.Store(ctx, "t", Reading{})`,
 			want:    []string{"func (v Reading) EncodeItem("},
 			notWant: []string{"DecodeItem"},
 		},
 		{
 			name:    "remove emits the key and its table",
-			call:    `	_ = dynamobind.Remove(ctx, c, "t", Reading{})`,
+			call:    `	_ = dynamobind.Remove(ctx, "t", Reading{})`,
 			want:    []string{"func (v Reading) ItemKey(", "func ReadingTable("},
 			notWant: []string{"EncodeItem", "DecodeItem"},
 		},
 		{
 			name: "store returning emits both codecs",
-			call: `	_, _, _ = dynamobind.StoreReturning(ctx, c, "t", Reading{})`,
+			call: `	_, _, _ = dynamobind.StoreReturning(ctx, "t", Reading{})`,
 			want: []string{"func (v Reading) EncodeItem(", "func (v *Reading) DecodeItem("},
 		},
 		{
 			name: "storeall discovers the slice element",
-			call: `	_, _ = dynamobind.StoreAll(ctx, c, "t", []Reading{})`,
+			call: `	_, _ = dynamobind.StoreAll(ctx, "t", []Reading{})`,
 			want: []string{"func (v Reading) EncodeItem("},
 		},
 	}
@@ -118,7 +118,7 @@ func TestDynamoUsageFollowsCallSites(t *testing.T) {
 func TestDynamoUsageReachesNestedTypes(t *testing.T) {
 	body := "type Profile struct {\n\tCity string `dynamo:\"city\"`\n}\n\n" +
 		"type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n\tProfile Profile `dynamo:\"profile\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 	for _, want := range []string{"func (v Reading) EncodeItem(", "func (v Profile) EncodeItem("} {
 		if !strings.Contains(code, want) {
 			t.Errorf("missing %q in:\n%s", want, code)
@@ -132,12 +132,12 @@ func TestDynamoUsageReachesNestedTypes(t *testing.T) {
 }
 
 // TestDynamoKeyBuilderComesWithTheKeyTag pins the one operation that is not
-// usage-directed. Load(ctx, c, table, v.ItemKey()) is the documented way to
+// usage-directed. Load(ctx, table, v.ItemKey()) is the documented way to
 // read an item, and using a method is not a discoverable call, so waiting for
 // one would mean the method never existed to call.
 func TestDynamoKeyBuilderComesWithTheKeyTag(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_, _ = dynamobind.Load[Reading](ctx, c, "t", dynamodb.Key{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_, _ = dynamobind.Load[Reading](ctx, "t", dynamodb.Key{})`))
 	if !strings.Contains(code, "func (v Reading) ItemKey(") {
 		t.Fatalf("a bound type with a partitionkey must get its key builder:\n%s", code)
 	}
@@ -147,7 +147,7 @@ func TestDynamoKeyBuilderComesWithTheKeyTag(t *testing.T) {
 // no key to build, and no table to describe.
 func TestDynamoNoKeyTagNoKeyBuilder(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 	for _, notWant := range []string{"ItemKey", "ReadingTable", "dynamobind.Keyer"} {
 		if strings.Contains(code, notWant) {
 			t.Fatalf("unexpected %q without a key tag:\n%s", notWant, code)
@@ -158,7 +158,7 @@ func TestDynamoNoKeyTagNoKeyBuilder(t *testing.T) {
 func TestDynamoUnusedTypeEmitsNothing(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n}\n\n" +
 		"type Unrelated struct {\n\tID string `dynamo:\"id\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 	if strings.Contains(code, "Unrelated") {
 		t.Fatalf("unused type emitted:\n%s", code)
 	}
@@ -168,7 +168,7 @@ func TestDynamoUnusedTypeEmitsNothing(t *testing.T) {
 // exists for.
 func TestDynamoGeneratedCodeHasNoReflect(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n\tTags []string `dynamo:\"tags,stringset\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 	if strings.Contains(code, "reflect") {
 		t.Fatalf("generated code references reflect:\n%s", code)
 	}
@@ -176,7 +176,7 @@ func TestDynamoGeneratedCodeHasNoReflect(t *testing.T) {
 
 func TestDynamoTableDefinitionCarriesKeyTypes(t *testing.T) {
 	body := "type Reading struct {\n\tSensor []byte `dynamo:\"sensor,partitionkey\"`\n\tAt float64 `dynamo:\"at,sortkey\"`\n}"
-	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Remove(ctx, c, "t", Reading{})`))
+	code := generateDynamo(t, dynamoSource(body, `	_ = dynamobind.Remove(ctx, "t", Reading{})`))
 	for _, want := range []string{
 		`PartitionKey: dynamodb.KeyAttribute{Name: "sensor", Type: dynamodb.TypeBinary}`,
 		`SortKey:      &dynamodb.KeyAttribute{Name: "at", Type: dynamodb.TypeNumber}`,
@@ -189,7 +189,7 @@ func TestDynamoTableDefinitionCarriesKeyTypes(t *testing.T) {
 
 func TestDynamoTableDefinitionIsDisableable(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n}"
-	dir := dynamoModule(t, dynamoSource(body, `	_ = dynamobind.Remove(ctx, c, "t", Reading{})`))
+	dir := dynamoModule(t, dynamoSource(body, `	_ = dynamobind.Remove(ctx, "t", Reading{})`))
 	options := generator.DefaultOptions()
 	options.DisableFeatures = []generator.Feature{generator.FeatureItemTable}
 	plan, err := generator.AnalyzeDynamoItemsWithOptions(dir, options)
@@ -210,7 +210,7 @@ func TestDynamoTableDefinitionIsDisableable(t *testing.T) {
 
 func TestDynamoCodecDisableEmitsNothing(t *testing.T) {
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n}"
-	dir := dynamoModule(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+	dir := dynamoModule(t, dynamoSource(body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 	options := generator.DefaultOptions()
 	options.DisableFeatures = []generator.Feature{generator.FeatureItemCodec}
 	plan, err := generator.AnalyzeDynamoItemsWithOptions(dir, options)
@@ -304,7 +304,7 @@ func TestDynamoGenerationErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			dir := dynamoModule(t, dynamoSource(test.body, `	_ = dynamobind.Store(ctx, c, "t", Reading{})`))
+			dir := dynamoModule(t, dynamoSource(test.body, `	_ = dynamobind.Store(ctx, "t", Reading{})`))
 			_, err := generator.AnalyzeDynamoItemsWithOptions(dir, generator.DefaultOptions())
 			if err == nil {
 				t.Fatalf("expected an error naming the field")

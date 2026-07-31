@@ -79,10 +79,13 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan) error {
 	name := decl.Name
 	base := lowerFirst(name)
 
-	// The expression and its aliases are constants: the attribute names are
-	// known here, so nothing is assembled at run time. Every name is aliased
-	// whether or not it is a reserved word, which is why no reserved-word list
-	// has to be carried.
+	// The table, the expression and its aliases are constants: every name is
+	// known here, so nothing is assembled at run time. Every attribute is
+	// aliased whether or not it is a reserved word, which is why no reserved-word
+	// list has to be carried.
+	fmt.Fprintf(b, "// %sTable is the table %s declares.\n", base, name)
+	fmt.Fprintf(b, "const %sTable = %s\n\n", base, strconv.Quote(decl.Table))
+
 	fmt.Fprintf(b, "// %sKeyCondition is the key condition of %s.\n", base, name)
 	fmt.Fprintf(b, "const %sKeyCondition = %s\n\n", base, strconv.Quote(plan.Expression))
 
@@ -97,27 +100,19 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan) error {
 	}
 	b.WriteString("}\n\n")
 
-	params := make([]string, 0, len(decl.Params))
-	for _, param := range decl.Params {
-		params = append(params, param.Name+" "+param.Type)
+	result, err := dynamoQueryResult(plan)
+	if err != nil {
+		return err
 	}
-	signature := "ctx context.Context, c *dynamodb.Client, table string"
-	if len(params) > 0 {
-		signature += ", " + strings.Join(params, ", ")
-	}
-	signature += ", opts ...dynamodb.QueryOption"
+	params := dynamoQueryParams(decl)
 
-	fmt.Fprintf(b, "// %s queries %s.\n", name, plan.Item.Name)
-	switch decl.Shape {
-	case DynamoPage:
-		fmt.Fprintf(b, "func %s(%s) (dynamobind.Page[%s], error) {\n", name, signature, plan.Item.Name)
-	case DynamoMany:
-		fmt.Fprintf(b, "func %s(%s) iter.Seq2[%s, error] {\n", name, signature, plan.Item.Name)
-	default:
-		return fmt.Errorf("dynamobind: statement %s has no result shape", name)
-	}
+	// The signature carries what the declaration cannot supply and nothing else:
+	// the Context, the declared parameters, and the driver's own options. The
+	// table comes from the declaration and the client from the Context.
+	fmt.Fprintf(b, "// %s queries %s in %s.\n", name, plan.Item.Name, decl.Table)
+	fmt.Fprintf(b, "func %s(ctx context.Context%s, opts ...dynamodb.QueryOption) %s {\n", name, params, result)
 
-	fmt.Fprintf(b, "\tvalues := map[string]dynamodb.AttributeValue{\n")
+	b.WriteString("\tvalues := map[string]dynamodb.AttributeValue{\n")
 	for _, value := range plan.Values {
 		expr, ok := dynamoScalarEncode(value.Param.Name, value.Attribute.Type)
 		if !ok {
@@ -127,17 +122,41 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan) error {
 	}
 	b.WriteString("\t}\n")
 
-	// The generated options go last so a caller option never replaces the
-	// names or values this condition depends on.
-	fmt.Fprintf(b, "\topts = append(opts,\n")
+	// The generated options go last so a caller option never replaces the names
+	// or values this condition depends on.
+	b.WriteString("\topts = append(opts,\n")
 	fmt.Fprintf(b, "\t\tdynamodb.WithExpressionNames(%sAttributeNames),\n", base)
-	fmt.Fprintf(b, "\t\tdynamodb.WithExpressionValues(values),\n\t)\n")
+	b.WriteString("\t\tdynamodb.WithExpressionValues(values),\n\t)\n")
 
 	entry := "Query"
 	if decl.Shape == DynamoPage {
 		entry = "QueryPage"
 	}
-	fmt.Fprintf(b, "\treturn dynamobind.%s[%s](ctx, c, table, %sKeyCondition, opts...)\n}\n\n",
-		entry, plan.Item.Name, base)
+	fmt.Fprintf(b, "\treturn dynamobind.%s[%s](ctx, %sTable, %sKeyCondition, opts...)\n}\n\n",
+		entry, plan.Item.Name, base, base)
 	return nil
+}
+
+// dynamoQueryResult is the Go result type a declaration's shape selects.
+func dynamoQueryResult(plan DynamoQueryPlan) (string, error) {
+	switch plan.Decl.Shape {
+	case DynamoPage:
+		return fmt.Sprintf("(dynamobind.Page[%s], error)", plan.Item.Name), nil
+	case DynamoMany:
+		return fmt.Sprintf("iter.Seq2[%s, error]", plan.Item.Name), nil
+	default:
+		return "", fmt.Errorf("dynamobind: statement %s has no result shape", plan.Decl.Name)
+	}
+}
+
+// dynamoQueryParams writes the declared parameters as a Go parameter list.
+func dynamoQueryParams(decl DynamoQueryDecl) string {
+	if len(decl.Params) == 0 {
+		return ""
+	}
+	typed := make([]string, 0, len(decl.Params))
+	for _, param := range decl.Params {
+		typed = append(typed, param.Name+" "+param.Type)
+	}
+	return ", " + strings.Join(typed, ", ")
 }

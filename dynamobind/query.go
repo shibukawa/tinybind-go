@@ -30,8 +30,12 @@ func (p Page[T]) HasMore() bool { return len(p.LastEvaluatedKey) > 0 }
 func QueryPage[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
-	page, err := c.Query(ctx, table, keyCond, opts...)
+}](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	page, err := c.Query(ctx, name, keyCond, opts...)
 	if err != nil {
 		return Page[T]{}, err
 	}
@@ -42,8 +46,12 @@ func QueryPage[T any, PT interface {
 func ScanPage[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
-	page, err := c.Scan(ctx, table, opts...)
+}](ctx context.Context, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	page, err := c.Scan(ctx, name, opts...)
 	if err != nil {
 		return Page[T]{}, err
 	}
@@ -62,7 +70,7 @@ func ScanPage[T any, PT interface {
 func Query[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
+}](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		first := true
@@ -72,7 +80,7 @@ func Query[T any, PT interface {
 			if len(start) > 0 {
 				pageOpts = append(append([]dynamodb.QueryOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
 			}
-			page, err := QueryPage[T, PT](ctx, c, table, keyCond, pageOpts...)
+			page, err := QueryPage[T, PT](ctx, table, keyCond, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -95,7 +103,7 @@ func Query[T any, PT interface {
 func Scan[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
+}](ctx context.Context, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		first := true
@@ -105,7 +113,7 @@ func Scan[T any, PT interface {
 			if len(start) > 0 {
 				pageOpts = append(append([]dynamodb.ScanOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
 			}
-			page, err := ScanPage[T, PT](ctx, c, table, pageOpts...)
+			page, err := ScanPage[T, PT](ctx, table, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)

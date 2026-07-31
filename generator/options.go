@@ -329,12 +329,14 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		// type parameter. Its constraints are the generated interfaces, so
 		// before the first generation the call does not type-check and no
 		// instantiation is recorded; the argument's own type resolves anyway.
-		ItemEncodeCall(Function(path, "Store"), ArgumentType("item", 3)),
-		ItemEncodeCall(Function(path, "StoreAll"), ArgumentType("item", 3)),
-		ItemEncodeDecodeCall(Function(path, "StoreReturning"), ArgumentType("item", 3)),
-		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 3)),
-		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 3)),
-		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 3)),
+		// Index 2 is the value: the signature is (ctx, table, v, opts...), the
+		// client having moved into the Context.
+		ItemEncodeCall(Function(path, "Store"), ArgumentType("item", 2)),
+		ItemEncodeCall(Function(path, "StoreAll"), ArgumentType("item", 2)),
+		ItemEncodeDecodeCall(Function(path, "StoreReturning"), ArgumentType("item", 2)),
+		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 2)),
+		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 2)),
+		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 2)),
 	}
 	statuses := map[string]int{
 		"BadRequest": 400, "Validation": 400, "Unauthorized": 401, "Forbidden": 403,

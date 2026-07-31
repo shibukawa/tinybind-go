@@ -1,14 +1,17 @@
 // Access patterns for Reading. Every attribute here is checked against the
-// dynamo tags on the Go type, so a renamed tag fails generation.
+// dynamo tags on the Go type, so a renamed tag fails generation, and the table
+// each one runs against is declared here rather than passed in at every call.
 
 export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading> {
+  table readings
   key sensor = {sensor} and at > {from}
 }
 
 export statement ReadingsBetween(sensor: Sensor, low: int64, high: int64): dynamo.page<Reading> {
+  table readings
   key sensor = {sensor} and at between {low} and {high}
 }
 
 export statement ReadingsForSensor(sensor: Sensor): dynamo.many<Reading> {
-  key sensor = {sensor}
+  table readings; key sensor = {sensor}
 }
