@@ -22,6 +22,7 @@ go_signature:
     syntactic: the check is on the parsed parameter list, because it runs before the package compiles; an unparsable file is skipped and a mismatched call shape stays an ordinary Go compile error
     template_surface: unchanged either way, so the choice belongs to whoever writes the implementation, function by function
     reason: application code stays a plain function and the runtime owns the concurrency, the way a caller promisifies a blocking call, while a call that can genuinely abort still gets what it needs
+    sync_form: requirement:render-context-externals extends the same detection to a synchronous external, which today is the one external shape that cannot receive the context
 usage:
   - an async external may be called only in a decision:async-boundary-syntax await clause header
   - any other call site is a generation error naming the function and the position

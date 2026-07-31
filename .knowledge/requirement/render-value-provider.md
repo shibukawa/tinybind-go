@@ -58,6 +58,12 @@ call_site_wiring:
     gain: call-site substitution without name lookup, useful for a test double or a per-server implementation
     cost: every call site must pass it, and omitting it becomes a render-time failure rather than a compile error
     status: not selected; recorded because call-site wiring is a reasonable want
+sync_external_alternative:
+  asked: 2026-07-31, per decision:library-component-seams; the reporter wants requirement:render-context-externals as well as this seam, not instead of it
+  difference: an external hands the value to the template, which may then interpolate it anywhere and log it; this seam renders it and never puts it in template scope
+  checkability: an element's placement and vary axis are declared and checked, while an external call is an ordinary expression wherever expressions are allowed
+  shared: both read request-scoped state from the render context and neither writes the response
+  consequence: the cache exclusion above holds only for this seam; a token reaching a template through an external is outside it
 open_questions:
   - whether the typed provider-struct variant ships alongside the linked-symbol default
   - whether a provider result is memoized per render, per response, or invoked per occurrence

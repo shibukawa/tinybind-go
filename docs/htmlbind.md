@@ -345,6 +345,20 @@ JavaScript braces are not template syntax. Contributions must be static markup;
 the merged head is written before the first body byte, so it cannot depend on
 request data.
 
+A contribution may be a `link`, `meta`, `style`, `script`, `title`, or
+`noscript`. `noscript` is the only one that may hold elements — `link`, `style`,
+and `meta` — because everything else there would be body content:
+
+```html
+<head>
+<noscript><meta http-equiv="refresh" content="0; url=/no-script"></noscript>
+</head>
+```
+
+A contribution written this way is unconditional, which is right for a page that
+always wants it. A tag that should appear only for some responses is supplied at
+the render call instead, through `htmlbind.WithHead`.
+
 Every component reachable from the rendered chain contributes, including
 components called from a body, and identical tags are emitted once. Identity is
 per tag, so two components that both link `/shared.css` and then declare their
@@ -760,6 +774,36 @@ func Decorate(value string, tone Tone) string {
 	}
 	return value
 }
+```
+
+### Reading the request
+
+Declare a leading `context.Context` and your function receives the context the
+page is rendering under — the `ctx` you passed to an async entry, or the one
+`WithContext` supplied to a synchronous one:
+
+```go
+func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+```
+
+The template declaration is unchanged — `external CSRFToken(): string` either way
+— so this is a decision for whoever writes the Go, function by function. Leave
+the parameter out and the function is called plainly, exactly as before.
+
+This is how a value that belongs to the request rather than to the page — a CSRF
+token, a request id, a nonce — reaches markup without travelling through the
+parameter struct of every page that needs it. It is a read: a function called
+this way must not write the response.
+
+An external declared `: html` returns an `htmlbind.Fragment` and renders as a
+subtree, so a whole hidden input can come back instead of a bare token:
+
+```text
+external CSRFField(): html
+```
+
+```go
+func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
 ```
 
 ## Async components

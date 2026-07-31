@@ -22,6 +22,7 @@ surface:
   staging:
     first: the await-block flag alone, because it is what decision:client-runtime-ownership needs to move the streaming script out of the entry points
     later: a partial-update flag for requirement:partial-update-boundaries, once that capability ships
+    asset_set: requirement:component-asset-requirements folds a required-asset set through the same shape; it is a set rather than a bool, so it is the first member that is not one accessor per capability
     shape_choice: one bool accessor per capability, decided 2026-07-27; adding a second method later is additive, so no summary struct is needed
   names:
     accessor: HasAwaitBlock on Fragment and on Wrapper

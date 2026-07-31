@@ -345,11 +345,16 @@ func packageName(dir string) (string, error) {
 // contextExternals names the package-level functions in dir whose first
 // parameter is a context.Context.
 //
-// An async external is an ordinary blocking Go function, so the template
-// declaration says nothing about a context. Reading the implementation lets a
-// function that can abort receive the boundary's context without a second
-// declaration form: write the parameter and it is passed, leave it out and the
-// function is called plainly.
+// An external is an ordinary Go function, so the template declaration says
+// nothing about a context. Reading the implementation lets a function that needs
+// one receive it without a second declaration form: write the parameter and it
+// is passed, leave it out and the function is called plainly.
+//
+// An async external gets the boundary's context, which is what lets a call that
+// can abort observe cancellation. A synchronous one gets the render context at
+// the position it occupies, which is what lets a value belonging to the request
+// — a CSRF token, a nonce — render inline without travelling through the
+// parameter struct of every page that needs it.
 //
 // Detection is syntactic on purpose. It runs before the package compiles, so a
 // file that does not parse is skipped rather than failing generation; a call

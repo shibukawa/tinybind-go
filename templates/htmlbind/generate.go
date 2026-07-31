@@ -204,8 +204,9 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 
 func (e *goEmitter) emitImports() {
 	e.b.WriteString("import (\n")
-	// context reaches generated code only through an await boundary's bindings.
-	if e.c.usesAwait() {
+	// context reaches generated code through an await boundary's bindings, and
+	// through any synchronous external whose implementation declared one.
+	if e.c.usesAwait() || e.usesSyncRenderContext() {
 		e.b.WriteString("\t\"context\"\n")
 	}
 	// strings is used only by the generated record JSON encoders; every other

@@ -316,6 +316,16 @@ export component Card(label: string): html {
 
 この `head` の中では `style` と `script` の中身が生テキストとして扱われるので、CSS や JavaScript の波括弧がテンプレート構文と衝突しません。寄与は静的なマークアップである必要があります。マージ済み head は body の最初の1バイトより前に書かれるため、リクエストデータに依存できないからです。
 
+寄与にできるのは `link`、`meta`、`style`、`script`、`title`、`noscript` です。要素の子を持てるのは `noscript` だけで、その子は `link`、`style`、`meta` に限られます。それ以外はボディの内容だからです。
+
+```html
+<head>
+<noscript><meta http-equiv="refresh" content="0; url=/no-script"></noscript>
+</head>
+```
+
+この書き方の寄与は無条件です。常に出したいページには正しく、一部のレスポンスにだけ出したいタグは、代わりに render 呼び出しで `htmlbind.WithHead` から渡します。
+
 描画されるチェーンから到達可能な component はすべて寄与します。本体から呼ばれる component も含まれ、同一のタグは1回だけ出力されます。同一性はタグ単位なので、2 つの component が両方 `/shared.css` をリンクしてそれぞれ独自の style を宣言した場合、link は 1 つ、style ブロックは 2 つになります。
 
 その寄与には行き先が必要です。ドキュメントシェルとは `html`、`head`、`body` を持つ component のことで、その `head` 要素が出力先になります。
@@ -670,6 +680,35 @@ func Decorate(value string, tone Tone) string {
 	}
 	return value
 }
+```
+
+### リクエストを読む
+
+先頭に `context.Context` を宣言すると、ページが描画されている context — async 系
+エントリに渡した `ctx`、または同期系エントリに `WithContext` で渡した値 — を受け
+取ります。
+
+```go
+func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+```
+
+テンプレート側の宣言はどちらでも `external CSRFToken(): string` のままです。つま
+りこれは Go を書く人が関数ごとに決めることです。引数を書かなければ、これまでどお
+り素朴に呼ばれます。
+
+ページではなくリクエストに属する値 — CSRF トークン、リクエスト ID、nonce — を、
+必要なページすべてのパラメータ構造体を経由させずに markup へ届けるための仕組みで
+す。これは読み取りであって、この形で呼ばれる関数がレスポンスに書いてはいけません。
+
+`: html` と宣言した external は `htmlbind.Fragment` を返し、部分木として描画され
+ます。トークンだけでなく hidden input 全体を返せます。
+
+```text
+external CSRFField(): html
+```
+
+```go
+func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
 ```
 
 ## 非同期 component

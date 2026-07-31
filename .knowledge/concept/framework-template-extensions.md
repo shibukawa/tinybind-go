@@ -26,6 +26,13 @@ extensions:
   - requirement:render-value-provider
   - requirement:framework-script-contribution
   - requirement:render-time-script-contribution
+  - requirement:render-context-externals
+  - requirement:component-asset-requirements
+downstream_round:
+  when: 2026-07-31, decision:library-component-seams
+  what: the framework that owns this concept reached the builtin-element and caller-head asks again from three features, and added two the concept did not hold
+  added: a context for a synchronous external, and assets a component brings with it
+  widened_actor: a library shipping a component is a third contributor beside the framework and the application, and it owns no route, no scaffold, and no shell
 syntax: decision:builtin-element-syntax
 script_delivery: decision:framework-script-delivery
 script_authoring: decision:script-load-mode-authoring

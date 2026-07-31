@@ -415,6 +415,40 @@ parameter, which is exactly the cross-file composition case. Until it is fixed,
 a framework composing slots that way should merge those fragments' `Head()`
 values itself.
 
+### Contributing from the render call
+
+A component declares what generation can know. For a tag you decide per response
+— a title from the record you just loaded, a marker emitted only while a cookie
+is absent — supply it at the call:
+
+```go
+err := htmlbind.RenderChain(w, chain, page,
+	htmlbind.WithHead(
+		htmlbind.HeadTitle(order.Customer),
+		htmlbind.HeadNoScript(htmlbind.HeadMeta(
+			htmlbind.HeadAttr{Name: "http-equiv", Value: "refresh"},
+			htmlbind.HeadAttr{Name: "content", Value: "0; url=/_handoff"},
+		)),
+	),
+)
+```
+
+The nodes are values rather than markup, so nothing you pass can become an
+element, and every value is escaped for its position. They merge after every
+component contribution, through the same deduplication, and they are in hand
+before the head pass — so streaming is unaffected and no body byte is buffered.
+A malformed node fails the render before the first byte.
+
+`HeadScript` requires a `src`: no path through this package writes inline script.
+
+On a response with no document shell there is no head to merge into.
+`htmlbind.RenderHeadNodes(nodes)` gives you the same ready-to-write tags without
+a render, so you can carry them in a navigation payload or refuse the response
+rather than discover the loss in a browser.
+
+The full inventory of what is available to a framework, and what is specified but
+not yet built, is [framework facilities](httpbind_framework_facilities.md).
+
 ## Generator integration
 
 A framework builds its own generate command rather than shipping tinybind's. The
