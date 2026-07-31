@@ -181,6 +181,8 @@ func stampedResult(outDir, fingerprint string, recorded stamp, request GenerateR
 			result.BinderPath = abs
 		case request.ConfigBindName:
 			result.ConfigBindPath = abs
+		case request.DynamoName:
+			result.DynamoPath = abs
 		case request.OpenAPIName:
 			result.OpenAPIPath = abs
 		default:
@@ -196,7 +198,7 @@ func stampedResult(outDir, fingerprint string, recorded stamp, request GenerateR
 // outputNames lists every file name this request can write. GeneratePackage
 // fills the defaults in before either side of the cache uses them.
 func outputNames(request GenerateRequest) []string {
-	return []string{request.TemplatesName, request.Name, request.ConfigBindName, request.OpenAPIName}
+	return []string{request.TemplatesName, request.Name, request.ConfigBindName, request.DynamoName, request.OpenAPIName}
 }
 
 // generationInputs is the non-file part of the fingerprint: the generator

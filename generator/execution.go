@@ -28,8 +28,10 @@ type GenerateRequest struct {
 	// retains it.
 	SQLDialect     string
 	ConfigBindName string
-	Check          bool
-	GenerateAll    bool
+	// DynamoName is the DynamoDB item codec output file.
+	DynamoName  string
+	Check       bool
+	GenerateAll bool
 	// Force regenerates even when the generated files record the current input
 	// hash. Use it after a change the hash does not cover, such as an edit in
 	// another package of the module.
@@ -44,6 +46,7 @@ type GenerateRequest struct {
 type GenerateResult struct {
 	BinderPath     string
 	ConfigBindPath string
+	DynamoPath     string
 	OpenAPIPath    string
 	TemplatesPath  string
 	Diagnostics    []parser.Diagnostic
@@ -54,8 +57,8 @@ type GenerateResult struct {
 
 // Paths returns non-empty artifact paths in generation order.
 func (result GenerateResult) Paths() []string {
-	paths := make([]string, 0, 4)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.OpenAPIPath} {
+	paths := make([]string, 0, 5)
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -85,6 +88,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.ConfigBindName == "" {
 		request.ConfigBindName = defaultConfigBindOut
+	}
+	if request.DynamoName == "" {
+		request.DynamoName = defaultDynamoOut
 	}
 
 	options := request.applyTo(g.Options)
@@ -134,6 +140,13 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.ConfigBindPath, err = runner.generateConfigBind(load, request.Out, request.ConfigBindName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate configbind: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return GenerateResult{}, err
+	}
+	result.DynamoPath, err = runner.generateDynamoItems(load, request.Out, request.DynamoName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate dynamobind: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err

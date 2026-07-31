@@ -51,6 +51,7 @@ options:
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]
+  dynamobind: [Load, Store, StoreReturning, Remove, RemoveReturning, Update, QueryPage, Query, Scan, StoreAll, LoadAll] under github.com/shibukawa/tinybind-go/dynamobind, per api:dynamobind-operations
   rule: non-nil Calls.Set replaces all RuntimePackages expansion; CallRegistry.Options merges base expansion and registered wrappers into one explicit Calls snapshot
 wrapper_package:
   arbitrary_name: explicit data:generator-call-pattern

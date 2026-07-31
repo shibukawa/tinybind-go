@@ -2,9 +2,9 @@
 
 [日本語](README.ja.md)
 
-Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, and SQL packages.
+Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md)
 
 Building a framework on top of this? See [htmlbind for framework owners](docs/htmlbind_frameworkowner.md).
 
@@ -115,6 +115,7 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / NewStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
+| `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |
 | `templates/htmlbind/` | Typed, context-safe HTML template compiler |
