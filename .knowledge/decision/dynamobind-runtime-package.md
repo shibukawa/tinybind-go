@@ -9,9 +9,7 @@ Add a DynamoDB binding runtime as its own package that imports the driver, and n
 status: accepted
 extends: decision:runtime-package-boundaries
 package:
-  name: dynamobind
-  decided: user 2026-07-31
-  reason: it matches jsonbind, sqlbind, htmlbind and configbind; dynamodbbind is more literal but doubles the b
+  name: dynamobind, matching jsonbind, sqlbind, htmlbind and configbind
   path: github.com/shibukawa/tinybind-go/dynamobind
 owns:
   - api:dynamobind-operations
@@ -21,7 +19,6 @@ imports:
   - github.com/shibukawa/tinygodriver/nosql/dynamodb
 driver_version:
   minimum: v1.1.3, the release that introduced nosql/dynamodb
-  current_go_mod: v1.1.3, bumped from v1.0.3 on 2026-07-31 when dynamobind landed
   effect: adding dynamobind makes the driver a required dependency of a runtime package, not only of an example
 excludes:
   - net/http beyond what the driver itself pulls in

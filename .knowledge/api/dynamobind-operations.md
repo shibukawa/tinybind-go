@@ -7,7 +7,6 @@ Typed wrappers over the driver item calls: the caller passes and receives applic
 
 ```yaml
 status: accepted
-decided: user 2026-07-31; every open choice resolved to its recommendation
 package: github.com/shibukawa/tinybind-go/dynamobind
 dispatch: decision:dynamobind-static-dispatch
 single:
@@ -22,11 +21,11 @@ returning:
   meaning: the returned value is the item that was replaced or deleted; the bool is false when there was none
   implementation: send WithReturnValues ALL_OLD and decode WriteResult.Attributes into T
   scope: PutItem and DeleteItem accept only NONE and ALL_OLD, so ALL_OLD is the whole feature
-  not_available: the driver exposes no ReturnValuesOnConditionCheckFailure, so a failed condition carries no attributes on any path
+  no_condition_failure_attributes: the driver exposes no ReturnValuesOnConditionCheckFailure, so a failed condition carries no attributes
   reason_for_a_separate_name: Store and Remove keep the error-only signature, so the common call pays nothing and no raw dynamodb.Item reaches a caller
 paged:
   QueryPage: "func QueryPage[T any, PT ...](ctx, c, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error)"
-  ScanPage: "func ScanPage[T any, PT ...](ctx, c, table string, opts ...dynamodb.ScanOption) (Page[T], error)"; added in implementation, since Scan needed the same one-request form Query had
+  ScanPage: "func ScanPage[T any, PT ...](ctx, c, table string, opts ...dynamodb.ScanOption) (Page[T], error)"
   Page: "type Page[T any] struct { Items []T; LastEvaluatedKey dynamodb.Key; Count int; ScannedCount int }"
   HasMore: "func (p Page[T]) HasMore() bool"
 iterated:
@@ -61,6 +60,9 @@ partial_update:
   Update: takes the driver update expression verbatim and supplies only the key from v.ItemKey()
   no_expression_generation: no per-field setter or expression builder is generated; that is a separate project
   contrast: Store is PutItem, which replaces the whole item, so it is not a partial update
+string_key_condition:
+  status: the escape hatch, now that requirement:dynamo-typed-queries generates the declared form
+  unchecked: keyCond and its expression values are untyped here, so a renamed attribute still compiles, and reserved words are the caller's to alias
 deferred:
   - a page-level Query and Scan iterator
   - generated update and condition expressions

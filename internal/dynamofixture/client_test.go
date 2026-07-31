@@ -285,3 +285,56 @@ func store(t *testing.T, fake *fakeDynamo, n int) {
 		fake.put(dynamofixture.Reading{Sensor: "s", At: int64(i), Note: strconv.Itoa(i)}.EncodeItem())
 	}
 }
+
+// TestDeclaredQueryRunsAgainstTheWire drives a generated query function end to
+// end. Nothing in the call names an attribute, a placeholder or an expression.
+func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
+	ctx := context.Background()
+	client, fake := newFakeDynamo(t)
+	store(t, fake, 5)
+
+	var seen []int64
+	for reading, err := range dynamofixture.ReadingsSince(ctx, client, table, "s", 0) {
+		if err != nil {
+			t.Fatalf("ReadingsSince: %v", err)
+		}
+		seen = append(seen, reading.At)
+	}
+	if len(seen) != 5 {
+		t.Fatalf("iterated %d of 5: %v", len(seen), seen)
+	}
+
+	page, err := dynamofixture.ReadingsBetween(ctx, client, table, "s", 0, 10)
+	if err != nil {
+		t.Fatalf("ReadingsBetween: %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("page: %+v", page)
+	}
+}
+
+// TestDeclaredQuerySendsAliasesAndValues proves the request carries the aliased
+// expression and the bound values the declaration described.
+func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
+	ctx := context.Background()
+	client, fake := newFakeDynamo(t)
+	store(t, fake, 1)
+
+	for _, err := range dynamofixture.ReadingsSince(ctx, client, table, "s", 3) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := fake.lastRequest()
+	if request.KeyConditionExpression != "#k0 = :v0 AND #k1 > :v1" {
+		t.Fatalf("key condition: %q", request.KeyConditionExpression)
+	}
+	if request.ExpressionAttributeNames["#k0"] != "sensor" || request.ExpressionAttributeNames["#k1"] != "at" {
+		t.Fatalf("names: %v", request.ExpressionAttributeNames)
+	}
+	sensor, _ := request.ExpressionAttributeValues[":v0"].AsString()
+	from, _ := request.ExpressionAttributeValues[":v1"].AsNumber()
+	if sensor != "s" || from != "3" {
+		t.Fatalf("values: sensor=%q from=%q", sensor, from)
+	}
+}

@@ -259,6 +259,7 @@ func skipDynamoFile(f *ast.File, pkg *packages.Package, normalized normalizedOpt
 		strings.HasSuffix(base, "_httpbind_gen.go") ||
 		strings.HasSuffix(base, "_openapi_gen.go") ||
 		base == defaultDynamoOut ||
+		base == defaultDynamoQueryOut ||
 		base == "tinybind_gen.go" ||
 		base == "tinybind_openapi_gen.go" ||
 		gensource.IsGenerated(f, normalized.parserConfig.GeneratedHeaders...)

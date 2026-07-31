@@ -13,6 +13,7 @@ error も、retry の判断も、page の境界も、すべて利用者の手元
 - reflection を使わない `EncodeItem` と `DecodeItem` の生成
 - table 定義と同じ tag から作る `ItemKey`
 - `<Type>Table` の生成。schema と request の key 名が食い違わなくなります
+- `.tb.dynamo` の宣言 1 つにつき 1 つの名前付きクエリ関数
 - 型が runtime interface を満たすことの compile 時 assertion
 
 ## ユーザーが用意するもの
@@ -161,6 +162,72 @@ for reading, err := range dynamobind.Query[Reading](ctx, c, "readings", "sensor 
 
 loop を break すると、次の request を出さずに終わります。
 
+## 宣言済みクエリ
+
+クエリは package の隣の `.tb.dynamo` file で宣言し、生成が 1 宣言につき 1 つの名前付き
+関数にします。
+
+```text
+export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading> {
+  key sensor = {sensor} and at > {from}
+}
+```
+
+```go
+for reading, err := range ReadingsSince(ctx, client, "readings", "room-1", from) {
+	if err != nil {
+		return err
+	}
+	use(reading)
+}
+```
+
+結果型は行数ではなく **request の形**を選びます。Query は常に複数返すからです。
+`dynamo.many<T>` は全 page を反復し、`dynamo.page<T>` は 1 request で `Page[T]` を返します。
+
+宣言に書いた属性名は `dynamo` tag と照合されるので、tag を rename すると本番ではなく
+生成が失敗します。key 節が受け付けるのは DynamoDB がそこで受け付けるものだけです。
+partition key は `=` のみ、sort key の述語は `=`, `<`, `<=`, `>`, `>=`, `between`,
+`begins_with` から高々 1 つ。キー以外の属性を書くとそう言われます。
+
+```text
+readings.tb.dynamo:5: statement ReadingsByNote: note is not a key of Reading;
+a key condition reaches sensor and at, and a non-key attribute belongs in a filter
+```
+
+filter 式は未実装なので、この message は今は存在しない節を指しています。実装されたとき、
+同じ宣言に入ります。
+
+### 予約語は自動で処理されます
+
+DynamoDB は 573 語を予約しており、`status`、`name`、`size`、`type`、`data`、`year`、
+`count`、`timestamp` が含まれます。式にそのまま書くと拒否されます。生成されたクエリは
+全属性を無条件に alias するので、この問題自体が発生しません。
+
+```go
+const eventsByStatusKeyCondition = "#k0 = :v0"
+
+var eventsByStatusAttributeNames = map[string]string{"#k0": "status"}
+```
+
+式も alias map も定数です。属性名が分かった時点で確定するので、呼び出しごとの組み立ては
+ありません。
+
+### 文字列形式も残っています
+
+`Query` と `QueryPage` は今もキー条件を text で受け取ります。宣言で表現できないものの
+ためです。その text は tag と照合されず、予約語の alias は利用者の責任です。
+
+```go
+// ValidationException: Attribute name is a reserved keyword
+dynamobind.Query[Event](ctx, c, "events", "status = :s", values)
+
+// 自分で alias する
+dynamobind.Query[Event](ctx, c, "events", "#n0 = :s",
+	dynamodb.WithExpressionNames(map[string]string{"#n0": "status"}),
+	values)
+```
+
 ## batch
 
 `StoreAll` と `LoadAll` は入力を DynamoDB が受け付ける単位に分割します。write は 25
@@ -260,5 +327,5 @@ program 1 本を比較しています。
 - transaction、PartiQL、Streams、DAX は対象外です。driver が対象外としているためです。
 - nested struct は同一 package で宣言されている必要があります。他人の package に codec
   は生成できません。
-- secondary index の tag は未実装です。
-- update 式・condition 式の生成は未実装です。式は自分で渡してください。
+- secondary index の tag は未実装なので、宣言クエリは table 自身の key に対して走ります。
+- filter 式・projection 式・condition 式・update 式は生成しません。自分で渡してください。

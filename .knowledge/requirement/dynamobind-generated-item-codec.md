@@ -33,7 +33,6 @@ key_builder_is_not_usage_directed:
   rule: a bound type declaring a partitionkey gets ItemKey and its table definition, whether or not a discovered call needs them
   reason: the documented read is "Load(ctx, c, table, v.ItemKey())", and using a method is not a call the generator can discover; waiting for a discoverable use would mean the method never existed to be called
   cost: three lines, dropped by the linker when nothing calls them
-  established: implementation 2026-07-31
 discovery:
   read_side: the type argument is explicit, since T appears only in the result, so the AST carries it even before any codec exists
   write_side: the type comes from the value argument, not the type parameter

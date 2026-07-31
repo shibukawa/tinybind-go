@@ -71,6 +71,9 @@ type Options struct {
 	// applied to file base names. Empty values use the standard patterns.
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
+	// DynamoTemplatePattern is the base-name glob for DynamoDB query
+	// declarations. An empty value uses DefaultDynamoTemplatePattern.
+	DynamoTemplatePattern string
 	// SQLDialect names the target database for SQL templates: "postgresql",
 	// "mysql", or "sqlite". A run that discovers a SQL template must set it.
 	// There is no default, because an assumed dialect emits placeholders the
@@ -115,10 +118,11 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:     PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath}},
-		FileTypes:           PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
-		HTMLTemplatePattern: DefaultHTMLTemplatePattern,
-		SQLTemplatePattern:  DefaultSQLTemplatePattern,
+		RuntimePackages:       PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath}},
+		FileTypes:             PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
+		HTMLTemplatePattern:   DefaultHTMLTemplatePattern,
+		SQLTemplatePattern:    DefaultSQLTemplatePattern,
+		DynamoTemplatePattern: DefaultDynamoTemplatePattern,
 	}
 }
 

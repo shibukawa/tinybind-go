@@ -23,7 +23,7 @@ goals:
   - no application-field reflection, per decision:reflection-free
   - a type without generated code fails to compile, not at run time
   - driver errors, retry behavior, and pagination stay visible, per rule:dynamobind-driver-passthrough
-decided_2026_07_31:
+decisions:
   package_name: dynamobind
   tag_spelling: dynamo, per rule:dynamo-tag-options
   table_definition: emitted, per decision:dynamobind-table-definition
@@ -38,16 +38,36 @@ in_scope:
 out_of_scope:
   - the DynamoDB client itself; it stays in system:tinygodriver-dynamodb
   - removing encoding/json from the request path, per decision:dynamobind-json-transport-deferred
-  - what the driver excludes: transactions, PartiQL, Streams, DAX
+  - what the driver excludes: transactions, PartiQL, Streams, DAX, per system:tinygodriver-dynamodb transaction_note
+  - single-table design, per decision:dynamo-single-table-scope
   - secondary index key tags; defer until the primary key path is proven
 acceptance:
   - a tagged struct round trips through the driver without the caller naming an attribute string
   - generated path stays within the size budget in requirement:dynamobind-verification
   - regenerating is unnecessary for a runtime fix, per decision:generated-runtime-in-module
-open: none; every design choice is resolved and the remaining work is implementation
+target_state:
+  property: no application source names a DynamoDB attribute; every name lives in a tag and in generated code
+  test: grepping the application for an attribute name returns nothing
+  reached: the item path, where the codec, the key builder and the table definition all come from the tags
+  not_reached: the read path, where a key condition is still text, its placeholders correspond by convention, its values are encoded by hand and its reserved words are the caller's problem
+  stages:
+    1_item_codec: done
+    2_declared_queries: done; requirement:dynamo-typed-queries generates one named function per access pattern, closing the read path for a primary key and with it the reserved-word hazard
+    3_index_tags: names the index a query runs against; deferred, and defined for the multi-table model only per decision:dynamo-single-table-scope
+    4_open_expressions: filter, condition and update expressions, the grammar that has to be authored; a filter joins the stage 2 declaration rather than needing its own mechanism
+  reading: stage 2 is where the property holds for anyone reading and writing by primary key, which is most callers; the later stages raise the ceiling rather than the floor
+not_the_goal:
+  - an ORM
+  - single-table design, per decision:dynamo-single-table-scope
+  - transactions, which the driver does not expose and which would not be a single-type generic if it did
+  - hiding the driver; errors, retries and page boundaries stay the caller's, per rule:dynamobind-driver-passthrough
+planned:
+  - requirement:dynamo-optimistic-locking
+  - requirement:dynamo-ttl-attribute, blocked on the driver
+  scope: decision:dynamo-framework-requests
 deferred:
   - a page-level Query and Scan iterator, per api:dynamobind-operations
-  - generated update and condition expressions
+  - generated update and condition expressions, which requirement:dynamo-typed-queries does not reopen
   - secondary index tags, per rule:dynamo-tag-options
 related:
   - vision:tinybind

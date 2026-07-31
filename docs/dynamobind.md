@@ -13,6 +13,7 @@ every driver error, every retry decision and every page boundary is still yours.
 - `EncodeItem` and `DecodeItem` for each bound type, without reflection
 - `ItemKey`, built from the same tags the table definition uses
 - `<Type>Table`, so the key names in the schema and in the request cannot drift
+- one named function per declared query, from a `.tb.dynamo` file
 - compile-time assertions that the type satisfies the runtime interfaces
 
 ## What you provide
@@ -163,6 +164,76 @@ the whole table.
 
 Breaking out of the loop stops without issuing another request.
 
+## Declared queries
+
+A query is declared in a `.tb.dynamo` file beside the package, and generation
+turns each declaration into one named function:
+
+```text
+export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading> {
+  key sensor = {sensor} and at > {from}
+}
+```
+
+```go
+for reading, err := range ReadingsSince(ctx, client, "readings", "room-1", from) {
+	if err != nil {
+		return err
+	}
+	use(reading)
+}
+```
+
+The result type picks the request shape rather than a row count, since a Query
+always returns many: `dynamo.many<T>` iterates every page, `dynamo.page<T>`
+issues one request and returns a `Page[T]`.
+
+Every attribute the declaration names is checked against your `dynamo` tags, so
+a renamed tag fails generation instead of failing in production. The key clause
+accepts what DynamoDB accepts there and nothing else: the partition key with
+`=`, and at most one sort key predicate from `=`, `<`, `<=`, `>`, `>=`,
+`between` and `begins_with`. Naming a non-key attribute is an error that says so:
+
+```text
+readings.tb.dynamo:5: statement ReadingsByNote: note is not a key of Reading;
+a key condition reaches sensor and at, and a non-key attribute belongs in a filter
+```
+
+Filter expressions are not implemented yet, so that message names a clause that
+does not exist. They join the same declaration when they land.
+
+### Reserved words are handled for you
+
+DynamoDB reserves 573 words, including `status`, `name`, `size`, `type`, `data`,
+`year`, `count` and `timestamp`, and an expression naming one literally is
+rejected. Generated queries alias every attribute unconditionally, so the
+question never arises:
+
+```go
+const eventsByStatusKeyCondition = "#k0 = :v0"
+
+var eventsByStatusAttributeNames = map[string]string{"#k0": "status"}
+```
+
+The expression and the alias map are constants, fixed when the attribute names
+are known, so nothing is assembled per call.
+
+### The string form is still there
+
+`Query` and `QueryPage` still take a key condition as text, for what a
+declaration cannot express. Nothing checks that text against your tags, and the
+reserved words above are yours to alias:
+
+```go
+// ValidationException: Attribute name is a reserved keyword
+dynamobind.Query[Event](ctx, c, "events", "status = :s", values)
+
+// Alias it yourself
+dynamobind.Query[Event](ctx, c, "events", "#n0 = :s",
+	dynamodb.WithExpressionNames(map[string]string{"#n0": "status"}),
+	values)
+```
+
 ## Batches
 
 `StoreAll` and `LoadAll` split the input into requests DynamoDB accepts: 25
@@ -265,6 +336,7 @@ API above does not change when that lands.
   excludes them.
 - A nested struct must be declared in the same package; a codec cannot be
   generated into someone else's.
-- Secondary index tags are not implemented yet.
-- Generated update and condition expressions are not implemented; pass the
-  expression yourself.
+- Secondary index tags are not implemented yet, so a declared query runs against
+  the table's own keys.
+- Filter, projection, condition and update expressions are not generated; pass
+  those yourself.

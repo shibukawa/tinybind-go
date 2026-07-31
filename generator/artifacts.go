@@ -27,6 +27,7 @@ const (
 	ArtifactBinding      ArtifactKind = "binding"
 	ArtifactConfigBind   ArtifactKind = "configbind"
 	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
+	ArtifactDynamoQuery  ArtifactKind = "dynamo_query"
 	ArtifactOpenAPI      ArtifactKind = "openapi"
 )
 
@@ -97,6 +98,14 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, fmt.Errorf("generate dynamobind: %w", err)
 	}
 	artifacts = append(artifacts, items...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	queries, err := runner.dynamoQueryArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate dynamobind queries: %w", err)
+	}
+	artifacts = append(artifacts, queries...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
