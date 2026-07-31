@@ -45,7 +45,7 @@ or decides a route.
 | Fragment capability introspection | deciding what runtime a response needs | shipped |
 | Live boundary rendering | a region re-rendered per delivery from a source | shipped |
 | Live reconnection mode | resuming a subscription on the page's own route | specified, not built |
-| Registered components (`<csrf-token/>`) | markup your framework implements | specified, not built |
+| Registered builtin elements (`<csrf-token/>`) | markup your framework implements | specified, not built |
 | Component assets | a library shipping a component plus its `.js` | specified, not built |
 | Render-time script contribution | selecting a script per response by name | specified, not built |
 
@@ -135,8 +135,8 @@ occupies. Inside an await or live boundary subtree that is the boundary's
 context, so work started by a live delivery is bounded by that delivery rather
 than by the original render.
 
-A render that supplied no context still has one, so unlike a registered
-component's provider, a context-taking external can never fail for want of it.
+A render that supplied no context still has one, so unlike a registered builtin
+element's provider, a context-taking external can never fail for want of it.
 
 #### What it costs in generated code
 
@@ -165,11 +165,11 @@ there is a generation error naming the position.
 
 #### What this is not
 
-It is not the registered-component seam described later, and it does not replace
-it. An external hands the value to the template, which may then interpolate it
-anywhere; a registered component renders it and never puts it in template scope.
-The first is cheap and general, the second is checkable. A framework that wants
-both is asking for the right thing.
+It is not the registered builtin element seam described later, and it does not
+replace it. An external hands the value to the template, which may then
+interpolate it anywhere; a builtin element renders it and never puts it in
+template scope. The first is cheap and general, the second is checkable. A
+framework that wants both is asking for the right thing.
 
 ## The document head
 
@@ -289,7 +289,7 @@ compiled. It does not cover a component a *library* supplies — see below.
 These are designed, agreed, and unimplemented. They are listed with what each
 would give you so you can decide whether to wait or work around.
 
-### Registered components
+### Registered builtin elements
 
 Markup your framework implements, callable by name from any template in the
 generation unit, with no import and no per-page declaration:
@@ -299,16 +299,35 @@ generation unit, with no import and no per-page declaration:
 <pw-noscript-handoff />
 ```
 
+**These are not components**, and the distinction is load-bearing rather than
+pedantic. A `component` is PascalCase, declared in a template file, and reached
+across files through an `external` declaration that restates its contract. A
+builtin element is kebab-case, registered on the generate command, ambient across
+the whole generation unit, and lowered into the plan steps of whatever component
+contains it rather than becoming a component of its own. If you have seen this
+called *framework-provided components* elsewhere, it is the same seam under a
+name that reads more naturally from the framework side.
+
+The hyphen is what makes the space available: `rule:template-name-casing` gives
+kebab-case to real HTML elements, and a hyphen is the HTML custom-element marker,
+so a bare `csrf-token` sits in the custom-element space and can never collide
+with a standard element.
+
 Registration is a whitelist passed to the generate command — a name-to-Go-symbol
 map, static, needing no reflection and no init ordering — so a project that
 registers none generates what it generates today. An element with no per-request
 value folds entirely into static bytes and costs nothing at render time; one with
 a value calls a context-taking provider function at its plan step.
 
+The whitelist has a second entry kind: a passthrough name or glob pattern, so an
+application can list the Web Components it uses — `sl-*` for a whole library —
+and have them emitted verbatim. Without it, closing the hyphenated space to
+registered names would ban Web Components outright.
+
 Three properties are only available this way, and are the reason it is not sugar
 over an external:
 
-- **The value never enters template scope.** The component renders the token; an
+- **The value never enters template scope.** The element renders the token; an
   external hands it to the template.
 - **Placement is checkable.** A head-only contribution written in the body
   becomes a generation error rather than a page that half works.
@@ -319,9 +338,18 @@ over an external:
 
 ### Component assets
 
+This row does mean *components* — a date picker, a chart, a sortable table: a
+PascalCase declaration in a template file, with a script beside it. It is a
+different actor from the row above, where the framework registers an element it
+implements in Go. The seam has to serve both, because a builtin element can need
+a script exactly as a component can, but the case that has no answer at all today
+is the library one.
+
 A component library is a template plus a script plus some Go. Two of the three
 have a home. A library owns no route, no scaffold, and no shell, so it cannot
-reference its own file the way a framework references its runtime.
+reference its own file the way a framework references its runtime. It also has to
+be reachable across packages at all, which is still an open question about what an
+`external` declaration may name.
 
 What this would add:
 
