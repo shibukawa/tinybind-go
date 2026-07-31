@@ -29,6 +29,9 @@ type fakeDynamo struct {
 	// calls counts requests per operation, which is how a test observes the
 	// request count an iterator hides.
 	calls map[string]int
+	// last is the most recent decoded request, so a test can assert on the
+	// expression a generated query actually sent.
+	last fakeRequest
 }
 
 type fakeRequest struct {
@@ -39,6 +42,10 @@ type fakeRequest struct {
 	UpdateExpression  string          `json:"UpdateExpression"`
 	ExclusiveStartKey dynamodb.Key    `json:"ExclusiveStartKey"`
 	RequestItems      json.RawMessage `json:"RequestItems"`
+
+	KeyConditionExpression    string                             `json:"KeyConditionExpression"`
+	ExpressionAttributeNames  map[string]string                  `json:"ExpressionAttributeNames"`
+	ExpressionAttributeValues map[string]dynamodb.AttributeValue `json:"ExpressionAttributeValues"`
 }
 
 func newFakeDynamo(t *testing.T) (*dynamodb.Client, *fakeDynamo) {
@@ -63,6 +70,13 @@ func (f *fakeDynamo) count(op string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls[op]
+}
+
+// lastRequest returns the most recent request the fake decoded.
+func (f *fakeDynamo) lastRequest() fakeRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.last
 }
 
 func (f *fakeDynamo) put(item dynamodb.Item) {
@@ -117,6 +131,7 @@ func (f *fakeDynamo) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls[op]++
+	f.last = req
 
 	switch op {
 	case "GetItem":

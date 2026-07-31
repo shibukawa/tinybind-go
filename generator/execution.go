@@ -29,9 +29,11 @@ type GenerateRequest struct {
 	SQLDialect     string
 	ConfigBindName string
 	// DynamoName is the DynamoDB item codec output file.
-	DynamoName  string
-	Check       bool
-	GenerateAll bool
+	DynamoName string
+	// DynamoQueryName is the generated DynamoDB query output file.
+	DynamoQueryName string
+	Check           bool
+	GenerateAll     bool
 	// Force regenerates even when the generated files record the current input
 	// hash. Use it after a change the hash does not cover, such as an edit in
 	// another package of the module.
@@ -44,12 +46,13 @@ type GenerateRequest struct {
 
 // GenerateResult records generated artifacts or check diagnostics.
 type GenerateResult struct {
-	BinderPath     string
-	ConfigBindPath string
-	DynamoPath     string
-	OpenAPIPath    string
-	TemplatesPath  string
-	Diagnostics    []parser.Diagnostic
+	BinderPath      string
+	ConfigBindPath  string
+	DynamoPath      string
+	DynamoQueryPath string
+	OpenAPIPath     string
+	TemplatesPath   string
+	Diagnostics     []parser.Diagnostic
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
 	Cached bool
@@ -58,7 +61,7 @@ type GenerateResult struct {
 // Paths returns non-empty artifact paths in generation order.
 func (result GenerateResult) Paths() []string {
 	paths := make([]string, 0, 5)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.OpenAPIPath} {
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -91,6 +94,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.DynamoName == "" {
 		request.DynamoName = defaultDynamoOut
+	}
+	if request.DynamoQueryName == "" {
+		request.DynamoQueryName = defaultDynamoQueryOut
 	}
 
 	options := request.applyTo(g.Options)
@@ -147,6 +153,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.DynamoPath, err = runner.generateDynamoItems(load, request.Out, request.DynamoName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate dynamobind: %w", err)
+	}
+	result.DynamoQueryPath, err = runner.generateDynamoQueries(load, request.Out, request.DynamoQueryName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate dynamobind queries: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err

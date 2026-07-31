@@ -55,6 +55,26 @@ reflection_path:
   time: time.Time marshals to S in UTC RFC 3339 nano
   cost: linked only when called
 excluded_by_the_driver: [transactions, PartiQL, Streams, DAX]
+excluded_table_admin: TTL, global tables, backup, autoscaling, tags; UpdateTable index changes
+transaction_note:
+  asked: 2026-07-31, whether dynamobind supports DynamoDB transactions
+  answer: no, and it cannot; the driver declares no TransactWriteItems or TransactGetItems
+  misleading_sentinel: ErrTransactionConflict exists, and is not a trace of transaction support; DynamoDB returns TransactionConflictException to an ordinary PutItem whose item is held by someone else's transaction, and the driver maps it as retryable
+  shape_if_ever_taken: a transaction spans types and tables, so it cannot be a single-type generic like Store; it needs a builder that accumulates encoded writes
+  chunking_warning: TransactWriteItems caps at 100 items, and unlike StoreAll that cap must not be chunked, since splitting a transaction stops it being one; an oversized transaction is an error
+upstream_requests:
+  ranked_2026_07_31: by how much one upstream change unlocks downstream, per decision:dynamo-framework-requests
+  UpdateTimeToLive:
+    priority: first, and the smallest of the three
+    unlocks: requirement:dynamo-ttl-attribute here, the framework's session and auth-state backends, and the TTL half of its migration
+    natural_shape: a TableDefinition field, so it rides the create step rather than adding a workflow
+  UpdateTable:
+    priority: second
+    unlocks: adding a secondary index to a live table, without which an index-bearing table can only ever be created, never evolved
+    note: the same call site as the TTL work, which is why the two are worth sending together
+  transactions:
+    priority: third, and larger than the other two combined
+    note: a separate request rather than a rider on the TTL one
 related:
   - requirement:dynamobind-product-goals
   - decision:dynamobind-runtime-package

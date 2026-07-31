@@ -183,6 +183,8 @@ func stampedResult(outDir, fingerprint string, recorded stamp, request GenerateR
 			result.ConfigBindPath = abs
 		case request.DynamoName:
 			result.DynamoPath = abs
+		case request.DynamoQueryName:
+			result.DynamoQueryPath = abs
 		case request.OpenAPIName:
 			result.OpenAPIPath = abs
 		default:
@@ -198,7 +200,7 @@ func stampedResult(outDir, fingerprint string, recorded stamp, request GenerateR
 // outputNames lists every file name this request can write. GeneratePackage
 // fills the defaults in before either side of the cache uses them.
 func outputNames(request GenerateRequest) []string {
-	return []string{request.TemplatesName, request.Name, request.ConfigBindName, request.DynamoName, request.OpenAPIName}
+	return []string{request.TemplatesName, request.Name, request.ConfigBindName, request.DynamoName, request.DynamoQueryName, request.OpenAPIName}
 }
 
 // generationInputs is the non-file part of the fingerprint: the generator
@@ -261,14 +263,17 @@ func hashPackageInputs(digest hash.Hash, dir string, options Options, skip map[s
 	if err != nil {
 		return err
 	}
-	htmlPattern := templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern)
-	sqlPattern := templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern)
+	patterns := []string{
+		templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern),
+		templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern),
+		templatePattern(options.DynamoTemplatePattern, DefaultDynamoTemplatePattern),
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
-		if skip[name] || !isGenerationInput(name, htmlPattern, sqlPattern) {
+		if skip[name] || !isGenerationInput(name, patterns...) {
 			continue
 		}
 		if err := hashInto(digest, name, filepath.Join(dir, name)); err != nil {
@@ -280,18 +285,19 @@ func hashPackageInputs(digest hash.Hash, dir string, options Options, skip map[s
 
 // isGenerationInput reports whether a file in the package directory can change
 // generated output. Test files cannot: no phase loads them.
-func isGenerationInput(name, htmlPattern, sqlPattern string) bool {
+func isGenerationInput(name string, templatePatterns ...string) bool {
 	if strings.HasSuffix(name, "_test.go") {
 		return false
 	}
 	if strings.HasSuffix(name, ".go") {
 		return true
 	}
-	if matched, err := filepath.Match(htmlPattern, name); err == nil && matched {
-		return true
+	for _, pattern := range templatePatterns {
+		if matched, err := filepath.Match(pattern, name); err == nil && matched {
+			return true
+		}
 	}
-	matched, err := filepath.Match(sqlPattern, name)
-	return err == nil && matched
+	return false
 }
 
 // generatedInDir names the files this run writes into the hashed directory.

@@ -7,11 +7,9 @@ The dynamo tag names the attribute and its options; an option the generator does
 
 ```yaml
 status: accepted
-decided: user 2026-07-31
 tag:
   spelling: dynamo
   reason: it matches the house style, where a tag is short and names its purpose, as with check, db, opt, enum, query, payload and groupkey
-  rejected: dynamodbav, the aws-sdk-go-v2 and driver reflection spelling; it would have let one struct work with or without generation, at the cost of a tag named after a library rather than a purpose
 form: "`dynamo:\"<name>[,<option>...]\"`"
 name:
   empty: the field name is used
@@ -43,8 +41,11 @@ generation_checks:
   - dynamodbav present where dynamo is absent
 message: every failure names the struct, the field, and what was expected
 unexported_fields: skipped without error, as in the driver reflection path
+proposed_options:
+  version: requirement:dynamo-optimistic-locking; makes a write conditional on the version it read
+  ttl: requirement:dynamo-ttl-attribute; names the expiry attribute and implies the unixtime encoding
 deferred:
-  secondary_index: "dynamo:\"city,gsi=by-city,partitionkey\"" extends the same mechanism; defer until the primary key path is proven
+  secondary_index: "dynamo:\"city,gsi=by-city,partitionkey\"" extends the same mechanism; defer until the primary key path is proven, and when it lands it is defined for the multi-table model only, per decision:dynamo-single-table-scope
 related:
   - requirement:dynamobind-generated-item-codec
   - data:dynamodb-attribute-mapping

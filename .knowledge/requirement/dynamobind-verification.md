@@ -39,7 +39,6 @@ size_measured_2026_07_31:
   codec_cost: +170 bytes against the same codec written by hand, which is the budget that matters
   api_cost: the 24,629 bytes between the first two rows are the dynamobind helpers, not the codec; a program can call the generated methods directly and skip them
   against_reflection: the generated path is 19,490 bytes smaller than the driver's reflection mapper
-  superseded: the earlier 1.45 MB darwin/arm64 baselines, which no build here reproduces; tinygo 0.41.1 cannot link a native binary on this host
 build_paths:
   - "go test ./..."
   - "go test -tags force_tinygo_logic ./..."
