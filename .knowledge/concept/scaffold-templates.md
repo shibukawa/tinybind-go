@@ -23,6 +23,7 @@ excluded:
 content:
   - keys for each Bind option field under prefix tables
   - comments from help tags
+  - TOML table header comments from struct godoc via requirement:godoc-config-descriptions
   - example values from default tags
   - TOML keys stay field keys; not renamed by opt CLI aliases
   - environment names follow runtime opt and env overrides; env:"-" is omitted

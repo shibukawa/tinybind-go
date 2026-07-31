@@ -1,0 +1,15 @@
+{{- /*
+render writes the render call itself, wherever a generated file makes one. It is
+a block of its own because Symbols repoints a package but never a signature: a
+framework whose response entry needs the request needs this call reshaped rather
+than renamed, which is the same reason the error block exists. Everything in
+scope arrives by name, and the result is an expression of type error, so the
+caller still decides what a failure does.
+*/ -}}
+{{- define "render" -}}
+{{- if .Wrappers -}}
+{{ .Symbols.RuntimeAlias }}.RenderChain({{ .Writer }}, {{ .Wrappers }}, {{ .Leaf }}{{ with .Options }}, {{ . }}...{{ end }})
+{{- else -}}
+{{ .Symbols.RuntimeAlias }}.Render({{ .Writer }}, {{ .Leaf }}{{ with .Options }}, {{ . }}...{{ end }})
+{{- end -}}
+{{- end }}

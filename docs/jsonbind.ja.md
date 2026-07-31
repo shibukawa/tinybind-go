@@ -1,6 +1,6 @@
 # jsonbind 利用ガイド
 
-`jsonbind` は HTTP に依存せず、Go の構造体と JSON 文書を相互変換するパッケージです。`io.Reader` / `io.Writer` だけを使うため、CLI、ファイル、メッセージキュー、WASM などでも利用できます。
+`jsonbind` は Go の構造体と JSON 文書を相互変換します。しかも `net/http` には一切触れません。API は `io.Reader` / `io.Writer` だけなので、CLI、ファイル読み書き、メッセージキューの消費側、そして HTTP 依存が単なる重荷になる WASM ビルドでも使えます。
 
 ## 自動化されること
 
@@ -11,7 +11,7 @@
 - JSON document の読み込み上限
 - 実際に `DecodeJSON[T]` / `EncodeJSON[T]` で使われた型だけのコード生成
 
-`jsonbind` 自体は HTTP status や HTTP header を扱いません。HTTP request / response が必要なら [httpbind](httpbind.ja.md) を使います。
+HTTP status の選択や header の設定は、この境界の外側です。これらは [httpbind](httpbind.ja.md) の担当で、同じ codec の上に request / response の関心事を載せています。
 
 ## ユーザーが用意するもの
 
@@ -32,7 +32,7 @@ package document
 go generate ./...
 ```
 
-ジェネレーターは generic の型引数を調べます。decode だけを使う型には decoder、encode だけを使う型には encoder が生成されます。
+ジェネレーターは generic の型引数を調べるため、生成物は実際の呼び出し方をそのまま反映します。decode だけを使う型には decoder、encode だけを使う型には encoder。呼び出していない codec は生成されません。
 
 ## 基本例
 
@@ -101,11 +101,11 @@ type Address struct {
 }
 
 type Profile struct {
-	Name       string             `json:"name"`
-	Address    Address            `json:"address"`
-	History    []Address          `json:"history"`
-	Labels     map[string]string  `json:"labels"`
-	AddressBy  map[string]Address `json:"addressBy"`
+	Name      string             `json:"name"`
+	Address   Address            `json:"address"`
+	History   []Address          `json:"history"`
+	Labels    map[string]string  `json:"labels"`
+	AddressBy map[string]Address `json:"addressBy"`
 }
 
 func use(r io.Reader, w io.Writer) error {
@@ -117,9 +117,9 @@ func use(r io.Reader, w io.Writer) error {
 }
 ```
 
-ワイヤ名を明示しないフィールドは lower camel case になります。`DecodeJSON` では、リクエスト入力元を表す `query`、`path`、`header`、`cookie` のフィールドは decode 対象外です。一方、`EncodeJSON` は構造体のフィールドを出力対象にするため、JSON 専用モデルでは標準の `json` タグだけを使うのが分かりやすい設計です。
+ワイヤ名を明示しないフィールドは lower camel case になります。`DecodeJSON` は、リクエスト入力元を表す `query`、`path`、`header`、`cookie` のフィールドを decode 対象から外します。`EncodeJSON` はその区別をせず、構造体のフィールドをそのまま出力します。したがって JSON 専用モデルは、標準の `json` タグだけを持たせるのがもっとも見通しの良い設計です。
 
-現在の生成 codec が利用するのは `json` タグのフィールド名部分です。`omitempty` と `json:"-"` による省略は適用されないため、field はすべて出力される前提でモデルを設計してください。
+ここで `encoding/json` から持ち込んだ習慣をひとつ捨てる必要があります。生成 codec が読むのは `json` タグの名前部分だけで、`omitempty` は効かず、`json:"-"` も何も除外しません。宣言したフィールドはすべて出力される前提でモデルを設計してください。
 
 ## 未知のフィールドを保持する
 
@@ -161,11 +161,11 @@ func init() {
 doc, err := jsonbind.DecodeJSONLimit[Document](reader, 64<<10) // 64 KiB
 ```
 
-`DecodeJSONLimit` に 0 以下を渡すと、アプリ全体の上限を使用します。
+`DecodeJSONLimit` に 0 以下を渡すと、アプリ全体の上限に戻ります。
 
 ## エラー処理
 
-`jsonbind` のエラーは transport-neutral です。HTTP status へは変換しません。
+`jsonbind` のエラーは transport-neutral で、HTTP status を含意しません。どのエラーも code を持ち、フィールド単位の失敗ならその原因となったフィールド名も持ちます。
 
 ```go
 doc, err := jsonbind.DecodeJSON[Document](reader)
@@ -191,7 +191,7 @@ if err != nil {
 | `body_read` | reader からの読み込みに失敗 |
 | `internal` | nil writer など呼び出し側の問題 |
 
-`httpbind.Bind` 経由で発生した JSON エラーは、HTTP 用の validation / bad request / payload too large エラーへ変換されます。
+status の判断は捨てられたのではなく、先送りされているだけです。`httpbind.Bind` 経由で JSON を decode すると、同じエラーが HTTP 用の validation / bad request / payload too large エラーになります。
 
 ## ファイルの読み書き
 
@@ -217,11 +217,11 @@ func save(path string, value Config) error {
 
 ## HTTP なしの生成を保つ
 
-JSON だけのパッケージでは root の `httpbind` を import せず、`jsonbind.DecodeJSON` / `EncodeJSON` を直接呼びます。すると生成物も `jsonbind` 用だけになり、`net/http` への依存を持ちません。TinyGo / WASM 向けコードでは特にこの分離が有効です。
+依存関係を決めるのは import パスです。JSON だけのパッケージでは root の `httpbind` を経由せず、`jsonbind.DecodeJSON` / `EncodeJSON` を直接呼びます。すると生成物が参照するのも `jsonbind` だけになり、`net/http` を引き込みません。推移的な依存がそのままバイナリサイズになる TinyGo / WASM 向けでは、この分離を意識的に守る価値があります。
 
 ## よくある生成漏れ
 
-型を wrapper の外側から動的に渡すだけでは、ジェネレーターが具体的な型を見つけられないことがあります。解析対象パッケージに具体的な呼び出しを置いてください。
+生成は何も言わずに通ったのに、実行時に decoder も encoder も無いと言われる。よくある原因は、その型が generic の wrapper 越しにしか `DecodeJSON` に届いていないことです。ジェネレーターからは具体的な型ではなく型パラメータしか見えていません。解析対象パッケージに具体的な呼び出しを置いてください。
 
 ```go
 func DecodeUser(r io.Reader) (User, error) {
@@ -229,4 +229,4 @@ func DecodeUser(r io.Reader) (User, error) {
 }
 ```
 
-`jsonbind: no generated decoder` または encoder 相当のエラーが出た場合は、対象型の呼び出しが同じパッケージにあり、生成後のファイルがビルド対象に含まれているかを確認します。
+それでもエラーが消えない場合は、2 点を確認します。その具体的な呼び出しがジェネレーターの解析したパッケージにあるか、そして生成後のファイルがビルド対象に含まれているかです。

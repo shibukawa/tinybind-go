@@ -1,8 +1,10 @@
 package htmlbind
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -31,13 +33,27 @@ const (
 	kindTrustedCSS  valueKind = "trusted_css"
 	kindTrustedJS   valueKind = "trusted_javascript"
 	kindScriptJSON  valueKind = "script_json"
+	kindError       valueKind = "error"
 )
+
+// errorFields are the presentation-safe fields an await recover clause may read.
+// They mirror htmlbind.AsyncError; the raw Go error never reaches a template.
+var errorFields = map[string]valueType{
+	"code":      {kind: kindString},
+	"message":   {kind: kindString},
+	"retryable": {kind: kindBool},
+	"timeout":   {kind: kindBool},
+}
 
 type valueType struct {
 	kind     valueKind
 	name     string
 	elem     *valueType
 	optional bool
+	// async marks a value the caller started and the template must bind in an
+	// await clause before reading. It wraps the whole type, so it survives
+	// neither required() nor awaited().
+	async bool
 }
 
 func (t valueType) String() string {
@@ -51,14 +67,31 @@ func (t valueType) String() string {
 	if t.optional {
 		base += "?"
 	}
+	if t.async {
+		base = "async " + base
+	}
 	return base
 }
 
 func (t valueType) required() valueType { t.optional = false; return t }
 
+// awaited is the type an await binding sees once the value settles.
+func (t valueType) awaited() valueType { t.async = false; return t }
+
 type functionSig struct {
 	params []valueType
 	result valueType
+	// async marks a function that takes a context and returns an error. It may
+	// only be called in an await binding.
+	async bool
+	// live marks a function returning a sequence of deliveries. It may only be
+	// called in a live binding.
+	live bool
+}
+
+// cachePolicy is the validated form of a component's cache annotation.
+type cachePolicy struct {
+	ttl time.Duration
 }
 
 type componentInfo struct {
@@ -68,10 +101,10 @@ type componentInfo struct {
 	// head holds the nodes contributed by head elements declared outside the
 	// document shell, already scoped and ready to merge.
 	head []Node
-	// headTags holds the same contributions as ready to write HTML, one string
-	// per node, with extracted assets replaced by their reference tags. It is
+	// headTags holds the same contributions as ready to write HTML, one entry
+	// per tag, with extracted assets replaced by their reference tags. It is
 	// filled by extractAssets.
-	headTags []string
+	headTags []headTag
 	// style is the scoped CSS of this component's style block, which
 	// requirement:static-asset-extraction moves into a generated stylesheet.
 	style string
@@ -81,6 +114,18 @@ type componentInfo struct {
 	// shell marks a component that owns the document head, which is where
 	// merged contributions are injected.
 	shell bool
+	// cache holds the validated cache annotation, or nil when the component is
+	// rendered on every invocation.
+	cache *cachePolicy
+	// await marks a component that owns at least one await boundary. A cached
+	// component may not reach one, because a boundary is emitted in two pieces
+	// and cannot be stored as one byte range.
+	await bool
+	// live marks a component that owns at least one live boundary. Every live
+	// boundary is also an await boundary, so this is a subset of await: it
+	// exists so a caller can tell a screen that keeps changing from one that is
+	// merely progressive.
+	live bool
 }
 
 type compiler struct {
@@ -93,6 +138,15 @@ type compiler struct {
 	externals   map[string]functionSig
 	components  map[string]*componentInfo
 	exprTypes   map[Expr]valueType
+	// liveBoundaries marks the await boundaries that bind at least one live
+	// source, and therefore re-render per delivery instead of settling once.
+	// It is derived from the bindings rather than written at the wait site,
+	// because how often a value arrives is what its declaration says.
+	liveBoundaries map[*syntax.AwaitNode]bool
+
+	// collapseWhitespace enables requirement:static-whitespace-normalization.
+	// It is on unless the run asked for byte-identical output.
+	collapseWhitespace bool
 
 	// current tracks the component being analyzed so slot elements can bind to
 	// its parameters.
@@ -104,6 +158,19 @@ type compiler struct {
 	// loopDepth is non-zero inside a for body, where a slot cannot guarantee
 	// at most one rendering.
 	loopDepth int
+	// awaitDepth is non-zero inside any await clause, where a slot would be
+	// rendered by both the fallback and the replacement.
+	awaitDepth int
+	// awaitCall is the one call expression currently allowed to name an async
+	// external, so a nested async call inside an await header is still rejected.
+	awaitCall Expr
+	// awaitSource is the one expression currently allowed to evaluate to an
+	// async type. It is the binding source of the await clause being analyzed,
+	// so an async value read anywhere else is a local error with a position.
+	awaitSource Expr
+	// actions collects the server-action references the module makes, in source
+	// order, for the resolution pass described on ServerActionAttr.
+	actions []ActionRef
 }
 
 type CompileError struct {
@@ -120,12 +187,14 @@ func (e *CompileError) Error() string {
 	return fmt.Sprintf("%s:%d:%d: %s", name, e.Pos.Line, e.Pos.Col, e.Message)
 }
 
-func newCompiler(filename, source string, module *Module) *compiler {
+func newCompiler(filename, source string, module *Module, collapseWhitespace bool) *compiler {
 	return &compiler{
 		filename: filename, source: source, module: module,
 		records: map[string]*TypeDecl{}, enums: map[string]*EnumDecl{},
 		enumMembers: map[string]valueType{}, externals: map[string]functionSig{},
 		components: map[string]*componentInfo{}, exprTypes: map[Expr]valueType{},
+		liveBoundaries:     map[*syntax.AwaitNode]bool{},
+		collapseWhitespace: collapseWhitespace,
 	}
 }
 
@@ -173,17 +242,31 @@ func (c *compiler) analyze() error {
 				if err != nil {
 					return err
 				}
+				// An external is an ordinary blocking Go function, so a pending
+				// handle has no meaning in its signature; asynchrony there is
+				// the `external async` modifier instead.
+				if t.async {
+					return c.error(parameter.Pos, "external parameter "+parameter.Name+" cannot be async; declare the function external async instead")
+				}
 				sig.params = append(sig.params, t)
 			}
 			result, err := c.resolveType(declaration.Result)
 			if err != nil {
 				return err
 			}
+			if result.async {
+				return c.error(declaration.Pos, "external "+declaration.Name+" cannot return an async type; declare the function external async instead")
+			}
 			sig.result = result
+			sig.async = declaration.Async
+			sig.live = declaration.Live
 			c.externals[declaration.Name] = sig
 		case *TemplateDecl:
 			if declaration.Kind != "html:component" || declaration.Output.Name != "html" {
 				return c.error(declaration.Pos, "HTML generator only accepts html:component declarations")
+			}
+			if declaration.Output.Async {
+				return c.error(declaration.Pos, "component output cannot be async; a component waits inside an await clause instead")
 			}
 			if c.nameExists(declaration.Name) {
 				return c.error(declaration.Pos, "duplicate declaration "+declaration.Name)
@@ -197,7 +280,15 @@ func (c *compiler) analyze() error {
 				if err != nil {
 					return err
 				}
+				// A slot parameter is a bound continuation rather than a value,
+				// so there is nothing for a caller to have started.
+				if t.async && t.kind == kindHTML {
+					return c.error(parameter.Pos, "html parameter "+parameter.Name+" cannot be async")
+				}
 				info.params[parameter.Name] = t
+			}
+			if err := c.applyAnnotations(info, declaration); err != nil {
+				return err
 			}
 			c.components[declaration.Name] = info
 		}
@@ -213,6 +304,13 @@ func (c *compiler) analyze() error {
 		if !ok {
 			return c.error(component.Pos, "invalid HTML component body")
 		}
+		// Whitespace is normalized before the head is collected, so the
+		// contributions collectHead captures are the rewritten nodes.
+		body, err := normalizeWhitespace(c.filename, body, c.collapseWhitespace)
+		if err != nil {
+			return err
+		}
+		component.Body = body
 		c.current = info
 		c.slotUsed = map[string]bool{}
 		c.loopDepth = 0
@@ -226,7 +324,139 @@ func (c *compiler) analyze() error {
 		}
 		c.current = nil
 	}
+	return c.validateCachedComponents()
+}
+
+// applyAnnotations validates the declaration's annotations. An unknown name is
+// an error rather than a no-op, because an ignored annotation reads as enabled
+// behavior at the call site.
+func (c *compiler) applyAnnotations(info *componentInfo, declaration *TemplateDecl) error {
+	for _, annotation := range declaration.Annotations {
+		switch annotation.Name {
+		case "cache":
+			policy, err := c.cacheAnnotation(declaration, annotation)
+			if err != nil {
+				return err
+			}
+			info.cache = policy
+		default:
+			return c.error(annotation.Pos, "unknown annotation @"+annotation.Name)
+		}
+	}
 	return nil
+}
+
+// cacheAnnotation reads @cache(ttl: "5m"). The TTL is required and parsed here,
+// so a malformed duration is reported with its own position instead of failing
+// at run time.
+func (c *compiler) cacheAnnotation(declaration *TemplateDecl, annotation Annotation) (*cachePolicy, error) {
+	for _, argument := range annotation.Args {
+		if argument.Name != "ttl" {
+			return nil, c.error(argument.Pos, "unknown @cache argument "+argument.Name)
+		}
+	}
+	argument, ok := annotation.Argument("ttl")
+	if !ok {
+		return nil, c.error(annotation.Pos, "@cache requires a ttl argument, for example @cache(ttl: \"5m\")")
+	}
+	ttl, err := time.ParseDuration(argument.Value)
+	if err != nil {
+		return nil, c.error(argument.Pos, "@cache ttl is not a duration: "+argument.Value)
+	}
+	if ttl <= 0 {
+		return nil, c.error(argument.Pos, "@cache ttl must be positive")
+	}
+	// An html parameter is a bound continuation rather than a value, so it
+	// cannot take part in the cache key.
+	for _, parameter := range declaration.Parameters {
+		t, err := c.resolveType(parameter.Type)
+		if err != nil {
+			return nil, err
+		}
+		if t.kind == kindHTML {
+			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the html parameter "+parameter.Name)
+		}
+		// Stored bytes stand in for a fresh render, and a pending value belongs
+		// to the one request that started it, so it can be neither part of the
+		// key nor part of what the key stands for.
+		if c.containsAsync(t, map[string]bool{}) {
+			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the async parameter "+parameter.Name+"; a pending value belongs to one request")
+		}
+	}
+	return &cachePolicy{ttl: ttl}, nil
+}
+
+// validateCachedComponents rejects the cases where stored bytes could not stand
+// in for a fresh render.
+func (c *compiler) validateCachedComponents() error {
+	for _, declaration := range c.module.Declarations {
+		component, ok := declaration.(*TemplateDecl)
+		if !ok {
+			continue
+		}
+		info := c.components[component.Name]
+		if info == nil || info.cache == nil {
+			continue
+		}
+		if info.shell {
+			return c.error(component.Pos, "cached component "+component.Name+" cannot own the document head, because the merged head depends on the chain rather than on its parameters")
+		}
+		if owner := c.reachesAwait(component.Name, map[string]bool{}); owner != "" {
+			where := "it"
+			if owner != component.Name {
+				where = owner
+			}
+			return c.error(component.Pos, "cached component "+component.Name+" cannot reach an await boundary; "+where+" declares one")
+		}
+	}
+	return nil
+}
+
+// reachesLive returns the name of the first component in the call graph that
+// owns a live boundary. It walks the same graph as reachesAwait and answers the
+// other half of the question a caller asks before rendering: not whether this
+// response needs the boundary runtime, but whether the screen will keep
+// changing once the document has finished.
+func (c *compiler) reachesLive(name string, seen map[string]bool) string {
+	if seen[name] {
+		return ""
+	}
+	seen[name] = true
+	info, ok := c.components[name]
+	if !ok {
+		return ""
+	}
+	if info.live {
+		return name
+	}
+	for _, called := range c.calledComponents(info) {
+		if owner := c.reachesLive(called, seen); owner != "" {
+			return owner
+		}
+	}
+	return ""
+}
+
+// reachesAwait returns the name of the first component in the call graph that
+// owns an await boundary.
+func (c *compiler) reachesAwait(name string, seen map[string]bool) string {
+	if seen[name] {
+		return ""
+	}
+	seen[name] = true
+	info, ok := c.components[name]
+	if !ok {
+		return ""
+	}
+	if info.await {
+		return name
+	}
+	for _, called := range c.calledComponents(info) {
+		if owner := c.reachesAwait(called, seen); owner != "" {
+			return owner
+		}
+	}
+	return ""
 }
 
 func (c *compiler) nameExists(name string) bool {
@@ -270,6 +500,8 @@ func (c *compiler) resolveType(ref TypeRef) (valueType, error) {
 		result.kind = kindTrustedJS
 	case "script_json":
 		result.kind = kindScriptJSON
+	case "error":
+		result.kind = kindError
 	default:
 		if _, ok := c.records[ref.Name]; ok {
 			result = valueType{kind: kindRecord, name: ref.Name}
@@ -284,7 +516,37 @@ func (c *compiler) resolveType(ref TypeRef) (valueType, error) {
 		result = valueType{kind: kindArray, elem: &elem}
 	}
 	result.optional = ref.Optional
+	// The modifier is applied last because it wraps the whole type expression:
+	// `async User?` is a pending optional, not an optional pending.
+	result.async = ref.Async
 	return result, nil
+}
+
+// containsAsync reports whether t is async or reaches an async field. It is
+// what keeps a pending value out of the places that must be able to stand in
+// for a value they already have, such as a cache key.
+func (c *compiler) containsAsync(t valueType, visiting map[string]bool) bool {
+	if t.async {
+		return true
+	}
+	switch t.kind {
+	case kindArray:
+		return t.elem != nil && c.containsAsync(*t.elem, visiting)
+	case kindRecord:
+		record, ok := c.records[t.name]
+		if !ok || visiting[t.name] {
+			return false
+		}
+		visiting[t.name] = true
+		defer delete(visiting, t.name)
+		for _, field := range record.Fields {
+			fieldType, err := c.resolveType(field.Type)
+			if err == nil && c.containsAsync(fieldType, visiting) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType) error {
@@ -294,10 +556,10 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 		case *syntax.ExpressionNode:
 			t, err := c.infer(node.Expression, scope)
 			if err != nil {
-				return err
+				return annotateRawTextInsertion(node.Context, err)
 			}
 			if err := c.validateInsertion(node.Context, t, exprPos(node.Expression)); err != nil {
-				return err
+				return annotateRawTextInsertion(node.Context, err)
 			}
 			if err := c.markHTMLParameterUse(node.Expression, t); err != nil {
 				return err
@@ -344,6 +606,12 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			c.loopDepth--
 		case *ElementNode:
 			for _, attribute := range node.Attributes {
+				if attribute.Name == ServerActionAttr {
+					if err := c.analyzeServerAction(node.Name, attribute, node.Attributes); err != nil {
+						return err
+					}
+					continue
+				}
 				if err := c.analyzeAttribute(node.Name, attribute, scope); err != nil {
 					return err
 				}
@@ -356,6 +624,10 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			// body is analyzed, and they carry no expressions to type-check.
 		case *SlotNode:
 			if err := c.analyzeSlot(node, scope); err != nil {
+				return err
+			}
+		case *syntax.AwaitNode:
+			if err := c.analyzeAwait(node, scope); err != nil {
 				return err
 			}
 		case *ComponentNode:
@@ -391,6 +663,10 @@ func (c *compiler) collectHead(info *componentInfo, body []Node) error {
 				walk(node.Else)
 			case *syntax.ForNode:
 				walk(node.Body)
+			case *syntax.AwaitNode:
+				walk(node.Primary)
+				walk(node.Fallback)
+				walk(node.Recover)
 			case *ComponentNode:
 				walk(node.Children)
 			}
@@ -490,6 +766,105 @@ func scopeSuffix(filename, component string) string {
 	return string(out)
 }
 
+// awaitedType infers a binding source that is not a call, with the async read
+// rule lifted for that one expression. Everything inside it is still checked
+// normally, so awaiting a field of a pending record stays an error naming the
+// value that has to be awaited first.
+func (c *compiler) awaitedType(expr Expr, scope map[string]valueType) (valueType, error) {
+	outer := c.awaitSource
+	c.awaitSource = expr
+	defer func() { c.awaitSource = outer }()
+	return c.infer(expr, scope)
+}
+
+// analyzeAwait types one boundary. The bindings are visible only in the primary
+// subtree, and the error name only in the recover subtree, so no clause can
+// read a value that does not exist when it renders.
+func (c *compiler) analyzeAwait(node *syntax.AwaitNode, scope map[string]valueType) error {
+	if c.current != nil {
+		c.current.await = true
+	}
+	primaryScope := copyScope(scope)
+	for _, binding := range node.Bindings {
+		if binding.Name == "outer" {
+			return c.error(binding.Pos, "await binding cannot be named outer; the generated scope reserves that name")
+		}
+		call, isCall := binding.Call.(*CallExpr)
+		if !isCall {
+			// The other source is a value the caller already started, read
+			// through a parameter or a record field. It settles beside any
+			// call in the same clause.
+			t, err := c.awaitedType(binding.Call, scope)
+			if err != nil {
+				return err
+			}
+			if !t.async {
+				return c.error(binding.Pos, "await binding "+binding.Name+" reads "+t.String()+"; only an async value or an async external call can be awaited")
+			}
+			primaryScope[binding.Name] = t.awaited()
+			continue
+		}
+		identifier, ok := call.Callee.(*IdentifierExpr)
+		if !ok {
+			return c.error(binding.Pos, "await binding "+binding.Name+" must call an async external function")
+		}
+		sig, ok := c.externals[identifier.Name]
+		if !ok {
+			return c.error(binding.Pos, "unknown function "+identifier.Name)
+		}
+		if !sig.async && !sig.live {
+			return c.error(binding.Pos, identifier.Name+" is not async; declare it as external async or external live to await it")
+		}
+		if sig.live {
+			// The boundary re-renders per delivery rather than settling once.
+			// Nothing about the clause changes: whether a value arrives once or
+			// many times is what its declaration says, not what the wait site
+			// asks for.
+			c.liveBoundaries[node] = true
+			if c.current != nil {
+				c.current.live = true
+			}
+		}
+		outerCall := c.awaitCall
+		c.awaitCall = call
+		t, err := c.infer(call, scope)
+		c.awaitCall = outerCall
+		if err != nil {
+			return err
+		}
+		primaryScope[binding.Name] = t
+	}
+	if c.liveBoundaries[node] {
+		if err := c.rejectStatefulControls(node.Primary); err != nil {
+			return err
+		}
+	}
+	c.awaitDepth++
+	defer func() { c.awaitDepth-- }()
+	// Every clause starts from the slot usage before the boundary, because at
+	// most one of them ends up in the document.
+	before := copyUsage(c.slotUsed)
+	if err := c.analyzeNodes(node.Primary, primaryScope); err != nil {
+		return err
+	}
+	c.slotUsed = copyUsage(before)
+	if err := c.analyzeNodes(node.Fallback, copyScope(scope)); err != nil {
+		return err
+	}
+	c.slotUsed = copyUsage(before)
+	if node.HasRecover {
+		recoverScope := copyScope(scope)
+		if node.ErrorName != "" {
+			recoverScope[node.ErrorName] = valueType{kind: kindError}
+		}
+		if err := c.analyzeNodes(node.Recover, recoverScope); err != nil {
+			return err
+		}
+		c.slotUsed = copyUsage(before)
+	}
+	return nil
+}
+
 // analyzeSlot binds a slot element to the html parameter it names and enforces
 // the rules that keep slot rendering statically predictable.
 func (c *compiler) analyzeSlot(node *SlotNode, scope map[string]valueType) error {
@@ -516,6 +891,9 @@ func (c *compiler) analyzeSlot(node *SlotNode, scope map[string]valueType) error
 	if c.loopDepth > 0 {
 		return c.error(node.Pos, "slot "+name+" cannot appear inside a for body")
 	}
+	if c.awaitDepth > 0 {
+		return c.error(node.Pos, "slot "+name+" cannot appear inside an await block; the fallback and the replacement would both render it")
+	}
 	if c.slotUsed[name] {
 		return c.error(node.Pos, "slot "+name+" is rendered more than once on the same path")
 	}
@@ -538,6 +916,9 @@ func (c *compiler) markHTMLParameterUse(expr Expr, t valueType) error {
 	}
 	if c.loopDepth > 0 {
 		return c.error(identifier.Pos, "slot "+identifier.Name+" cannot appear inside a for body")
+	}
+	if c.awaitDepth > 0 {
+		return c.error(identifier.Pos, "slot "+identifier.Name+" cannot appear inside an await block; the fallback and the replacement would both render it")
 	}
 	if c.slotUsed[identifier.Name] {
 		return c.error(identifier.Pos, "slot "+identifier.Name+" is rendered more than once on the same path")
@@ -725,15 +1106,31 @@ func (c *compiler) attributeValueType(attribute Attribute, scope map[string]valu
 	return valueType{kind: kindString}, nil
 }
 
+// annotateRawTextInsertion adds the raw-text hint to an analysis diagnostic. A
+// brace the parser accepted as an insertion can still be authored JavaScript
+// that happened to match an insertion shape, such as `{name}` written as an
+// object shorthand, and those reach analysis rather than the parser.
+func annotateRawTextInsertion(context string, err error) error {
+	if !isRawTextContext(context) {
+		return err
+	}
+	var compileErr *CompileError
+	if !errors.As(err, &compileErr) {
+		return err
+	}
+	compileErr.Message += rawTextHint(context, false)
+	return err
+}
+
 func (c *compiler) validateInsertion(context string, t valueType, pos Position) error {
 	base := t.required().kind
 	switch context {
 	case "html:child":
-		if base == kindTrustedCSS || base == kindTrustedJS || base == kindScriptJSON || base == kindRecord || base == kindArray {
+		if base == kindTrustedCSS || base == kindTrustedJS || base == kindScriptJSON || base == kindRecord || base == kindArray || base == kindError {
 			return c.error(pos, "cannot insert "+t.String()+" into html:child")
 		}
 	case "html:attribute":
-		if base == kindTrustedHTML || base == kindTrustedCSS || base == kindTrustedJS || base == kindScriptJSON || base == kindRecord || base == kindArray || base == kindHTML {
+		if base == kindTrustedHTML || base == kindTrustedCSS || base == kindTrustedJS || base == kindScriptJSON || base == kindRecord || base == kindArray || base == kindHTML || base == kindError {
 			return c.error(pos, "cannot insert "+t.String()+" into html:attribute")
 		}
 	case "html:script":
@@ -788,6 +1185,13 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 		if err == nil {
 			if object.optional {
 				err = c.error(expr.Pos, "member access on optional "+object.String())
+			} else if object.kind == kindError {
+				field, ok := errorFields[expr.Member]
+				if !ok {
+					err = c.error(expr.Pos, "unknown field "+expr.Member+" on error")
+				} else {
+					result = field
+				}
 			} else if object.kind != kindRecord {
 				err = c.error(expr.Pos, "member access requires a record")
 			} else {
@@ -871,6 +1275,13 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 	if err != nil {
 		return valueType{}, err
 	}
+	// A pending value has no rendering, no fields, and no operators until it
+	// settles, so the one place it may be read is the await binding that waits
+	// for it. Checking here covers every expression form at once, including the
+	// object of a member access and the operand of a comparison.
+	if result.async && c.awaitSource != expr {
+		return valueType{}, c.error(exprPos(expr), "async value "+result.String()+" must be bound by an await clause before it is read")
+	}
 	c.exprTypes[expr] = result
 	return result, nil
 }
@@ -899,6 +1310,14 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	sig, ok := c.externals[identifier.Name]
 	if !ok {
 		return valueType{}, c.error(call.Pos, "unknown function "+identifier.Name)
+	}
+	// An async result exists only inside the boundary that waits for it, so the
+	// only legal call site is that boundary's own binding.
+	if sig.live && c.awaitCall != call {
+		return valueType{}, c.error(call.Pos, "live function "+identifier.Name+" can only be called in an await binding")
+	}
+	if sig.async && c.awaitCall != call {
+		return valueType{}, c.error(call.Pos, "async function "+identifier.Name+" can only be called in an await binding")
 	}
 	if len(call.Arguments) != len(sig.params) {
 		return valueType{}, c.error(call.Pos, fmt.Sprintf("%s expects %d arguments", identifier.Name, len(sig.params)))
@@ -993,6 +1412,11 @@ func numeric(t valueType) bool {
 	return !t.optional && (t.kind == kindInt || t.kind == kindFloat)
 }
 func (c *compiler) jsonSerializable(t valueType, visiting map[string]bool) bool {
+	// A pending value has no serialization until it settles, and a record
+	// carrying one cannot be written into a script as a whole.
+	if t.async {
+		return false
+	}
 	if t.optional {
 		t.optional = false
 	}
@@ -1023,6 +1447,9 @@ func (c *compiler) jsonSerializable(t valueType, visiting map[string]bool) bool 
 }
 
 func (c *compiler) comparable(t valueType, visiting map[string]bool) bool {
+	if t.async {
+		return false
+	}
 	if t.optional {
 		return true
 	}
@@ -1112,4 +1539,70 @@ func exprPos(expr Expr) Position {
 		return expr.Pos
 	}
 	return Position{Line: 1, Col: 1}
+}
+
+// statefulControls are the elements whose state the browser owns rather than the
+// markup: what the user typed, where the caret is, what is selected. Replacing
+// one discards all of it.
+var statefulControls = map[string]bool{
+	"input":    true,
+	"textarea": true,
+	"select":   true,
+	"form":     true,
+}
+
+// rejectStatefulControls reports a form control in a live boundary's primary
+// subtree, which is the one subtree a delivery replaces.
+//
+// A navigation already had this exposure once per page transition. A live
+// boundary turns it into once every few seconds, arriving on the server's clock
+// while the user is typing, so a warning would be read as noise and the loss is
+// silent. The rule is therefore an error, and a control that genuinely should
+// reset says so with an annotation.
+//
+// It does not walk the fallback or recover subtrees: neither is re-rendered by a
+// delivery, so a control there is as safe as one outside the boundary. It also
+// does not follow component calls, because a component's own body is checked
+// where it is declared only if that body holds the boundary; a control reached
+// through a call stays authoring guidance rather than a diagnostic.
+func (c *compiler) rejectStatefulControls(nodes []Node) error {
+	for _, node := range nodes {
+		switch node := node.(type) {
+		case *ElementNode:
+			if statefulControls[node.Name] {
+				return c.error(node.Pos, "<"+node.Name+"> cannot appear in a live boundary; a delivery replaces this subtree and discards what the user typed. Put the control outside the boundary and update it through its parameters instead")
+			}
+			if err := c.rejectStatefulControls(node.Children); err != nil {
+				return err
+			}
+		case *syntax.IfNode:
+			if err := c.rejectStatefulControls(node.Then); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Else); err != nil {
+				return err
+			}
+		case *syntax.ForNode:
+			if err := c.rejectStatefulControls(node.Body); err != nil {
+				return err
+			}
+		case *syntax.AwaitNode:
+			// A nested boundary's own subtrees are replaced by that boundary,
+			// which this delivery also re-runs, so they are in scope too.
+			if err := c.rejectStatefulControls(node.Primary); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Fallback); err != nil {
+				return err
+			}
+			if err := c.rejectStatefulControls(node.Recover); err != nil {
+				return err
+			}
+		case *SlotNode:
+			if err := c.rejectStatefulControls(node.Default); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

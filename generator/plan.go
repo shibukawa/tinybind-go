@@ -12,6 +12,9 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/internal/gensource"
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
 // FieldSource is where a request field is read from.
@@ -44,10 +47,26 @@ type FieldPlan struct {
 	Kind     string      // string|int|int64|bool|float64|file|rest_*|struct|slice|map
 	JSON     string      // json name for encode/document keys
 	Check    CheckRules  // from check:"" tag; empty if absent
+	Enum     EnumRule    // from enum:"" tag; unset if absent
+	Default  DefaultRule // from default:"" tag; unset if absent
 	TypeName string      // KindStruct name, or element struct name for slice/map of struct
 	ElemKind string      // for slice/map: string|int|int64|bool|float64|struct
 	DB       string      // SQL result column (db tag or snake_case field name)
 	GroupKey bool        // groupkey tag presence
+	Doc      string      // godoc of the field (doc or line comment)
+}
+
+// HasValidation reports whether anything about the field can reject a bound
+// value, across every tag that carries a constraint.
+func (f FieldPlan) HasValidation() bool {
+	return f.Check.HasValidation() || f.Enum.Set
+}
+
+// NeedsPresence is true when codegen must track whether the field was present:
+// validation has to skip absent optional values, and a default only applies to
+// a field nobody supplied.
+func (f FieldPlan) NeedsPresence() bool {
+	return f.HasValidation() || f.Default.Set
 }
 
 // IsRest reports whether f is a payload rest map field.
@@ -99,6 +118,8 @@ type TypePlan struct {
 	// of every artifact generated for this type.
 	SourcePath string
 	Fields     []FieldPlan
+	// Doc is the godoc of the type declaration.
+	Doc string
 	// Usage records which generated entry points are referenced by source code.
 	// Zero means the type is unused and emits no mapping paths.
 	Usage Usage
@@ -115,7 +136,14 @@ const (
 	UsageDecodeJSON
 	UsageEncodeJSON
 	UsageScanRows
+	UsageEncodeItem
+	UsageDecodeItem
+	UsageItemKey
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
+	// UsageItem is every DynamoDB item entry point. It stays out of UsageAll:
+	// the item codec has its own generate-all rule, which requires a dynamo tag,
+	// so an unrelated request struct never acquires one.
+	UsageItem = UsageEncodeItem | UsageDecodeItem | UsageItemKey
 )
 
 // DiscoverySymbol identifies a generic function and the entry point it needs.
@@ -149,37 +177,14 @@ func AnalyzePackage(dir string) (*PackagePlan, error) {
 
 // AnalyzePackageWithOptions is AnalyzePackage with customizable call targets.
 func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
-	abs, err := filepath.Abs(dir)
+	return analyzeLoadedPackage(newPackageLoad(dir), opts)
+}
+
+// analyzeLoadedPackage builds the plan from a package the run already loaded.
+func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error) {
+	pkg, err := load.get()
 	if err != nil {
 		return nil, err
-	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName |
-			packages.NeedFiles |
-			packages.NeedSyntax |
-			packages.NeedTypes |
-			packages.NeedTypesInfo |
-			packages.NeedImports |
-			packages.NeedModule |
-			packages.NeedDeps,
-		Dir: abs,
-	}
-	pkgs, err := packages.Load(cfg, ".")
-	if err != nil {
-		return nil, fmt.Errorf("packages.Load %s: %w", abs, err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package in %s", abs)
-	}
-	pkg := pkgs[0]
-	for _, p := range pkgs {
-		if p.Name != "" && !strings.HasSuffix(p.ID, ".test") {
-			pkg = p
-			break
-		}
-	}
-	if pkg.TypesInfo == nil {
-		return nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
 	}
 
 	plan := &PackagePlan{Package: pkg.Name, PackagePath: pkg.PkgPath}
@@ -205,7 +210,10 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 			base == "httpbind_gen.go" ||
 			base == "httpbind_openapi_gen.go" ||
 			base == "tinybind_gen.go" ||
-			base == "tinybind_openapi_gen.go" {
+			base == "tinybind_openapi_gen.go" ||
+			// Nothing a generation run wrote is an input to what it reads,
+			// whatever the output file was named or headed with.
+			gensource.IsGenerated(f, normalized.parserConfig.GeneratedHeaders...) {
 			continue
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)
@@ -230,7 +238,13 @@ func AnalyzePackageWithOptions(dir string, opts Options) (*PackagePlan, error) {
 				if !ok || st.Fields == nil {
 					continue
 				}
-				tp, ok, err := analyzeStruct(ts.Name.Name, st, binderNames)
+				// An ungrouped declaration carries its doc on the GenDecl;
+				// a group's own doc describes the group, not each spec.
+				var declDoc *ast.CommentGroup
+				if len(gd.Specs) == 1 {
+					declDoc = gd.Doc
+				}
+				tp, ok, err := analyzeStruct(ts.Name.Name, godoc.Text(ts.Doc, declDoc), st, binderNames)
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", ts.Name.Name, err)
 				}
@@ -318,7 +332,7 @@ func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoveryS
 			args := genericTypeArgExprs(call.Fun)
 			if symbol.ArgumentType != nil {
 				if len(call.Args) > *symbol.ArgumentType {
-					if name := namedTypeName(info.TypeOf(call.Args[*symbol.ArgumentType])); name != "" {
+					if name := argumentTypeName(info.TypeOf(call.Args[*symbol.ArgumentType])); name != "" {
 						out[name] |= symbol.Usage
 					}
 				}
@@ -354,15 +368,17 @@ func discoverySymbolMatches(obj types.Object, symbol DiscoverySymbol) bool {
 	if signature.Recv() == nil {
 		return false
 	}
-	receiver := signature.Recv().Type()
-	if pointer, ok := receiver.(*types.Pointer); ok {
-		receiver = pointer.Elem()
-	}
-	named, ok := receiver.(*types.Named)
+	named, ok := unaliasPtr(signature.Recv().Type()).(*types.Named)
 	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == symbol.ReceiverPackagePath && named.Obj().Name() == symbol.ReceiverType
 }
 
 func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
+	return namedTypeName(instantiatedTypeArgAt(info, fun, index))
+}
+
+// instantiatedTypeArgAt returns the type argument inferred for an instantiated
+// generic call, for the calls that spell no explicit type argument.
+func instantiatedTypeArgAt(info *types.Info, fun ast.Expr, index int) types.Type {
 	for {
 		switch e := fun.(type) {
 		case *ast.ParenExpr:
@@ -373,28 +389,54 @@ func instantiatedTypeNameAt(info *types.Info, fun ast.Expr, index int) string {
 			fun = e.X
 		case *ast.SelectorExpr:
 			if inst, ok := info.Instances[e.Sel]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		case *ast.Ident:
 			if inst, ok := info.Instances[e]; ok && inst.TypeArgs.Len() > index {
-				return namedTypeName(inst.TypeArgs.At(index))
+				return inst.TypeArgs.At(index)
 			}
-			return ""
+			return nil
 		default:
-			return ""
+			return nil
 		}
 	}
 }
 
-func namedTypeName(t types.Type) string {
-	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
+// argumentTypeName is namedTypeName through one slice or array, so a call that
+// takes a batch of values discovers the element type. A scalar argument behaves
+// exactly as before.
+func argumentTypeName(t types.Type) string {
+	if name := namedTypeName(t); name != "" {
+		return name
 	}
-	if n, ok := t.(*types.Named); ok && n.Obj() != nil {
+	switch collection := types.Unalias(t).(type) {
+	case *types.Slice:
+		return namedTypeName(collection.Elem())
+	case *types.Array:
+		return namedTypeName(collection.Elem())
+	}
+	return ""
+}
+
+func namedTypeName(t types.Type) string {
+	if n, ok := unaliasPtr(t).(*types.Named); ok && n.Obj() != nil {
 		return n.Obj().Name()
 	}
 	return ""
+}
+
+// unaliasPtr resolves type aliases and strips one pointer indirection. Since
+// Go 1.24 the go/types default is gotypesalias=1, so an alias arrives as
+// *types.Alias and passes no *types.Named assertion on its own; every named
+// type test here goes through this helper so an alias behaves as the type it
+// names. A defined type stays itself: only aliases are transparent.
+func unaliasPtr(t types.Type) types.Type {
+	t = types.Unalias(t)
+	if p, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(p.Elem())
+	}
+	return t
 }
 
 func propagateNestedUsage(plans []TypePlan) {
@@ -473,7 +515,7 @@ func genericTypeArgExprs(fun ast.Expr) []ast.Expr {
 	}
 }
 
-func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool) (TypePlan, bool, error) {
+func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]bool) (TypePlan, bool, error) {
 	var fields []FieldPlan
 	restCount := 0
 	for _, f := range st.Fields.List {
@@ -485,7 +527,7 @@ func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool)
 				continue
 			}
 			src, wire := parseFieldTag(id.Name, f.Tag)
-			fp, ok, err := analyzeField(id.Name, f.Type, f.Tag, src, wire, binderNames)
+			fp, ok, err := analyzeField(id.Name, godoc.Text(f.Doc, f.Comment), f.Type, f.Tag, src, wire, binderNames)
 			if err != nil {
 				return TypePlan{}, false, err
 			}
@@ -523,10 +565,10 @@ func analyzeStruct(name string, st *ast.StructType, binderNames map[string]bool)
 	if len(fields) == 0 {
 		return TypePlan{}, false, nil
 	}
-	return TypePlan{Name: name, Fields: fields}, true, nil
+	return TypePlan{Name: name, Doc: doc, Fields: fields}, true, nil
 }
 
-func analyzeField(fieldName string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool) (FieldPlan, bool, error) {
+func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool) (FieldPlan, bool, error) {
 	kind, typeName, elemKind, ok, err := fieldTypeKind(typ, binderNames, src, wire, fieldName)
 	if err != nil {
 		return FieldPlan{}, false, err
@@ -546,6 +588,22 @@ func analyzeField(fieldName string, typ ast.Expr, tag *ast.BasicLit, src FieldSo
 	if err != nil {
 		return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
 	}
+	var enum EnumRule
+	if enumRaw, ok := tagLookup(tag, "enum"); ok {
+		enum, err = ParseEnumTag(enumRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
+	// Looked up rather than read, so that default:"" is an empty-string default
+	// and not the same thing as carrying no default tag at all.
+	var def DefaultRule
+	if defRaw, ok := tagLookup(tag, "default"); ok {
+		def, err = ParseDefaultTag(defRaw, kind)
+		if err != nil {
+			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+		}
+	}
 	return FieldPlan{
 		Name:     fieldName,
 		Wire:     wire,
@@ -553,10 +611,13 @@ func analyzeField(fieldName string, typ ast.Expr, tag *ast.BasicLit, src FieldSo
 		Kind:     kind,
 		JSON:     jsonName,
 		Check:    check,
+		Enum:     enum,
+		Default:  def,
 		TypeName: typeName,
 		ElemKind: elemKind,
 		DB:       dbColumn(fieldName, tag),
 		GroupKey: tagPresent(tag, "groupkey"),
+		Doc:      doc,
 	}, true, nil
 }
 
@@ -727,6 +788,30 @@ func tagValue(tag *ast.BasicLit, key string) string {
 		return ""
 	}
 	return lookupTag(raw, key)
+}
+
+// tagLookup reports the value of key and whether the tag carried it at all,
+// which tagValue cannot express for tags whose empty value is meaningful.
+func tagLookup(tag *ast.BasicLit, key string) (string, bool) {
+	if tag == nil {
+		return "", false
+	}
+	raw, err := strconv.Unquote(tag.Value)
+	if err != nil {
+		return "", false
+	}
+	for _, part := range strings.Fields(raw) {
+		k, v, ok := strings.Cut(part, ":")
+		if !ok || k != key {
+			continue
+		}
+		val, err := strconv.Unquote(v)
+		if err != nil {
+			return strings.Trim(v, `"`), true
+		}
+		return val, true
+	}
+	return "", false
 }
 
 func lookupTag(raw, key string) string {

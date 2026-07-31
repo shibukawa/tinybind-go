@@ -25,7 +25,7 @@ type CreateUserResponse struct {
 // SearchRequest demos query-only and payload-only fields.
 type SearchRequest struct {
 	Keyword string `query:"keyword" check:"required"`
-	Page    int    `query:"page" check:"min=1,default=1"`
+	Page    int    `query:"page" check:"min=1" default:"1"`
 	Filter  string `payload:"filter"`
 }
 

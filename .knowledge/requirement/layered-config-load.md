@@ -19,6 +19,7 @@ layers:
     format: decision:toml-config-format
     path: decision:config-file-path-resolution
     parser: concept:reusable-source-parsers
+    interpolation: requirement:config-env-interpolation
   - id: env
     description: reusable env map filtered by generated known keys
     parser: concept:reusable-source-parsers
@@ -34,6 +35,7 @@ rules:
   - SubCommand fields never read TOML or env and are not overlay-backed
   - struct apply is generated; no runtime reflection
   - only one TOML file is loaded; extra, user, and system files are not merged
+  - file string values expand ${NAME} before merge and stay place file_toml
 related:
   - concept:layered-config-sources
   - concept:config-overlay
@@ -42,6 +44,8 @@ related:
   - requirement:source-provenance-logging
   - requirement:cli-subcommands
   - requirement:config-file-discovery
+  - requirement:config-env-interpolation
+  - decision:env-interpolation-layer
   - decision:config-file-path-resolution
   - decision:prefix-table-binding
   - decision:configbind-codegen-no-reflect
@@ -57,4 +61,5 @@ acceptance:
   - --config-path selects the file over configdir search
   - --config-path unreadable returns error without falling back to configdir
   - first existing ExtraConfigReadPaths entry wins over later extras and configdir
+  - a file value carrying ${NAME} reaches the struct expanded, still marked file_toml
 ```

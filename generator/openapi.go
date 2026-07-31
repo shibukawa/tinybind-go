@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 	"github.com/shibukawa/tinybind-go/parser"
 )
 
@@ -23,6 +24,12 @@ func BuildOpenAPI(dir string) (Document, error) {
 
 // BuildOpenAPI builds a document using this generator's discovery identities.
 func (g *Generator) BuildOpenAPI(dir string) (Document, error) {
+	return g.buildOpenAPI(newPackageLoad(dir))
+}
+
+// buildOpenAPI is BuildOpenAPI over a package the run already loaded. Routes and
+// type plans are two readings of the same type-checked package.
+func (g *Generator) buildOpenAPI(load *packageLoad) (Document, error) {
 	normalized, err := g.Options.normalized()
 	if err != nil {
 		return nil, err
@@ -30,11 +37,15 @@ func (g *Generator) BuildOpenAPI(dir string) (Document, error) {
 	if !normalized.openAPI {
 		return nil, fmt.Errorf("%w: %s", ErrFeatureDisabled, FeatureOpenAPI)
 	}
-	routes, err := parser.ParsePackageWithConfig(dir, normalized.parserConfig)
+	pkg, err := load.get()
 	if err != nil {
 		return nil, fmt.Errorf("parse routes: %w", err)
 	}
-	plan, err := g.Analyze(dir)
+	routes, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse routes: %w", err)
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, fmt.Errorf("analyze types: %w", err)
 	}
@@ -78,15 +89,6 @@ func (d Document) JSON() ([]byte, error) {
 	return d.MarshalJSON()
 }
 
-// YAML returns a minimal YAML encoding of the document (deterministic key order).
-func (d Document) YAML() ([]byte, error) {
-	var b strings.Builder
-	if err := writeYAML(&b, map[string]any(d), 0); err != nil {
-		return nil, err
-	}
-	return []byte(b.String()), nil
-}
-
 func indexTypes(plan *PackagePlan) map[string]TypePlan {
 	out := make(map[string]TypePlan, len(plan.Types))
 	for _, t := range plan.Types {
@@ -102,6 +104,16 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 	if route.Handler.Name != "" {
 		op["operationId"] = route.Handler.Name
 	}
+	// Handler godoc documents the operation: first sentence as summary, rest as description.
+	if summary, description := godoc.Split(route.Handler.Doc); summary != "" {
+		op["summary"] = summary
+		if description != "" {
+			op["description"] = description
+		}
+		if godoc.Deprecated(route.Handler.Doc) {
+			op["deprecated"] = true
+		}
+	}
 
 	var params []any
 	var bodyProps map[string]any
@@ -115,7 +127,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 		ensureSchema(schemas, reqName, types[reqName])
 		if tp, ok := types[reqName]; ok {
 			for _, f := range tp.Fields {
-				if f.Check.HasValidation() {
+				if f.HasValidation() {
 					hasCheckValidation = true
 				}
 				switch f.Source {
@@ -310,12 +322,28 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 }
 
 func parameter(in string, f FieldPlan, required bool) map[string]any {
-	return map[string]any{
+	schema := schemaForField(f)
+	// Field docs belong on the parameter object, so drop the schema copies.
+	delete(schema, "description")
+	delete(schema, "deprecated")
+	return describe(map[string]any{
 		"name":     f.Wire,
 		"in":       in,
 		"required": required,
-		"schema":   schemaForField(f),
+		"schema":   schema,
+	}, f.Doc)
+}
+
+// describe attaches godoc text to an OpenAPI schema or parameter object.
+func describe(target map[string]any, doc string) map[string]any {
+	if doc == "" {
+		return target
 	}
+	target["description"] = doc
+	if godoc.Deprecated(doc) {
+		target["deprecated"] = true
+	}
+	return target
 }
 
 func schemaForKind(kind string) map[string]any {
@@ -337,7 +365,8 @@ func schemaForKind(kind string) map[string]any {
 	}
 }
 
-// schemaForField builds an OpenAPI schema object including check-tag constraints.
+// schemaForField builds an OpenAPI schema object including check-tag constraints
+// and the enum and default tags.
 func schemaForField(f FieldPlan) map[string]any {
 	s := schemaForKind(f.Kind)
 	c := f.Check
@@ -357,9 +386,9 @@ func schemaForField(f FieldPlan) map[string]any {
 		s["minLength"] = *c.Len
 		s["maxLength"] = *c.Len
 	}
-	if len(c.Enum) > 0 {
-		enums := make([]any, 0, len(c.Enum))
-		for _, v := range c.Enum {
+	if f.Enum.Set {
+		enums := make([]any, 0, len(f.Enum.Values))
+		for _, v := range f.Enum.Values {
 			enums = append(enums, enumJSONValue(f.Kind, v))
 		}
 		s["enum"] = enums
@@ -382,10 +411,10 @@ func schemaForField(f FieldPlan) map[string]any {
 	if c.DateTime {
 		s["format"] = "date-time"
 	}
-	if c.HasDefault {
-		s["default"] = enumJSONValue(f.Kind, c.Default)
+	if f.Default.Set {
+		s["default"] = enumJSONValue(f.Kind, f.Default.Value)
 	}
-	return s
+	return describe(s, f.Doc)
 }
 
 func enumJSONValue(kind, val string) any {
@@ -452,7 +481,7 @@ func ensureSchema(schemas map[string]any, name string, tp TypePlan) {
 	if len(required) > 0 {
 		schema["required"] = stringSliceAny(required)
 	}
-	schemas[name] = schema
+	schemas[name] = describe(schema, tp.Doc)
 }
 
 // stringSliceAny converts []string to []any for OpenAPI document maps / YAML.
@@ -532,84 +561,4 @@ func extractStreamElem(resp string) string {
 		return s[:j]
 	}
 	return s
-}
-
-func writeYAML(b *strings.Builder, v any, indent int) error {
-	// Normalize typed string slices so required: etc. emit as YAML lists.
-	if ss, ok := v.([]string); ok {
-		return writeYAML(b, stringSliceAny(ss), indent)
-	}
-	ind := strings.Repeat("  ", indent)
-	switch x := v.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(x))
-		for k := range x {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			val := x[k]
-			if ss, ok := val.([]string); ok {
-				val = stringSliceAny(ss)
-			}
-			switch val.(type) {
-			case map[string]any, []any:
-				fmt.Fprintf(b, "%s%s:\n", ind, k)
-				if err := writeYAML(b, val, indent+1); err != nil {
-					return err
-				}
-			default:
-				fmt.Fprintf(b, "%s%s: %s\n", ind, k, yamlScalar(val))
-			}
-		}
-	case []any:
-		for _, item := range x {
-			if ss, ok := item.([]string); ok {
-				item = stringSliceAny(ss)
-			}
-			switch item.(type) {
-			case map[string]any, []any:
-				fmt.Fprintf(b, "%s-\n", ind)
-				if err := writeYAML(b, item, indent+1); err != nil {
-					return err
-				}
-			default:
-				fmt.Fprintf(b, "%s- %s\n", ind, yamlScalar(item))
-			}
-		}
-	default:
-		fmt.Fprintf(b, "%s%s\n", ind, yamlScalar(x))
-	}
-	return nil
-}
-
-func yamlScalar(v any) string {
-	switch x := v.(type) {
-	case string:
-		// quote if needed
-		if x == "" || strings.ContainsAny(x, ":#\n'\"") || strings.Contains(x, " ") {
-			return strconvQuote(x)
-		}
-		return x
-	case bool:
-		if x {
-			return "true"
-		}
-		return "false"
-	case int:
-		return fmt.Sprintf("%d", x)
-	case int64:
-		return fmt.Sprintf("%d", x)
-	case float64:
-		return fmt.Sprintf("%v", x)
-	case nil:
-		return "null"
-	default:
-		return strconvQuote(fmt.Sprint(x))
-	}
-}
-
-func strconvQuote(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
 }

@@ -30,7 +30,7 @@ dialect:
 structured_lists:
   where: AND children by default; explicit and/or groups; omit when empty for SELECT
   joins: conditional; cannot vary result shape
-  set: manage commas; require an unconditional item or pre-execution empty check
+  set: manage commas; require a statically provable non-empty item set per rule:sql-static-mutation-safety
   order_by: static branches or enums; manage commas and empty clause
   insert: paired field-value assignments; no bulk insert
   returning: static item shape
@@ -39,11 +39,14 @@ result_validation:
   - validate column count, names or aliases, types, optionality, and join nullability where provable
   - keep declared public cardinality when analysis is inconclusive
   - enforce unproven one and optional cardinality at runtime
+  - reject a provable disagreement between the declared output and the body per rule:sql-cardinality-body-agreement
+static_analysis: rule:sql-top-level-keyword-scan
 mutation_safety:
-  - UPDATE and DELETE reject an empty dynamic WHERE
+  - UPDATE and DELETE need a provably non-empty WHERE, decided at generation time by rule:sql-static-mutation-safety
   - full-table mutation needs a future explicit opt-in
 forbidden:
   - value interpolation into SQL text
+  - a generated runtime check for a condition decidable at generation time
   - manually authored bind-placeholder tokens in executable SQL text; only value expressions generate them
   - arbitrary dynamic identifiers, operators, keywords, or sort directions
   - runtime-conditional select or returning columns

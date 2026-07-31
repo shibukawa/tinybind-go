@@ -18,6 +18,8 @@ features:
   - streaming
   - ScanRows
   - multipart File
+  - DynamoDB item codec, proposed by requirement:dynamobind-generated-item-codec
+  - DynamoDB table definition emission, per decision:dynamobind-table-definition
 behavior:
   - disabled operation ignores RuntimePackages and operation-specific Set
   - disabled operation contributes no nested helper closure

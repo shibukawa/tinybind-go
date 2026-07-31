@@ -29,10 +29,12 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
 	publicDir := flags.String("public-dir", "", "directory receiving extracted component assets (default: "+DefaultPublicDir+"; requires -public-url-base)")
 	publicURLBase := flags.String("public-url-base", "", "URL path or full URL prefixing extracted asset names (default: "+DefaultPublicURLBase+"; requires -public-dir)")
+	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
+	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -59,7 +61,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		SQLTemplatePattern:  *sqlTemplatePattern,
 		PublicDir:           *publicDir,
 		PublicURLBase:       *publicURLBase,
-		Check:               *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
+		SQLDialect:          *sqlDialect,
+		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
 		SQLContextOnlyAPI: *sqlContextOnlyAPI,
 	})
 	if err != nil {
@@ -76,6 +79,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		}
 		fmt.Fprintln(stdout, "ok")
 		return 0
+	}
+	if result.Cached {
+		fmt.Fprintf(stderr, "generate: %s is up to date\n", *dir)
 	}
 	for _, path := range result.Paths() {
 		fmt.Fprintln(stdout, path)

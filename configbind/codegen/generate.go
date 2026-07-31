@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/cliparser"
 	"github.com/shibukawa/tinybind-go/minitoml/codegen"
@@ -20,7 +21,10 @@ type Spec struct {
 	SubCommand  bool
 	Name        string
 	Help        string
-	Fields      []Field
+	// Doc is the struct's godoc text. Bind specs render it above the scaffold
+	// table; subcommand specs fall back to it when Help is empty.
+	Doc    string
+	Fields []Field
 }
 
 // Field and FieldKind re-export for callers.
@@ -33,8 +37,10 @@ const (
 	FieldString      = codegen.FieldString
 	FieldBool        = codegen.FieldBool
 	FieldInt         = codegen.FieldInt
+	FieldDuration    = codegen.FieldDuration
 	FieldStringSlice = codegen.FieldStringSlice
 	FieldStruct      = codegen.FieldStruct
+	FieldStructSlice = codegen.FieldStructSlice
 )
 
 // Generate emits package source that registers one Definition for each Spec.
@@ -60,6 +66,9 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 	if specsNeedStrconv(specs) {
 		b.WriteString("\t\"strconv\"\n")
 	}
+	if specsNeedTime(specs) {
+		b.WriteString("\t\"time\"\n")
+	}
 	b.WriteString("\n")
 	b.WriteString("\t\"github.com/shibukawa/tinybind-go/cliparser\"\n")
 	b.WriteString("\t\"github.com/shibukawa/tinybind-go/configbind\"\n")
@@ -71,19 +80,26 @@ func GenerateGroup(packageName string, specs []Spec, indexOffset int) ([]byte, e
 	}
 	b.WriteString("}\n\n")
 
+	// known lets dependon parents be checked against the keys generated in this
+	// run. A parent bound in another package is invisible here and passes.
+	known := knownFieldKinds(specs)
+	knownFalsy, err := knownFalsyChoices(specs)
+	if err != nil {
+		return nil, fmt.Errorf("configbind/codegen: %w", err)
+	}
 	for i, s := range specs {
 		if s.PackagePath == "" {
 			s.PackagePath = packageName
 		}
 		registerName := fmt.Sprintf("register%sDefinition%d", s.TypeName, indexOffset+i)
-		var err error
+		var genErr error
 		if s.SubCommand {
-			err = emitSubCommandType(&b, s, registerName)
+			genErr = emitSubCommandType(&b, s, registerName)
 		} else {
-			err = emitType(&b, s, registerName)
+			genErr = emitType(&b, s, registerName, known, knownFalsy)
 		}
-		if err != nil {
-			return nil, err
+		if genErr != nil {
+			return nil, genErr
 		}
 	}
 
@@ -99,7 +115,7 @@ func specsNeedStrconv(specs []Spec) bool {
 	fieldsNeedStrconv = func(fields []Field) bool {
 		for _, field := range fields {
 			if field.Kind == FieldBool || field.Kind == FieldInt ||
-				(field.Kind == FieldStruct && fieldsNeedStrconv(field.Nested)) {
+				((field.Kind == FieldStruct || field.Kind == FieldStructSlice) && fieldsNeedStrconv(field.Nested)) {
 				return true
 			}
 		}
@@ -113,7 +129,26 @@ func specsNeedStrconv(specs []Spec) bool {
 	return false
 }
 
-func emitType(b *bytes.Buffer, s Spec, registerName string) error {
+func specsNeedTime(specs []Spec) bool {
+	var fieldsNeedTime func([]Field) bool
+	fieldsNeedTime = func(fields []Field) bool {
+		for _, field := range fields {
+			if field.Kind == FieldDuration ||
+				(field.Kind == FieldStruct && fieldsNeedTime(field.Nested)) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, spec := range specs {
+		if fieldsNeedTime(spec.Fields) {
+			return true
+		}
+	}
+	return false
+}
+
+func emitType(b *bytes.Buffer, s Spec, registerName string, known map[string]FieldKind, knownFalsy map[string]string) error {
 	if s.TypeName == "" || s.Prefix == "" {
 		return fmt.Errorf("configbind/codegen: TypeName and Prefix required")
 	}
@@ -122,8 +157,29 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 			return fmt.Errorf("configbind/codegen: Bind field %s cannot use arg tag", field.Field.GoName)
 		}
 	}
+	if err := checkTableArrayFields(s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
+	if err := checkStructFieldTags("", s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 	keys := collectKeys(s.Prefix, s.Fields)
 	defaults := collectDefaults(s.Prefix, s.Fields)
+	falsy, err := collectFalsy(s.Prefix, s.Fields)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
+	// A number or duration parent needs its own falsy choice, and that parent
+	// may live in another spec of this run, so the whole run's falsy map feeds
+	// the check.
+	dependsOn, err := collectDependsOn(s.Prefix, s.Fields, known, knownFalsy)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
+	secrets, err := collectSecrets(s.Prefix, s.Fields)
+	if err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 	flagMetas := collectFlagMetas(s.Prefix, s.Fields)
 	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
@@ -137,6 +193,9 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 	b.WriteString("](configbind.Definition{\n")
 	fmt.Fprintf(b, "\t\tTypeName: %s,\n", strconv.Quote(typeIdentity))
 	fmt.Fprintf(b, "\t\tPrefix: %s,\n", strconv.Quote(s.Prefix))
+	if s.Doc != "" {
+		fmt.Fprintf(b, "\t\tDoc: %s,\n", strconv.Quote(s.Doc))
+	}
 	b.WriteString("\t\tKnownKeys: []string{\n")
 	for _, k := range keys {
 		fmt.Fprintf(b, "\t\t\t%s,\n", strconv.Quote(k))
@@ -149,6 +208,37 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 			if v, ok := defaults[k]; ok {
 				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(v))
 			}
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(dependsOn) > 0 {
+		b.WriteString("\t\tDependsOn: map[string][]string{\n")
+		for _, k := range keys {
+			parents, ok := dependsOn[k]
+			if !ok {
+				continue
+			}
+			quoted := make([]string, 0, len(parents))
+			for _, parent := range parents {
+				quoted = append(quoted, strconv.Quote(parent))
+			}
+			fmt.Fprintf(b, "\t\t\t%s: {%s},\n", strconv.Quote(k), strings.Join(quoted, ", "))
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(falsy) > 0 {
+		b.WriteString("\t\tFalsy: map[string]string{\n")
+		for _, k := range keys {
+			if value, ok := falsy[k]; ok {
+				fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(k), strconv.Quote(value))
+			}
+		}
+		b.WriteString("\t\t},\n")
+	}
+	if len(secrets) > 0 {
+		b.WriteString("\t\tSecrets: map[string]string{\n")
+		for _, secret := range secrets {
+			fmt.Fprintf(b, "\t\t\t%s: %s,\n", strconv.Quote(secret.Key), strconv.Quote(secret.Mode))
 		}
 		b.WriteString("\t\t},\n")
 	}
@@ -175,23 +265,7 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 	b.WriteString("\t\t},\n")
 	fmt.Fprintf(b, "\t\tApply: %s,\n", applyName)
 	b.WriteString("\t\tScaffold: []configbind.ScaffoldField{\n")
-	for _, scaffoldField := range flattenScaffoldFields("", s.Fields) {
-		f := scaffoldField.Field
-		fmt.Fprintf(b, "\t\t{Key: %s, Kind: %s", strconv.Quote(scaffoldField.Key), scaffoldKindName(f.Kind))
-		if f.Default != "" {
-			fmt.Fprintf(b, ", Default: %s", strconv.Quote(f.Default))
-		}
-		if f.Opt != "" {
-			fmt.Fprintf(b, ", Opt: %s", strconv.Quote(f.Opt))
-		}
-		if f.Env != "" {
-			fmt.Fprintf(b, ", Env: %s", strconv.Quote(f.Env))
-		}
-		if f.Help != "" {
-			fmt.Fprintf(b, ", Help: %s", strconv.Quote(f.Help))
-		}
-		b.WriteString("},\n")
-	}
+	writeScaffoldFields(b, flattenScaffoldFields("", s.Fields))
 	b.WriteString("\t\t},\n")
 	b.WriteString("\t})\n")
 	b.WriteString("}\n\n")
@@ -202,7 +276,7 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 	b.WriteString("\tif !ok || p == nil {\n")
 	fmt.Fprintf(b, "\t\treturn fmt.Errorf(\"configbind: apply %s: bad destination\")\n", s.TypeName)
 	b.WriteString("\t}\n")
-	if err := emitApplyFields(b, "p", s.Prefix, s.Fields); err != nil {
+	if err := emitApplyFields(b, applyScope{src: "o"}, "p", s.Prefix, s.Fields); err != nil {
 		return err
 	}
 	b.WriteString("\treturn nil\n")
@@ -211,11 +285,34 @@ func emitType(b *bytes.Buffer, s Spec, registerName string) error {
 }
 
 func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
+	if s.Help == "" {
+		s.Help = s.Doc
+	}
 	if s.TypeName == "" || s.Name == "" || s.Help == "" {
 		return fmt.Errorf("configbind/codegen: subcommand TypeName, Name, and Help required")
 	}
 	if strings.ContainsAny(s.Name, " \t\r\n") || strings.HasPrefix(s.Name, "-") {
 		return fmt.Errorf("configbind/codegen: invalid subcommand name %q", s.Name)
+	}
+	if err := rejectTableArrays(s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: subcommand %s: %w", s.Name, err)
+	}
+	for _, field := range flattenFields("", s.Fields) {
+		for _, tag := range []struct {
+			name string
+			set  bool
+		}{
+			// Parents and Secret include what a struct above the field
+			// declared, so a tag written there is caught here too.
+			{"dependon", len(field.Parents) > 0},
+			{"falsy", field.Field.Falsy != ""},
+			{"secret", field.Secret != ""},
+		} {
+			if tag.set {
+				return fmt.Errorf("configbind/codegen: subcommand %s: field %s cannot use %s; subcommand fields are not overlay-backed",
+					s.Name, field.Field.GoName, tag.name)
+			}
+		}
 	}
 	flagMetas := collectFlagMetas("", s.Fields)
 	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
@@ -283,7 +380,7 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 	b.WriteString("\tif !ok || p == nil {\n")
 	fmt.Fprintf(b, "\t\treturn fmt.Errorf(\"configbind: apply %s: bad destination\")\n", s.TypeName)
 	b.WriteString("\t}\n")
-	if err := emitApplyFields(b, "p", "", s.Fields); err != nil {
+	if err := emitApplyFields(b, applyScope{src: "o"}, "p", "", s.Fields); err != nil {
 		return err
 	}
 	b.WriteString("\treturn nil\n")
@@ -294,23 +391,243 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 type scaffoldCodegenField struct {
 	Key   string
 	Field Field
+	// Nested holds the element fields of an array of tables, keyed relative to Key.
+	Nested []scaffoldCodegenField
+	// Parents are the absolute dependon parents this key answers to: its own
+	// tag plus every tag declared on a struct above it.
+	Parents []string
+	// Secret is the disclosure mode in force here, from this field's own tag or
+	// the nearest struct above it that declared one.
+	Secret string
 }
 
+// flattenFields returns the leaf fields reachable by a single config key.
+// Arrays of tables are skipped: their element fields are addressed per element,
+// not by one stable key, so they have no flag, env, or default of their own.
+//
+// A dependon or secret tag on a nested struct covers the whole subtree, so the
+// walk carries both down; a leaf's own dependon adds to the inherited parents
+// rather than replacing them, because both conditions have to hold for the key
+// to be worth printing.
 func flattenFields(prefix string, fields []Field) []scaffoldCodegenField {
+	return flattenInheriting(prefix, fields, nil, "")
+}
+
+func flattenInheriting(prefix string, fields []Field, parents []string, secret string) []scaffoldCodegenField {
 	var result []scaffoldCodegenField
 	for _, field := range fields {
 		key := joinKey(prefix, field.Key)
-		if field.Kind == FieldStruct {
-			result = append(result, flattenFields(key, field.Nested)...)
-			continue
+		fieldParents := parents
+		if parent := resolveParentKey(prefix, field.DependsOn); parent != "" {
+			fieldParents = append(append([]string(nil), parents...), parent)
 		}
-		result = append(result, scaffoldCodegenField{Key: key, Field: field})
+		fieldSecret := secret
+		if field.Secret != "" {
+			fieldSecret = field.Secret
+		}
+		switch field.Kind {
+		case FieldStruct:
+			result = append(result, flattenInheriting(key, field.Nested, fieldParents, fieldSecret)...)
+		case FieldStructSlice:
+			// The array itself is one stable key, so it carries its own dependon
+			// and secret. Its elements are addressed per element and are collected
+			// by collectElementSecrets instead.
+			result = append(result, scaffoldCodegenField{
+				Key:     key,
+				Field:   field,
+				Parents: fieldParents,
+				Secret:  fieldSecret,
+			})
+		default:
+			result = append(result, scaffoldCodegenField{
+				Key:     key,
+				Field:   field,
+				Parents: fieldParents,
+				Secret:  fieldSecret,
+			})
+		}
 	}
 	return result
 }
 
+// resolveParentKey turns one dependon tag into an absolute config key. A
+// leading dot makes it relative to the struct the tag is written in, which is
+// what lets one shared struct type name a sibling under every prefix it is
+// embedded at; anything else is already absolute.
+func resolveParentKey(prefix, tag string) string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return ""
+	}
+	if rest, ok := strings.CutPrefix(tag, "."); ok {
+		return joinKey(prefix, strings.TrimSpace(rest))
+	}
+	return tag
+}
+
+// flattenScaffoldFields is flattenFields plus one entry per array of tables,
+// which the scaffold renders as its own [[key]] block.
 func flattenScaffoldFields(prefix string, fields []Field) []scaffoldCodegenField {
-	return flattenFields(prefix, fields)
+	var result []scaffoldCodegenField
+	for _, field := range fields {
+		key := joinKey(prefix, field.Key)
+		switch field.Kind {
+		case FieldStruct:
+			result = append(result, flattenScaffoldFields(key, field.Nested)...)
+		case FieldStructSlice:
+			result = append(result, scaffoldCodegenField{
+				Key:    key,
+				Field:  field,
+				Nested: flattenScaffoldFields("", field.Nested),
+			})
+		default:
+			result = append(result, scaffoldCodegenField{Key: key, Field: field})
+		}
+	}
+	return result
+}
+
+func writeScaffoldFields(b *bytes.Buffer, fields []scaffoldCodegenField) {
+	for _, scaffoldField := range fields {
+		f := scaffoldField.Field
+		fmt.Fprintf(b, "\t\t{Key: %s, Kind: %s", strconv.Quote(scaffoldField.Key), scaffoldKindName(f.Kind))
+		if f.Default != "" {
+			fmt.Fprintf(b, ", Default: %s", strconv.Quote(f.Default))
+		}
+		if f.Opt != "" {
+			fmt.Fprintf(b, ", Opt: %s", strconv.Quote(f.Opt))
+		}
+		if f.Env != "" {
+			fmt.Fprintf(b, ", Env: %s", strconv.Quote(f.Env))
+		}
+		if f.Help != "" {
+			fmt.Fprintf(b, ", Help: %s", strconv.Quote(f.Help))
+		}
+		if len(scaffoldField.Nested) > 0 {
+			b.WriteString(", Nested: []configbind.ScaffoldField{\n")
+			writeScaffoldFields(b, scaffoldField.Nested)
+			b.WriteString("}")
+		}
+		b.WriteString("},\n")
+	}
+}
+
+// checkTableArrayFields rejects tags that cannot reach an array-of-tables
+// element: it has no flag, env var, or single config key of its own.
+func checkTableArrayFields(fields []Field) error {
+	for _, field := range fields {
+		switch field.Kind {
+		case FieldStruct:
+			if err := checkTableArrayFields(field.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			if field.Opt != "" || field.Env != "" {
+				return fmt.Errorf("field %s: an array of tables has no flag or env form", field.GoName)
+			}
+			if err := checkElementFields(field.GoName, field.Nested); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// rejectTableArrays refuses arrays of tables where only CLI arguments arrive:
+// a subcommand is never fed from a config file.
+func rejectTableArrays(fields []Field) error {
+	for _, field := range fields {
+		switch field.Kind {
+		case FieldStruct:
+			if err := rejectTableArrays(field.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			return fmt.Errorf("field %s: a subcommand cannot take an array of tables", field.GoName)
+		}
+	}
+	return nil
+}
+
+// checkStructFieldTags rejects the tags a struct field cannot carry.
+//
+// Every tag has an outcome here, because the tags that reached this walk without
+// one were accepted and dropped: a default on a nested struct generated nothing
+// and reported nothing. dependon and secret describe a whole subtree and are
+// propagated to its leaves. falsy names one value, which neither a struct nor an
+// array has. default, opt, env, and arg each address one scalar key, so they
+// have nowhere to land on either.
+//
+// help is the exception: requirement:godoc-help-precedence backfills help tags
+// into source from godoc, including onto struct fields, so rejecting it here
+// would fail the generation run that wrote it.
+func checkStructFieldTags(prefix string, fields []Field) error {
+	for _, field := range fields {
+		key := joinKey(prefix, field.Key)
+		switch field.Kind {
+		case FieldStruct:
+			if err := checkScalarOnlyTags(field, "the nested struct "+key); err != nil {
+				return err
+			}
+			if field.Falsy != "" {
+				return fmt.Errorf("field %s: falsy applies to a leaf field, not to the nested struct %s", field.GoName, key)
+			}
+			if err := checkStructFieldTags(key, field.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			if err := checkScalarOnlyTags(field, "the array of tables "+key); err != nil {
+				return err
+			}
+			// dependon and secret stay: the array itself owns one stable key, so a
+			// parent can hide it whole and a disclosure mode can cover its elements.
+			// Only falsy still has no single value to name.
+			if field.Falsy != "" {
+				return fmt.Errorf("field %s: falsy applies to a leaf field, not to the array of tables %s", field.GoName, key)
+			}
+		}
+	}
+	return nil
+}
+
+// checkScalarOnlyTags rejects the tags that address exactly one scalar key.
+func checkScalarOnlyTags(field Field, subject string) error {
+	for _, tag := range []struct {
+		name string
+		set  bool
+		why  string
+	}{
+		{"default", field.Default != "", "a default is one parsed value"},
+		{"opt", field.Opt != "", "a CLI flag carries one value"},
+		{"env", field.Env != "", "an environment variable carries one value"},
+		{"arg", field.Arg != "", "a positional argument carries one value"},
+	} {
+		if tag.set {
+			return fmt.Errorf("field %s: %s applies to a leaf field, not to %s; %s", field.GoName, tag.name, subject, tag.why)
+		}
+	}
+	return nil
+}
+
+// checkElementFields rejects the tags an array-of-tables element field cannot
+// carry. secret is not among them: an element value needs redaction as much as
+// any other, and it is resolved by the element's path under the array key, which
+// is stable even though the element's own key carries a runtime index.
+func checkElementFields(owner string, fields []Field) error {
+	for _, field := range fields {
+		if field.Opt != "" || field.Env != "" || field.Arg != "" {
+			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no flag, env, or positional form", owner, field.GoName)
+		}
+		// An element field has no stable config key, so nothing can name it as a
+		// dependon parent and nothing can look it up to hide or fill it in.
+		if field.DependsOn != "" || field.Falsy != "" {
+			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no provenance key for dependon or falsy", owner, field.GoName)
+		}
+		if err := checkElementFields(owner+"."+field.GoName, field.Nested); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func collectPositionals(fields []Field) ([]scaffoldCodegenField, error) {
@@ -318,7 +635,7 @@ func collectPositionals(fields []Field) ([]scaffoldCodegenField, error) {
 	optionalSeen := false
 	restSeen := false
 	for _, field := range fields {
-		if field.Kind == FieldStruct {
+		if field.Kind == FieldStruct || field.Kind == FieldStructSlice {
 			if field.Arg != "" {
 				return nil, fmt.Errorf("field %s: nested struct cannot be positional", field.GoName)
 			}
@@ -385,20 +702,65 @@ func scaffoldKindName(kind FieldKind) string {
 		return "configbind.ScaffoldBool"
 	case FieldInt:
 		return "configbind.ScaffoldInt"
+	case FieldDuration:
+		return "configbind.ScaffoldDuration"
 	case FieldStringSlice:
 		return "configbind.ScaffoldStringSlice"
+	case FieldStructSlice:
+		return "configbind.ScaffoldTableArray"
 	default:
 		return "configbind.ScaffoldString"
 	}
 }
 
-func emitApplyFields(b *bytes.Buffer, recv, prefix string, fields []Field) error {
+// applyScope is where one group of fields reads from: the Go expression holding
+// their overlay (the whole overlay at the top level, or one array-of-tables
+// element inside a loop), the key path diagnostics name them by, and the
+// nesting depth that keeps loop variables apart.
+type applyScope struct {
+	src        string
+	diagPrefix string
+	// diagIndexArgs names the loop variables that fill the [%d] verbs diagPrefix
+	// carries, in the order they appear. An element's only identifier is its
+	// position, so an error inside one has to name it.
+	diagIndexArgs []string
+	depth         int
+}
+
+// diagKey returns the key as a Go format string; it holds a [%d] verb per array
+// of tables enclosing this scope.
+func (s applyScope) diagKey(key string) string {
+	return joinKey(s.diagPrefix, key)
+}
+
+// diagArgs returns the argument list that precedes any later verb, ready to
+// splice into an emitted fmt.Errorf call.
+func (s applyScope) diagArgs() string {
+	if len(s.diagIndexArgs) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(s.diagIndexArgs, ", ")
+}
+
+// doubledDiagArgs feeds a message that spells the key twice, so each occurrence
+// gets its own copy of the index arguments.
+func doubledDiagArgs(s applyScope) string {
+	if len(s.diagIndexArgs) == 0 {
+		return ""
+	}
+	both := append(append([]string(nil), s.diagIndexArgs...), s.diagIndexArgs...)
+	return ", " + strings.Join(both, ", ")
+}
+
+// emitApplyFields writes the field assignments for one struct.
+func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fields []Field) error {
+	src := scope.src
 	for _, f := range fields {
 		full := joinKey(prefix, f.Key)
 		access := recv + "." + f.GoName
 		switch f.Kind {
 		case FieldString:
-			fmt.Fprintf(b, "\tif v, ok := o.GetString(%q); ok {\n", full)
+			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
 			fmt.Fprintf(b, "\t\t%s = v\n", access)
 			if f.Default != "" {
 				b.WriteString("\t} else {\n")
@@ -408,10 +770,10 @@ func emitApplyFields(b *bytes.Buffer, recv, prefix string, fields []Field) error
 				b.WriteString("\t}\n")
 			}
 		case FieldBool:
-			fmt.Fprintf(b, "\tif v, ok := o.GetString(%q); ok {\n", full)
+			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
 			b.WriteString("\t\tbb, err := strconv.ParseBool(v)\n")
 			b.WriteString("\t\tif err != nil {\n")
-			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", full)
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
 			fmt.Fprintf(b, "\t\t%s = bb\n", access)
 			if f.Default != "" {
@@ -426,29 +788,62 @@ func emitApplyFields(b *bytes.Buffer, recv, prefix string, fields []Field) error
 				b.WriteString("\t}\n")
 			}
 		case FieldInt:
-			fmt.Fprintf(b, "\tif v, ok := o.GetString(%q); ok {\n", full)
-			b.WriteString("\t\tn, err := strconv.ParseInt(v, 10, 64)\n")
+			// Parsing at the field's own width keeps an int64 field from being
+			// narrowed to int, and turns an out-of-range value into an error
+			// instead of a wrapped one.
+			spec, err := codegen.IntFieldSpecOf(f.GoType)
+			if err != nil {
+				return fmt.Errorf("field %s: %w", f.GoName, err)
+			}
+			parse := "strconv.ParseInt"
+			if !spec.Signed {
+				parse = "strconv.ParseUint"
+			}
+			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
+			fmt.Fprintf(b, "\t\tn, err := %s(v, 10, %d)\n", parse, spec.BitSize)
 			b.WriteString("\t\tif err != nil {\n")
-			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\", err)\n", full)
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
-			fmt.Fprintf(b, "\t\t%s = int(n)\n", access)
+			fmt.Fprintf(b, "\t\t%s = %s(n)\n", access, spec.Name)
 			if f.Default != "" {
-				value, err := strconv.ParseInt(f.Default, 10, 64)
+				literal, err := spec.ParseLiteral(f.Default)
 				if err != nil {
-					return fmt.Errorf("invalid int default %q for %s", f.Default, f.GoName)
+					return fmt.Errorf("invalid %s default %q for %s", spec.Name, f.Default, f.GoName)
 				}
 				b.WriteString("\t} else {\n")
-				fmt.Fprintf(b, "\t\t%s = %s\n", access, strconv.FormatInt(value, 10))
+				fmt.Fprintf(b, "\t\t%s = %s\n", access, literal)
+				b.WriteString("\t}\n")
+			} else {
+				b.WriteString("\t}\n")
+			}
+		case FieldDuration:
+			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
+			b.WriteString("\t\td, err := time.ParseDuration(v)\n")
+			b.WriteString("\t\tif err != nil {\n")
+			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
+			b.WriteString("\t\t}\n")
+			fmt.Fprintf(b, "\t\t%s = d\n", access)
+			if f.Default != "" {
+				value, err := time.ParseDuration(f.Default)
+				if err != nil {
+					return fmt.Errorf("invalid duration default %q for %s", f.Default, f.GoName)
+				}
+				b.WriteString("\t} else {\n")
+				fmt.Fprintf(b, "\t\t%s = %d // %s\n", access, int64(value), value)
 				b.WriteString("\t}\n")
 			} else {
 				b.WriteString("\t}\n")
 			}
 		case FieldStringSlice:
-			fmt.Fprintf(b, "\tif v, ok := o.GetMulti(%q); ok {\n", full)
+			fmt.Fprintf(b, "\tif v, ok := %s.GetMulti(%q); ok {\n", src, full)
 			fmt.Fprintf(b, "\t\t%s = v\n", access)
 			b.WriteString("\t}\n")
 		case FieldStruct:
-			if err := emitApplyFields(b, access, full, f.Nested); err != nil {
+			if err := emitApplyFields(b, scope, access, full, f.Nested); err != nil {
+				return err
+			}
+		case FieldStructSlice:
+			if err := emitApplyStructSlice(b, scope, access, full, f); err != nil {
 				return err
 			}
 		default:
@@ -458,21 +853,265 @@ func emitApplyFields(b *bytes.Buffer, recv, prefix string, fields []Field) error
 	return nil
 }
 
+// emitApplyStructSlice expands one array of tables into a loop over its element
+// overlays. Element keys are relative to the array key, so the element fields
+// are emitted with an empty prefix.
+func emitApplyStructSlice(b *bytes.Buffer, scope applyScope, access, full string, f Field) error {
+	if f.ElemType == "" {
+		return fmt.Errorf("field %s needs ElemType for a struct slice", f.GoName)
+	}
+	diagKey := scope.diagKey(full)
+	entry := fmt.Sprintf("ta%d", scope.depth+1)
+	index := fmt.Sprintf("i%d", scope.depth+1)
+	fmt.Fprintf(b, "\tif %s, ok := %s.Get(%q); ok {\n", entry, scope.src, full)
+	fmt.Fprintf(b, "\t\tif !%s.IsTables {\n", entry)
+	fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: expected an array of tables ([[%s]])\"%s)\n",
+		diagKey, diagKey, doubledDiagArgs(scope))
+	b.WriteString("\t\t}\n")
+	fmt.Fprintf(b, "\t\t%s = make([]%s, len(%s.Tables))\n", access, f.ElemType, entry)
+	fmt.Fprintf(b, "\t\tfor %s := range %s.Tables {\n", index, entry)
+	elemScope := applyScope{
+		src: fmt.Sprintf("%s.Tables[%s]", entry, index),
+		// The element's index joins the key here, so every diagnostic emitted
+		// inside the loop names which element it came from.
+		diagPrefix:    diagKey + "[%d]",
+		diagIndexArgs: append(append([]string(nil), scope.diagIndexArgs...), index),
+		depth:         scope.depth + 1,
+	}
+	if err := emitApplyFields(b, elemScope, fmt.Sprintf("%s[%s]", access, index), "", f.Nested); err != nil {
+		return err
+	}
+	b.WriteString("\t\t}\n")
+	b.WriteString("\t}\n")
+	return nil
+}
+
 func collectKeys(prefix string, fields []Field) []string {
 	var keys []string
 	var walk func(string, []Field)
 	walk = func(p string, fs []Field) {
 		for _, f := range fs {
 			full := joinKey(p, f.Key)
-			if f.Kind == FieldStruct {
+			switch f.Kind {
+			case FieldStruct:
 				walk(full, f.Nested)
-				continue
+			case FieldStructSlice:
+				// The array itself is one key; its element keys are per element.
+				keys = append(keys, full)
+			default:
+				keys = append(keys, full)
 			}
-			keys = append(keys, full)
 		}
 	}
 	walk(prefix, fields)
 	return keys
+}
+
+// knownFieldKinds indexes every Bind key emitted in this generation run by kind.
+// knownFalsyChoices is the run's falsy map, which a dependon check needs when
+// the parent it names lives in another spec of the same run.
+func knownFalsyChoices(specs []Spec) (map[string]string, error) {
+	out := map[string]string{}
+	for _, spec := range specs {
+		if spec.SubCommand {
+			continue
+		}
+		falsy, err := collectFalsy(spec.Prefix, spec.Fields)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range falsy {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
+func knownFieldKinds(specs []Spec) map[string]FieldKind {
+	known := map[string]FieldKind{}
+	for _, spec := range specs {
+		if spec.SubCommand {
+			continue
+		}
+		for _, field := range flattenFields(spec.Prefix, spec.Fields) {
+			known[field.Key] = field.Field.Kind
+		}
+	}
+	return known
+}
+
+// collectDependsOn maps each dependent key to every parent it answers to: the
+// key's own dependon tag plus the tags of the structs it sits under. It rejects
+// the mistakes visible at generation time; a parent that belongs to another
+// package is absent from known and is accepted as-is.
+func collectDependsOn(prefix string, fields []Field, known map[string]FieldKind, falsy map[string]string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, field := range flattenFields(prefix, fields) {
+		for _, parent := range field.Parents {
+			if strings.Contains(parent, ",") {
+				return nil, fmt.Errorf("field %s: dependon takes one parent key, got %q", field.Field.GoName, parent)
+			}
+			if parent == field.Key {
+				return nil, fmt.Errorf("field %s: dependon refers to itself", field.Field.GoName)
+			}
+			if err := checkParentKind(field.Field.GoName, parent, known, falsy); err != nil {
+				return nil, err
+			}
+			out[field.Key] = appendParent(out[field.Key], parent)
+		}
+	}
+	if err := checkDependencyCycles(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// checkParentKind states which kinds have a defined "empty". A string is empty
+// when it is "", a bool when it is false; a number or duration has no such
+// value of its own, because zero is a deliberate setting, so it may only be a
+// parent once its own falsy tag says which value means off.
+func checkParentKind(owner, parent string, known map[string]FieldKind, falsy map[string]string) error {
+	kind, ok := known[parent]
+	if !ok {
+		return nil
+	}
+	switch kind {
+	case FieldString, FieldBool:
+		return nil
+	case FieldInt, FieldDuration:
+		if falsy[parent] == "" {
+			return fmt.Errorf("field %s: dependon parent %q is a number or duration, so it needs its own falsy tag to say which value means off", owner, parent)
+		}
+		return nil
+	default:
+		return fmt.Errorf("field %s: dependon parent %q must be a string, bool, int, or duration field", owner, parent)
+	}
+}
+
+func appendParent(parents []string, parent string) []string {
+	for _, existing := range parents {
+		if existing == parent {
+			return parents
+		}
+	}
+	return append(parents, parent)
+}
+
+// collectFalsy maps each falsy-tagged key to the choice that means "off". A
+// string names one of its own enum choices; a number or duration names the
+// zero-ish value that disables the feature it configures. Bool is excluded
+// because false already says it, and so are the kinds with no single value.
+func collectFalsy(prefix string, fields []Field) (map[string]string, error) {
+	out := map[string]string{}
+	for _, field := range flattenFields(prefix, fields) {
+		value := field.Field.Falsy
+		if value == "" {
+			continue
+		}
+		if field.Field.Kind == FieldStruct || field.Field.Kind == FieldStructSlice {
+			// checkStructFieldTags owns placement and words the rejection in terms
+			// of where the tag sits; reporting it here would preempt that with a
+			// message about value kinds instead.
+			continue
+		}
+		switch field.Field.Kind {
+		case FieldString:
+		case FieldInt:
+			spec, err := codegen.IntFieldSpecOf(field.Field.GoType)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", field.Field.GoName, err)
+			}
+			if _, err := spec.ParseLiteral(value); err != nil {
+				return nil, fmt.Errorf("field %s: falsy %q is not a valid %s: %w", field.Field.GoName, value, spec.Name, err)
+			}
+		case FieldDuration:
+			if _, err := time.ParseDuration(value); err != nil {
+				return nil, fmt.Errorf("field %s: falsy %q is not a duration: %w", field.Field.GoName, value, err)
+			}
+		default:
+			return nil, fmt.Errorf("field %s: falsy applies to string, int, and duration fields only", field.Field.GoName)
+		}
+		out[field.Key] = value
+	}
+	return out, nil
+}
+
+// secretEntry is one key and the disclosure mode that applies to it, kept in
+// declaration order so the generated map literal is deterministic.
+type secretEntry struct {
+	Key  string
+	Mode string
+}
+
+// collectSecrets lists every key with a disclosure mode in declaration order:
+// leaves, the keys that inherit a mode from a struct or array above them, and
+// the fields of array-of-tables elements.
+//
+// An element field is indexed by its path under the array key rather than by its
+// own key, because its own key carries an index that only exists at run time.
+// Provenance matches that path at every index.
+func collectSecrets(prefix string, fields []Field) ([]secretEntry, error) {
+	var out []secretEntry
+	var walk func(string, []Field, string) error
+	walk = func(p string, fs []Field, inherited string) error {
+		for _, field := range fs {
+			key := joinKey(p, field.Key)
+			mode := inherited
+			if field.Secret != "" {
+				if err := checkSecretMode(field.GoName, field.Secret); err != nil {
+					return err
+				}
+				mode = field.Secret
+			}
+			if mode != "" {
+				out = append(out, secretEntry{Key: key, Mode: mode})
+			}
+			switch field.Kind {
+			case FieldStruct, FieldStructSlice:
+				if err := walk(key, field.Nested, mode); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(prefix, fields, ""); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func checkSecretMode(goName, mode string) error {
+	switch mode {
+	case "hide", "mask", "show":
+		return nil
+	}
+	return fmt.Errorf("field %s: secret must be hide, mask, or show, got %q", goName, mode)
+}
+
+// checkDependencyCycles rejects a dependon chain that loops back on itself.
+// Only same-run edges are visible, which is where an author-written cycle lives.
+func checkDependencyCycles(edges map[string][]string) error {
+	var walk func(key string, seen map[string]bool) error
+	walk = func(key string, seen map[string]bool) error {
+		for _, parent := range edges[key] {
+			if seen[parent] {
+				return fmt.Errorf("dependon cycle through %q", parent)
+			}
+			seen[parent] = true
+			if err := walk(parent, seen); err != nil {
+				return err
+			}
+			delete(seen, parent)
+		}
+		return nil
+	}
+	for start := range edges {
+		if err := walk(start, map[string]bool{start: true}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func collectDefaults(prefix string, fields []Field) map[string]string {
@@ -481,12 +1120,15 @@ func collectDefaults(prefix string, fields []Field) map[string]string {
 	walk = func(p string, fs []Field) {
 		for _, f := range fs {
 			full := joinKey(p, f.Key)
-			if f.Kind == FieldStruct {
+			switch f.Kind {
+			case FieldStruct:
 				walk(full, f.Nested)
-				continue
-			}
-			if f.Default != "" {
-				out[full] = f.Default
+			case FieldStructSlice:
+				// Element defaults are applied per element inside the generated loop.
+			default:
+				if f.Default != "" {
+					out[full] = f.Default
+				}
 			}
 		}
 	}
@@ -507,6 +1149,10 @@ func collectFlagMetas(prefix string, fields []Field) []cliparser.FieldMeta {
 			}
 			if f.Kind == FieldStruct {
 				walk(full, f.Nested)
+				continue
+			}
+			if f.Kind == FieldStructSlice {
+				// No flag or env var can address a repeated table.
 				continue
 			}
 			if f.Arg != "" {

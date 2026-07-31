@@ -27,8 +27,9 @@ resolver_contract:
   SQLExecutor: ExecContext-compatible and QueryContext-compatible
   accepted_values: [sql.DB, sql.Conn, sql.Tx]
 standard_runtime:
-  setter: WithSQLExecutor(context.Context, SQLExecutor) context.Context
+  setter: WithSQLExecutor(context.Context, SQLExecutor, ...ExecutorOption) context.Context
   resolver: SQLExecutorFromContext(context.Context) (SQLExecutor, error)
+  write_resolver: WriteExecutorFromContext per requirement:sql-read-only-executor
   key: private typed key
 wrapper_behavior:
   sql.exec: resolve then delegate to explicit API
@@ -46,7 +47,7 @@ context_only_mode:
     internal: _tinybindExec<Component>, unexported and non-conflicting
     builder: Build<Component> stays exported and unchanged
   rules:
-    - no exported function accepts sql.DB, sql.Tx, SQLQuerier, or SQLExecer
+    - no exported function accepts sql.DB, sql.Tx, sqlbind.Execer, or sqlbind.Querier
     - no <Component>Context wrapper is generated; that name stays free
     - the same public function is used inside and outside a transaction
     - transaction selection stays in the Context, not in the signature

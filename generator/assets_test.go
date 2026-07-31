@@ -240,12 +240,24 @@ func TestPublicAssetWritesAreStableAcrossRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An unchanged package is a cache hit, so nothing is rewritten at all.
 	second, err := runner.GeneratePackage(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(first.AssetPaths, ",") != strings.Join(second.AssetPaths, ",") {
-		t.Fatalf("asset names changed: %v then %v", first.AssetPaths, second.AssetPaths)
+	if !second.Cached {
+		t.Fatalf("second run regenerated: %v", second.Paths())
+	}
+	// Forcing past the cache must land on the same names, which is what keeps a
+	// client's cached copy valid.
+	forced := request
+	forced.Force = true
+	third, err := runner.GeneratePackage(context.Background(), forced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(first.AssetPaths, ",") != strings.Join(third.AssetPaths, ",") {
+		t.Fatalf("asset names changed: %v then %v", first.AssetPaths, third.AssetPaths)
 	}
 	entries, err := os.ReadDir(options.PublicDir)
 	if err != nil {

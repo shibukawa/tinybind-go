@@ -1,54 +1,62 @@
 ---
 id: decision:async-component-signature
 type: decision
-title: Async Component Render Signature
+title: Async Render Entry Signature
 ---
-Give only components owning an await boundary an iterator-returning render signature; keep the synchronous writer signature everywhere else.
+Keep one uniform bound-component value and put the sync-versus-async split on the render entry point, not on each generated component function.
 
 ```yaml
 source:
   - requirement:template-code-generation
   - requirement:html-component-api
   - user signature decision 2026-07-25
-review_gate: approved 2026-07-25
+  - decision:generated-render-plan consequence 2026-07-26
+review_gate: approved 2026-07-25; entry-point placement approved 2026-07-26
 baseline: requirement:html-component-api fragment signature and generated params struct
 executor: decision:generated-render-plan coordinator; the entry function is a typed facade over it
-sync_api: func Component(w io.Writer, params ComponentParams) error
-async_api: func Component(ctx context.Context, w io.Writer, params ComponentParams) iter.Seq2[Content, error]
-slot_type:
-  shape: the decision:generated-render-plan component value, not a bare render func
-  carries: bound plan, bound params, requirement:head-merging contributions, and async capability
-  reason: a bare func hides head contributions, which the coordinator needs before writing the root head
+component_value:
+  shape: one bound plan plus params value for every component, async or not
+  carries: bound plan, bound params, and requirement:head-merging contributions
+  reason: the coordinator walks plans, so awaiting is a runtime step rather than a property of the generated function type
+  consequence: a component gains or loses an await boundary without changing the type of any call site that composes it
+superseded:
+  earlier: two generated component signatures, one returning error and one returning iter.Seq2
+  why: the plan coordinator already erased per-component control flow, so a second signature only duplicated the classification in generated code
+entries:
+  sync: func Render(w io.Writer, leaf, options...) error
+  async: func RenderAsync(ctx context.Context, w io.Writer, leaf, options...) iter.Seq2[Content, error]
+  chain: api:render-html-chain carries the wrapper list variant of each
+  naming: the progressive entry is named for its asynchrony, not for streaming, because a stream name collides with chunked transfer encoding and server-sent events
+one_async_entry:
+  decision: no error-returning wrapper hides the range loop, approved 2026-07-26
+  reason: the number of boundaries a render produces is not knowable up front, least of all for a chain assembled at request time, so a streaming handler is written against the sequence either way
+  consequence: the caller writes each Content and calls the exported flush helper, which is the same loop the wrapper would have contained
 content: data:async-boundary-content
 context_argument:
-  placement: leading parameter, not a generated params field
+  placement: leading parameter of the async entries, not a generated params field
   reason: the params struct mirrors declared template parameters, and a synthesized ctx field would collide with the naming rule
+  sync_entry: a render option may still supply a context, because api:cache-store and blocking await both want one
+sync_of_async:
+  behavior: the sync entry renders an await boundary by blocking on its bindings and emitting the settled primary or recover subtree in place; bindings that fail with no recover subtree return the unrecovered failure and write nothing, so a caller rendering into a buffer can still answer with an error status
+  reason: one template then renders correctly with or without progressive delivery, which also serves clients without JavaScript
+  cost: no fallback is streamed and total latency is the slowest binding
 selection:
-  async_api: data:component-render-capabilities async_effect is async_boundary, or the assembled chain is async in requirement:chain-render-pipeline
-  sync_api: every other capability set, preserving requirement:html-rendering-compatibility
-  slot_owner: compiled async-agnostic; the chain classification decides which entry the caller uses
-rationale:
-  - static markup outside every await block still streams straight to the writer, so slot filling completes normally
-  - only await block interiors leave through the sequence, so slot composition and async never compete for the same channel
-  - only later boundary completions need a value channel, so only they need the iterator
-  - iter.Seq2 lets the caller pull, flush, and stop without exposing goroutines or channels
-  - error is the sequence error value, so both before-commit and after-commit failures use one path
-  - a pending-only component never becomes exported; rule:component-capability-combinations forces an owning await boundary first
+  by_caller: the caller picks the entry; nothing in generated code forces the async entry
+  chain: requirement:chain-render-pipeline classification decides only whether the async entry has work to yield
 execution:
-  start: rendering begins on the first pull; the initial pass writes fallback markup and placeholders to w
-  yield: one data:async-boundary-content per completed boundary in completion order
+  start: rendering begins on the first pull; the initial pass writes fallback markup and placeholders to w and flushes
+  yield: one data:async-boundary-content per settled boundary in completion order
   error: yield zero Content with the error; the sequence ends
   stop: early consumer stop cancels remaining request-owned work through ctx
   end: sequence ends when all request-owned boundaries settle or ctx cancels
+  live_exception: proposed concept:live-boundary-updates keeps this signature and lets the sequence never end, which is why decision:live-transport-boundary moves an endless sequence off the document response and onto its own request
 caller:
-  route_handler: requirement:generated-html-route-handlers ranges one merged sequence, wraps each item, and flushes
-  chain: requirement:chain-render-pipeline ranges every async member sequence concurrently and merges them
-  nested_call: application code never ranges a member sequence directly
+  route_handler: requirement:generated-route-registration ranges the merged sequence, writes each item, and flushes
+  loop: the caller ranges, writes each item, and flushes; nothing in the runtime does it on the caller's behalf
 constraints:
-  - goroutines never touch w; only the ranging caller writes
+  - goroutines never touch w; only the ranging caller and the initial pass write
   - the sequence is single-use and single-consumer
-  - a component with no boundary work still writes its document and yields nothing
+  - a render with no boundary work writes its document and yields nothing
 open_questions:
   - Content package placement and whether it is shared with requirement:component-delta-rendering operations
-  - push-style iter.Seq2 versus an explicit pull adapter for callers mixing both writers
 ```

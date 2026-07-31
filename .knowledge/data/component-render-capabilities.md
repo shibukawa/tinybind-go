@@ -25,6 +25,13 @@ dimensions:
   client_update:
     static: no independent update instance
     boundary: requirement:partial-update-boundaries enabled
+  server_action:
+    none: no requirement:template-server-functions reference
+    present: at least one, lowered under the set decision:script-free-render-mode selected
+render_mode:
+  values: the scripted default and the script-free mode of decision:script-free-render-mode
+  effect: it gates the client_update and async_effect dimensions and selects the decision:server-action-lowering set
+  cache: it participates in the component version below, because the same component emits different markup in each mode
 derivation:
   explicit: cache flag, update flag, declared slot, route file role, and decision:async-boundary-syntax
   local_inferred: direct async external references

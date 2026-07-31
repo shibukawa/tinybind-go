@@ -3,64 +3,8 @@
 package pages
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
-
-type TrustedHTML string
-type TrustedCSS string
-type TrustedJavaScript string
-type ScriptJSON string
-
-func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string       { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
-
-func _tinybindJSONQuote(value string) string {
-	const hex = "0123456789abcdef"
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			out.WriteString("\\\"")
-		case '\\':
-			out.WriteString("\\\\")
-		case '\b':
-			out.WriteString("\\b")
-		case '\f':
-			out.WriteString("\\f")
-		case '\n':
-			out.WriteString("\\n")
-		case '\r':
-			out.WriteString("\\r")
-		case '\t':
-			out.WriteString("\\t")
-		case '<':
-			out.WriteString("\\u003c")
-		case '>':
-			out.WriteString("\\u003e")
-		case '&':
-			out.WriteString("\\u0026")
-		case '\u2028':
-			out.WriteString("\\u2028")
-		case '\u2029':
-			out.WriteString("\\u2029")
-		default:
-			if r < 0x20 {
-				out.WriteString("\\u00")
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
-			} else {
-				out.WriteRune(r)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
 
 type renderPanelParams struct {
 	Title    string
@@ -78,7 +22,7 @@ var planPageOpsFill1Plan = &htmlbind.Plan[PageParams]{Ops: []htmlbind.Op[PagePar
 }}
 
 var planPageOpsFill2Plan = &htmlbind.Plan[PageParams]{Ops: []htmlbind.Op[PageParams]{
-	planPageOps.Static("\n  \n  <p>body text</p>\n"),
+	planPageOps.Static("<p>body text</p> "),
 }}
 
 var planPanelOps = htmlbind.Builder[renderPanelParams]{}
@@ -86,20 +30,20 @@ var planPanelOps = htmlbind.Builder[renderPanelParams]{}
 var planPanelPlan = &htmlbind.Plan[renderPanelParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[renderPanelParams]{
-		planPanelOps.Static("\n<section class=\"panel\">\n  <div class=\"head\">"),
+		planPanelOps.Static(" <section class=\"panel\"> <div class=\"head\">"),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Header },
 			[]htmlbind.Op[renderPanelParams]{
 				planPanelOps.Static("<b>"),
 				planPanelOps.Text(func(p renderPanelParams) string { return p.Title }),
 				planPanelOps.Static("</b>"),
 			}),
-		planPanelOps.Static("</div>\n  <div class=\"body\">"),
+		planPanelOps.Static("</div> <div class=\"body\">"),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Children },
 			nil),
-		planPanelOps.Static("</div>\n  "),
+		planPanelOps.Static("</div> "),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Footer },
 			nil),
-		planPanelOps.Static("\n</section>\n"),
+		planPanelOps.Static(" </section> "),
 	},
 }
 
@@ -113,11 +57,11 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static("\n"),
+		planPageOps.Static(" "),
 		planPageOps.Component(func(p PageParams) htmlbind.Fragment {
 			return renderPanel(renderPanelParams{Title: p.Caption, Header: htmlbind.Bind(planPageOpsFill1Plan, p), Children: htmlbind.Bind(planPageOpsFill2Plan, p)})
 		}),
-		planPageOps.Static("\n"),
+		planPageOps.Static(" "),
 	},
 }
 

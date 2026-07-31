@@ -1,16 +1,16 @@
 # sqlbind 利用ガイド
 
-tinybind-go の SQL 機能には2つの用途があります。
+tinybind-go は SQL に2方向から取り組みます。答える問いがそれぞれ違います。
 
 1. `.tb.sql` から parameterized SQL builder と `database/sql` 実行関数を作る型付き SQL template
-2. 通常の SQL で取得した JOIN 行を、`sqlbind.ScanRows[T]` で親子構造へまとめる row grouping
+2. 通常の SQL で取得した flat な JOIN 行を、`sqlbind.ScanRows[T]` で親子構造へまとめる row grouping
 
-どちらもアプリケーション構造体のフィールド走査に reflection を使わず、必要な処理を事前生成します。
+どちらも実行時にアプリケーション構造体のフィールドを走査しません。必要な処理は型ごとに事前生成されます。
 
 ## SQL template で自動化されること
 
 - `.tb.sql` の自動発見
-- 値式から `$1`, `$2`, ... placeholder と `Args` の生成
+- 値式から dialect に応じた placeholder と `Args` の生成
 - statement の戻り件数に応じた `database/sql` API
 - SELECT / RETURNING の列数・列名と結果型の検査
 - query result の scan
@@ -45,7 +45,7 @@ package store
 go generate ./...
 ```
 
-`.tb.html` と `.tb.sql` は `tinybind_templates_gen.go` にまとめられます。対象ディレクトリ直下だけが探索対象です。
+`.tb.html` と `.tb.sql` は `tinybind_templates_gen.go` にまとめられます。探索は対象ディレクトリ自身で止まるため、サブディレクトリに置いたテンプレートは拾われません。
 
 別の命名規則を使う場合は、ベース名に対する glob を
 `-html-template-pattern` と `-sql-template-pattern` で指定します。
@@ -56,7 +56,21 @@ go generate ./...
 
 既定値は引き続き `*.tb.html` と `*.tb.sql` です。
 
-既定の placeholder は PostgreSQL 形式の `$1`, `$2`, ... です。dialect や placeholder を実行時に選ぶ API はありません。
+## dialect の選択
+
+SQL template を含む生成では、対象データベースの指定が必須です。既定値はありません。
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
+```
+
+指定できるのは `postgresql`、`mysql`、`sqlite` で、省略すると PostgreSQL と黙って解釈するのではなく生成エラーになります。placeholder の形式を間違えると対象エンジンがその SQL を単純に拒否しますが、template のどこを読んでもその間違いは現れないからです。HTML template しか持たない package に dialect は不要です。
+
+placeholder は選択に従い、PostgreSQL なら `$1`, `$2`, ...、MySQL と SQLite なら `?` になります。SQLite は複数の placeholder 表記を読みますが、`?` が位置指定の形式で、引数の bind のされ方に一致します。生成される実行時 API に dialect や placeholder の引数はないので、エンジンを切り替えても変わるのは出力される SQL テキストだけで、呼び出す側の signature は変わりません。dialect が決まるのはコード生成の時点で、実行時ではありません。
+
+dialect が変えるのは placeholder だけです。それ以外に書いたものは逐語的に生成 SQL へ届きます。`||` を `CONCAT` に書き換えたり、`ON CONFLICT` を `ON DUPLICATE KEY UPDATE` に翻訳したり、MySQL に無い `RETURNING` を回避したりはしません。この種の翻訳層は正しく見えて静かに壊れます — `||` は PostgreSQL と SQLite では文字列連結ですが MySQL では論理和なので、書き換えると述語が反転しえます — し、template で読む SQL と実際に走る SQL が別物になります。選んだエンジンに向けて書いてください。したがって生成された1つの package が対応するのは1つのエンジンです。2つ必要なら generator を2回走らせます。
+
+この点は、本番が PostgreSQL でテストだけ SQLite にしようとする前に検討する価値があります。両者は `RETURNING` と `ON CONFLICT` を共有するので単純な CRUD なら移植できることも多いのですが、移植できたことを検証する仕組みはありませんし、テストで動かす生成 package は出荷する package とは別物です。dialect を生成ディレクトリ単位で選ぶ形にしてあるのは、両方走らせることを意識的な選択にするためです。
 
 ## 最小の query
 
@@ -87,8 +101,8 @@ type User struct {
 	Active bool
 }
 
-func BuildGetUser(id int) (Statement, error)
-func GetUser(ctx context.Context, db SQLQuerier, id int) (User, error)
+func BuildGetUser(id int) (sqlbind.Statement, error)
+func GetUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
 ```
 
 ```go
@@ -104,7 +118,7 @@ fmt.Println(user.Name)
 
 ## 値は必ず parameter として渡される
 
-テンプレートの `{id}` や `{name}` は SQL 文字列へ直接連結されません。
+テンプレートの `{id}` や `{name}` が SQL 文字列へ連結されることはありません。
 
 ```text
 export statement RenameUser(id: int, name: string): sql.exec {
@@ -120,7 +134,7 @@ statement, err := BuildRenameUser(42, "Ada")
 // statement.Args == []any{"Ada", 42}
 ```
 
-テンプレートに `$1` や `?` を手書きすると生成エラーになります。table 名、column 名、operator、sort direction のような SQL 構造を通常の値 parameter で動的に差し替えることもできません。
+この保証は例外なく効き、その分の代償もあります。`$1` や `?` を手書きすれば生成エラーになり、通常の値 parameter は SQL の構造要素——table 名、column 名、operator、sort direction——の代わりには決してなれません。
 
 ## 戻り件数の宣言
 
@@ -189,7 +203,7 @@ for user, err := range ListActiveUsers(ctx, db, true) {
 }
 ```
 
-結果を先に slice へ貯めず、行ごとに scan して返します。途中で `break` しても underlying `sql.Rows` は close されます。query、scan、iteration の error は iterator の error 値として1回 yield されます。
+iterator の裏に slice は溜まりません。行は1件ずつ scan されて渡されます。途中で `break` しても underlying `sql.Rows` は close され、query、scan、iteration の error は error 値として1回 yield されます。
 
 ```go
 for user, err := range ListActiveUsers(ctx, db, true) {
@@ -203,7 +217,7 @@ for user, err := range ListActiveUsers(ctx, db, true) {
 
 ## 結果型と SELECT 列
 
-結果型の field 順と SELECT / RETURNING の列順を対応させます。列名または alias も field 名と対応させます。
+結果型の field 順は SELECT / RETURNING の列順と対応し、列名または alias も field 名と対応していなければなりません。生成時にどちらも検査されるため、結果型から離れていった SELECT 列はクエリではなくビルドを落とします。
 
 ```text
 type UserSummary {
@@ -218,7 +232,7 @@ ORDER BY id
 }
 ```
 
-結果列を runtime の `if` で増減させることはできません。どの分岐でも同じ結果 shape にしてください。
+ただしこの検査が成り立つのは、shape が静的に分かる場合だけです。だからこそ結果列を runtime の `if` で増減させることはできません。どの分岐でも同じ結果 shape に保ってください。
 
 ## 型
 
@@ -234,7 +248,11 @@ ORDER BY id
 | `T[]` | `[]T` |
 | `T?` | `*T` |
 
-SQL driver が返す値からこれらの Go 型へ `database/sql.Rows.Scan` できることも必要です。NULL を受ける列では optional 型など、driver と schema に合う型を選びます。
+この表が示すのは Go の型までで、driver も同意している必要があります。使用する SQL driver が返す値をこれらの型へ `database/sql.Rows.Scan` できることが前提なので、schema と driver の両方に合う型を選び、NULL がありうる列では optional 型を使ってください。
+
+2つだけ、driver の同意以上のものが要る型があります。`url` 列は両方向ともテキストとして運ばれます。`url.URL` の parameter は文字列形式で bind され、返ってきた列は runtime の adapter で parse し直されます。`database/sql` は struct を bind することも scan することもできないからです。optional な `url` は NULL のとき nil pointer になり、必須の `url` は必須の `string` と同じくエラーになります。
+
+もう1つは `datetime` / `date` / `time` で、driver が `time.Time` を返してくれる必要があります。テキストやバイト列は `time.Time` へ scan できません。MySQL なら DSN の `parseTime=true` がそれにあたります。SQLite は日付型を持たないので、driver と列の宣言型次第です。いずれにせよ driver の設定であって、dialect の選択が代わりに面倒を見られる範囲ではありません。
 
 ## 条件付き SQL
 
@@ -253,7 +271,7 @@ ORDER BY id
 }
 ```
 
-条件が false なら block 全体が省略され、採用された値だけで placeholder と `Args` が連番になります。
+条件が false なら block 全体が省略されます。placeholder を消費するのは採用された値だけなので、どの分岐が残っても番号と `Args` はずれません。
 
 ```text
 {if condition}
@@ -282,7 +300,7 @@ statement, err := BuildFindUsers([]int{10, 20, 30})
 // Args: []any{10, 20, 30}
 ```
 
-空 slice は有効な value list を作れないため、builder が error を返します。呼び出し側で空を特別扱いするか、template の条件分岐で SQL 構造を決めてください。
+空 slice を value list として書き下す方法はありません。そのため builder は `IN ()` を出力せず error を返します。呼び出し側で空を特別扱いするか、template の条件分岐で別の SQL 構造を選んでください。
 
 ## predicate の再利用
 
@@ -301,7 +319,7 @@ ORDER BY id
 }
 ```
 
-predicate は `export` できず、`BuildMinimumID` や DB 実行 API は作られません。公開 statement の中から呼びます。
+predicate は `export` できず、`BuildMinimumID` も DB 実行 API も作られません。呼べるのは別の statement の中からだけです。
 
 ## typed subquery
 
@@ -330,7 +348,7 @@ ORDER BY active_users.id
 }
 ```
 
-subquery の引数と外側の引数は、最終 SQL で現れる順に1つの placeholder 列へ統合されます。alias は lower snake case で明示します。recursive relation は使えません。
+合成しても parameter が分断されることはありません。subquery の引数と外側の引数は、最終 SQL に現れる順で1つの placeholder 列へ統合されます。alias は lower snake case で明示します。recursive relation は使えません。
 
 ## UPDATE / DELETE の安全性
 
@@ -342,7 +360,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-WHERE が template 内にまったくなければ生成時に失敗します。WHERE が条件 block にあり、実行時に空になる可能性がある場合は `Build...` が実行前に拒否します。
+clause が空になりうるかどうかは template の性質であって実行時データの性質ではないため、検査はすべて生成時に行われ、生成コードにガードは入りません。条件 block の中だけにある WHERE は、片方の経路が全件削除になるため生成に失敗します。
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +369,27 @@ DELETE FROM users
 }
 ```
 
-この builder を `enabled == false` で呼ぶと error になり、DB へは送信されません。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+`else` があって両分岐とも述語を出す場合は、空になる経路がないので生成できます。
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+同じ証明が動的な `SET` list にも適用されます。代入がすべて条件付きの UPDATE は生成エラーです。
+
+keyword はその statement 自身のものでなければなりません。subquery、CTE 本体、文字列リテラル、コメントの中にある WHERE は条件を満たさないため、次は拒否されます。
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+検査は `sql.exec` だけでなくすべての cardinality に適用されます。`sql.one<T>` として宣言した `DELETE ... RETURNING` も同じように証明されます。意図的な全件 UPDATE / DELETE の opt-in は現在ありません。
+
+`sql.predicate` が条件を満たすのは、その predicate 自身がすべての経路で空にならない場合だけです。
 
 ## 低レベル builder を使う
 
@@ -367,9 +405,11 @@ log.Printf("sql=%s args=%v", statement.SQL, statement.Args)
 rows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)
 ```
 
-これは SQL のテスト、ログ、独自 DB abstraction との接続に便利です。`Statement` は次の利用者向け shape です。
+これは SQL のテスト、ログ、独自 DB abstraction との接続に便利です。`Statement` が宣言されるのは生成パッケージごとではなく runtime package `github.com/shibukawa/tinybind-go/sqlbind` に一度だけなので、値はパッケージ境界をそのまま越えられます。
 
 ```go
+package sqlbind
+
 type Statement struct {
 	SQL  string
 	Args []any
@@ -378,7 +418,7 @@ type Statement struct {
 
 ## transaction
 
-明示 executor API は `*sql.DB`、`*sql.Conn`、`*sql.Tx` と互換です。
+明示 executor API が受け取るのは `*sql.DB`、`*sql.Conn`、`*sql.Tx` が満たす interface です。だからこそ、生成された同じ関数が transaction の内でも外でも動きます。
 
 ```go
 tx, err := db.BeginTx(ctx, nil)
@@ -398,7 +438,7 @@ return tx.Commit()
 
 ## Context から executor を解決する API
 
-framework middleware が transaction を Context に保持する場合は、生成時に `-sql-context-api` を指定します。
+transaction を framework middleware が持つようになると、executor を毎回引数で引き回す書き方は成り立たなくなります。その場合は、生成時に Context API を有効にします。
 
 ```go
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-api
@@ -417,6 +457,23 @@ Context に executor がなければ `sqlbind.ErrNoSQLExecutor` が返ります�
 
 executor を引数で明示する通常 API も残るため、用途に応じて併用できます。
 
+### 読み取り専用 executor
+
+read replica への接続や `sql.TxOptions{ReadOnly: true}` で開始した transaction を Context に入れるときは、`sqlbind.AsReadOnly()` を付けます。
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // SELECT なので実行される
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+書き込み statement は生成時に判定され、実行前に `sqlbind.ErrReadOnlyExecutor` を返します。エラーには弾かれた statement 名が入ります。SQL の組み立てもデータベースへの往復も発生しないため、read replica に繋がっていない開発環境やテストでも同じように失敗します。
+
+読み取りと判定されるのは、先頭が `SELECT` / `VALUES` / `TABLE`、または CTE 本体に書き込みを含まず末尾が読み取りの `WITH` で、かつトップレベルに `FOR UPDATE` などの行ロック句がない statement だけです。`DELETE ... RETURNING` を `sql.one<T>` で宣言したものや `SELECT ... FOR UPDATE` は書き込みとして扱われます。判定できないものはすべて書き込みに倒れるので、誤判定は「read replica を使えたはずが writer を使う」方向にしか起きません。
+
+`SELECT` から書き込みを行う関数を呼ぶ場合など、静的に判定できない書き込みは検出できません。最終的な防御はデータベース側に残ります。カスタム resolver（`-sql-executor-resolver`）を指定した場合、その契約は読み取り専用かどうかを運べないため、このチェックは無効になります。
+
 ## context のみの公開 API
 
 宣言した statement 名をそのまま唯一の実行 API として公開する framework 向けに、
@@ -432,7 +489,7 @@ func FindUser(ctx context.Context, id int) (User, error)
 
 このモードでは:
 
-- `*sql.DB`、`*sql.Tx`、`SQLQuerier`、`SQLExecer` を受け取る公開関数を生成しません
+- `*sql.DB`、`*sql.Tx`、`sqlbind.Querier`、`sqlbind.Execer` を受け取る公開関数を生成しません
 - executor を受け取る関数は非公開になります
 - `BuildName` は従来どおり公開されます
 - `NameContext` を生成しないため、その名前は空いたままです
@@ -449,40 +506,40 @@ func FindUser(ctx context.Context, id int) (User, error)
 ### すべての exported statement
 
 ```go
-func BuildName(p ...P) (Statement, error)
+func BuildName(p ...P) (sqlbind.Statement, error)
 ```
 
 ### `sql.exec`
 
 ```go
-func Name(ctx context.Context, db SQLExecer, p ...P) (sql.Result, error)
+func Name(ctx context.Context, db sqlbind.Execer, p ...P) (sql.Result, error)
 ```
 
 ### `sql.one<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (T, error)
 ```
 
 ### `sql.optional<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (*T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (*T, error)
 ```
 
 ### `sql.many<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) iter.Seq2[T, error]
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) iter.Seq2[T, error]
 ```
 
 ### `-sql-context-api` を有効にした場合
 
 ```go
-func NameContext(ctx context.Context, p ...P) (sql.Result, error)     // exec
-func NameContext(ctx context.Context, p ...P) (T, error)              // one
-func NameContext(ctx context.Context, p ...P) (*T, error)             // optional
-func NameContext(ctx context.Context, p ...P) iter.Seq2[T, error]     // many
+func NameContext(ctx context.Context, p ...P) (sql.Result, error) // exec
+func NameContext(ctx context.Context, p ...P) (T, error)          // one
+func NameContext(ctx context.Context, p ...P) (*T, error)         // optional
+func NameContext(ctx context.Context, p ...P) iter.Seq2[T, error] // many
 ```
 
 ### `-sql-context-only-api` を有効にした場合
@@ -512,7 +569,7 @@ func Name(ctx context.Context, p ...P) iter.Seq2[T, error] // many
 
 ## `ScanRows[T]` で JOIN 結果を親子構造にする
 
-SQL template とは別に、既存の query で得た flat な JOIN 行を構造体の tree にまとめられます。
+JOIN は child の数だけ parent 行を繰り返して返し、この平坦化は戻り件数の宣言では取り消せません。`ScanRows[T]` は取得後に tree を組み直します。対象は既存の任意の query で、SQL template は関与しません。
 
 ```go
 type Organization struct {
@@ -522,8 +579,8 @@ type Organization struct {
 }
 
 type User struct {
-	ID    int    `db:"user_id" groupkey:""`
-	Name  string `db:"user_name"`
+	ID   int    `db:"user_id" groupkey:""`
+	Name string `db:"user_name"`
 }
 ```
 
@@ -549,7 +606,7 @@ ORDER BY o.id, u.id`)
 }
 ```
 
-各階層に scalar の `groupkey:""` field をちょうど1つ用意します。
+各階層に scalar の `groupkey:""` field をちょうど1つ用意します。マージの判断はすべてこの key が決めます。
 
 - 同じ root key の行は同じ root object にまとまる
 - 同じ child key の行は同じ child object にまとまる
@@ -587,4 +644,4 @@ JOIN の SELECT では、すべての scalar field に対応する一意な列 a
 - 列 alias と `db` タグが一致している必要がある
 - 結果行をすべて走査して tree を構築するため、非常に大きい結果ではメモリ使用量を考慮する
 
-単純な1行 / 複数行 query には SQL template の `sql.one` / `sql.optional` / `sql.many`、JOIN の重複行を階層化したい場合には `ScanRows`、という使い分けが基本です。
+2つの使い分けを決めるのは、たいていこの最後の制約です。行が1件ずつ流れていける普通の query には SQL template の `sql.one` / `sql.optional` / `sql.many` を選びます。JOIN が同じ parent を繰り返し返し、その parent を丸ごと受け取りたいときに `ScanRows` を選びます。

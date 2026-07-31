@@ -2,6 +2,7 @@
 package configbind
 
 import (
+	"iter"
 	"sort"
 	"strings"
 )
@@ -21,7 +22,12 @@ type Entry struct {
 	Raw     string
 	Multi   []string
 	IsMulti bool
-	Place   Place
+	// Tables holds one overlay per [[key]] element when IsTables is true. Their
+	// keys are relative to the table-array key. Only the TOML layer produces
+	// them: env and CLI have no repeated-table form.
+	Tables   []*Overlay
+	IsTables bool
+	Place    Place
 }
 
 // Overlay is a key-wise multi-source merge buffer (later Set wins).
@@ -56,6 +62,19 @@ func (o *Overlay) SetMulti(key string, values []string, place Place) {
 	}
 }
 
+// SetTables stores the elements of an array of tables for key from place.
+func (o *Overlay) SetTables(key string, tables []*Overlay, place Place) {
+	if o.entries == nil {
+		o.entries = make(map[string]Entry)
+	}
+	o.entries[key] = Entry{
+		Raw:      "",
+		Tables:   append([]*Overlay(nil), tables...),
+		IsTables: true,
+		Place:    place,
+	}
+}
+
 // Get returns the entry for key.
 func (o *Overlay) Get(key string) (Entry, bool) {
 	if o == nil || o.entries == nil {
@@ -65,19 +84,29 @@ func (o *Overlay) Get(key string) (Entry, bool) {
 	return e, ok
 }
 
-// GetString returns a scalar raw string for key.
+// GetString returns a scalar raw string for key. An array of tables has no
+// scalar form, so it reads as absent.
 func (o *Overlay) GetString(key string) (string, bool) {
 	e, ok := o.Get(key)
-	if !ok {
+	if !ok || e.IsTables {
 		return "", false
 	}
 	return e.Raw, true
 }
 
+// GetTables returns the per-element overlays of an array of tables.
+func (o *Overlay) GetTables(key string) ([]*Overlay, bool) {
+	e, ok := o.Get(key)
+	if !ok || !e.IsTables {
+		return nil, false
+	}
+	return e.Tables, true
+}
+
 // GetMulti returns multi values when present; otherwise splits Raw by comma if needed.
 func (o *Overlay) GetMulti(key string) ([]string, bool) {
 	e, ok := o.Get(key)
-	if !ok {
+	if !ok || e.IsTables {
 		return nil, false
 	}
 	if e.IsMulti {
@@ -100,6 +129,22 @@ func (o *Overlay) Keys() []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// All iterates entries in sorted key order. Callers get a stable sequence
+// instead of the map iteration order behind the overlay.
+func (o *Overlay) All() iter.Seq2[string, Entry] {
+	return func(yield func(string, Entry) bool) {
+		for _, k := range o.Keys() {
+			e, ok := o.Get(k)
+			if !ok {
+				continue
+			}
+			if !yield(k, e) {
+				return
+			}
+		}
+	}
 }
 
 // MergeMap merges scalar string values from m with the given place.

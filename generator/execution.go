@@ -24,7 +24,12 @@ type GenerateRequest struct {
 	// globs. Empty values retain the generator options.
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
-	ConfigBindName      string
+	// SQLDialect overrides the generator option for this run. An empty value
+	// retains it.
+	SQLDialect     string
+	ConfigBindName string
+	// DynamoName is the DynamoDB item codec output file.
+	DynamoName string
 	// PublicDir and PublicURLBase override where extracted static assets are
 	// written and how they are referenced. Empty values retain the generator
 	// options; setting one requires setting the other.
@@ -32,6 +37,10 @@ type GenerateRequest struct {
 	PublicURLBase string
 	Check         bool
 	GenerateAll   bool
+	// Force regenerates even when the generated files record the current input
+	// hash. Use it after a change the hash does not cover, such as an edit in
+	// another package of the module.
+	Force         bool
 	SQLContextAPI bool
 	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
 	// turn the option on, never off.
@@ -42,22 +51,40 @@ type GenerateRequest struct {
 type GenerateResult struct {
 	BinderPath     string
 	ConfigBindPath string
+	DynamoPath     string
 	OpenAPIPath    string
 	TemplatesPath  string
 	// AssetPaths holds the static files extracted from component style and
 	// script blocks, in generation order.
 	AssetPaths  []string
 	Diagnostics []parser.Diagnostic
+	// Cached reports that the paths were left untouched because the generated
+	// files already record the current input hash.
+	Cached bool
 }
 
 // Paths returns non-empty artifact paths in generation order.
 func (result GenerateResult) Paths() []string {
-	paths := make([]string, 0, 4+len(result.AssetPaths))
+	paths := make([]string, 0, 5+len(result.AssetPaths))
 	if result.TemplatesPath != "" {
 		paths = append(paths, result.TemplatesPath)
 	}
+	// The extracted assets follow the template file that produced them.
 	paths = append(paths, result.AssetPaths...)
-	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.OpenAPIPath} {
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+// goPaths is Paths without the public assets. Only Go artifacts carry a
+// generation stamp, because a stylesheet has no comment syntax in common with
+// Go and its name already records the hash of its bytes.
+func (result GenerateResult) goPaths() []string {
+	paths := make([]string, 0, 5)
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -91,6 +118,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if request.ConfigBindName == "" {
 		request.ConfigBindName = defaultConfigBindOut
 	}
+	if request.DynamoName == "" {
+		request.DynamoName = defaultDynamoOut
+	}
 
 	options := request.applyTo(g.Options)
 	normalized, err := options.normalized()
@@ -102,6 +132,19 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 		return GenerateResult{Diagnostics: diagnostics}, err
 	}
 
+	outDir := request.Out
+	if outDir == "" {
+		outDir = request.Dir
+	}
+	// A fingerprint that cannot be computed only disables the cache; generation
+	// itself reports the underlying problem with better context.
+	fingerprint, fingerprintErr := generationFingerprint(request.Dir, outDir, request, options)
+	if fingerprintErr == nil && !request.Force {
+		if cached, ok := cachedGeneration(outDir, fingerprint, request); ok {
+			return cached, nil
+		}
+	}
+
 	runner := New(options)
 	result := GenerateResult{}
 	if result.TemplatesPath, result.AssetPaths, err = runner.generateTemplateFiles(request.Dir, request.Out, request.TemplatesName); err != nil {
@@ -110,9 +153,12 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
-	result.BinderPath, err = runner.Generate(request.Dir, request.Out, request.Name)
+	// Generated templates join the package, so the remaining phases share one
+	// type check taken after they are written.
+	load := newPackageLoad(request.Dir)
+	result.BinderPath, err = runner.generate(load, request.Out, request.Name)
 	if err != nil {
-		if !strings.Contains(err.Error(), "no generatable structs") {
+		if !errors.Is(err, ErrNothingToGenerate) {
 			return GenerateResult{}, fmt.Errorf("generate mapping: %w", err)
 		}
 		result.BinderPath = ""
@@ -120,15 +166,22 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
-	result.ConfigBindPath, err = runner.GenerateConfigBind(request.Dir, request.Out, request.ConfigBindName)
+	result.ConfigBindPath, err = runner.generateConfigBind(load, request.Out, request.ConfigBindName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate configbind: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
+	result.DynamoPath, err = runner.generateDynamoItems(load, request.Out, request.DynamoName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate dynamobind: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return GenerateResult{}, err
+	}
 	if request.OpenAPI && normalized.openAPI {
-		result.OpenAPIPath, err = runner.GenerateOpenAPI(request.Dir, request.Out, request.OpenAPIName)
+		result.OpenAPIPath, err = runner.generateOpenAPI(load, request.Out, request.OpenAPIName)
 		if err != nil {
 			if result.BinderPath == "" && result.ConfigBindPath != "" && strings.Contains(err.Error(), "no") {
 				result.OpenAPIPath = ""
@@ -141,6 +194,11 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if len(result.Paths()) == 0 {
 		return result, fmt.Errorf("%w in %s", ErrNothingToGenerate, request.Dir)
+	}
+	if fingerprintErr == nil {
+		if err := stampGeneration(fingerprint, result); err != nil {
+			return GenerateResult{}, fmt.Errorf("stamp generated files: %w", err)
+		}
 	}
 	return result, nil
 }

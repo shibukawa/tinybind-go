@@ -38,6 +38,29 @@ func TestGeneratedArtifactsAreSelfContained(t *testing.T) {
 			},
 		},
 		{
+			// Two sources of one kind used to collide: the runtime helpers each
+			// file emitted were hoisted by name, and any helper missing from
+			// that list redeclared itself.
+			name: "two sql sources in one package",
+			files: map[string]string{
+				"doc.go": "package fixture\n",
+				"users.pw.sql": "package fixture\n\ntype Row { id: int }\n\n" +
+					"export statement Find(id: int): sql.one<Row> {SELECT id FROM users WHERE id = {id}}\n",
+				"orders.pw.sql": "package fixture\n\ntype Order { id: int }\n\n" +
+					"export statement ListOrders(ids: int[]): sql.many<Order> {SELECT id FROM orders WHERE id IN ({ids})}\n",
+			},
+		},
+		{
+			name: "two html sources in one package",
+			files: map[string]string{
+				"doc.go": "package fixture\n",
+				"page.pw.html": "package fixture\n\ntype Payload { name: string, count: int }\n\n" +
+					"export component Page(data: Payload): html {\n<script>{JsonForScript(data)}</script>\n}\n",
+				"card.pw.html": "package fixture\n\ntype Card { title: string, tags: string[] }\n\n" +
+					"export component CardView(card: Card): html {\n<script>{JsonForScript(card)}</script>\n}\n",
+			},
+		},
+		{
 			name: "config only",
 			files: map[string]string{
 				"config.go": "package fixture\n\nimport \"tempmod/pw\"\n\n" +

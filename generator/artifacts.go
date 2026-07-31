@@ -23,14 +23,12 @@ import (
 type ArtifactKind string
 
 const (
-	// ArtifactPackageShared holds declarations reused by several per-source
-	// artifacts of one package.
-	ArtifactPackageShared ArtifactKind = "package_shared"
-	ArtifactHTMLTemplate  ArtifactKind = "html_template"
-	ArtifactSQLTemplate   ArtifactKind = "sql_template"
-	ArtifactBinding       ArtifactKind = "binding"
-	ArtifactConfigBind    ArtifactKind = "configbind"
-	ArtifactOpenAPI       ArtifactKind = "openapi"
+	ArtifactHTMLTemplate ArtifactKind = "html_template"
+	ArtifactSQLTemplate  ArtifactKind = "sql_template"
+	ArtifactBinding      ArtifactKind = "binding"
+	ArtifactConfigBind   ArtifactKind = "configbind"
+	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
+	ArtifactOpenAPI      ArtifactKind = "openapi"
 	// ArtifactStylesheet is the component CSS extracted from one template.
 	ArtifactStylesheet ArtifactKind = "stylesheet"
 	// ArtifactScript is the component JavaScript extracted from one template.
@@ -78,11 +76,8 @@ type Artifact struct {
 	PublicPath string
 }
 
-// Base names for the package-wide artifacts.
-const (
-	sharedArtifactBase  = "tinybind_shared"
-	openAPIArtifactBase = "tinybind_openapi"
-)
+// openAPIArtifactBase names the only remaining package-wide artifact.
+const openAPIArtifactBase = "tinybind_openapi"
 
 // GenerateArtifacts runs every enabled generation phase and returns the result
 // as per-source artifacts. It writes no file, so the same call serves both
@@ -113,7 +108,9 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	binding, err := runner.bindingArtifacts(request.Dir)
+	// Every remaining phase reads the same type-checked package.
+	load := newPackageLoad(request.Dir)
+	binding, err := runner.bindingArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate mapping: %w", err)
 	}
@@ -121,7 +118,7 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	config, err := runner.configBindArtifacts(request.Dir)
+	config, err := runner.configBindArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate configbind: %w", err)
 	}
@@ -129,8 +126,16 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	items, err := runner.dynamoItemArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate dynamobind: %w", err)
+	}
+	artifacts = append(artifacts, items...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if request.OpenAPI && normalized.openAPI {
-		openAPI, err := runner.openAPIArtifact(request.Dir)
+		openAPI, err := runner.openAPIArtifact(load)
 		if err != nil {
 			return nil, fmt.Errorf("generate OpenAPI: %w", err)
 		}
@@ -156,6 +161,9 @@ func (request GenerateRequest) applyTo(base Options) Options {
 	}
 	if request.PublicURLBase != "" {
 		options.PublicURLBase = request.PublicURLBase
+	}
+	if request.SQLDialect != "" {
+		options.SQLDialect = request.SQLDialect
 	}
 	return options
 }
@@ -184,7 +192,14 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return nil, err
+	}
 	pkg, err := g.templatePackageName(dir, files)
+	if err != nil {
+		return nil, err
+	}
+	withContext, err := contextExternals(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +210,7 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 		if err != nil {
 			return nil, err
 		}
-		if generated[i], assets[i], err = g.generateTemplate(file, source, pkg); err != nil {
+		if generated[i], assets[i], err = g.generateTemplate(file, source, pkg, withContext); err != nil {
 			return nil, err
 		}
 	}
@@ -236,16 +251,13 @@ func assetArtifacts(files []templateFile, assets [][]htmlbind.Asset) []Artifact 
 	return artifacts
 }
 
-// splitTemplateArtifacts separates the template runtime helpers shared by a
-// package from the declarations owned by each template source, so several
-// sources of one package can be generated into separate files without
-// redeclaring an identifier.
+// splitTemplateArtifacts turns each template source into its own artifact.
+// Generated code declares no runtime, so every declaration belongs to exactly
+// one source and no package-wide artifact is needed.
 func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte) ([]Artifact, error) {
 	fset := token.NewFileSet()
 	var imports []*ast.ImportSpec
 	importKeys := map[string]bool{}
-	shared := map[string]bool{}
-	var sharedDecls []ast.Decl
 	specific := make([][]ast.Decl, len(files))
 	owned := map[string]string{}
 
@@ -270,21 +282,7 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 			if gen, ok := declaration.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
 				continue
 			}
-			names := declarationNames(declaration)
-			if isSharedTemplateDecl(names) {
-				fresh := false
-				for _, name := range names {
-					if !shared[name] {
-						shared[name] = true
-						fresh = true
-					}
-				}
-				if fresh {
-					sharedDecls = append(sharedDecls, declaration)
-				}
-				continue
-			}
-			for _, name := range names {
+			for _, name := range declarationNames(declaration) {
 				if previous, exists := owned[name]; exists {
 					return nil, fmt.Errorf("duplicate generated template declaration %s in %s and %s", name, previous, files[index].path)
 				}
@@ -294,21 +292,7 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 		}
 	}
 
-	artifacts := make([]Artifact, 0, len(files)+1)
-	if len(sharedDecls) > 0 {
-		source, err := renderArtifactFile(fset, pkg, imports, sharedDecls, templateGeneratedHeader)
-		if err != nil {
-			return nil, err
-		}
-		artifacts = append(artifacts, Artifact{
-			Kind:        ArtifactPackageShared,
-			Destination: DestinationGoPackage,
-			OutputBase:  sharedArtifactBase,
-			Extension:   ExtensionGo,
-			PackageName: pkg,
-			Content:     source,
-		})
-	}
+	artifacts := make([]Artifact, 0, len(files))
 	for index, file := range files {
 		if len(specific[index]) == 0 {
 			continue
@@ -335,20 +319,6 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 }
 
 const templateGeneratedHeader = "// Code generated by tinybind templates; DO NOT EDIT.\n\n"
-
-// isSharedTemplateDecl reports whether a declaration belongs to the package
-// runtime that every generated template file repeats.
-func isSharedTemplateDecl(names []string) bool {
-	if len(names) == 0 {
-		return false
-	}
-	for _, name := range names {
-		if !templateRuntimeName(name) {
-			return false
-		}
-	}
-	return true
-}
 
 // renderArtifactFile prints one artifact carrying only the imports its own
 // declarations reference, so each artifact compiles on its own.
@@ -403,8 +373,8 @@ func dropUnusedImports(source []byte) ([]byte, error) {
 	return formatted, nil
 }
 
-func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
-	plan, err := g.Analyze(dir)
+func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -444,8 +414,8 @@ func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
 	return artifacts, nil
 }
 
-func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
-	pkgName, specs, err := AnalyzeConfigBindSources(dir, g.Options)
+func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {
+	pkgName, specs, err := configBindSources(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -482,12 +452,62 @@ func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
 	return artifacts, nil
 }
 
-func (g *Generator) openAPIArtifact(dir string) ([]Artifact, error) {
-	doc, err := g.BuildOpenAPI(dir)
+// dynamoItemArtifacts emits one item codec artifact per source file that
+// declares a bound type, so a package with two DynamoDB sources generates two
+// files and neither owns the other's declarations.
+func (g *Generator) dynamoItemArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.featureDisabled(FeatureItemCodec) {
+		return nil, nil
+	}
+	plan, err := analyzeDynamoItems(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := g.Analyze(dir)
+	grouped := map[string][]string{}
+	var order []string
+	for _, item := range plan.Items {
+		if item.Usage == 0 {
+			continue
+		}
+		if _, seen := grouped[item.SourcePath]; !seen {
+			order = append(order, item.SourcePath)
+		}
+		grouped[item.SourcePath] = append(grouped[item.SourcePath], item.Name)
+	}
+	sort.Strings(order)
+	emitTable := !g.Options.featureDisabled(FeatureItemTable)
+	artifacts := make([]Artifact, 0, len(order))
+	for _, source := range order {
+		selected := make(map[string]bool, len(grouped[source]))
+		for _, name := range grouped[source] {
+			selected[name] = true
+		}
+		code, err := emitDynamoSelected(plan, selected, emitTable)
+		if err != nil {
+			return nil, err
+		}
+		if len(code) == 0 {
+			continue
+		}
+		artifacts = append(artifacts, Artifact{
+			SourcePath:  source,
+			Kind:        ArtifactDynamoItem,
+			Destination: DestinationGoPackage,
+			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
+			PackageName: plan.Package,
+			Content:     code,
+		})
+	}
+	return artifacts, nil
+}
+
+func (g *Generator) openAPIArtifact(load *packageLoad) ([]Artifact, error) {
+	doc, err := g.buildOpenAPI(load)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}

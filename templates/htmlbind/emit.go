@@ -2,6 +2,8 @@ package htmlbind
 
 import (
 	"fmt"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -93,19 +95,59 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		scope.types[name] = t
 	}
 	plan := &planEmitter{e: e, scope: scope}
+	e.rootScope, e.checks = scope, nil
+	defer func() { e.rootScope, e.checks = nil, nil }()
 	if err := e.emitOps(plan, component.Body.([]Node)); err != nil {
 		return err
 	}
-	head := "nil"
-	if transitive := e.c.transitiveHead(component.Name); len(transitive) > 0 {
-		quoted := make([]string, len(transitive))
-		for i, tag := range transitive {
-			quoted[i] = strconv.Quote(tag)
+	// transitiveHead already starts at this component, so it covers the component's
+	// own contribution as well as every one it reaches.
+	head, headSources := "nil", ""
+	if tags := e.c.transitiveHead(component.Name); len(tags) > 0 {
+		htmlParts := make([]string, 0, len(tags))
+		sourceParts := make([]string, 0, len(tags))
+		for _, tag := range tags {
+			htmlParts = append(htmlParts, strconv.Quote(tag.html))
+			sourceParts = append(sourceParts, strconv.Quote(tag.source))
 		}
-		head = "[]string{" + strings.Join(quoted, ", ") + "}"
+		head = "[]string{" + strings.Join(htmlParts, ", ") + "}"
+		// Written only beside a non-empty head, so a project with no contribution
+		// anywhere keeps its previous generated output byte for byte.
+		headSources = "\tHeadSources: []string{" + strings.Join(sourceParts, ", ") + "},\n"
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n\tOps: %s,\n}\n\n",
-		prefix, params, head, indentBlock(plan.literal(), "\t"))
+	ops := plan.literal()
+	// The flag is written only when it is true, so a project with no await
+	// boundary anywhere keeps its previous generated output byte for byte. The
+	// walk is over the call graph, so a component that merely calls an async one
+	// carries the flag too.
+	await := ""
+	if e.c.reachesAwait(component.Name, map[string]bool{}) != "" {
+		await = "\tHasAwaitBlock: true,\n"
+	}
+	// Same rule for the live flag, over the same call graph. It is a subset of
+	// the await flag, so a component reporting this one always reports that one
+	// too, and a project with no live boundary regenerates unchanged.
+	if e.c.reachesLive(component.Name, map[string]bool{}) != "" {
+		await += "\tHasLiveBlock: true,\n"
+	}
+	// The Check field is written only for a component with a required async
+	// parameter, so every other component keeps its previous output.
+	check := ""
+	if len(e.checks) > 0 {
+		check = fmt.Sprintf("\tCheck: func(%s %s) error {\n%s\n\t\treturn nil\n\t},\n",
+			receiverIdent, params, indentBlock(strings.Join(e.checks, "\n"), "\t"))
+	}
+	// The Cache field is written only for a cached component, so the generated
+	// output of every other component is unchanged.
+	cache := ""
+	if info.cache != nil {
+		cache = fmt.Sprintf("\tCache: &%sCache,\n", prefix)
+		if err := e.emitCachePolicy(component, prefix, params, head, ops); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, headSources, await, check, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -120,6 +162,165 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			prefix, params)
 	}
 	return nil
+}
+
+// emitCachePolicy writes the cache configuration of one component: its identity
+// plus a fingerprint of the plan this run produced, and the generated function
+// encoding its parameters into a key.
+//
+// Fingerprinting the emitted instruction list is what makes regenerated code
+// unable to read entries written by the previous code, including changes that
+// came from a nested component rather than from this template.
+func (e *goEmitter) emitCachePolicy(component *TemplateDecl, prefix, params, head, ops string) error {
+	info := e.c.components[component.Name]
+	// Identity uses the package and the template's base name rather than the
+	// path the generator was invoked with, so the same source produces the same
+	// key on every machine. Template files of one package share a directory, so
+	// base names are unique within it.
+	identity := e.pkg + "/" + path.Base(e.c.filename) + ":" + component.Name
+	id := identity + ":" + fingerprint(head+"\x00"+ops)
+	var parts []string
+	for _, parameter := range component.Parameters {
+		t, err := e.c.resolveType(parameter.Type)
+		if err != nil {
+			return err
+		}
+		parts = append(parts, cacheKeyCall(t, receiverIdent+"."+goPublicName(parameter.Name)))
+	}
+	key := `""`
+	if len(parts) > 0 {
+		key = strings.Join(parts, " + ")
+	}
+	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n\tKey: func(%s %s) string { return %s },\n}\n\n",
+		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, receiverIdent, params, key)
+	return nil
+}
+
+// fingerprint is a stable 64-bit FNV-1a digest rendered as hex. It only has to
+// change when the generated code changes, so a non-cryptographic hash is enough.
+func fingerprint(value string) string {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	hash := uint64(offset64)
+	for _, b := range []byte(value) {
+		hash ^= uint64(b)
+		hash *= prime64
+	}
+	return strconv.FormatUint(hash, 16)
+}
+
+// cacheKeyCall encodes one value into its framed cache key contribution.
+func cacheKeyCall(t valueType, code string) string {
+	if t.optional {
+		return "htmlbind.KeyOptional(" + code + ", " + cacheKeyEncoder(t.required()) + ")"
+	}
+	if t.kind == kindArray && t.elem != nil {
+		return "htmlbind.KeyArray(" + code + ", " + cacheKeyEncoder(*t.elem) + ")"
+	}
+	return cacheKeyEncoder(t) + "(" + code + ")"
+}
+
+// cacheKeyEncoder returns a func value encoding one value of t, for the generic
+// runtime helpers that take an element encoder.
+func cacheKeyEncoder(t valueType) string {
+	if t.optional {
+		return "func(value " + goType(t) + ") string { return " + cacheKeyCall(t, "value") + " }"
+	}
+	switch t.kind {
+	case kindBool:
+		return "htmlbind.KeyBool"
+	case kindInt:
+		return "htmlbind.KeyInt"
+	case kindFloat:
+		return "htmlbind.KeyFloat"
+	case kindBytes:
+		return "htmlbind.KeyBytes"
+	case kindDateTime, kindDate, kindTime:
+		return "htmlbind.KeyTime"
+	case kindURL:
+		return "func(value url.URL) string { return htmlbind.KeyString(value.String()) }"
+	case kindRecord:
+		return cacheKeyRecordEncoder(t.name)
+	case kindArray:
+		return "func(value " + goType(t) + ") string { return " + cacheKeyCall(t, "value") + " }"
+	default:
+		// string, decimal, enums, and the trusted string types are all ~string.
+		return "htmlbind.KeyString[" + goType(t) + "]"
+	}
+}
+
+// cacheKeyRecordEncoder names the generated key encoder for a declared record.
+func cacheKeyRecordEncoder(name string) string { return "_tinybindKey" + name }
+
+// emitCacheKeyHelpers writes one encoder per record reachable from a cached
+// component's parameters.
+func (e *goEmitter) emitCacheKeyHelpers() error {
+	for _, record := range e.cacheRecords {
+		var parts []string
+		for _, field := range e.c.records[record.name].Fields {
+			t, err := e.c.resolveType(field.Type)
+			if err != nil {
+				return err
+			}
+			parts = append(parts, cacheKeyCall(t, "value."+goPublicName(field.Name)))
+		}
+		body := `""`
+		if len(parts) > 0 {
+			body = strings.Join(parts, " + ")
+		}
+		fmt.Fprintf(&e.b, "func %s(value %s) string { return %s }\n\n", cacheKeyRecordEncoder(record.name), goType(record), body)
+	}
+	return nil
+}
+
+// collectCacheRecords returns the records reachable from a cached component's
+// parameters, sorted by name so emission is deterministic.
+func (e *goEmitter) collectCacheRecords() []valueType {
+	found := map[string]valueType{}
+	var visit func(valueType)
+	visit = func(t valueType) {
+		base := t.required()
+		if base.kind == kindArray && base.elem != nil {
+			visit(*base.elem)
+			return
+		}
+		if base.kind != kindRecord {
+			return
+		}
+		if _, seen := found[base.name]; seen {
+			return
+		}
+		found[base.name] = base
+		for _, field := range e.c.records[base.name].Fields {
+			if fieldType, err := e.c.resolveType(field.Type); err == nil {
+				visit(fieldType)
+			}
+		}
+	}
+	for _, declaration := range e.c.module.Declarations {
+		component, ok := declaration.(*TemplateDecl)
+		if !ok {
+			continue
+		}
+		if info := e.c.components[component.Name]; info == nil || info.cache == nil {
+			continue
+		}
+		for _, parameter := range component.Parameters {
+			if t, err := e.c.resolveType(parameter.Type); err == nil {
+				visit(t)
+			}
+		}
+	}
+	names := make([]string, 0, len(found))
+	for name := range found {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]valueType, 0, len(names))
+	for _, name := range names {
+		out = append(out, found[name])
+	}
+	return out
 }
 
 // planPrefix derives the unexported variable prefix for a component's plan.
@@ -148,6 +349,10 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 			}
 		case *syntax.ForNode:
 			if err := e.emitForOp(p, node); err != nil {
+				return err
+			}
+		case *syntax.AwaitNode:
+			if err := e.emitAwaitOp(p, node); err != nil {
 				return err
 			}
 		case *SlotNode:
@@ -196,6 +401,9 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 }
 
 func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
+	if attribute.Name == ServerActionAttr {
+		return e.emitServerAction(p, attribute)
+	}
 	if attribute.Boolean {
 		p.static(" " + attribute.Name)
 		return nil
@@ -235,6 +443,41 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 		strconv.Quote(attribute.Name), receiverIdent, p.scope.goType, optional(value)))
 	return nil
 }
+
+// emitServerAction replaces the reserved attribute with the one carrying the
+// handler's endpoint. The URL is a compile-time constant, because the direct
+// entry point holds no path parameter, so the whole lowering is static text.
+func (e *goEmitter) emitServerAction(p *planEmitter, attribute Attribute) error {
+	name, _ := staticAttributeText(attribute)
+	url, ok := e.actions[name]
+	if !ok && e.resolveAction != nil {
+		url, ok = e.resolveAction(name)
+	}
+	if !ok {
+		where := "it must be an exported handler in the Go package beside this template"
+		if e.resolveAction != nil {
+			// With a resolver configured the handler may legitimately live
+			// anywhere, so the message names both sources rather than asserting
+			// the one that happens to be built in.
+			where = "no exported handler in the Go package beside this template declares it, and the configured resolver did not answer for it"
+		}
+		return e.c.error(attribute.Pos, "no server action was resolved for "+quoteName(name)+"; "+where)
+	}
+	p.static(" " + e.actionAttr + `="` + escapeAttributeValue(url) + `"`)
+	return nil
+}
+
+// attributeValueEscaper makes a caller-supplied URL safe in a double-quoted
+// attribute. A generated endpoint contains none of these characters, but the
+// prefix is configurable and therefore not ours to trust.
+var attributeValueEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"\"", "&#34;",
+	"<", "&lt;",
+	">", "&gt;",
+)
+
+func escapeAttributeValue(value string) string { return attributeValueEscaper.Replace(value) }
 
 // attributeValueCode builds the escaped attribute value and the body that
 // reports whether it is present.
@@ -289,17 +532,23 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 		p.op(fmt.Sprintf("Slot(func(%s %s) htmlbind.Fragment { return %s }, nil)", receiverIdent, p.scope.goType, code))
 		return nil
 	}
+	// JsonForScript is lowered rather than called: the encoding is generated per
+	// argument type, so the argument has to be reached through the call. A
+	// script_json value arriving any other way — a parameter, a record field, an
+	// external result — is already encoded, so it falls through to the raw path
+	// below rather than being unwrapped.
 	if context == "html:script" && t.kind == kindScriptJSON {
-		call := expr.(*CallExpr)
-		argument := call.Arguments[0]
-		argCode, err := e.exprCode(argument, p.scope)
-		if err != nil {
-			return err
+		if call, ok := jsonForScriptCall(expr); ok {
+			argument := call.Arguments[0]
+			argCode, err := e.exprCode(argument, p.scope)
+			if err != nil {
+				return err
+			}
+			p.flush()
+			p.op(fmt.Sprintf("Raw(func(%s %s) string { return %s })",
+				receiverIdent, p.scope.goType, jsonEncodeCall(e.c.exprTypes[argument], argCode)))
+			return nil
 		}
-		p.flush()
-		p.op(fmt.Sprintf("Raw(func(%s %s) string { return _tinybindJSON%s(%s) })",
-			receiverIdent, p.scope.goType, jsonTypeKey(e.c.exprTypes[argument]), argCode))
-		return nil
 	}
 	raw := t.required().kind == kindTrustedHTML || t.required().kind == kindTrustedCSS || t.required().kind == kindTrustedJS || t.required().kind == kindScriptJSON
 	kind := "Text"
@@ -313,6 +562,20 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 	p.flush()
 	p.op(fmt.Sprintf("%s(func(%s %s) string { %s })", kind, receiverIdent, p.scope.goType, body))
 	return nil
+}
+
+// jsonForScriptCall reports whether an expression is a direct JsonForScript
+// call, which is the only form whose argument the emitter can encode.
+func jsonForScriptCall(expr Expr) (*CallExpr, bool) {
+	call, ok := expr.(*CallExpr)
+	if !ok || len(call.Arguments) != 1 {
+		return nil, false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	if !ok || identifier.Name != "JsonForScript" {
+		return nil, false
+	}
+	return call, true
 }
 
 func (e *goEmitter) emitIfOp(p *planEmitter, node *syntax.IfNode) error {
@@ -366,6 +629,193 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 	return nil
 }
 
+// awaitSourceName renders a binding's source the way the template wrote it, so
+// an unset value is reported by the name the caller knows it by rather than by
+// its generated field path. It falls back to the bound name for a source that
+// is not a plain path.
+func awaitSourceName(source Expr, bound string) string {
+	var path func(Expr) string
+	path = func(expr Expr) string {
+		switch expr := expr.(type) {
+		case *IdentifierExpr:
+			return expr.Name
+		case *MemberExpr:
+			if object := path(expr.Object); object != "" {
+				return object + "." + expr.Member
+			}
+		}
+		return ""
+	}
+	if name := path(source); name != "" {
+		return name
+	}
+	return bound
+}
+
+// emitAwaitOp writes one boundary. The primary and recover subtrees each get a
+// generated scope struct, so the bound results and the error stay statically
+// typed instead of becoming lookups.
+func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
+	e.scopeCount++
+	scopeType := fmt.Sprintf("%sAwait%d", p.scope.builder, e.scopeCount)
+	recoverType := scopeType + "Recover"
+	primary := p.scope.child(scopeType, scopeType+"Ops")
+	recovery := p.scope.child(recoverType, recoverType+"Ops")
+
+	// live boundaries bind at least one source that keeps delivering, so their
+	// bindings become subscription pumps rather than tasks joined once. A
+	// settle-once binding in such a clause is a pump that delivers once and
+	// returns, which is what lets one clause mix the two.
+	live := e.c.liveBoundaries[node]
+	// The bindings run concurrently and each assigns its own scope field, so
+	// they share no memory and need no lock.
+	var fields, tasks, checks []string
+	// liveBindings holds one subscription pump per binding. Each writes its own
+	// scope field and the boundary re-renders whenever any of them moves, so
+	// nothing has to select between them.
+	var liveBindings []string
+	// pump wraps one binding's body in the LiveBinding shape.
+	pump := func(body string) string {
+		return fmt.Sprintf("func(deliver func(func(*%s), error) bool) error {\n%s\n}", scopeType, body)
+	}
+	for _, binding := range node.Bindings {
+		t := e.c.exprTypes[binding.Call].awaited()
+		field := goPublicName(binding.Name)
+		primary.paths[binding.Name] = field
+		primary.types[binding.Name] = t
+		fields = append(fields, "\t"+field+" "+goType(t))
+		call, isCall := binding.Call.(*CallExpr)
+		if !isCall {
+			// A value the caller started. Waiting for it is the same join as a
+			// call, so it settles beside one in the same clause and the first
+			// failure in declaration order still decides the boundary.
+			code, err := e.exprCode(binding.Call, p.scope)
+			if err != nil {
+				return err
+			}
+			if live {
+				liveBindings = append(liveBindings, pump(fmt.Sprintf(
+					"\tvalue, err := %s.Wait(ctx)\n\tdeliver(func(scope *%s) { scope.%s = value }, err)\n\treturn nil",
+					code, scopeType, field)))
+			} else {
+				tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s.Wait(ctx); scope.%s = value; return err },", code, field))
+			}
+			if !t.optional {
+				// Absence is legal only where the template declared the
+				// settled type optional. Everywhere else an unset handle is a
+				// caller bug, and it has to be reported while the response can
+				// still carry an error status.
+				line := fmt.Sprintf("\tif !%s.IsSet() {\n\t\treturn htmlbind.ErrUnsetPending(%s)\n\t}", code, strconv.Quote(awaitSourceName(binding.Call, binding.Name)))
+				if p.scope == e.rootScope {
+					// Reachable from the parameters alone, so it becomes the
+					// plan's own check and runs before this component writes
+					// its first byte.
+					e.checks = append(e.checks, line)
+				} else {
+					// Rooted in a loop item or an enclosing boundary's scope,
+					// which exist only once rendering reaches them.
+					checks = append(checks, line)
+				}
+			}
+			continue
+		}
+		var args []string
+		for _, argument := range call.Arguments {
+			code, err := e.exprCode(argument, p.scope)
+			if err != nil {
+				return err
+			}
+			args = append(args, code)
+		}
+		// The external stays an ordinary blocking call; htmlbind.Concurrent owns
+		// running it in a goroutine and joining the results. An implementation
+		// that declared a leading context.Context receives the boundary's, so a
+		// call that can abort gets what it needs without a second declaration
+		// form in the template.
+		callee := call.Callee.(*IdentifierExpr).Name
+		if e.c.externals[callee].live {
+			// A live external's context is mandatory rather than discovered:
+			// an endless source with no context has nothing to make it return
+			// when the subscription ends.
+			source := fmt.Sprintf("%s(%s)", callee, strings.Join(append([]string{"ctx"}, args...), ", "))
+			// The pump mirrors the source's own loop: one range, one deliver
+			// per value, and the error travels beside the value exactly as the
+			// sequence yields it.
+			liveBindings = append(liveBindings, pump(fmt.Sprintf(
+				"\tfor value, err := range %s {\n\t\tif !deliver(func(scope *%s) { scope.%s = value }, err) {\n\t\t\treturn nil\n\t\t}\n\t}\n\treturn nil",
+				source, scopeType, field)))
+			continue
+		}
+		if e.contextExternals[callee] {
+			args = append([]string{"ctx"}, args...)
+		}
+		if live {
+			// A settle-once source beside a live one: it delivers its value,
+			// which satisfies the boundary's wait for every binding, and then
+			// returns without holding the subscription open.
+			liveBindings = append(liveBindings, pump(fmt.Sprintf(
+				"\tvalue, err := %s(%s)\n\tdeliver(func(scope *%s) { scope.%s = value }, err)\n\treturn nil",
+				callee, strings.Join(args, ", "), scopeType, field)))
+			continue
+		}
+		tasks = append(tasks, fmt.Sprintf("\t\tfunc() error { value, err := %s(%s); scope.%s = value; return err },",
+			callee, strings.Join(args, ", "), field))
+	}
+	fmt.Fprintf(&e.declarations, "type %s struct {\n\tOuter %s\n%s\n}\n\n", scopeType, p.scope.goType, strings.Join(fields, "\n"))
+	fmt.Fprintf(&e.declarations, "var %sOps = htmlbind.Builder[%s]{}\n\n", scopeType, scopeType)
+	fmt.Fprintf(&e.declarations, "type %s struct {\n\tOuter %s\n\tErr htmlbind.AsyncError\n}\n\n", recoverType, p.scope.goType)
+	fmt.Fprintf(&e.declarations, "var %sOps = htmlbind.Builder[%s]{}\n\n", recoverType, recoverType)
+
+	primaryOps := &planEmitter{e: e, scope: primary}
+	if err := e.emitOps(primaryOps, node.Primary); err != nil {
+		return err
+	}
+	fallbackOps := &planEmitter{e: e, scope: p.scope}
+	if err := e.emitOps(fallbackOps, node.Fallback); err != nil {
+		return err
+	}
+	handler := "nil"
+	if node.HasRecover {
+		if node.ErrorName != "" {
+			recovery.paths[node.ErrorName] = "Err"
+			recovery.types[node.ErrorName] = valueType{kind: kindError}
+		}
+		recoverOps := &planEmitter{e: e, scope: recovery}
+		if err := e.emitOps(recoverOps, node.Recover); err != nil {
+			return err
+		}
+		handler = recoverOps.literal()
+	}
+
+	if live {
+		return e.finishLiveOp(p, liveOpParts{
+			scopeType:   scopeType,
+			recoverType: recoverType,
+			bindings:    liveBindings,
+			primary:     primaryOps.literal(),
+			fallback:    fallbackOps.literal(),
+			handler:     handler,
+		})
+	}
+	// On failure the scope is discarded rather than returned: a cancelled wait
+	// leaves its abandoned tasks still writing those fields.
+	resolve := fmt.Sprintf("func(ctx context.Context, %s %s) (%s, error) {\n\tscope := %s{Outer: %s}\n\tif err := htmlbind.Concurrent(ctx,\n%s\n\t); err != nil {\n\t\tvar zero %s\n\t\treturn zero, err\n\t}\n\treturn scope, nil\n}",
+		receiverIdent, p.scope.goType, scopeType, scopeType, receiverIdent, strings.Join(tasks, "\n"), scopeType)
+	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
+		receiverIdent, p.scope.goType, recoverType, recoverType, receiverIdent)
+	p.flush()
+	if len(checks) > 0 {
+		p.raw(fmt.Sprintf("htmlbind.Require(func(%s %s) error {\n%s\n\treturn nil\n})",
+			receiverIdent, p.scope.goType, strings.Join(checks, "\n")))
+	}
+	p.raw(fmt.Sprintf("htmlbind.Await(\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		indentBlock(resolve, "\t"), build,
+		indentBlock(primaryOps.literal(), "\t"),
+		indentBlock(fallbackOps.literal(), "\t"),
+		indentBlock(handler, "\t")))
+	return nil
+}
+
 func (e *goEmitter) emitSlotOp(p *planEmitter, node *SlotNode) error {
 	path := receiverIdent + "." + p.scope.paths[node.Parameter()]
 	fallback := &planEmitter{e: e, scope: p.scope}
@@ -394,8 +844,16 @@ func (e *goEmitter) emitComponentOp(p *planEmitter, node *ComponentNode) error {
 	}
 	// Each fill becomes its own plan over the caller's scope, so the callee
 	// never needs to know the caller's parameter type.
+	//
+	// Numbering follows the callee's parameter order rather than map iteration
+	// order, because generated code must be byte-identical between runs.
 	fills := map[string]string{}
-	for name, body := range bodies {
+	for _, parameter := range component.order {
+		body, filled := bodies[parameter.Name]
+		if !filled {
+			continue
+		}
+		name := parameter.Name
 		e.scopeCount++
 		fillPlan := fmt.Sprintf("%sFill%d", p.scope.builder, e.scopeCount)
 		fill := &planEmitter{e: e, scope: p.scope}
@@ -568,13 +1026,29 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 	return "", fmt.Errorf("unsupported expression %T", expr)
 }
 
+// headTag is one contributed head tag together with the component that declared
+// it. The origin is carried so a caller rejecting a contribution can name it;
+// see requirement:head-contribution-provenance.
+type headTag struct {
+	html   string
+	source string
+}
+
 // transitiveHead collects the head contributions of a component and every
 // component reachable from it, because a nested call renders after the shell
-// head is already written. Identical tags collapse, so two components sharing a
-// stylesheet contribute one link.
-func (c *compiler) transitiveHead(name string) []string {
-	var out []string
+// head is already written.
+//
+// One entry per contributed tag rather than per contributing component, because
+// requirement:head-merging deduplicates on the tag and identity is per tag: two
+// components sharing a stylesheet link must collapse to one even when the rest
+// of their contributions differ.
+func (c *compiler) transitiveHead(name string) []headTag {
+	var out []headTag
 	visited := map[string]bool{}
+	// Identity is the tag, so two components contributing the same stylesheet
+	// link collapse here and the first declarer keeps the attribution. Merging
+	// across chain members deduplicates again, because a member cannot see the
+	// contributions of the members it is composed with.
 	emitted := map[string]bool{}
 	var visit func(string)
 	visit = func(current string) {
@@ -586,11 +1060,11 @@ func (c *compiler) transitiveHead(name string) []string {
 		if !ok {
 			return
 		}
-		for _, tag := range info.headTags {
-			if emitted[tag] {
+		for _, tag := range c.headTags(info) {
+			if emitted[tag.html] {
 				continue
 			}
-			emitted[tag] = true
+			emitted[tag.html] = true
 			out = append(out, tag)
 		}
 		for _, called := range c.calledComponents(info) {
@@ -599,6 +1073,33 @@ func (c *compiler) transitiveHead(name string) []string {
 	}
 	visit(name)
 	return out
+}
+
+// headTags is one component's head contribution split into its individual tags.
+// Whitespace between tags is dropped, because the merged head is assembled from
+// the tags rather than from the authored block. extractAssets fills the list, so
+// a style or inline script block appears here as its reference tag rather than
+// as the block itself.
+func (c *compiler) headTags(info *componentInfo) []headTag { return info.headTags }
+
+// headSource names the declaring component and the position of the tag, in the
+// form a diagnostic can print directly.
+func (c *compiler) headSource(info *componentInfo, node Node) string {
+	pos := nodePosition(node)
+	return fmt.Sprintf("%s (%s:%d:%d)", info.decl.Name, c.filename, pos.Line, pos.Col)
+}
+
+// nodePosition reads the source position of a static head node.
+func nodePosition(node Node) Position {
+	switch node := node.(type) {
+	case *ElementNode:
+		return node.Pos
+	case *CommentNode:
+		return node.Pos
+	case *TextNode:
+		return node.Pos
+	}
+	return Position{Line: 1, Col: 1}
 }
 
 // calledComponents lists the components a component's body invokes.
@@ -624,6 +1125,10 @@ func (c *compiler) calledComponents(info *componentInfo) []string {
 				walk(node.Else)
 			case *syntax.ForNode:
 				walk(node.Body)
+			case *syntax.AwaitNode:
+				walk(node.Primary)
+				walk(node.Fallback)
+				walk(node.Recover)
 			}
 		}
 	}
@@ -631,4 +1136,41 @@ func (c *compiler) calledComponents(info *componentInfo) []string {
 		walk(body)
 	}
 	return names
+}
+
+// liveOpParts carries the pieces emitAwaitOp already built, so the live tail
+// reads as one call rather than threading several positional arguments.
+type liveOpParts struct {
+	scopeType   string
+	recoverType string
+	bindings    []string
+	primary     string
+	fallback    string
+	handler     string
+}
+
+// finishLiveOp writes the htmlbind.Live call. It differs from the await tail in
+// what it hands the runtime: subscriptions rather than a join, and a scope the
+// runtime fills field by field as deliveries arrive rather than one built once
+// from a settled set of results.
+func (e *goEmitter) finishLiveOp(p *planEmitter, parts liveOpParts) error {
+	pumps := make([]string, len(parts.bindings))
+	for index, binding := range parts.bindings {
+		pumps[index] = indentBlock(binding, "\t\t") + ","
+	}
+	bindings := fmt.Sprintf("func(ctx context.Context, %s %s) []htmlbind.LiveBinding[%s] {\n\treturn []htmlbind.LiveBinding[%s]{\n%s\n\t}\n}",
+		receiverIdent, p.scope.goType, parts.scopeType, parts.scopeType, strings.Join(pumps, "\n"))
+	// The scope starts with the outer parameters alone. Each binding fills its
+	// own field as it delivers, and the first render waits until every one has.
+	scope := fmt.Sprintf("func(%s %s) %s { return %s{Outer: %s} }",
+		receiverIdent, p.scope.goType, parts.scopeType, parts.scopeType, receiverIdent)
+	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
+		receiverIdent, p.scope.goType, parts.recoverType, parts.recoverType, receiverIdent)
+	p.flush()
+	p.raw(fmt.Sprintf("htmlbind.Live(\n%s,\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		indentBlock(bindings, "\t"), scope, build,
+		indentBlock(parts.primary, "\t"),
+		indentBlock(parts.fallback, "\t"),
+		indentBlock(parts.handler, "\t")))
+	return nil
 }

@@ -16,7 +16,9 @@ func TestRenderedOutput(t *testing.T) {
 	if err := htmlbind.Render(&output, Label(LabelParams{Value: "<value>", Tone: TonePrimary})); err != nil {
 		t.Fatal(err)
 	}
-	want := "\n<span>Primary:&lt;value&gt;</span>\n"
+	// A fragment body keeps its edge runs collapsed to one space, because the
+	// caller may place it between two inline boxes.
+	want := " <span>Primary:&lt;value&gt;</span> "
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}

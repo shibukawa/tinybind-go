@@ -13,7 +13,7 @@ must_preserve:
   - the requirement:html-component-api signature shape for unchanged templates
   - direct component composition and children semantics
   - streaming writes, context-aware escaping, and trusted output restrictions
-  - rendered body bytes for unchanged templates
+  - rendered body bytes for unchanged templates, except where requirement:static-whitespace-normalization rewrites static whitespace; that pass preserves the rendered result, not byte identity, and its switch restores byte identity
   - generation-time parsing and type checking with no runtime template parsing
 activation:
   nested_layout: only for an explicit or convention-generated data:html-render-route-plan

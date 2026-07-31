@@ -17,6 +17,7 @@ func registerConfigDefinition0() {
 	configbind.Register[Config](configbind.Definition{
 		TypeName: "github.com/shibukawa/tinybind-go/testdata/configmodulea.Config",
 		Prefix:   "framework",
+		Doc:      "Config deliberately shares its unqualified name with configmoduleb.Config",
 		KnownKeys: []string{
 			"framework.endpoint",
 		},

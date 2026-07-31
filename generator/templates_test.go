@@ -30,7 +30,9 @@ export statement FindUser(id: int): sql.optional<User> {SELECT id, name FROM use
 			t.Fatal(err)
 		}
 	}
-	path, err := generator.New(generator.DefaultOptions()).GenerateTemplates(dir, dir, "")
+	options := generator.DefaultOptions()
+	options.SQLDialect = "postgresql"
+	path, err := generator.New(options).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 	}
 	var stdout, stderr bytes.Buffer
 	set := generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))
-	exit := set.Run(context.Background(), []string{"generate", "-dir", dir, "-openapi=false", "-sql-context-api"}, generator.CommandIO{
+	exit := set.Run(context.Background(), []string{"generate", "-dir", dir, "-openapi=false", "-sql-context-api", "-sql-dialect=postgresql"}, generator.CommandIO{
 		Stdout: &stdout, Stderr: &stderr,
 	})
 	if exit != 0 {
@@ -135,6 +137,7 @@ export statement Ping(): sql.exec {SELECT 1}`,
 	opts := generator.DefaultOptions()
 	opts.HTMLTemplatePattern = "*.tmpl"
 	opts.SQLTemplatePattern = "*.sqlt"
+	opts.SQLDialect = "postgresql"
 	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +180,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 	set := generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))
 	exit := set.Run(context.Background(), []string{
 		"generate", "-dir", dir, "-openapi=false",
-		"-html-template-pattern=*.page", "-sql-template-pattern=*.query",
+		"-html-template-pattern=*.page", "-sql-template-pattern=*.query", "-sql-dialect=postgresql",
 	}, generator.CommandIO{Stdout: &stdout, Stderr: &stderr})
 	if exit != 0 {
 		t.Fatalf("exit=%d stderr=%s", exit, stderr.String())
@@ -196,8 +199,13 @@ func TestGenerateTemplatesUsesCustomSQLExecutorResolver(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "dbctx"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Generated SQL always references the module runtime package.
+	moduleRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string]string{
-		"go.mod": "module fixture\n\ngo 1.26\n",
+		"go.mod": "module fixture\n\ngo 1.26\n\nrequire github.com/shibukawa/tinybind-go v0.0.0\n\nreplace github.com/shibukawa/tinybind-go => " + filepath.ToSlash(moduleRoot) + "\n",
 		"query.tb.sql": `package fixture
 type User { id: int }
 export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id = {id}}`,
@@ -219,6 +227,7 @@ func Executor(context.Context) (ExecutorInterface, error) { return nil, nil }`,
 	}
 	opts := generator.DefaultOptions()
 	opts.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "fixture/dbctx", Name: "Executor"}
+	opts.SQLDialect = "postgresql"
 	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +241,7 @@ func Executor(context.Context) (ExecutorInterface, error) { return nil, nil }`,
 	}
 	command := exec.Command("go", "test", "./...")
 	command.Dir = dir
-	command.Env = append(os.Environ(), "GOWORK=off")
+	command.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("custom resolver output does not compile: %v\n%s\n%s", err, output, generated)
 	}

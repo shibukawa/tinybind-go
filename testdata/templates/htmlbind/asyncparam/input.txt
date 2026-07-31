@@ -1,0 +1,63 @@
+package pages
+
+type Order {
+  id: string
+  total: int
+}
+
+// A record carrying settled and pending members together. The name is an
+// ordinary value the fallback subtree may render while the orders are still on
+// their way.
+type Customer {
+  name: string
+  orders: async Order[]
+}
+
+type Row {
+  label: string
+  count: async int
+}
+
+external async LoadBadge(name: string): string
+
+export component Layout(customer: Customer, children: html): html {
+<header>
+{await orders = customer.orders}
+  <span class="count">{for order in orders}<i>{order.id}</i>{/for}</span>
+{fallback}
+  <span class="count-pending"></span>
+{/await}
+</header>
+<main>{children}</main>
+}
+
+export component Profile(customer: Customer, headline: async string?): html {
+<section>
+<h1>{customer.name}</h1>
+{await orders = customer.orders, badge = LoadBadge(customer.name)}
+  <p class="badge">{badge}</p>
+  <ul>{for order in orders}<li>{order.id}: {order.total}</li>{/for}</ul>
+{fallback}
+  <p class="pending">loading {customer.name}…</p>
+{recover err}
+  <p class="failed">{err.code}</p>
+{/await}
+{await note = headline}
+  <p class="note" title={note}>note</p>
+{fallback}
+  <p class="note-pending"></p>
+{/await}
+</section>
+}
+
+export component Rows(rows: Row[]): html {
+<ul>
+{for row in rows}
+  {await count = row.count}
+    <li>{row.label}: {count}</li>
+  {fallback}
+    <li>{row.label}: pending</li>
+  {/await}
+{/for}
+</ul>
+}

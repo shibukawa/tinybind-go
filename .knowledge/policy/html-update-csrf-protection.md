@@ -10,7 +10,7 @@ evidence:
   - https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
   - https://pkg.go.dev/net/http#CrossOriginProtection
 scope:
-  required: cookie-authenticated POST, PUT, PATCH, and DELETE update endpoints
+  required: cookie-authenticated POST, PUT, PATCH, and DELETE update endpoints, including generated requirement:template-server-functions action endpoints
   conditional: safe render-only GET endpoints must remain side-effect-free; origin defense may still apply
   optional: APIs using explicit non-cookie authorization without ambient credentials
 primary:
@@ -19,6 +19,12 @@ primary:
 browser_transport:
   bootstrap: escaped token in data:html-client-bootstrap meta or inert configuration
   request: X-CSRF-Token custom header from requirement:html-runtime-bootstrap
+  form_post:
+    shape: hidden form field carrying the synchronizer token, emitted by requirement:template-server-functions
+    why: a requirement:template-server-functions form must submit with JavaScript disabled, and a plain form cannot set a request header
+    scope: same-origin form posts to a generated action endpoint only
+    equivalence: this is the classic synchronizer-token transport and carries the same secrecy requirements as the header form
+    unchanged: the header remains the transport for every runtime-initiated update
   forbidden: URL, query string, persistent Web Storage, or application logs
 server_validation:
   - validate token before parsing boundary capability or executing renderer

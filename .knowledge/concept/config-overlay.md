@@ -9,6 +9,10 @@ Key-wise merge table holding the winning raw value and source Place for each Bin
 key: term:config-key flat path under Bind prefix
 entry: data:overlay-entry
 merge: rule:source-precedence later Set wins
+iteration:
+  storage: map keyed by config key
+  exposure: ordered slice or ordered iter.Seq2; never raw map range
+  ordering_authority: rule:config-output-ordering, from generated definitions
 sources_into_overlay:
   - default from generated defaults
   - file_toml from reusable TOML parser

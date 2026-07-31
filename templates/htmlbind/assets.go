@@ -68,36 +68,38 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 	seen := map[string]bool{}
 	for _, component := range c.componentDecls() {
 		info := c.components[component.Name]
-		var tags []string
+		var tags []headTag
 		for _, node := range info.head {
-			element, ok := node.(*ElementNode)
-			if !ok {
-				if fragment := renderStaticHTML([]Node{node}); strings.TrimSpace(fragment) != "" {
-					tags = append(tags, fragment)
-				}
+			if _, ok := node.(*TextNode); ok {
 				continue
 			}
+			html := ""
+			element, isElement := node.(*ElementNode)
 			switch {
-			case element.Name == "style":
+			case isElement && element.Name == "style":
 				// An empty style block owns no bundle content, so it references
 				// nothing.
 				if strings.TrimSpace(info.style) == "" {
 					continue
 				}
-				tags = append(tags, referenceTag("link", "href", styleURL, element.Attributes))
-			case element.Name == "script" && inlineScript(element):
+				html = referenceTag("link", "href", styleURL, element.Attributes)
+			case isElement && element.Name == "script" && inlineScript(element):
 				body := strings.TrimSpace(elementText(element))
 				asset := newAsset(AssetScript, unit, jsGeneratedHeader+body+"\n", urlBase)
 				if !seen[asset.FileName()] {
 					seen[asset.FileName()] = true
 					assets = append(assets, asset)
 				}
-				tags = append(tags, referenceTag("script", "src", asset.URL, element.Attributes))
+				html = referenceTag("script", "src", asset.URL, element.Attributes)
 			default:
 				// A script or link already naming an external URL contributes
 				// its tag unchanged and produces no file.
-				tags = append(tags, renderStaticHTML([]Node{node}))
+				html = renderStaticHTML([]Node{node})
 			}
+			if strings.TrimSpace(html) == "" {
+				continue
+			}
+			tags = append(tags, headTag{html: html, source: c.headSource(info, node)})
 		}
 		info.headTags = tags
 	}
@@ -182,10 +184,6 @@ func referenceTag(name, urlAttribute, url string, attributes []Attribute) string
 		out.WriteString("</" + name + ">")
 	}
 	return out.String()
-}
-
-func escapeAttributeValue(value string) string {
-	return strings.NewReplacer(`&`, "&amp;", `"`, "&quot;", `<`, "&lt;", `>`, "&gt;").Replace(value)
 }
 
 // newAsset names a file after the generation unit, the asset kind, and the hash

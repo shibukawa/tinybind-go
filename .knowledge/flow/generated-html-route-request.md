@@ -3,29 +3,47 @@ id: flow:generated-html-route-request
 type: flow
 title: Generated HTML Route Request Flow
 ---
-Generated request path from ServeMux registration through typed data loading and document rendering.
+Request path from generated ServeMux registration through whichever page rung the route uses.
 
 ```yaml
 flow:
-  trigger: api:register-generated-html-routes handler matches a page request
+  trigger: a route registered by api:register-generated-html-routes matches the request
+  branch: decision:route-handler-shape selects the rung from the presence and signature of func Page
   steps:
     - id: context
-      action: apply configured middleware, authentication, authorization, and observability hooks
-    - id: bind-path
-      action: decode requirement:typed-html-route-parameters from matched route
-    - id: bind-query
-      action: decode page-declared search parameter record
-    - id: plan
-      action: select data:html-render-route-plan document and requirement:nested-layout-composition chain
+      owner: application
+      action: run whatever middleware the application already wrapped around the mux
+    - id: dispatch
+      owner: generated
+      action: enter the generated handler for the matched route
+    - id: bind
+      owner: generated
+      rungs: [1, 2]
+      action: decode the dynamic path segments and the declared query parameters, in the order requirement:colocated-route-logic fixes
+    - id: load
+      owner: author
+      rungs: [2]
+      action: call func Page, which returns the component parameter values, or an error, or a requirement:redirect-error target
+    - id: raw
+      owner: author
+      rungs: [3]
+      action: the handler decodes, loads, and calls the generated composer itself, owning the whole response
+    - id: compose
+      owner: generated
+      action: assemble the requirement:nested-layout-composition chain and decision:html-document-shell, validating before any byte is written
     - id: query
-      action: invoke rule:render-external-query-semantics through data:html-route-dependencies
-    - id: render
-      action: render page into layouts and decision:html-document-shell with component capability lowering
+      owner: generated
+      action: invoke rule:render-external-query-semantics through data:html-route-dependencies for template-declared externals
     - id: respond
-      action: send complete HTML, streaming updates, or negotiated delta response
+      owner: generated
+      action: write the merged head, then the body, as complete HTML or a negotiated delta response
     - id: drain
+      owner: generated
       action: run flow:chain-render-pipeline when the assembled chain is async, writing and flushing each data:async-boundary-content item
   failure:
-    before_commit: configured typed HTTP error mapping
+    bind: configured invalid-parameter mapping, before func Page runs
+    page_function: configured typed HTTP error mapping, or a redirect through requirement:redirect-error, with nothing written yet
+    raw_handler: the handler writes whatever status it chooses
+    compose_before_commit: configured mapping on rungs 1 and 2, or an error returned to a rung 3 handler
     async_after_commit: decision:async-boundary-syntax recover content and server diagnostics
 ```

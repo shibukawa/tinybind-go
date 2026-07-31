@@ -130,3 +130,680 @@ func TestGenerateRejectsInvalidSubCommandPositionals(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestGenerateEmitsDurationField(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		PackagePath: "example.test/fixture",
+		TypeName:    "ServerConfig",
+		Prefix:      "server",
+		Fields: []Field{
+			{GoName: "ReadTimeout", Key: "read_timeout", Kind: FieldDuration, Default: "1h30m"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"time"`,
+		`{Key: "read_timeout", Kind: configbind.ScaffoldDuration, Default: "1h30m"}`,
+		`d, err := time.ParseDuration(v)`,
+		`p.ReadTimeout = 5400000000000 // 1h30m0s`,
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("generated duration field %q missing:\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsUnparsableDurationDefault(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []Field{{GoName: "ReadTimeout", Key: "read_timeout", Kind: FieldDuration, Default: "5"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration default") {
+		t.Fatalf("err=%v want a rejected bare-number default", err)
+	}
+}
+
+func TestGenerateEmitsDependsOnMap(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "RDBConfig",
+		Prefix:   "rdb",
+		Fields: []Field{
+			{GoName: "DSN", Key: "dsn", Kind: FieldString},
+			{GoName: "PoolSize", Key: "pool_size", Kind: FieldInt, Default: "10", DependsOn: "rdb.dsn"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"DependsOn: map[string][]string{",
+		`"rdb.pool_size": {"rdb.dsn"}`,
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("generated dependon %q missing:\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateAcceptsDependsOnFromAnotherPackage(t *testing.T) {
+	// The parent lives in a package generated elsewhere, so it cannot be checked
+	// here; the tag passes through unvalidated rather than failing the build.
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "AppConfig",
+		Prefix:   "app",
+		Fields:   []Field{{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "middleware.rdb.dsn"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `"app.pool": {"middleware.rdb.dsn"}`) {
+		t.Fatalf("cross-package parent missing:\n%s", src)
+	}
+}
+
+func TestGenerateRejectsBadDependsOn(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields []Field
+		want   string
+	}{
+		{
+			// An int parent has no empty of its own until a falsy tag names one.
+			name: "number parent without falsy",
+			fields: []Field{
+				{GoName: "Port", Key: "port", Kind: FieldInt},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.port"},
+			},
+			want: "needs its own falsy tag",
+		},
+		{
+			name: "list parent",
+			fields: []Field{
+				{GoName: "Origins", Key: "origins", Kind: FieldStringSlice},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.origins"},
+			},
+			want: "must be a string, bool, int, or duration field",
+		},
+		{
+			name:   "self reference",
+			fields: []Field{{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.pool"}},
+			want:   "refers to itself",
+		},
+		{
+			name: "several parents",
+			fields: []Field{
+				{GoName: "DSN", Key: "dsn", Kind: FieldString},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.dsn,rdb.other"},
+			},
+			want: "one parent key",
+		},
+		{
+			name: "cycle",
+			fields: []Field{
+				{GoName: "A", Key: "a", Kind: FieldString, DependsOn: "rdb.b"},
+				{GoName: "B", Key: "b", Kind: FieldString, DependsOn: "rdb.a"},
+			},
+			want: "dependon cycle",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Generate("fixture", []Spec{{TypeName: "RDBConfig", Prefix: "rdb", Fields: tc.fields}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenerateRejectsDependsOnInSubCommand(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName:   "MigrateOptions",
+		SubCommand: true,
+		Name:       "migrate",
+		Help:       "run migrations",
+		Fields:     []Field{{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.dsn"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "cannot use dependon") {
+		t.Fatalf("err=%v want a subcommand rejection", err)
+	}
+}
+
+func TestGenerateEmitsFalsyMap(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ObservabilityConfig",
+		Prefix:   "obs",
+		Fields: []Field{
+			{GoName: "Tracing", Key: "tracing", Kind: FieldString, Falsy: "off"},
+			{GoName: "URL", Key: "url", Kind: FieldString, DependsOn: "obs.tracing"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Falsy: map[string]string{",
+		`"obs.tracing": "off"`,
+		`"obs.url": {"obs.tracing"}`,
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("generated falsy %q missing:\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsFalsyOnUnsupportedKind(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ObservabilityConfig",
+		Prefix:   "obs",
+		Fields:   []Field{{GoName: "Enabled", Key: "enabled", Kind: FieldBool, Falsy: "false"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "falsy applies to string, int, and duration fields only") {
+		t.Fatalf("err=%v want a kind rejection", err)
+	}
+}
+
+func TestGenerateRejectsFalsyInSubCommand(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName:   "MigrateOptions",
+		SubCommand: true,
+		Name:       "migrate",
+		Help:       "run migrations",
+		Fields:     []Field{{GoName: "Mode", Key: "mode", Kind: FieldString, Falsy: "off"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "cannot use falsy") {
+		t.Fatalf("err=%v want a subcommand rejection", err)
+	}
+}
+
+func TestGenerateTableArrayRules(t *testing.T) {
+	routes := Field{
+		GoName:   "Routes",
+		Key:      "routes",
+		Kind:     FieldStructSlice,
+		ElemType: "RouteConfig",
+		Nested:   []Field{{GoName: "Path", Key: "path", Kind: FieldString}},
+	}
+
+	t.Run("bind_emits_a_loop", func(t *testing.T) {
+		src, err := Generate("sample", []Spec{{
+			TypeName: "AppConfig", Prefix: "app", Fields: []Field{routes},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(src)
+		for _, want := range []string{
+			`o.Get("app.routes")`,
+			"if !ta1.IsTables {",
+			"p.Routes = make([]RouteConfig, len(ta1.Tables))",
+			`ta1.Tables[i1].GetString("path")`,
+			`Key: "routes", Kind: configbind.ScaffoldTableArray`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("missing %q in\n%s", want, text)
+			}
+		}
+		// A repeated table has no flag or env form, so it stays out of FlagMetas.
+		if strings.Contains(text, `Key: "routes", Opt`) || strings.Contains(text, `{Prefix: "app", Key: "routes"`) {
+			t.Fatalf("routes must not become a flag:\n%s", text)
+		}
+	})
+
+	t.Run("element_flags_rejected", func(t *testing.T) {
+		flagged := routes
+		flagged.Nested = []Field{{GoName: "Path", Key: "path", Kind: FieldString, Opt: "path"}}
+		_, err := Generate("sample", []Spec{{
+			TypeName: "AppConfig", Prefix: "app", Fields: []Field{flagged},
+		}})
+		if err == nil || !strings.Contains(err.Error(), "no flag, env, or positional form") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+
+	t.Run("subcommand_rejected", func(t *testing.T) {
+		_, err := Generate("sample", []Spec{{
+			TypeName: "Serve", SubCommand: true, Name: "serve", Help: "serve files",
+			Fields: []Field{routes},
+		}})
+		if err == nil || !strings.Contains(err.Error(), "cannot take an array of tables") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+}
+
+func TestGenerateDurationInsideTableArrayElement(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Nested: []Field{
+				{GoName: "MaxAge", Key: "max_age", Kind: FieldDuration, Default: "1h"},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	// The element loop reads its own overlay, and diagnostics name the full path
+	// including the element index: file position is an element's only identifier.
+	for _, want := range []string{
+		`ta1.Tables[i1].GetString("max_age")`,
+		`"configbind: server.routes[%d].max_age: %w", i1, err`,
+		`p.Routes[i1].MaxAge = 3600000000000 // 1h0m0s`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("generated element duration %q missing:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `o.GetString("max_age")`) {
+		t.Fatalf("element field must not read the top-level overlay:\n%s", text)
+	}
+}
+
+func TestGenerateRejectsDependsOnInsideTableArrayElement(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Nested: []Field{
+				{GoName: "Dir", Key: "dir", Kind: FieldString, DependsOn: "server.root"},
+			},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon or falsy") {
+		t.Fatalf("err=%v want an element-field rejection", err)
+	}
+}
+
+// containsNormalized reports whether src contains want once both have their
+// runs of whitespace collapsed, so gofmt's map-key alignment does not decide
+// whether an assertion matches.
+func containsNormalized(src []byte, want string) bool {
+	collapse := func(text string) string { return strings.Join(strings.Fields(text), " ") }
+	return strings.Contains(collapse(string(src)), collapse(want))
+}
+
+// A dependon on a nested struct covers the whole subtree, so every leaf under
+// it answers to that parent without repeating the tag.
+func TestGenerateSpreadsDependsOnOverNestedStruct(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "SecurityConfig",
+		Prefix:   "security",
+		Fields: []Field{
+			{GoName: "Enabled", Key: "enabled", Kind: FieldBool},
+			{
+				GoName:    "HSTS",
+				Key:       "hsts",
+				Kind:      FieldStruct,
+				DependsOn: "security.enabled",
+				Nested: []Field{
+					{GoName: "MaxAge", Key: "max_age", Kind: FieldInt},
+					{GoName: "Preload", Key: "preload", Kind: FieldBool},
+				},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"security.hsts.max_age": {"security.enabled"}`,
+		`"security.hsts.preload": {"security.enabled"}`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+// A leaf inside a dependent subtree keeps its own parent and gains the one the
+// struct declared: both have to be set for the key to be worth printing.
+func TestGenerateKeepsLeafParentInsideDependentStruct(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "SecurityConfig",
+		Prefix:   "security",
+		Fields: []Field{
+			{GoName: "Enabled", Key: "enabled", Kind: FieldBool},
+			{GoName: "Mode", Key: "mode", Kind: FieldString},
+			{
+				GoName:    "HSTS",
+				Key:       "hsts",
+				Kind:      FieldStruct,
+				DependsOn: "security.enabled",
+				Nested: []Field{
+					{GoName: "MaxAge", Key: "max_age", Kind: FieldInt, DependsOn: "security.mode"},
+				},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsNormalized(src, `"security.hsts.max_age": {"security.enabled", "security.mode"}`) {
+		t.Fatalf("both parents expected:\n%s", src)
+	}
+}
+
+// A relative parent resolves against the struct the tag is written in, so one
+// shared struct type names its own sibling under every prefix it is embedded at.
+func TestGenerateResolvesRelativeDependsOn(t *testing.T) {
+	endpoint := func() []Field {
+		return []Field{
+			{GoName: "Enabled", Key: "enabled", Kind: FieldBool},
+			{GoName: "Path", Key: "path", Kind: FieldString, DependsOn: ".enabled"},
+		}
+	}
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{
+			{GoName: "Health", Key: "health", Kind: FieldStruct, Nested: endpoint()},
+			{GoName: "Readiness", Key: "readiness", Kind: FieldStruct, Nested: endpoint()},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"server.health.path": {"server.health.enabled"}`,
+		`"server.readiness.path": {"server.readiness.enabled"}`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsFalsyOnNestedStruct(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "SecurityConfig",
+		Prefix:   "security",
+		Fields: []Field{{
+			GoName: "HSTS",
+			Key:    "hsts",
+			Kind:   FieldStruct,
+			Falsy:  "off",
+			Nested: []Field{{GoName: "MaxAge", Key: "max_age", Kind: FieldInt}},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "falsy applies to a leaf field") {
+		t.Fatalf("err=%v want a nested-struct rejection", err)
+	}
+}
+
+func TestGenerateParsesIntegersAtFieldWidth(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields: []Field{
+			{GoName: "MaxBody", Key: "max_body", Kind: FieldInt, GoType: "int64", Default: "9223372036854775807"},
+			{GoName: "Workers", Key: "workers", Kind: FieldInt, GoType: "uint32"},
+			{GoName: "Port", Key: "port", Kind: FieldInt},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"strconv.ParseInt(v, 10, 64)",
+		"p.MaxBody = int64(n)",
+		"p.MaxBody = 9223372036854775807",
+		"strconv.ParseUint(v, 10, 32)",
+		"p.Workers = uint32(n)",
+		// An empty GoType stays int, so a field built before widths were
+		// carried keeps working.
+		"strconv.ParseInt(v, 10, 0)",
+		"p.Port = int(n)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsOutOfRangeIntegerDefault(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields:   []Field{{GoName: "Workers", Key: "workers", Kind: FieldInt, GoType: "int32", Default: "3000000000"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "invalid int32 default") {
+		t.Fatalf("err=%v want an out-of-range default rejection", err)
+	}
+}
+
+func TestGenerateRejectsUnknownIntegerGoType(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "LimitConfig",
+		Prefix:   "limit",
+		Fields:   []Field{{GoName: "Workers", Key: "workers", Kind: FieldInt, GoType: "float64"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `unsupported integer type "float64"`) {
+		t.Fatalf("err=%v want an unsupported-type rejection", err)
+	}
+}
+
+func TestGenerateRejectsSecretInSubCommand(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName:   "MigrateOptions",
+		SubCommand: true,
+		Name:       "migrate",
+		Help:       "run migrations",
+		Fields:     []Field{{GoName: "Token", Key: "token", Kind: FieldString, Secret: "hide"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "cannot use secret") {
+		t.Fatalf("err=%v want a subcommand rejection", err)
+	}
+}
+
+// A secret on the array of tables covers every field of every element. The array
+// owns one stable key, so a mode written there has somewhere to land; only the
+// elements' own keys carry a run-time index.
+func TestGenerateSpreadsSecretOverTableArray(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Secret:   "mask",
+			Nested: []Field{
+				{GoName: "Dir", Key: "dir", Kind: FieldString},
+				{GoName: "Root", Key: "root", Kind: FieldString},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gofmt aligns map values, so compare with runs of spaces collapsed.
+	text := collapseSpaces(string(src))
+	for _, want := range []string{
+		`"server.routes": "mask"`,
+		`"server.routes.dir": "mask"`,
+		`"server.routes.root": "mask"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+}
+
+func collapseSpaces(s string) string {
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return s
+}
+
+// An element field's own secret tag is honored and outranks the array's mode.
+// It is indexed by the element's path under the array key, because the element's
+// own key carries an index that exists only at run time.
+func TestGenerateKeepsElementSecretByStablePath(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "RDBConfig",
+		Prefix:   "rdb",
+		Fields: []Field{{
+			GoName:   "Connections",
+			Key:      "connections",
+			Kind:     FieldStructSlice,
+			ElemType: "ConnectionConfig",
+			Nested: []Field{
+				{GoName: "Group", Key: "group", Kind: FieldString},
+				{GoName: "DSN", Key: "dsn", Kind: FieldString, Secret: "mask"},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := collapseSpaces(string(src))
+	if !strings.Contains(text, `"rdb.connections.dsn": "mask"`) {
+		t.Fatalf("element secret missing:\n%s", text)
+	}
+	// The untagged sibling gains no mode, and no indexed key is ever generated.
+	if strings.Contains(text, `"rdb.connections.group"`) {
+		t.Fatalf("untagged element field must not gain a mode:\n%s", text)
+	}
+	if strings.Contains(text, "connections[0]") {
+		t.Fatalf("secret map must not hold a run-time index:\n%s", text)
+	}
+}
+
+// falsy still has no single value to name on an array of tables.
+func TestGenerateRejectsFalsyOnTableArray(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName:   "Routes",
+			Key:      "routes",
+			Kind:     FieldStructSlice,
+			ElemType: "RouteConfig",
+			Falsy:    "off",
+			Nested:   []Field{{GoName: "Dir", Key: "dir", Kind: FieldString}},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "falsy applies to a leaf field") {
+		t.Fatalf("err=%v want a falsy rejection", err)
+	}
+}
+
+func TestGenerateRejectsUnknownSecretMode(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields:   []Field{{GoName: "Token", Key: "token", Kind: FieldString, Secret: "true"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "secret must be hide, mask, or show") {
+		t.Fatalf("err=%v want a mode rejection", err)
+	}
+}
+
+// A secret on a nested struct covers its subtree, the way dependon does.
+func TestGenerateSpreadsSecretOverNestedStruct(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName: "Upstream",
+			Key:    "upstream",
+			Kind:   FieldStruct,
+			Secret: "mask",
+			Nested: []Field{
+				{GoName: "User", Key: "user", Kind: FieldString},
+				{GoName: "Password", Key: "password", Kind: FieldString, Secret: "hide"},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"server.upstream.user": "mask"`,
+		// A leaf's own tag wins over the one it inherits.
+		`"server.upstream.password": "hide"`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+// A tag that addresses one scalar key has nowhere to land on a struct or an
+// array, and the generator says so instead of dropping it. A default on a nested
+// struct was accepted and silently generated nothing before this check existed.
+func TestGenerateRejectsScalarOnlyTagsOnContainers(t *testing.T) {
+	nested := Field{
+		GoName: "Health",
+		Key:    "health",
+		Kind:   FieldStruct,
+		Nested: []Field{{GoName: "Path", Key: "path", Kind: FieldString}},
+	}
+	array := Field{
+		GoName:   "Routes",
+		Key:      "routes",
+		Kind:     FieldStructSlice,
+		ElemType: "RouteConfig",
+		Nested:   []Field{{GoName: "Dir", Key: "dir", Kind: FieldString}},
+	}
+	for _, tc := range []struct {
+		name  string
+		field Field
+		want  string
+	}{
+		{"default on struct", withDefault(nested, "path=/healthz"), "default applies to a leaf field, not to the nested struct"},
+		{"opt on struct", withOpt(nested, "health"), "opt applies to a leaf field, not to the nested struct"},
+		{"env on struct", withEnv(nested, "HEALTH"), "env applies to a leaf field, not to the nested struct"},
+		{"default on array", withDefault(array, "dir=/srv"), "default applies to a leaf field, not to the array of tables"},
+		// opt and env on an array were already rejected, by an earlier check with
+		// its own wording; the case is here so the coverage stays total.
+		{"env on array", withEnv(array, "ROUTES"), "an array of tables has no flag or env form"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Generate("fixture", []Spec{{
+				TypeName: "ServerConfig", Prefix: "server", Fields: []Field{tc.field},
+			}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// help is exempt: godoc backfill writes help tags onto struct fields, so
+// rejecting it here would fail the generation run that wrote it.
+func TestGenerateAcceptsHelpOnContainers(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ServerConfig",
+		Prefix:   "server",
+		Fields: []Field{{
+			GoName: "Health",
+			Key:    "health",
+			Kind:   FieldStruct,
+			Help:   "health endpoint settings",
+			Nested: []Field{{GoName: "Path", Key: "path", Kind: FieldString}},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("help on a nested struct must be accepted: %v", err)
+	}
+}
+
+func withDefault(f Field, v string) Field { f.Default = v; return f }
+func withOpt(f Field, v string) Field     { f.Opt = v; return f }
+func withEnv(f Field, v string) Field     { f.Env = v; return f }

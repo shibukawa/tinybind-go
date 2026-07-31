@@ -37,7 +37,10 @@ func TestGenerateFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := htmlbind.Generate(inputPath, input, htmlbind.GenerateOptions{})
+			// The filename reaches generated output through HeadSources, so it is
+			// passed as a stable slash-joined label rather than as the on-disk path,
+			// which would bake this checkout's layout into the golden.
+			got, err := htmlbind.Generate(name+"/input.txt", input, htmlbind.GenerateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,6 +105,11 @@ func TestGenerateDiagnostics(t *testing.T) {
 		{"optional mixed attribute", `component Bad(value: string?): html {<p title="prefix {value}">x</p>}`, "optional expression must be the entire attribute"},
 		{"unsafe json field", `type Payload { target: url } component Bad(value: Payload): html {<script>{JsonForScript(value)}</script>}`, "not statically serializable"},
 		{"noncomparable values", `component Bad(left: string[], right: string[]): html {{if left == right}x{/if}}`, "values are not comparable"},
+		// An object shorthand and a single-statement block match an insertion
+		// shape, so they reach analysis; the hint has to survive that far.
+		{"shorthand reaching analysis", `component Bad(): html {<script>const o = {name};</script>}`, "inside <script> content"},
+		{"tight call block reaching analysis", `component Bad(): html {<script>if(x){render()}</script>}`, "inside <script> content"},
+		{"typed insertion keeps its hint", `component Bad(value: string): html {<script>{value}</script>}`, "insert a value with RawJavaScript or JsonForScript"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -270,7 +278,7 @@ func TestRenderChainWithoutWrappers(t *testing.T) {
 	if err := htmlbind.Render(&out, Page(PageParams{Body: "solo"})); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "\n<p>solo</p>\n" {
+	if out.String() != " <p>solo</p> " {
 		t.Fatalf("unexpected leaf-only output %q", out.String())
 	}
 }
@@ -381,4 +389,298 @@ func TestShellRendersWithoutAChain(t *testing.T) {
 }
 `)
 	runGeneratedTests(t, generated, companion)
+}
+
+// TestAsyncAndCacheDiagnostics covers the rules that keep an await boundary and
+// a cached component from producing output the runtime cannot stand behind.
+func TestAsyncAndCacheDiagnostics(t *testing.T) {
+	cases := []struct{ name, source, want string }{
+		{
+			"async call outside await",
+			`external async Load(): string
+component Bad(): html {<p>{Load()}</p>}`,
+			"can only be called in an await binding",
+		},
+		{
+			"nested async call in a binding",
+			`external async Load(value: string): string
+component Bad(): html {{await v = Load(Load("x"))}<p>{v}</p>{fallback}p{/await}}`,
+			"can only be called in an await binding",
+		},
+		{
+			"awaiting a synchronous external",
+			`external Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}`,
+			"is not async; declare it as external async",
+		},
+		{
+			"missing fallback clause",
+			`external async Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{/await}}`,
+			"expected {fallback} inside {await}",
+		},
+		{
+			"slot inside an await clause",
+			`external async Load(): string
+component Bad(children: html): html {{await v = Load()}<slot required />{fallback}p{/await}}`,
+			"cannot appear inside an await block",
+		},
+		{
+			"binding shadows the generated scope field",
+			`external async Load(): string
+component Bad(): html {{await outer = Load()}<p>{outer}</p>{fallback}p{/await}}`,
+			"cannot be named outer",
+		},
+		{
+			"error field that does not exist",
+			`external async Load(): string
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{recover err}{err.detail}{/await}}`,
+			"unknown field detail on error",
+		},
+		{
+			"unknown annotation",
+			`@memo(ttl: "5m")
+component Bad(): html {<p>x</p>}`,
+			"unknown annotation @memo",
+		},
+		{
+			"cache without a ttl",
+			`@cache()
+component Bad(): html {<p>x</p>}`,
+			"@cache requires a ttl argument",
+		},
+		{
+			"cache with an unparsable ttl",
+			`@cache(ttl: "soon")
+component Bad(): html {<p>x</p>}`,
+			"@cache ttl is not a duration",
+		},
+		{
+			"cache with a slot parameter",
+			`@cache(ttl: "5m")
+component Bad(children: html): html {<p><slot required /></p>}`,
+			"cannot declare the html parameter children",
+		},
+		{
+			"cached component owning an await boundary",
+			`external async Load(): string
+@cache(ttl: "5m")
+component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}`,
+			"cannot reach an await boundary",
+		},
+		{
+			"cached component reaching an await boundary through a call",
+			`external async Load(): string
+component Inner(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}
+@cache(ttl: "5m")
+component Bad(): html {<Inner />}`,
+			"cannot reach an await boundary; Inner declares one",
+		},
+		{
+			"annotation on a type declaration",
+			`@cache(ttl: "5m")
+type Bad { name: string }`,
+			"annotation cannot precede a type declaration",
+		},
+		{
+			"reading an async parameter outside an await clause",
+			`component Bad(name: async string): html {<p>{name}</p>}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"reading a field of an async record",
+			`type User { name: string }
+component Bad(user: async User): html {{await v = user.name}<p>{v}</p>{fallback}p{/await}}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"comparing an async value",
+			`component Bad(count: async int): html {{if count == 1}<p>x</p>{/if}}`,
+			"must be bound by an await clause before it is read",
+		},
+		{
+			"awaiting a value that is not async",
+			`component Bad(name: string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"only an async value or an async external call can be awaited",
+		},
+		{
+			"async modifying another async",
+			`component Bad(name: async async string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"async cannot modify another async",
+		},
+		{
+			"array of async values",
+			`component Bad(names: [async string]): html {<p>x</p>}`,
+			"async applies to the whole type",
+		},
+		{
+			"async external parameter",
+			`external Load(value: async string): string
+component Bad(): html {<p>{Load("x")}</p>}`,
+			"cannot be async; declare the function external async instead",
+		},
+		{
+			"async external result",
+			`external Load(): async string
+component Bad(): html {<p>x</p>}`,
+			"cannot return an async type",
+		},
+		{
+			"async slot parameter",
+			`component Bad(children: async html): html {<p><slot required /></p>}`,
+			"html parameter children cannot be async",
+		},
+		{
+			"cached component with an async parameter",
+			`@cache(ttl: "5m")
+component Bad(name: async string): html {{await v = name}<p>{v}</p>{fallback}p{/await}}`,
+			"cannot declare the async parameter name",
+		},
+		{
+			"cached component with a record reaching an async field",
+			`type User { pending: async string }
+@cache(ttl: "5m")
+component Bad(user: User): html {<p>x</p>}`,
+			"cannot declare the async parameter user",
+		},
+		{
+			"serializing an async value into a script",
+			`type User { pending: async string }
+component Bad(user: User): html {<script type="application/json">{JsonForScript(user)}</script>}`,
+			"not statically serializable",
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := htmlbind.Generate("invalid.txt", []byte(test.source), htmlbind.GenerateOptions{Package: "invalid"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestAsyncExternalContextArgument covers the two shapes an async external's Go
+// implementation may take. The template declaration is the same either way; the
+// caller reports which functions accept a leading context.
+func TestAsyncExternalContextArgument(t *testing.T) {
+	source := []byte(`external async LoadUser(id: string): User
+external async LoadTags(id: string): string[]
+type User { name: string }
+component Page(id: string): html {{await user = LoadUser(id), tags = LoadTags(id)}<p>{user.name}</p>{fallback}p{/await}}`)
+
+	plain, err := htmlbind.Generate("page.txt", source, htmlbind.GenerateOptions{Package: "pages"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(plain, []byte("LoadUser(p.Id)")) || !bytes.Contains(plain, []byte("LoadTags(p.Id)")) {
+		t.Fatalf("externals were not called as plain functions:\n%s", plain)
+	}
+
+	mixed, err := htmlbind.Generate("page.txt", source, htmlbind.GenerateOptions{
+		Package:          "pages",
+		ContextExternals: map[string]bool{"LoadTags": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(mixed, []byte("LoadTags(ctx, p.Id)")) {
+		t.Fatalf("context-taking external did not receive ctx:\n%s", mixed)
+	}
+	if !bytes.Contains(mixed, []byte("LoadUser(p.Id)")) {
+		t.Fatalf("plain external gained a ctx argument:\n%s", mixed)
+	}
+}
+
+// TestDocumentedRawTextExamples compiles the examples in the "Braces inside
+// <script> and <style>" section of docs/htmlbind.md, so the documented rules and
+// rule:raw-text-insertion-gate cannot drift apart.
+func TestDocumentedRawTextExamples(t *testing.T) {
+	t.Run("authored content survives byte for byte", func(t *testing.T) {
+		source := "export component Widget(): html {\n<script>\n" +
+			"class X {}\n" +
+			"function f() {\n  return 1\n}\n" +
+			"function g(){return 1}\n" +
+			"const o = { a: 1 };\n" +
+			"const n = {0: 'a'};\n" +
+			"const p = {a, b};\n" +
+			"class C { m() { this.v = 1; } }\n" +
+			"if (x) { render() }\n" +
+			"const s = `hi ${name}`;\n" +
+			"</script>\n<style>\n" +
+			".a { color: red; }\n" +
+			".b{color:red}\n" +
+			"@media print {\n  .c { color: #000; }\n}\n" +
+			"</style>\n" +
+			"<script type=\"speculationrules\">\n{\"prerender\": [{\"where\": {\"href_matches\": \"/*\"}}]}\n</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("documented content example failed: %v", err)
+		}
+		for _, want := range []string{
+			`class X {}`, `function g(){return 1}`, `const o = { a: 1 };`, `const n = {0: 'a'};`,
+			`const p = {a, b};`, `class C { m() { this.v = 1; } }`, `if (x) { render() }`,
+			"`hi ${name}`", `.a { color: red; }`, `.b{color:red}`, `.c { color: #000; }`,
+			`{\"prerender\": [{\"where\": {\"href_matches\": \"/*\"}}]}`,
+		} {
+			if !bytes.Contains(generated, []byte(want)) {
+				t.Errorf("generated output missing authored line %q", want)
+			}
+		}
+	})
+
+	t.Run("every documented insertion shape compiles", func(t *testing.T) {
+		source := `type Payload { id: int }
+type Config { js: trusted_javascript }
+
+export component Widget(
+  js: trusted_javascript,
+  cfg: Config,
+  css: string,
+  payload: Payload,
+  ready: bool,
+  on: trusted_javascript,
+  off: trusted_javascript
+): html {
+<script>{js}</script>
+<script>{cfg.js}</script>
+<script>{JsonForScript(payload)}</script>
+<script>{(ready ? on : off)}</script>
+<style>{RawCSS(css)}</style>
+<script>{if ready}console.log(1){/if}</script>
+}
+`
+		if _, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"}); err != nil {
+			t.Fatalf("documented insertion example failed: %v", err)
+		}
+	})
+
+	t.Run("the escape resolves a collision", func(t *testing.T) {
+		source := "export component W(): html {\n<script>const o = {{name}};</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("documented escape example failed: %v", err)
+		}
+		if !bytes.Contains(generated, []byte(`const o = {name};`)) {
+			t.Fatal("escape did not emit a literal brace pair")
+		}
+	})
+
+	t.Run("a bare script_json value is already encoded", func(t *testing.T) {
+		// The documented residual: a tight shorthand naming an insertable
+		// parameter compiles. It must compile rather than crash, because the
+		// emitter only unwraps a direct JsonForScript call.
+		source := "export component W(payload: script_json): html {\n<script>const o = {payload};</script>\n}\n"
+		if _, err := htmlbind.Generate("doc.txt", []byte(source), htmlbind.GenerateOptions{Package: "doc"}); err != nil {
+			t.Fatalf("bare script_json insertion failed: %v", err)
+		}
+		spaced := "export component W(payload: script_json): html {\n<script>const o = { payload };</script>\n}\n"
+		generated, err := htmlbind.Generate("doc.txt", []byte(spaced), htmlbind.GenerateOptions{Package: "doc"})
+		if err != nil {
+			t.Fatalf("spaced form failed: %v", err)
+		}
+		if !bytes.Contains(generated, []byte(`const o = { payload };`)) {
+			t.Fatal("spaced form was not kept as authored content")
+		}
+	})
 }

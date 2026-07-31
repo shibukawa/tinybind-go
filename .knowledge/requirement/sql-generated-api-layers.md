@@ -12,6 +12,7 @@ low_level:
   inputs: typed component parameters
   output: data:sql-statement plus error
   behavior: build SQL and Args without database access
+  builder: sqlbind.Builder; the generated file declares no builder type or helper
 high_level:
   name: <Component>
   inputs: context.Context, minimal executor interface, typed component parameters
@@ -27,8 +28,9 @@ context_only_surface:
   default: disabled
   effect: <Component> becomes the context-resolved public function and the executor-taking function becomes unexported
 executor_interfaces:
-  sql.exec: ExecContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
-  row_outputs: QueryContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
+  source: declared once in the module per decision:generated-runtime-in-module; never emitted into a generated file
+  sql.exec: sqlbind.Execer, ExecContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
+  row_outputs: sqlbind.Querier, QueryContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
 execution:
   sql.exec: ExecContext; return affected-row-capable result
   sql.one<T>: QueryContext; reject zero or multiple rows
@@ -39,5 +41,6 @@ benefits:
   - low-level deterministic tests without a database
   - SQL logging, middleware, and custom execution
   - one generated public convenience API for normal database/sql use
+  - one canonical Statement and executor type shared by every generated package
   - optional web-framework transaction propagation through Context without removing explicit dependency injection
 ```

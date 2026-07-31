@@ -22,7 +22,7 @@ type User { id: int, name: string }
 export statement Find(id: int, names: string[], active: bool): sql.one<User> {
 SELECT id, name FROM users WHERE id = {id} AND name IN ({names}) {if active}AND active = {true}{/if}
 }`)
-	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{})
+	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,16 +40,115 @@ func TestBuilder(t *testing.T) {
 func TestGenerateExecMutationAndQuestionPlaceholders(t *testing.T) {
 	source := []byte(`package queries
 export statement Rename(id: int, name: string, enabled: bool): sql.exec {
-UPDATE users SET name = {name} {if enabled}WHERE id = {id}{/if}
+UPDATE users SET name = {name} WHERE id = {id} {if enabled}AND enabled{/if}
 }`)
-	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{PlaceholderStyle: "question"})
+	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectMySQL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(generated, []byte("b.WriteByte('?')")) {
-		t.Fatalf("question placeholder not generated:\n%s", generated)
+	if !bytes.Contains(generated, []byte("_tinybindsql.NewBuilder(_tinybindsql.Question)")) {
+		t.Fatalf("question placeholder style not selected:\n%s", generated)
 	}
 	runGenerated(t, generated, nil)
+}
+
+// TestGenerateMySQLEmitsQuestionPlaceholders runs the generated builder,
+// because containing the right constant is not the same as producing SQL the
+// engine accepts. Expanded value lists follow the selected style too.
+func TestGenerateEmitsEachDialectPlaceholderStyle(t *testing.T) {
+	for _, dialect := range []struct {
+		name string
+		want string
+	}{
+		{sqlbind.DialectPostgreSQL, "\\nSELECT id, name FROM users WHERE id = $1 AND name IN ($2, $3)\\n"},
+		{sqlbind.DialectMySQL, "\\nSELECT id, name FROM users WHERE id = ? AND name IN (?, ?)\\n"},
+		{sqlbind.DialectSQLite, "\\nSELECT id, name FROM users WHERE id = ? AND name IN (?, ?)\\n"},
+	} {
+		t.Run(dialect.name, func(t *testing.T) {
+			source := []byte(`package queries
+type User { id: int, name: string }
+export statement Find(id: int, names: string[]): sql.one<User> {
+SELECT id, name FROM users WHERE id = {id} AND name IN ({names})
+}`)
+			generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: dialect.name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtimeTest := []byte(`package queries
+import "testing"
+func TestBuilder(t *testing.T) {
+	statement, err := BuildFind(7, []string{"a", "b"})
+	if err != nil { t.Fatal(err) }
+	if statement.SQL != "` + dialect.want + `" { t.Fatalf("SQL = %q", statement.SQL) }
+	if len(statement.Args) != 3 { t.Fatalf("Args = %#v", statement.Args) }
+}`)
+			runGenerated(t, generated, runtimeTest)
+		})
+	}
+}
+
+func TestGenerateRequiresAKnownDialect(t *testing.T) {
+	source := []byte(`package queries
+export statement Ping(): sql.exec {SELECT 1}`)
+	for name, dialect := range map[string]string{"missing": "", "unknown": "oracle"} {
+		_, err := sqlbind.Generate("ping.tb.sql", source, sqlbind.GenerateOptions{Dialect: dialect})
+		if err == nil {
+			t.Fatalf("%s dialect generated successfully", name)
+		}
+		if !strings.Contains(err.Error(), strings.Join(sqlbind.SupportedDialects, ", ")) {
+			t.Fatalf("%s dialect error does not list the choices: %v", name, err)
+		}
+	}
+}
+
+// TestEverySupportedDialectHasAPlaceholderStyle keeps the exported list and the
+// internal mapping from drifting apart. A dialect present in only one of them
+// would either be rejected as unknown or emit uncompilable generated code.
+func TestEverySupportedDialectHasAPlaceholderStyle(t *testing.T) {
+	source := []byte(`package queries
+export statement Ping(): sql.exec {SELECT 1}`)
+	for _, dialect := range sqlbind.SupportedDialects {
+		generated, err := sqlbind.Generate("ping.tb.sql", source, sqlbind.GenerateOptions{Dialect: dialect})
+		if err != nil {
+			t.Fatalf("%s: %v", dialect, err)
+		}
+		if !bytes.Contains(generated, []byte("_tinybindsql.NewBuilder(_tinybindsql.")) {
+			t.Fatalf("%s selected no placeholder style:\n%s", dialect, generated)
+		}
+	}
+}
+
+// TestGenerateScansURLThroughRuntimeAdapter covers a defect independent of the
+// dialect: net/url.URL is neither a valid bind parameter nor a valid Scan
+// target, so a url column needs the runtime adapter at both ends.
+func TestGenerateScansURLThroughRuntimeAdapter(t *testing.T) {
+	source := []byte(`package queries
+type Site { id: int, link: url, backup: url? }
+export statement FindSite(link: url): sql.one<Site> {
+SELECT id, link, backup FROM sites WHERE link = {link}
+}`)
+	generated, err := sqlbind.Generate("sites.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "rows.Scan(&result.Id, _tinybindsql.ScanURL(&result.Link), _tinybindsql.ScanOptionalURL(&result.Backup))"
+	if !bytes.Contains(generated, []byte(want)) {
+		t.Fatalf("url fields are not scanned through the adapter:\n%s", generated)
+	}
+	runtimeTest := []byte(`package queries
+import (
+	"net/url"
+	"testing"
+)
+func TestBuilder(t *testing.T) {
+	link, err := url.Parse("https://example.com/a")
+	if err != nil { t.Fatal(err) }
+	statement, err := BuildFindSite(*link)
+	if err != nil { t.Fatal(err) }
+	if len(statement.Args) != 1 { t.Fatalf("Args = %#v", statement.Args) }
+	if statement.Args[0] != "https://example.com/a" { t.Fatalf("Args[0] = %#v, want the text form", statement.Args[0]) }
+}`)
+	runGenerated(t, generated, runtimeTest)
 }
 
 func TestPredicateAndRelationCompositionSharePlaceholderOrder(t *testing.T) {
@@ -60,7 +159,7 @@ statement ActiveUsers(minimum: int): sql.relation<User> {SELECT id, name FROM us
 export statement Find(name: string, minimum: int): sql.many<User> {
 SELECT active_users.id, active_users.name FROM subquery ActiveUsers(minimum) AS active_users WHERE active_users.name = {name}
 }`)
-	generated, err := sqlbind.Generate("relations.tb.sql", source, sqlbind.GenerateOptions{})
+	generated, err := sqlbind.Generate("relations.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,11 +196,11 @@ export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHE
 export statement MaybeUser(id: int): sql.optional<User> {SELECT id, name FROM users WHERE id = {id}}
 export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}
 export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
-	generated, err := sqlbind.Generate("context.tb.sql", source, sqlbind.GenerateOptions{ContextAPI: true})
+	generated, err := sqlbind.Generate("context.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ContextAPI: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, signature := range []string{"func GetUser(ctx context.Context, db SQLQuerier", "func GetUserContext(ctx context.Context", "func MaybeUserContext(ctx context.Context", "func ListUsersContext(ctx context.Context", "func DeleteUserContext(ctx context.Context"} {
+	for _, signature := range []string{"func GetUser(ctx context.Context, db _tinybindsql.Querier", "func GetUserContext(ctx context.Context", "func MaybeUserContext(ctx context.Context", "func ListUsersContext(ctx context.Context", "func DeleteUserContext(ctx context.Context"} {
 		if !bytes.Contains(generated, []byte(signature)) {
 			t.Fatalf("generated output lacks %q:\n%s", signature, generated)
 		}
@@ -163,17 +262,19 @@ func TestGenerateCustomContextResolver(t *testing.T) {
 	source := []byte(`package queries
 type User { id: int }
 export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id = {id}}`)
-	generated, err := sqlbind.Generate("custom.tb.sql", source, sqlbind.GenerateOptions{ExecutorResolver: &sqlbind.ExecutorResolver{PackagePath: "example.com/web/dbctx", Name: "Executor"}})
+	generated, err := sqlbind.Generate("custom.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ExecutorResolver: &sqlbind.ExecutorResolver{PackagePath: "example.com/web/dbctx", Name: "Executor"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(generated, []byte(`_tinybindresolver "example.com/web/dbctx"`)) || !bytes.Contains(generated, []byte(`_tinybindresolver.Executor(ctx)`)) {
 		t.Fatalf("custom resolver missing:\n%s", generated)
 	}
-	if bytes.Contains(generated, []byte(`github.com/shibukawa/tinybind-go/sqlbind`)) {
-		t.Fatalf("standard resolver imported with custom resolver:\n%s", generated)
+	// The runtime package is always imported for Statement and Builder; only
+	// the standard Context resolver must be absent.
+	if bytes.Contains(generated, []byte(`_tinybindsql.SQLExecutorFromContext`)) {
+		t.Fatalf("standard resolver used with custom resolver:\n%s", generated)
 	}
-	if _, err := sqlbind.Generate("custom.tb.sql", source, sqlbind.GenerateOptions{ExecutorResolver: &sqlbind.ExecutorResolver{Name: "not-exported"}}); err == nil || !strings.Contains(err.Error(), "invalid SQL executor resolver") {
+	if _, err := sqlbind.Generate("custom.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ExecutorResolver: &sqlbind.ExecutorResolver{Name: "not-exported"}}); err == nil || !strings.Contains(err.Error(), "invalid SQL executor resolver") {
 		t.Fatalf("invalid resolver error = %v", err)
 	}
 }
@@ -191,7 +292,7 @@ func TestGenerateDiagnostics(t *testing.T) {
 		{`type Row { id: int } export statement Get(): sql.one<Row> {SELECT id FROM rows} statement GetContext(): sql.exec {SELECT 1}`, "generated Context API conflicts"},
 	}
 	for _, test := range tests {
-		options := sqlbind.GenerateOptions{}
+		options := sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}
 		if strings.Contains(test.want, "Context API conflicts") {
 			options.ContextAPI = true
 		}
@@ -204,7 +305,7 @@ func TestGenerateDiagnostics(t *testing.T) {
 
 func TestSQLLiteralsAndCommentsAreLossless(t *testing.T) {
 	source := []byte("statement Safe(): sql.exec { SELECT '{not_template}', $$ {also_not} $$/** {still_not} */ -- $1 {comment}\n }")
-	if _, err := sqlbind.Generate("safe.tb.sql", source, sqlbind.GenerateOptions{}); err != nil {
+	if _, err := sqlbind.Generate("safe.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -241,7 +342,7 @@ export statement FindUser(id: int): sql.one<User> {SELECT id, name FROM users WH
 export statement MaybeUser(id: int): sql.optional<User> {SELECT id, name FROM users WHERE id = {id}}
 export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}
 export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
-	generated, err := sqlbind.Generate("users.pw.sql", source, sqlbind.GenerateOptions{ContextOnly: true})
+	generated, err := sqlbind.Generate("users.pw.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ContextOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +351,8 @@ export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id
 		"func MaybeUser(ctx context.Context, id int) (*User, error)",
 		"func ListUsers(ctx context.Context) iter.Seq2[User, error]",
 		"func DeleteUser(ctx context.Context, id int) (sql.Result, error)",
-		"func BuildFindUser(id int) (Statement, error)",
-		"func _tinybindExecFindUser(ctx context.Context, db SQLQuerier",
+		"func BuildFindUser(id int) (_tinybindsql.Statement, error)",
+		"func _tinybindExecFindUser(ctx context.Context, db _tinybindsql.Querier",
 	}
 	for _, signature := range want {
 		if !bytes.Contains(generated, []byte(signature)) {
@@ -264,7 +365,7 @@ export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id
 		}
 	}
 	for _, exported := range exportedFuncSignatures(t, generated) {
-		if strings.Contains(exported, "SQLQuerier") || strings.Contains(exported, "SQLExecer") {
+		if strings.Contains(exported, "_tinybindsql.Querier") || strings.Contains(exported, "_tinybindsql.Execer") {
 			t.Fatalf("context-only output exports an executor-taking function: %s", exported)
 		}
 	}
@@ -300,7 +401,7 @@ func TestGenerateContextOnlyKeepsDeclaredNameFree(t *testing.T) {
 type Row { id: int }
 export statement Get(): sql.one<Row> {SELECT id FROM rows}
 statement GetContext(): sql.exec {SELECT 1}`)
-	if _, err := sqlbind.Generate("free.pw.sql", source, sqlbind.GenerateOptions{ContextOnly: true}); err != nil {
+	if _, err := sqlbind.Generate("free.pw.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ContextOnly: true}); err != nil {
 		t.Fatalf("context-only generation must not reserve GetContext: %v", err)
 	}
 }
@@ -327,4 +428,71 @@ func exportedFuncSignatures(t *testing.T, generated []byte) []string {
 		out = append(out, buffer.String())
 	}
 	return out
+}
+
+// A write statement must resolve its executor through the resolver that rejects
+// a read-only Context, and must fail before it reaches the database.
+func TestGenerateReadOnlyExecutorRejection(t *testing.T) {
+	source := []byte(`package queries
+type User { id: int, name: string }
+export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}
+export statement LockUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id} FOR UPDATE}
+export statement PopUser(id: int): sql.one<User> {DELETE FROM users WHERE id = {id} RETURNING id, name}
+export statement PurgeUsers(): sql.many<User> {DELETE FROM users WHERE id > 0 RETURNING id, name}
+export statement DeleteUser(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
+	generated, err := sqlbind.Generate("readonly.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ContextAPI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"LockUser", "PopUser", "PurgeUsers", "DeleteUser"} {
+		call := `_tinybindsql.WriteExecutorFromContext(ctx, "` + name + `")`
+		if !bytes.Contains(generated, []byte(call)) {
+			t.Fatalf("write statement %s lacks %q:\n%s", name, call, generated)
+		}
+	}
+	if bytes.Count(generated, []byte("_tinybindsql.SQLExecutorFromContext(ctx)")) != 2 {
+		t.Fatalf("read statements should be the only users of the plain resolver:\n%s", generated)
+	}
+	runtimeTest := []byte(`package queries
+import (
+    "context"
+    "database/sql"
+    "errors"
+    "strings"
+    "testing"
+    rootsql "github.com/shibukawa/tinybind-go/sqlbind"
+)
+var errQuery = errors.New("query reached the database")
+var errExec = errors.New("exec reached the database")
+type failingExecutor struct{}
+func (failingExecutor) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errQuery }
+func (failingExecutor) ExecContext(context.Context, string, ...any) (sql.Result, error) { return nil, errExec }
+func TestReadOnlyContextRejectsWrites(t *testing.T) {
+    ctx := rootsql.WithSQLExecutor(context.Background(), failingExecutor{}, rootsql.AsReadOnly())
+
+    // Writes stop at the resolver, so the database is never reached.
+    if _, err := LockUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("FOR UPDATE error = %v", err) }
+    if _, err := PopUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("DELETE RETURNING error = %v", err) }
+    if _, err := DeleteUserContext(ctx, 1); !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("exec error = %v", err) }
+    purged := 0
+    for _, err := range PurgeUsersContext(ctx) { purged++; if !errors.Is(err, rootsql.ErrReadOnlyExecutor) { t.Fatalf("many write error = %v", err) } }
+    if purged != 1 { t.Fatalf("many write yields = %d", purged) }
+
+    // The error names the statement that was misrouted.
+    _, err := PopUserContext(ctx, 1)
+    if !strings.Contains(err.Error(), "PopUser") { t.Fatalf("error does not name the statement: %v", err) }
+
+    // Reads run against the same read-only executor.
+    if _, err := GetUserContext(ctx, 1); !errors.Is(err, errQuery) { t.Fatalf("read error = %v", err) }
+    listed := 0
+    for _, err := range ListUsersContext(ctx) { listed++; if !errors.Is(err, errQuery) { t.Fatalf("many read error = %v", err) } }
+    if listed != 1 { t.Fatalf("many read yields = %d", listed) }
+
+    // Without AsReadOnly every statement reaches the database as before.
+    writable := rootsql.WithSQLExecutor(context.Background(), failingExecutor{})
+    if _, err := PopUserContext(writable, 1); !errors.Is(err, errQuery) { t.Fatalf("writable one error = %v", err) }
+    if _, err := DeleteUserContext(writable, 1); !errors.Is(err, errExec) { t.Fatalf("writable exec error = %v", err) }
+}`)
+	runGenerated(t, generated, runtimeTest)
 }

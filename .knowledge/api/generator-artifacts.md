@@ -14,8 +14,10 @@ behavior:
   - normalize data:generator-options once, as api:generator-execution does
   - run the same template, binding, configbind, and OpenAPI phases
   - attribute every emitted declaration to the source file that caused it
+  - emit no runtime declaration and no package-shared artifact, per decision:generated-runtime-in-module
   - return artifacts in deterministic order independent of filesystem iteration
-  - write, create, or remove no file
+  - write, create, or remove no file, so no data:generation-stamp is produced or consulted
+  - type-check the package once per call, per decision:shared-package-load
   - return typed errors and diagnostics rather than formatted process output
   - check context cancellation between analysis and emission
 relation_to_package_api:
@@ -27,6 +29,7 @@ consumers:
   - editor integrations and tests needing generated source without file effects
 related:
   - data:generation-artifact
+  - decision:shared-package-load
   - requirement:per-source-generation-artifacts
   - rule:generated-source-self-contained
   - api:generator-execution

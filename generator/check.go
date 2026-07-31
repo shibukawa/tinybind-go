@@ -9,45 +9,29 @@ import (
 
 // CheckRules is the structured form of a field's check tag (codegen only).
 type CheckRules struct {
-	Required   bool
-	Min        *float64
-	Max        *float64
-	MinLen     *int
-	MaxLen     *int
-	Len        *int
-	Enum       []string
-	Pattern    string
-	Default    string
-	HasDefault bool
-	Email      bool
-	UUID       bool
-	Date       bool
-	Time       bool
-	DateTime   bool
+	Required bool
+	Min      *float64
+	Max      *float64
+	MinLen   *int
+	MaxLen   *int
+	Len      *int
+	Pattern  string
+	Email    bool
+	UUID     bool
+	Date     bool
+	Time     bool
+	DateTime bool
 }
 
-// HasRules reports whether any check constraint or default is set.
-func (c CheckRules) HasRules() bool {
-	return c.Required ||
-		c.Min != nil || c.Max != nil ||
-		c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
-		len(c.Enum) > 0 || c.Pattern != "" || c.HasDefault ||
-		c.Email || c.UUID || c.Date || c.Time || c.DateTime
-}
-
-// HasValidation reports whether the rules can reject a bound value.
-// A default alone changes an absent value but cannot produce a validation error.
+// HasValidation reports whether the check rules can reject a bound value. Every
+// check rule can; defaults live in DefaultRule precisely because they cannot.
+// Enums can too, but are their own tag: see FieldPlan.HasValidation.
 func (c CheckRules) HasValidation() bool {
 	return c.Required ||
 		c.Min != nil || c.Max != nil ||
 		c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
-		len(c.Enum) > 0 || c.Pattern != "" ||
+		c.Pattern != "" ||
 		c.Email || c.UUID || c.Date || c.Time || c.DateTime
-}
-
-// NeedsPresence is true when codegen must track whether the field was present.
-func (c CheckRules) NeedsPresence() bool {
-	return c.HasRules()
 }
 
 // ParseCheckTag parses a check tag value for a field of the given Go kind.
@@ -136,19 +120,9 @@ func applyCheckToken(c *CheckRules, tok string) error {
 			}
 			c.Len = &n
 		case "enum":
-			if val == "" {
-				return fmt.Errorf("check: empty enum")
-			}
-			parts := strings.Split(val, "|")
-			for _, p := range parts {
-				if p == "" {
-					return fmt.Errorf("check: empty enum value in %q", val)
-				}
-				c.Enum = append(c.Enum, p)
-			}
+			return fmt.Errorf("check: enum is not a check rule; use the struct tag enum:%q instead", strings.ReplaceAll(val, "|", ","))
 		case "default":
-			c.Default = val
-			c.HasDefault = true
+			return fmt.Errorf("check: default is not a check rule; use the struct tag default:%q instead", val)
 		case "pattern":
 			return fmt.Errorf("check: pattern= must be the last rule")
 		default:
@@ -185,7 +159,7 @@ func validateCheckAgainstKind(c CheckRules, kind string) error {
 	if isFile || isRest || isComposite {
 		// Nested/file/rest content rules deferred; only required is allowed for now.
 		if c.Min != nil || c.Max != nil || c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
-			len(c.Enum) > 0 || c.Pattern != "" || c.HasDefault ||
+			c.Pattern != "" ||
 			c.Email || c.UUID || c.Date || c.Time || c.DateTime {
 			what := "file"
 			if isRest {
@@ -210,18 +184,6 @@ func validateCheckAgainstKind(c CheckRules, kind string) error {
 	if c.Email || c.UUID || c.Date || c.Time || c.DateTime || c.Pattern != "" {
 		if !isString {
 			return fmt.Errorf("check: format/pattern rules only apply to string, not %s", kind)
-		}
-	}
-	if c.HasDefault {
-		if _, err := defaultGoLiteral(kind, c.Default); err != nil {
-			return fmt.Errorf("check: invalid default for %s: %w", kind, err)
-		}
-	}
-	if len(c.Enum) > 0 {
-		for _, v := range c.Enum {
-			if _, err := defaultGoLiteral(kind, v); err != nil {
-				return fmt.Errorf("check: invalid enum value %q for %s: %w", v, kind, err)
-			}
 		}
 	}
 	return nil

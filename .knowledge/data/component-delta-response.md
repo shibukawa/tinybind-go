@@ -16,6 +16,9 @@ fields:
       anchor_or_parent: optional structural target
       content_validator: omitted for removals
       html_template: safe HTML fragment for insertions and replacements
+head:
+  missing: no field currently carries the document head change, so a navigation cannot express it
+  proposed: requirement:client-managed-head supplies the merged tag list; this response either gains a field for it or the framework carries it alongside
 behavior:
   unchanged: no HTML operation; carry its validator in next_manifest
   incompatible_version: instruct full navigation or return complete HTML

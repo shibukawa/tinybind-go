@@ -29,25 +29,42 @@ packages:
     owns:
       - api:scan-rows
       - SQL scanner registry and row helpers
+      - data:sql-statement, Execer, Querier, Builder, and AppendValues used by generated SQL
+      - decision:sql-context-executor-api standard resolver
     excludes:
       - net/http
   htmlbind:
     owns:
       - decision:generated-render-plan coordinator
       - requirement:head-merging and requirement:chain-render-pipeline execution
+      - trusted value types, Escape, and the scalar and JSON formatters used by generated HTML
     excludes:
       - net/http
     note: requirement:html-component-api is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
+  dynamobind:
+    status: proposed by decision:dynamobind-runtime-package
+    path: github.com/shibukawa/tinybind-go/dynamobind
+    owns:
+      - api:dynamobind-operations
+      - ItemEncoder, ItemDecoder, and Keyer used by generated DynamoDB codecs
+    imports:
+      - github.com/shibukawa/tinygodriver/nosql/dynamodb
+    excludes:
+      - database/sql
 dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf
+  - dynamobind -> system:tinygodriver-dynamodb, the one runtime that depends on an external driver
 forbidden:
   - jsonbind -> httpbind
+  - tinygodriver -> tinybind-go, in any package, example, or test
   - shared runtime code importing net/http or database/sql for every mode
+  - generated code declaring its own copy of a runtime type or helper, per decision:generated-runtime-in-module
 generation:
   JSON-only: import and register with jsonbind
   HTTP: import httpbind and jsonbind; register each entry with its owner
   SQL-only: import and register with sqlbind
+  DynamoDB-only: import the driver for the emitted methods; no registration, per decision:dynamobind-static-dispatch
 generator:
   command: cmd/tinybind-gen
   mapping_file: tinybind_gen.go

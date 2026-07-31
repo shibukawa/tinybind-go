@@ -57,6 +57,10 @@ type statementInfo struct {
 	params      map[string]valueType
 	result      valueType
 	cardinality string
+	// readOnly is the access mode of rule:sql-statement-access-mode. It selects
+	// the Context resolver a write statement must use, so a read-only executor
+	// rejects the statement before it reaches the database.
+	readOnly bool
 }
 
 type compiler struct {
@@ -181,8 +185,9 @@ func (c *compiler) analyze() error {
 		if err := c.analyzeNodes(body, copyScope(c.statements[d.Name].params), d.Name); err != nil {
 			return err
 		}
-		if (c.statements[d.Name].cardinality == "exec") && isMutation(body) && !hasWhere(body) {
-			return c.error(d.Pos, "UPDATE and DELETE statements require a WHERE clause")
+		c.statements[d.Name].readOnly = isReadOnly(body)
+		if err := c.checkMutationSafety(d, body); err != nil {
+			return err
 		}
 		if err := c.validateStaticResultShape(d, body); err != nil {
 			return err
@@ -514,28 +519,11 @@ func (c *compiler) validateStaticResultShape(statement *TemplateDecl, nodes []No
 	if err := walk(nodes); err != nil {
 		return err
 	}
-	query := strings.TrimSpace(staticSQL(nodes))
-	upper := strings.ToUpper(query)
-	if strings.HasPrefix(upper, "WITH ") {
+	items, found := resultColumns(staticSQL(nodes))
+	if !found {
 		return nil
 	}
-	start, end := -1, -1
-	if selectAt := keywordIndex(upper, "SELECT", 0); selectAt >= 0 {
-		start = selectAt + len("SELECT")
-		end = keywordIndex(upper, "FROM", start)
-	} else if returningAt := keywordIndex(upper, "RETURNING", 0); returningAt >= 0 {
-		start = returningAt + len("RETURNING")
-		end = len(query)
-	}
-	if start < 0 || end < start {
-		return nil
-	}
-	list := strings.TrimSpace(query[start:end])
-	if strings.HasPrefix(strings.ToUpper(list), "DISTINCT ") {
-		list = strings.TrimSpace(list[len("DISTINCT "):])
-	}
-	items := splitSQLList(list)
-	if len(items) == 1 && (strings.TrimSpace(items[0]) == "*" || strings.HasSuffix(strings.TrimSpace(items[0]), ".*")) {
+	if len(items) == 1 && (items[0] == "*" || strings.HasSuffix(items[0], ".*")) {
 		return nil
 	}
 	record := c.records[info.result.name]
@@ -551,63 +539,98 @@ func (c *compiler) validateStaticResultShape(statement *TemplateDecl, nodes []No
 	return nil
 }
 
-func keywordIndex(upper, keyword string, from int) int {
-	for from <= len(upper)-len(keyword) {
-		index := strings.Index(upper[from:], keyword)
-		if index < 0 {
-			return -1
-		}
-		index += from
-		before := index == 0 || !sqlWordByte(upper[index-1])
-		after := index+len(keyword) == len(upper) || !sqlWordByte(upper[index+len(keyword)])
-		if before && after {
-			return index
-		}
-		from = index + len(keyword)
+// resultListTerminators are the top-level keywords that can end a select list
+// when the statement has no FROM clause, or end a RETURNING list.
+var resultListTerminators = map[string]bool{
+	"FROM": true, "WHERE": true, "GROUP": true, "HAVING": true, "WINDOW": true,
+	"ORDER": true, "LIMIT": true, "OFFSET": true, "FETCH": true, "FOR": true,
+	"UNION": true, "INTERSECT": true, "EXCEPT": true,
+}
+
+// resultColumns returns the top-level result columns of a statement, per
+// rule:sql-top-level-keyword-scan. Only keywords at the statement's own nesting
+// level are read, so a subquery's select list is never mistaken for the outer
+// one, and a WITH statement is resolved to its tail.
+func resultColumns(query string) ([]string, bool) {
+	tokens, ok := scanSQLTokens(query)
+	if !ok || len(tokens) == 0 {
+		return nil, false
 	}
-	return -1
+	from := 0
+	if tokens[0].word && tokens[0].text == "WITH" {
+		if _, from, ok = splitWith(tokens); !ok {
+			return nil, false
+		}
+	}
+	begin, list := -1, -1
+	for i := from; i < len(tokens); i++ {
+		if !tokens[i].word || tokens[i].depth != 0 {
+			continue
+		}
+		if tokens[i].text == "SELECT" || tokens[i].text == "RETURNING" {
+			begin = i
+			break
+		}
+	}
+	if begin < 0 {
+		return nil, false
+	}
+	list = skipSelectQualifiers(tokens, begin+1)
+	end := len(tokens)
+	for i := list; i < len(tokens); i++ {
+		if tokens[i].word && tokens[i].depth == 0 && resultListTerminators[tokens[i].text] {
+			end = i
+			break
+		}
+	}
+	// The list spans the raw text between the tokens that bracket it, so an
+	// item opening with a literal keeps its full text.
+	start := tokens[list-1].end
+	stop := len(query)
+	if end < len(tokens) {
+		stop = tokens[end].start
+	}
+	if strings.TrimSpace(query[start:stop]) == "" {
+		return nil, false
+	}
+	return splitColumns(query, start, stop, tokens[list:end]), true
 }
-func sqlWordByte(value byte) bool {
-	return value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '_'
-}
-func splitSQLList(value string) []string {
-	var out []string
-	start, depth := 0, 0
-	quote := byte(0)
-	for i := 0; i < len(value); i++ {
-		ch := value[i]
-		if quote != 0 {
-			if ch == quote {
-				if i+1 < len(value) && value[i+1] == quote {
-					i++
-					continue
+
+// skipSelectQualifiers steps over ALL, DISTINCT, and DISTINCT ON (...), which
+// precede the first result column without being one.
+func skipSelectQualifiers(tokens []sqlToken, i int) int {
+	if i >= len(tokens) || !tokens[i].word {
+		return i
+	}
+	switch tokens[i].text {
+	case "ALL":
+		return i + 1
+	case "DISTINCT":
+		i++
+		if i < len(tokens) && tokens[i].word && tokens[i].text == "ON" {
+			i++
+			if i < len(tokens) && tokens[i].text == "(" {
+				if closing := matchParen(tokens, i); closing >= 0 {
+					return closing + 1
 				}
-				quote = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quote = ch
-			continue
-		}
-		switch ch {
-		case '(':
-			depth++
-		case ')':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				out = append(out, strings.TrimSpace(value[start:i]))
-				start = i + 1
 			}
 		}
 	}
-	if tail := strings.TrimSpace(value[start:]); tail != "" {
-		out = append(out, tail)
+	return i
+}
+
+// splitColumns cuts the list at its own top-level commas and returns the raw
+// text of each item, so alias and column names stay readable. A comma inside a
+// literal or a nested expression is not a separator.
+func splitColumns(query string, start, stop int, list []sqlToken) []string {
+	var out []string
+	for _, token := range list {
+		if token.text == "," && !token.word && token.depth == 0 {
+			out = append(out, strings.TrimSpace(query[start:token.start]))
+			start = token.end
+		}
 	}
-	return out
+	return append(out, strings.TrimSpace(query[start:stop]))
 }
 func staticColumnName(item string) (string, bool) {
 	item = strings.TrimSpace(item)
@@ -787,18 +810,6 @@ func copyScope(in map[string]valueType) map[string]valueType {
 	return out
 }
 
-func isMutation(nodes []Node) bool {
-	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(staticSQL(nodes))), "UPDATE ") || strings.HasPrefix(strings.ToUpper(strings.TrimSpace(staticSQL(nodes))), "DELETE ")
-}
-func hasWhere(nodes []Node) bool {
-	words := strings.Fields(strings.ToUpper(staticSQL(nodes)))
-	for _, word := range words {
-		if strings.Trim(word, "(),;") == "WHERE" {
-			return true
-		}
-	}
-	return false
-}
 func staticSQL(nodes []Node) string {
 	var b strings.Builder
 	for _, n := range nodes {

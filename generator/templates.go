@@ -116,7 +116,16 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, 
 	if err := checkPublicAssetPairing(g.Options.PublicDir, g.Options.PublicURLBase); err != nil {
 		return "", nil, err
 	}
+	// The dialect is a configuration error, not a template diagnostic, so it is
+	// reported once against the discovered set and before anything is written.
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return "", nil, err
+	}
 	pkg, err := g.templatePackageName(dir, files)
+	if err != nil {
+		return "", nil, err
+	}
+	withContext, err := contextExternals(dir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -127,7 +136,7 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, 
 		if err != nil {
 			return "", nil, err
 		}
-		code, extracted, err := g.generateTemplate(file, source, pkg)
+		code, extracted, err := g.generateTemplate(file, source, pkg, withContext)
 		if err != nil {
 			return "", nil, err
 		}
@@ -242,7 +251,7 @@ func (g *Generator) templatePackageName(dir string, files []templateFile) (strin
 // generated API shape, returning the Go source and the static files extracted
 // from it. Diagnostics keep the discovered path, so custom input suffixes are
 // reported exactly as they exist on disk.
-func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string) ([]byte, []htmlbind.Asset, error) {
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, contextExternals map[string]bool) ([]byte, []htmlbind.Asset, error) {
 	if file.kind == htmlTemplate {
 		module, err := htmlbind.Parse(file.path, source)
 		if err != nil {
@@ -252,9 +261,11 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			return nil, nil, err
 		}
 		result, err := htmlbind.GenerateModule(file.path, source, htmlbind.GenerateOptions{
-			Package:       pkg,
-			Unit:          artifactBase(file.path),
-			PublicURLBase: g.Options.resolvedPublicURLBase(),
+			Package:            pkg,
+			Unit:               artifactBase(file.path),
+			PublicURLBase:      g.Options.resolvedPublicURLBase(),
+			ContextExternals:   contextExternals,
+			PreserveWhitespace: g.Options.PreserveTemplateWhitespace,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -270,6 +281,7 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 	}
 	options := templatesql.GenerateOptions{
 		Package:     pkg,
+		Dialect:     g.Options.SQLDialect,
 		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
 		ContextOnly: g.Options.SQLContextOnlyAPI,
 	}
@@ -278,6 +290,25 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 	}
 	code, err := templatesql.Generate(file.path, source, options)
 	return code, nil, err
+}
+
+// checkSQLDialect validates the configured dialect when the run discovers a SQL
+// template. A package holding only HTML templates needs no dialect.
+func checkSQLDialect(files []templateFile, dialect string) error {
+	found := false
+	for _, file := range files {
+		if file.kind == sqlTemplate {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	if err := templatesql.ValidateDialect(dialect); err != nil {
+		return fmt.Errorf("%w; set Options.SQLDialect or -sql-dialect", err)
+	}
+	return nil
 }
 
 func checkTemplatePackage(filename string, declaration *htmlbind.PackageDecl, pkg string) error {
@@ -311,6 +342,59 @@ func packageName(dir string) (string, error) {
 	return "", nil
 }
 
+// contextExternals names the package-level functions in dir whose first
+// parameter is a context.Context.
+//
+// An async external is an ordinary blocking Go function, so the template
+// declaration says nothing about a context. Reading the implementation lets a
+// function that can abort receive the boundary's context without a second
+// declaration form: write the parameter and it is passed, leave it out and the
+// function is called plainly.
+//
+// Detection is syntactic on purpose. It runs before the package compiles, so a
+// file that does not parse is skipped rather than failing generation; a call
+// shape that then does not match is an ordinary Go compile error at the
+// generated call site.
+func contextExternals(dir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	found := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, entry.Name()), nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			// A method cannot be an external, so a receiver rules it out.
+			if !ok || function.Recv != nil || function.Name == nil {
+				continue
+			}
+			if takesLeadingContext(function.Type) {
+				found[function.Name.Name] = true
+			}
+		}
+	}
+	return found, nil
+}
+
+func takesLeadingContext(signature *ast.FuncType) bool {
+	if signature.Params == nil || len(signature.Params.List) == 0 {
+		return false
+	}
+	selector, ok := signature.Params.List[0].Type.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Context" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "context"
+}
+
 func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 	fset := token.NewFileSet()
 	imports := map[string]*ast.ImportSpec{}
@@ -332,30 +416,13 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 			if gen, ok := declaration.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
 				continue
 			}
+			// Every declaration now derives from its own template source, so a
+			// repeated name is a genuine conflict rather than a shared runtime
+			// helper that each file happened to emit.
 			names := declarationNames(declaration)
-			duplicate := ""
-			allRuntime := len(names) > 0
 			for _, name := range names {
-				if seen[name] && !templateRuntimeName(name) {
-					duplicate = name
-					break
-				}
-				if !templateRuntimeName(name) {
-					allRuntime = false
-				}
-			}
-			if duplicate != "" {
-				return nil, fmt.Errorf("duplicate generated template declaration %s", duplicate)
-			}
-			if allRuntime {
-				skip := true
-				for _, name := range names {
-					if !seen[name] {
-						skip = false
-					}
-				}
-				if skip {
-					continue
+				if seen[name] {
+					return nil, fmt.Errorf("duplicate generated template declaration %s", name)
 				}
 			}
 			declarations = append(declarations, declaration)
@@ -383,8 +450,8 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	out.WriteByte('\n')
-	// Merging several template files can leave an import that only the skipped
-	// duplicate runtime declarations referenced.
+	// Merging several template files unions their import blocks, so an import
+	// one file needed can be unused by the combined declarations.
 	return dropUnusedImports([]byte(out.String()))
 }
 
@@ -406,13 +473,6 @@ func declarationNames(declaration ast.Decl) []string {
 		}
 	}
 	return names
-}
-func templateRuntimeName(name string) bool {
-	switch name {
-	case "HTML", "TrustedHTML", "TrustedCSS", "TrustedJavaScript", "ScriptJSON", "Statement", "SQLExecer", "SQLQuerier", "_tinybindSQLBuilder":
-		return true
-	}
-	return strings.HasPrefix(name, "_tinybindJSON") || name == "_tinybindWrite" || name == "_tinybindEscape" || name == "_tinybindBool" || name == "_tinybindInt" || name == "_tinybindFloat" || name == "_tinybindSQLArgs" || name == "_tinybindStatement" || name == "_tinybindSafeMutation"
 }
 func goTemplateIdentifier(value string) string {
 	var out strings.Builder

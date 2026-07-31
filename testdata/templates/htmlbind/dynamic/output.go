@@ -4,64 +4,9 @@ package pages
 
 import (
 	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
-
-type TrustedHTML string
-type TrustedCSS string
-type TrustedJavaScript string
-type ScriptJSON string
-
-func _tinybindBool(value bool) string     { return strconv.FormatBool(value) }
-func _tinybindInt(value int) string       { return strconv.Itoa(value) }
-func _tinybindFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
-
-func _tinybindJSONQuote(value string) string {
-	const hex = "0123456789abcdef"
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			out.WriteString("\\\"")
-		case '\\':
-			out.WriteString("\\\\")
-		case '\b':
-			out.WriteString("\\b")
-		case '\f':
-			out.WriteString("\\f")
-		case '\n':
-			out.WriteString("\\n")
-		case '\r':
-			out.WriteString("\\r")
-		case '\t':
-			out.WriteString("\\t")
-		case '<':
-			out.WriteString("\\u003c")
-		case '>':
-			out.WriteString("\\u003e")
-		case '&':
-			out.WriteString("\\u0026")
-		case '\u2028':
-			out.WriteString("\\u2028")
-		case '\u2029':
-			out.WriteString("\\u2029")
-		default:
-			if r < 0x20 {
-				out.WriteString("\\u00")
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
-			} else {
-				out.WriteRune(r)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
 
 type User struct {
 	Name       string
@@ -88,7 +33,7 @@ var planProfileOps = htmlbind.Builder[ProfileParams]{}
 var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[ProfileParams]{
-		planProfileOps.Static("\n<article"),
+		planProfileOps.Static(" <article"),
 		planProfileOps.BoolAttr("hidden", func(p ProfileParams) bool { return !(p.User.Active) }),
 		planProfileOps.Attr("title", func(p ProfileParams) (string, bool) {
 			if p.User.Nickname == nil {
@@ -96,14 +41,14 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 			}
 			return htmlbind.Escape(*(p.User.Nickname)), true
 		}),
-		planProfileOps.Static(">\n  <a"),
+		planProfileOps.Static("> <a"),
 		planProfileOps.Attr("href", func(p ProfileParams) (string, bool) { return htmlbind.Escape(p.User.ProfileURL.String()), true }),
 		planProfileOps.Static(">"),
 		planProfileOps.Text(func(p ProfileParams) string { return p.User.Name }),
-		planProfileOps.Static("</a>\n  "),
+		planProfileOps.Static("</a> "),
 		planProfileOps.If(func(p ProfileParams) bool { return p.User.Active },
 			[]htmlbind.Op[ProfileParams]{
-				planProfileOps.Static("\n    <ul>"),
+				planProfileOps.Static(" <ul>"),
 				htmlbind.For(
 					func(p ProfileParams) []string { return p.User.Tags },
 					func(p ProfileParams, item string, index int) planProfileOpsScope1 {
@@ -111,17 +56,17 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 					},
 					[]htmlbind.Op[planProfileOpsScope1]{
 						planProfileOpsScope1Ops.Static("<li"),
-						planProfileOpsScope1Ops.Attr("data-index", func(p planProfileOpsScope1) (string, bool) { return htmlbind.Escape(_tinybindInt(p.Index)), true }),
+						planProfileOpsScope1Ops.Attr("data-index", func(p planProfileOpsScope1) (string, bool) { return htmlbind.Escape(htmlbind.FormatInt(p.Index)), true }),
 						planProfileOpsScope1Ops.Static(">"),
 						planProfileOpsScope1Ops.Text(func(p planProfileOpsScope1) string { return p.Item }),
 						planProfileOpsScope1Ops.Static("</li>"),
 					}),
-				planProfileOps.Static("</ul>\n  "),
+				planProfileOps.Static("</ul> "),
 			},
 			[]htmlbind.Op[ProfileParams]{
-				planProfileOps.Static("\n    <p>inactive</p>\n  "),
+				planProfileOps.Static(" <p>inactive</p> "),
 			}),
-		planProfileOps.Static("\n</article>\n"),
+		planProfileOps.Static(" </article> "),
 	},
 }
 

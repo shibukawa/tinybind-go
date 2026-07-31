@@ -46,6 +46,7 @@ func customFrameworkOptions(t *testing.T) generator.Options {
 	options.SQLTemplatePattern = "*.pw.sql"
 	options.SQLContextOnlyAPI = true
 	options.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "tempmod/pw", Name: "SQLExecutor"}
+	options.SQLDialect = "postgresql"
 	return options
 }
 
@@ -106,7 +107,6 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 		byKind[artifact.Kind] = append(byKind[artifact.Kind], artifact)
 	}
 	for _, kind := range []generator.ArtifactKind{
-		generator.ArtifactPackageShared,
 		generator.ArtifactHTMLTemplate,
 		generator.ArtifactSQLTemplate,
 		generator.ArtifactBinding,
@@ -153,7 +153,7 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 	sql := byKind[generator.ArtifactSQLTemplate][0].Content
 	for _, want := range []string{
 		"func FindUser(ctx context.Context, id int) (UserRow, error)",
-		"func BuildFindUser(id int) (Statement, error)",
+		"func BuildFindUser(id int) (_tinybindsql.Statement, error)",
 		"_tinybindresolver.SQLExecutor(ctx)",
 	} {
 		if !bytes.Contains(sql, []byte(want)) {

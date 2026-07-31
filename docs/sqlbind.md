@@ -1,16 +1,16 @@
 # sqlbind User Guide
 
-tinybind-go provides two SQL workflows:
+tinybind-go approaches SQL from two directions, and they answer different questions:
 
-1. Typed SQL templates that turn `.tb.sql` files into parameterized builders and `database/sql` execution functions
-2. Row grouping that turns flat JOIN rows into object trees with `sqlbind.ScanRows[T]`
+1. Typed SQL templates turn `.tb.sql` files into parameterized builders and `database/sql` execution functions
+2. Row grouping turns flat JOIN rows into object trees through `sqlbind.ScanRows[T]`
 
-Both workflows generate type-specific code ahead of time rather than reflecting over application struct fields.
+Neither workflow reflects over application struct fields at runtime. Both generate type-specific code ahead of time.
 
 ## What SQL templates automate
 
 - Discovering `.tb.sql` files
-- Turning value expressions into `$1`, `$2`, ... placeholders and `Args`
+- Turning value expressions into dialect-appropriate placeholders and `Args`
 - Generating `database/sql` APIs based on result cardinality
 - Checking SELECT/RETURNING column count and names against the result type
 - Scanning query results
@@ -45,7 +45,7 @@ Place `users.tb.sql` in the same directory, then run:
 go generate ./...
 ```
 
-The generator combines `.tb.html` and `.tb.sql` output in `tinybind_templates_gen.go`. Only files directly inside the target directory are discovered.
+The generator combines `.tb.html` and `.tb.sql` output in `tinybind_templates_gen.go`. Discovery stops at the target directory itself; templates in a subdirectory are never picked up.
 
 To use another naming convention, pass base-name globs with
 `-html-template-pattern` and `-sql-template-pattern`, for example:
@@ -56,7 +56,21 @@ To use another naming convention, pass base-name globs with
 
 The defaults remain `*.tb.html` and `*.tb.sql`.
 
-The default placeholder style is PostgreSQL `$1`, `$2`, and so on. Generated runtime APIs do not accept a dialect or placeholder option.
+## Choosing a dialect
+
+A run that finds a SQL template must name its target database. There is no default:
+
+```go
+//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-dialect postgresql
+```
+
+`postgresql`, `mysql`, and `sqlite` are the accepted values, and omitting the flag is a generation error rather than a quiet PostgreSQL default. The reason is that the wrong placeholder token produces SQL the target engine simply rejects, while nothing in the templates hints at the mistake. A package holding only HTML templates needs no dialect.
+
+Placeholders follow the selection: `$1`, `$2`, and so on for PostgreSQL, `?` for MySQL and SQLite. SQLite reads several placeholder spellings, and `?` is the positional one, which is what matches how arguments are bound. Generated runtime APIs accept no dialect or placeholder argument, so switching engines changes the emitted SQL text and nothing about the signatures you call. The dialect is fixed when the code is generated, not chosen when it runs.
+
+The placeholder token is the only thing the dialect changes. Everything else you write reaches the generated SQL verbatim: tinybind will not rewrite `||` into `CONCAT`, translate `ON CONFLICT` into `ON DUPLICATE KEY UPDATE`, or work around MySQL's missing `RETURNING`. A translation layer of that kind looks correct and fails subtly — `||` is string concatenation in PostgreSQL and SQLite but logical OR in MySQL, so rewriting it can invert a predicate — and it would make the SQL you read in the template different from the SQL that runs. Write for the engine you selected. One generated package therefore serves one engine; run the generator twice to serve two.
+
+That last point is worth weighing before you reach for SQLite in tests against a PostgreSQL production database. The two share `RETURNING` and `ON CONFLICT`, so plain CRUD often does port, but nothing checks that it did, and the generated package you exercise is not the one you ship. Selecting the dialect per generated directory is what makes running both deliberate.
 
 ## Minimal query
 
@@ -87,8 +101,8 @@ type User struct {
 	Active bool
 }
 
-func BuildGetUser(id int) (Statement, error)
-func GetUser(ctx context.Context, db SQLQuerier, id int) (User, error)
+func BuildGetUser(id int) (sqlbind.Statement, error)
+func GetUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
 ```
 
 ```go
@@ -120,7 +134,7 @@ statement, err := BuildRenameUser(42, "Ada")
 // statement.Args == []any{"Ada", 42}
 ```
 
-Handwritten `$1` or `?` placeholders are generation errors. Ordinary value parameters also cannot dynamically replace structural SQL elements such as table names, column names, operators, or sort directions.
+The guarantee is absolute, and it costs something. Handwritten `$1` or `?` placeholders are generation errors, and an ordinary value parameter can never stand in for a structural element — a table name, a column name, an operator, a sort direction.
 
 ## Declaring result cardinality
 
@@ -189,7 +203,7 @@ for user, err := range ListActiveUsers(ctx, db, true) {
 }
 ```
 
-Rows are scanned and yielded without first accumulating a slice. Breaking out of the range closes the underlying `sql.Rows`. Query, scan, and iteration errors are yielded once through the error value.
+No slice accumulates behind the iterator: rows are scanned and yielded one at a time. Breaking out of the range closes the underlying `sql.Rows`, and query, scan, and iteration errors are yielded once through the error value.
 
 ```go
 for user, err := range ListActiveUsers(ctx, db, true) {
@@ -203,7 +217,7 @@ for user, err := range ListActiveUsers(ctx, db, true) {
 
 ## Result types and SELECT columns
 
-The order of result fields must match the SELECT or RETURNING column order. Column names or aliases must also correspond to field names.
+The order of result fields must match the SELECT or RETURNING column order, and column names or aliases must correspond to field names. Generation checks both, so a SELECT list that drifts away from its result type fails the build rather than the query.
 
 ```text
 type UserSummary {
@@ -218,7 +232,7 @@ ORDER BY id
 }
 ```
 
-Runtime conditions cannot add or remove SELECT/RETURNING columns. Keep the result shape identical across branches.
+That check only holds if the shape is knowable statically. Runtime conditions therefore cannot add or remove SELECT/RETURNING columns; keep the result shape identical across every branch.
 
 ## Types
 
@@ -234,7 +248,11 @@ Runtime conditions cannot add or remove SELECT/RETURNING columns. Keep the resul
 | `T[]` | `[]T` |
 | `T?` | `*T` |
 
-The selected SQL driver must also be able to scan returned values into these Go types. Use optional types where NULL is possible and choose types that match the schema and driver.
+The table stops at the Go type; the driver has to agree as well. Your SQL driver must be able to scan returned values into these types, so choose types that match both the schema and the driver, and use optional types wherever NULL is possible.
+
+Two entries need more than the driver's agreement. A `url` column is carried as text in both directions: a `url.URL` parameter binds as its string form, and a returned column is parsed back through a runtime adapter, because `database/sql` can neither bind nor scan a struct. An optional `url` leaves a nil pointer for NULL; a required one reports an error, exactly as a required `string` does.
+
+Separately, `datetime`, `date`, and `time` require the driver to hand back a `time.Time`; text and bytes do not scan into one. With MySQL that means `parseTime=true` in the DSN. With SQLite it depends on your driver and on the column's declared type, since SQLite stores no date type of its own. Either way it is driver configuration, not something the dialect selection can set for you.
 
 ## Conditional SQL
 
@@ -253,7 +271,7 @@ ORDER BY id
 }
 ```
 
-When the condition is false, the block is omitted. Only included values consume placeholders, so numbering and `Args` remain aligned.
+When the condition is false, the block is omitted. Only included values consume placeholders, so numbering and `Args` stay aligned no matter which branches survive.
 
 ```text
 {if condition}
@@ -282,7 +300,7 @@ statement, err := BuildFindUsers([]int{10, 20, 30})
 // Args: []any{10, 20, 30}
 ```
 
-An empty slice cannot form a valid value list, so the builder returns an error. Handle the empty case in the caller or use a template condition to choose the SQL structure.
+An empty slice has no valid rendering as a value list, so the builder returns an error instead of emitting `IN ()`. Handle the empty case in the caller, or use a template condition to pick a different SQL structure.
 
 ## Reusing predicates
 
@@ -301,7 +319,7 @@ ORDER BY id
 }
 ```
 
-Predicates cannot be exported and do not receive `BuildMinimumID` or execution APIs. Call them only from other statements.
+Predicates cannot be exported and receive neither `BuildMinimumID` nor an execution API. Call them only from other statements.
 
 ## Typed subqueries
 
@@ -330,7 +348,7 @@ ORDER BY active_users.id
 }
 ```
 
-Subquery and outer arguments share one placeholder sequence in final SQL order. The alias is explicit and lower snake case. Recursive relations are forbidden.
+Composition does not fragment the parameter list: subquery and outer arguments share one placeholder sequence, ordered as they appear in the final SQL. The alias is explicit and lower snake case. Recursive relations are forbidden.
 
 ## UPDATE and DELETE safety
 
@@ -342,7 +360,7 @@ UPDATE users SET name = {name} WHERE id = {id}
 }
 ```
 
-Generation fails when the template contains no WHERE at all. If WHERE is conditional and may disappear at runtime, `Build...` rejects the unsafe statement before it reaches the database.
+Whether a clause can come out empty is a property of the template, not of runtime data, so the whole check runs at generation time and no guard is emitted into generated code. A conditional WHERE fails to generate, because one call path would delete every row:
 
 ```text
 export statement UnsafeDelete(id: int, enabled: bool): sql.exec {
@@ -351,7 +369,27 @@ DELETE FROM users
 }
 ```
 
-Calling this builder with `enabled == false` returns an error. There is currently no opt-in for intentional full-table UPDATE or DELETE.
+An `if` with an `else` where both branches emit a predicate does generate, because no path leaves the clause empty:
+
+```text
+export statement SafeDelete(id: int, name: string, byID: bool): sql.exec {
+DELETE FROM users WHERE {if byID}id = {id}{else}name = {name}{/if}
+}
+```
+
+The same proof covers a dynamic `SET` list: an UPDATE whose assignments are all conditional is a generation error.
+
+The keyword must belong to the statement itself. A WHERE inside a subquery, a CTE body, a string literal, or a comment does not satisfy the requirement, so this is rejected:
+
+```text
+export statement StillUnsafe(): sql.exec {
+DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
+}
+```
+
+The check applies to every cardinality, not only `sql.exec`. A `DELETE ... RETURNING` declared as `sql.one<T>` is proven the same way. There is currently no opt-in for an intentional full-table UPDATE or DELETE.
+
+A `sql.predicate` satisfies the requirement only when that predicate is itself non-empty on every path.
 
 ## Using the low-level builder
 
@@ -367,9 +405,11 @@ log.Printf("sql=%s args=%v", statement.SQL, statement.Args)
 rows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)
 ```
 
-This is useful for SQL tests, logging, and custom database abstractions. The application-facing shape is:
+This is useful for SQL tests, logging, and custom database abstractions. `Statement` is declared once in the runtime package `github.com/shibukawa/tinybind-go/sqlbind` rather than per generated package, so a value crosses package boundaries unchanged:
 
 ```go
+package sqlbind
+
 type Statement struct {
 	SQL  string
 	Args []any
@@ -378,7 +418,7 @@ type Statement struct {
 
 ## Transactions
 
-Explicit-executor APIs accept interfaces implemented by `*sql.DB`, `*sql.Conn`, and `*sql.Tx`:
+Explicit-executor APIs accept interfaces implemented by `*sql.DB`, `*sql.Conn`, and `*sql.Tx`, which is why the same generated function works inside a transaction and outside one:
 
 ```go
 tx, err := db.BeginTx(ctx, nil)
@@ -398,7 +438,7 @@ return tx.Commit()
 
 ## Resolving an executor from Context
 
-When framework middleware stores a transaction in Context, enable Context APIs during generation:
+Threading an executor through every call stops working once framework middleware owns the transaction. For that case, enable Context APIs during generation:
 
 ```go
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-api
@@ -417,6 +457,23 @@ Without an executor, these functions return `sqlbind.ErrNoSQLExecutor`. `WithSQL
 
 The ordinary explicit-executor APIs remain available, so both styles can coexist.
 
+### Read-only executors
+
+When the Context carries a connection to a read replica, or a transaction begun with `sql.TxOptions{ReadOnly: true}`, add `sqlbind.AsReadOnly()`.
+
+```go
+ctx := sqlbind.WithSQLExecutor(r.Context(), replicaDB, sqlbind.AsReadOnly())
+
+user, err := GetUserContext(ctx, 42)         // a SELECT, so it runs
+res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
+```
+
+Write statements are identified at generation time and return `sqlbind.ErrReadOnlyExecutor` before executing. The error names the rejected statement. No SQL is built and no round trip happens, so the failure is identical on a developer machine or in a test that never touches a replica.
+
+A statement counts as read-only only when it opens with `SELECT`, `VALUES`, or `TABLE`, or is a `WITH` whose CTE bodies do not write and whose tail reads, and when it carries no top-level row-locking clause such as `FOR UPDATE`. A `DELETE ... RETURNING` declared as `sql.one<T>`, and a `SELECT ... FOR UPDATE`, are both writes. Anything the analysis cannot resolve is a write, so a misclassification can only cost a replica connection rather than send a write to a read-only executor.
+
+Writes that are invisible in the SQL text, such as a `SELECT` calling a function that writes, are not detected; the database remains the final guard. The check is disabled when a custom resolver (`-sql-executor-resolver`) is configured, because that contract cannot carry the access mode.
+
 ## Context-only public API
 
 A framework that publishes the declared statement names as its only executable
@@ -432,33 +489,7 @@ func FindUser(ctx context.Context, id int) (User, error)
 
 In this mode:
 
-- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
-- the executor-taking function becomes unexported;
-- `BuildName` stays exported and unchanged;
-- no `NameContext` wrapper is generated, so that name stays free;
-- the same public function is used inside and outside a transaction, because the
-  executor comes from the Context.
-
-`-sql-context-only-api` implies `-sql-context-api`. Set
-`Options.SQLExecutorResolver` to resolve the executor through a framework
-function instead of `sqlbind.SQLExecutorFromContext`.
-
-## Context-only public API
-
-A framework that publishes the declared statement names as its only executable
-API can generate the Context-resolved form under those names:
-
-```go
-//go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -sql-context-only-api
-```
-
-```go
-func FindUser(ctx context.Context, id int) (User, error)
-```
-
-In this mode:
-
-- no exported function accepts `*sql.DB`, `*sql.Tx`, `SQLQuerier`, or `SQLExecer`;
+- no exported function accepts `*sql.DB`, `*sql.Tx`, `sqlbind.Querier`, or `sqlbind.Execer`;
 - the executor-taking function becomes unexported;
 - `BuildName` stays exported and unchanged;
 - no `NameContext` wrapper is generated, so that name stays free;
@@ -476,31 +507,31 @@ In the signatures below, `p ...P` represents the mapped template parameters.
 ### Every exported statement
 
 ```go
-func BuildName(p ...P) (Statement, error)
+func BuildName(p ...P) (sqlbind.Statement, error)
 ```
 
 ### `sql.exec`
 
 ```go
-func Name(ctx context.Context, db SQLExecer, p ...P) (sql.Result, error)
+func Name(ctx context.Context, db sqlbind.Execer, p ...P) (sql.Result, error)
 ```
 
 ### `sql.one<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (T, error)
 ```
 
 ### `sql.optional<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) (*T, error)
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) (*T, error)
 ```
 
 ### `sql.many<T>`
 
 ```go
-func Name(ctx context.Context, db SQLQuerier, p ...P) iter.Seq2[T, error]
+func Name(ctx context.Context, db sqlbind.Querier, p ...P) iter.Seq2[T, error]
 ```
 
 ### With `-sql-context-api`
@@ -510,15 +541,6 @@ func NameContext(ctx context.Context, p ...P) (sql.Result, error) // exec
 func NameContext(ctx context.Context, p ...P) (T, error)          // one
 func NameContext(ctx context.Context, p ...P) (*T, error)         // optional
 func NameContext(ctx context.Context, p ...P) iter.Seq2[T, error] // many
-```
-
-### With `-sql-context-only-api`
-
-```go
-func Name(ctx context.Context, p ...P) (sql.Result, error) // exec
-func Name(ctx context.Context, p ...P) (T, error)          // one
-func Name(ctx context.Context, p ...P) (*T, error)         // optional
-func Name(ctx context.Context, p ...P) iter.Seq2[T, error] // many
 ```
 
 ### With `-sql-context-only-api`
@@ -548,7 +570,7 @@ No application-facing builder or execution function is generated. They are used 
 
 ## Grouping JOIN rows with `ScanRows[T]`
 
-Independently of SQL templates, existing queries can map flat JOIN rows into object trees.
+A JOIN returns the parent row again for every child, and no cardinality declaration can undo that flattening. `ScanRows[T]` rebuilds the tree afterwards, and it works on any existing query — SQL templates are not involved.
 
 ```go
 type Organization struct {
@@ -585,7 +607,7 @@ ORDER BY o.id, u.id`)
 }
 ```
 
-Each grouped struct level must have exactly one scalar `groupkey:""` field.
+Each grouped struct level must have exactly one scalar `groupkey:""` field. Those keys drive every merge decision:
 
 - Rows with the same root key merge into one root object
 - Rows with the same child key merge into one child object
@@ -623,4 +645,4 @@ Return a unique column alias corresponding to every scalar field in the JOIN SEL
 - Column aliases must match `db` tags
 - It consumes all result rows to construct the tree, so account for memory use with very large results
 
-As a rule of thumb, use SQL template `sql.one`, `sql.optional`, or `sql.many` for ordinary queries, and use `ScanRows` when repeated JOIN rows must be grouped into a hierarchy.
+The last constraint is what usually decides between the two workflows. Reach for a SQL template's `sql.one`, `sql.optional`, or `sql.many` for ordinary queries, where rows can stream past one at a time. Reach for `ScanRows` when a JOIN keeps repeating the same parent and the parent has to come back whole.

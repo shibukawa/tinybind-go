@@ -72,12 +72,12 @@ func ResetOpenAPIFragments() {
 	openAPIMu.Unlock()
 }
 
-// AssembleOpenAPI merges every registered package fragment and returns
-// deterministic OpenAPI 3.1 JSON and YAML documents.
-func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
+// AssembleOpenAPI merges every registered package fragment and returns a
+// deterministic OpenAPI 3.1 JSON document.
+func AssembleOpenAPI() (jsonDoc []byte, err error) {
 	fragments := snapshotOpenAPIFragments()
 	if len(fragments) == 0 {
-		return nil, nil, errNoOpenAPI
+		return nil, errNoOpenAPI
 	}
 	sort.Slice(fragments, func(i, j int) bool { return fragments[i].ID < fragments[j].ID })
 
@@ -85,14 +85,14 @@ func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
 	seenIDs := map[string]struct{}{}
 	for _, fragment := range fragments {
 		if fragment.ID == "" || len(fragment.JSON) == 0 {
-			return nil, nil, fmt.Errorf("httpbind: OpenAPI fragment requires ID and JSON")
+			return nil, fmt.Errorf("httpbind: OpenAPI fragment requires ID and JSON")
 		}
 		var doc map[string]any
 		if err := json.Unmarshal(fragment.JSON, &doc); err != nil {
-			return nil, nil, fmt.Errorf("httpbind: parse OpenAPI fragment %q: %w", fragment.ID, err)
+			return nil, fmt.Errorf("httpbind: parse OpenAPI fragment %q: %w", fragment.ID, err)
 		}
 		if _, ok := seenIDs[fragment.ID]; ok {
-			return nil, nil, fmt.Errorf("httpbind: conflicting OpenAPI fragment ID %q", fragment.ID)
+			return nil, fmt.Errorf("httpbind: conflicting OpenAPI fragment ID %q", fragment.ID)
 		}
 		seenIDs[fragment.ID] = struct{}{}
 		parsed = append(parsed, parsedOpenAPIFragment{id: fragment.ID, doc: doc})
@@ -100,7 +100,7 @@ func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
 
 	renames, err := openAPIComponentRenames(parsed)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for i := range parsed {
 		if len(renames[parsed[i].id]) > 0 {
@@ -123,14 +123,14 @@ func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
 	for _, fragment := range parsed {
 		if sourcePaths, ok := fragment.doc["paths"].(map[string]any); ok {
 			if err := mergeOpenAPIMap(paths, sourcePaths, "path", fragment.id); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		if sourceComponents, ok := fragment.doc["components"].(map[string]any); ok {
 			for section, raw := range sourceComponents {
 				sourceSection, ok := raw.(map[string]any)
 				if !ok {
-					return nil, nil, fmt.Errorf("httpbind: OpenAPI fragment %q components.%s must be an object", fragment.id, section)
+					return nil, fmt.Errorf("httpbind: OpenAPI fragment %q components.%s must be an object", fragment.id, section)
 				}
 				targetSection, _ := components[section].(map[string]any)
 				if targetSection == nil {
@@ -138,7 +138,7 @@ func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
 					components[section] = targetSection
 				}
 				if err := mergeOpenAPIMap(targetSection, sourceSection, "component "+section, fragment.id); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 		}
@@ -146,35 +146,19 @@ func AssembleOpenAPI() (jsonDoc, yamlDoc []byte, err error) {
 
 	jsonDoc, err = json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return nil, nil, fmt.Errorf("httpbind: marshal assembled OpenAPI JSON: %w", err)
+		return nil, fmt.Errorf("httpbind: marshal assembled OpenAPI JSON: %w", err)
 	}
-	var yaml strings.Builder
-	if err := writeOpenAPIYAML(&yaml, result, 0); err != nil {
-		return nil, nil, fmt.Errorf("httpbind: marshal assembled OpenAPI YAML: %w", err)
-	}
-	return jsonDoc, []byte(yaml.String()), nil
+	return jsonDoc, nil
 }
 
 // OpenAPIJSON serves the assembled OpenAPI document as application/json.
 func OpenAPIJSON(w http.ResponseWriter, r *http.Request) {
-	doc, _, err := AssembleOpenAPI()
+	doc, err := AssembleOpenAPI()
 	if err != nil {
 		WriteError(w, r, Internal(err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(doc)
-}
-
-// OpenAPIYAML serves the assembled OpenAPI document as application/yaml.
-func OpenAPIYAML(w http.ResponseWriter, r *http.Request) {
-	_, doc, err := AssembleOpenAPI()
-	if err != nil {
-		WriteError(w, r, Internal(err))
-		return
-	}
-	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(doc)
 }
@@ -331,65 +315,6 @@ func openAPIValuesEqual(a, b any) bool {
 	aJSON, _ := json.Marshal(a)
 	bJSON, _ := json.Marshal(b)
 	return bytes.Equal(aJSON, bJSON)
-}
-
-func writeOpenAPIYAML(b *strings.Builder, value any, indent int) error {
-	space := strings.Repeat("  ", indent)
-	switch current := value.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(current))
-		for key := range current {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			child := current[key]
-			switch child.(type) {
-			case map[string]any, []any:
-				fmt.Fprintf(b, "%s%s:\n", space, key)
-				if err := writeOpenAPIYAML(b, child, indent+1); err != nil {
-					return err
-				}
-			default:
-				fmt.Fprintf(b, "%s%s: %s\n", space, key, openAPIYAMLScalar(child))
-			}
-		}
-	case []any:
-		for _, child := range current {
-			switch child.(type) {
-			case map[string]any, []any:
-				fmt.Fprintf(b, "%s-\n", space)
-				if err := writeOpenAPIYAML(b, child, indent+1); err != nil {
-					return err
-				}
-			default:
-				fmt.Fprintf(b, "%s- %s\n", space, openAPIYAMLScalar(child))
-			}
-		}
-	default:
-		fmt.Fprintf(b, "%s%s\n", space, openAPIYAMLScalar(current))
-	}
-	return nil
-}
-
-func openAPIYAMLScalar(value any) string {
-	switch current := value.(type) {
-	case string:
-		if current == "" || strings.ContainsAny(current, ":#\n'\"") || strings.Contains(current, " ") {
-			quoted, _ := json.Marshal(current)
-			return string(quoted)
-		}
-		return current
-	case bool:
-		return fmt.Sprintf("%t", current)
-	case float64:
-		return fmt.Sprintf("%v", current)
-	case nil:
-		return "null"
-	default:
-		quoted, _ := json.Marshal(fmt.Sprint(current))
-		return string(quoted)
-	}
 }
 
 type openAPIMissingError struct{}

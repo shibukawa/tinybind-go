@@ -2,11 +2,13 @@
 
 [English](README.md)
 
-TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL のランタイム依存を別パッケージに分離しています。
+TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL・DynamoDB のランタイム依存を別パッケージに分離しています。
 
-利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md)
+利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md)
 
-リクエスト／レスポンスの構造体を一度定義するだけで、ジェネレータが型専用のバインダとライタを出力します。同じモデルで **JSON・form・multipart・query**（タグにより path / header / cookie も）を扱えます。レスポンスはクライアントの **`Accept`** に合わせて適応します（ストリーミング時は content negotiation も）。同じ解析結果から **OpenAPI 3.1 も生成**し、バインダ／ライタと常に同期します。ルート登録は別 DSL ではなく、実際の **`net/http` の書き方を静的解析**して発見します（`HandleFunc`、`Handle`、メソッド値、ラッパーなど）。
+この上にフレームワークを作る方へ: [htmlbind フレームワーク実装者向けガイド](docs/htmlbind_frameworkowner.ja.md)
+
+リクエスト／レスポンスの構造体を一度定義するだけで、ジェネレータが型専用のバインダとライタを出力します。同じモデルで **JSON・form・multipart・query**（タグにより path / header / cookie も）を扱えます。レスポンスはクライアントの **`Accept`** に合わせて適応します（ストリーミング時は content negotiation も）。同じ解析結果から **OpenAPI 3.1（JSON）も生成**し、バインダ／ライタと常に同期します。godoc コメントは `summary` / `description` として取り込まれます。ルート登録は別 DSL ではなく、実際の **`net/http` の書き方を静的解析**して発見します（`HandleFunc`、`Handle`、メソッド値、ラッパーなど）。
 
 ```go
 type CreateUserRequest struct {
@@ -114,6 +116,7 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / NewStream / OpenAPI 配信 / SwaggerUI |
 | `jsonbind/` | 単独の DecodeJSON / EncodeJSON。`net/http` と `database/sql` を import しない |
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
+| `dynamobind/` | `tinygodriver/nosql/dynamodb` 上の DynamoDB item runtime。`net/http` も `database/sql` も import しない |
 | `generator/` | フィールド計画に基づくバインダ／ライタ + OpenAPI 3.1 埋め込み生成 |
 | `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`NewStream`、エラー） |
 | `templates/htmlbind/` | 型付きで文脈安全な HTML template compiler |
@@ -126,6 +129,13 @@ _ = stream.Write(ChatEvent{Type: "done"})
 ```bash
 go run ./cmd/tinybind-gen generate -dir ./path/to/package
 ```
+
+生成ファイルには、生成に使った入力の SHA-256 を持つ `// tinybind:generated`
+コメントが記録されます。パッケージのソース・テンプレート・`go.mod`・オプション・
+ジェネレータのバイナリがすべて記録と同じハッシュになる実行は、再生成せずに
+終了します。`-force` を付けると常に再生成します。詳細は
+[docs/httpbind.ja.md](docs/httpbind.ja.md#変更のないパッケージのスキップ) を
+参照してください。
 
 フレームワーク側ですべてのランタイム関数をラップしても、呼び出しを
 ジェネレータに認識させられます。ラッパーのパッケージ上の識別子、操作の意味、

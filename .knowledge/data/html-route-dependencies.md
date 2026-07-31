@@ -7,6 +7,10 @@ Generated typed provider surface for external functions used by one filesystem r
 
 ```yaml
 source: decision:html-route-go-package-model
+scope:
+  route_mode: optional; requirement:colocated-route-logic is the primary way a route obtains data, and a colocated loader needs no entry here
+  still_used_for: template-declared external functions inside a route template
+  flat_mode: unchanged and unaffected
 generation:
   collect: every synchronous and requirement:async-external-functions declaration reachable from document, layouts, and pages
   group: stable route-relative template module identity
