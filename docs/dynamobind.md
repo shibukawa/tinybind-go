@@ -83,15 +83,16 @@ the declaration does.
 
 ### Why not the driver's `MarshalItem`
 
-The driver ships a reflection-based mapper. Two things are wrong with it for a
-struct known at compile time, and only the second is about speed.
+The driver ships a reflection-based mapper. The reason not to use it for a struct
+known at compile time is drift, not size. `TableDefinition.PartitionKey.Name`,
+the struct tag and the `Key` passed to `GetItem` are three unrelated strings.
+Rename one and the program still compiles; it fails at run time with
+`ValidationException`. Generation makes those one name, and a rename then fails
+the build.
 
-The first is drift. `TableDefinition.PartitionKey.Name`, the struct tag and the
-`Key` passed to `GetItem` are three unrelated strings. Rename one and the program
-still compiles; it fails at run time with `ValidationException`.
-
-The second is cost: the reflection path is about 24 KB of binary and 0.8 µs per
-item. See [Sizes](#sizes).
+It also costs about 0.8 µs and 21 allocations per item. It does not cost binary
+size any more: see [Sizes](#sizes), where the generated path through this package
+is the larger of the two.
 
 ## The `dynamo` tag
 
@@ -531,19 +532,43 @@ Query checks:
 ## Sizes
 
 Measured with TinyGo 0.41.1 on `wasip1`, for one program that stores and reads
-one four-field item:
+one four-field item. Every row does the same work, including the same
+attribute-level error reporting, so the rows differ only in how the item is
+mapped and how the client is reached.
 
-| Build | Bytes | Against the hand-written codec |
-|-------|-------|-------------------------------|
-| raw driver, item map built by hand | 3,543,805 | — |
-| hand-written codec through `dynamobind` | 3,568,434 | — |
-| **generated codec through `dynamobind`** | **3,568,604** | **+170** |
-| driver `MarshalItem` reflection | 3,588,094 | +19,660 |
+| Build | Bytes |
+|-------|-------|
+| raw driver, item map built by hand, no error reporting | 3,541,365 |
+| driver `MarshalItem` reflection | 3,586,193 |
+| hand-written codec, driver called directly | 3,586,568 |
+| hand-written codec through `dynamobind` | 3,625,798 |
+| **generated codec through `dynamobind`** | **3,626,010** |
 
-The generated codec costs 170 bytes more than the same codec written by hand, and
-saves about 19 KB against the reflection mapper. The 24 KB between the first two
-rows is the `dynamobind` API surface itself, not the codec: a program that wants
-neither can still call the generated methods directly.
+Two things to read out of it.
+
+**The generated codec costs 212 bytes** more than the same codec written by hand.
+That is the number the generator is accountable for, and it is the budget this
+project set out to keep.
+
+**The Context-resolved client costs about 38 KB**, and it dominates everything
+else here. Building the same program against the previous API, where the client
+was a parameter, gives 3,587,827 — the move into the Context is +37,971 bytes.
+That is not this package's overhead to fix: a bare `context.WithValue` plus one
+type assertion, with no `dynamobind` involved at all, costs 48,409 bytes in the
+same program, because the assertion pulls in type-descriptor machinery TinyGo
+otherwise drops.
+
+The consequence is worth stating plainly: **the generated path is now about 40 KB
+larger than the driver's reflection mapper**, not smaller. A typed codec calling
+the driver directly is a wash against reflection (+375 bytes); the whole
+difference is the API surface, and most of that is the Context. If a target is
+tight enough for 40 KB to matter, calling the driver directly with the generated
+`EncodeItem`, `DecodeItem` and `ItemKey` gets the type safety with none of it —
+they are ordinary methods and nothing in this package has to be linked to use
+them.
+
+The drift argument for generating the codec is unaffected: it is about names that
+cannot disagree, and it holds at any size.
 
 `encoding/json` and `reflect` are linked either way — the driver marshals its
 request bodies with `encoding/json` — so no amount of generated code removes them.

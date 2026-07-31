@@ -29,16 +29,27 @@ no_new_reflect:
   source_check: the emitted file contains no reflect reference; asserted on the committed fixture codec and on generated output in the analyzer tests
   runtime: dynamobind resolves nothing by reflection; AsError walks the chain by type assertion because errors.As needs it
   note: reflect is linked regardless through the driver's encoding/json request path, per decision:dynamobind-json-transport-deferred, so a symbol count over the whole binary measures the driver rather than this
-size_measured_2026_07_31:
+size_measured_2026_08_01:
   toolchain: tinygo 0.41.1, target wasip1
-  program: store and read one four-field item
-  raw_driver_hand_built_map: 3,543,805
-  hand_written_codec_through_dynamobind: 3,568,434
-  generated_codec_through_dynamobind: 3,568,604
-  driver_reflection_marshaler: 3,588,094
-  codec_cost: +170 bytes against the same codec written by hand, which is the budget that matters
-  api_cost: the 24,629 bytes between the first two rows are the dynamobind helpers, not the codec; a program can call the generated methods directly and skip them
-  against_reflection: the generated path is 19,490 bytes smaller than the driver's reflection mapper
+  program: store and read one four-field item, every row doing the same work including attribute-level error reporting
+  raw_driver_hand_built_map_no_errors: 3,541,365
+  driver_reflection_marshaler: 3,586,193
+  hand_written_codec_driver_direct: 3,586,568
+  hand_written_codec_through_dynamobind: 3,625,798
+  generated_codec_through_dynamobind: 3,626,010
+  codec_cost: +212 bytes against the same codec written by hand, which is the budget that matters and which holds
+  context_client_cost:
+    measured: +37,971 bytes, by building the same program against the previous commit where the client was a parameter
+    not_ours_to_fix: a bare context.WithValue plus one type assertion, with no dynamobind linked, costs 48,409 bytes in the same program; the assertion pulls in type-descriptor machinery TinyGo otherwise drops
+    consequence: decision:dynamo-context-client-api buys a call-site property at a fixed per-binary price, and the price is the largest single number here
+  against_reflection:
+    result: the generated path through dynamobind is 39,817 bytes LARGER than the driver reflection mapper, reversing the 2026-07-31 measurement
+    why: a typed codec calling the driver directly is a wash against reflection at +375 bytes; the whole difference is the API surface, most of it the Context
+    escape: the generated EncodeItem, DecodeItem and ItemKey are ordinary methods, so a size-critical program calls the driver directly and links none of this package
+  drift_argument_unaffected: generating the codec is about names that cannot disagree, which holds at any size
+  earlier_measurement:
+    date: 2026-07-31
+    void: taken against the client-parameter API, and its hand-written baseline reported no attribute errors, so neither its rows nor its conclusions carry over
 build_paths:
   - "go test ./..."
   - "go test -tags force_tinygo_logic ./..."
@@ -51,7 +62,7 @@ fixture:
   committed_output: a test regenerates and compares, so a stale codec fails the build rather than storing something wrong
 environment:
   driver: system:tinygodriver-dynamodb at tinygodriver v1.1.3
-  caveat: re-measure when the driver version moves; the budget compares paths within one driver build, not across driver releases
+  caveat: re-measure when the driver version moves or the runtime API changes; the budget compares paths within one build, not across releases, and the 2026-08-01 round exists because an API change invalidated the 2026-07-31 one
 related:
   - requirement:dynamobind-product-goals
   - requirement:dynamobind-generated-item-codec

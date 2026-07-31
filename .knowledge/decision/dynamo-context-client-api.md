@@ -35,6 +35,10 @@ errors_not_panics:
   why_the_prefix_matters: a missing client cannot issue a request at all, while a missing prefix would read the unprefixed table and answer with a normal empty page, so a silent fallback is indistinguishable from no data
   consequence: no empty-prefix default; a deployment using the declared names says so with WithTablePrefix("")
   reporting: a function returning an error returns it; an iterator yields it once with the zero value and stops, as a failed page already does
+cost:
+  binary: +37,971 bytes on tinygo wasip1, per requirement:dynamobind-verification
+  cause: context.WithValue and the type assertion that reads it back, which is inherent to the pattern rather than to this implementation
+  accepted: the call-site property was the requirement; a size-critical program calls the driver directly with the generated methods and links none of this
 no_framework_resolver:
   what: no generation option selects a resolver, unlike decision:sql-context-executor-api
   why: resolution moved into the runtime entries, so there is no generated call site to redirect; a framework installs its own client and prefix with WithClient instead

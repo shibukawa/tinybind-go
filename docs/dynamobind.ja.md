@@ -83,14 +83,15 @@ rename すると本番ではなく compile か生成が失敗します。client 
 ### driver の `MarshalItem` を使わない理由
 
 driver には reflection ベースの mapper が付属しています。compile 時に形の決まっている
-構造体に対しては 2 つ問題があり、速度の話は小さい方です。
+構造体に対して使わない理由は、サイズではなく drift です。
+`TableDefinition.PartitionKey.Name`、struct tag、`GetItem` に渡す `Key` は互いに何の関係も
+ない 3 つの文字列で、どれか 1 つを rename しても compile は通り、実行時に
+`ValidationException` で落ちます。生成すればこれが 1 つの名前になり、rename は build で
+落ちます。
 
-1 つは drift です。`TableDefinition.PartitionKey.Name`、struct tag、`GetItem` に渡す
-`Key` は互いに何の関係もない 3 つの文字列で、どれか 1 つを rename しても compile は通り、
-実行時に `ValidationException` で落ちます。
-
-もう 1 つは cost で、reflection path は binary 約 24 KB、item 1 件あたり約 0.8 µs です。
-[サイズ](#サイズ)を参照してください。
+時間の cost もあり、item 1 件あたり約 0.8 µs・21 allocation です。ただし binary size の
+話ではもうありません。[サイズ](#サイズ)のとおり、このパッケージを通る生成 path の方が
+大きくなっています。
 
 ## `dynamo` tag
 
@@ -506,21 +507,43 @@ tag と型の検査:
 ## サイズ
 
 TinyGo 0.41.1 / `wasip1` での実測です。4 field の item を 1 件 store して read する
-program 1 本を比較しています。
+program 1 本を比較しています。属性単位の error 報告も含めてどの行も同じ仕事をしていて、
+違うのは item の写し方と client の取り方だけです。
 
-| build | byte | 手書き codec との差 |
-|-------|------|--------------------|
-| driver 直、item map は手組み | 3,543,805 | — |
-| 手書き codec + `dynamobind` | 3,568,434 | — |
-| **生成 codec + `dynamobind`** | **3,568,604** | **+170** |
-| driver の `MarshalItem`（reflection） | 3,588,094 | +19,660 |
+| build | byte |
+|-------|------|
+| driver 直、item map は手組み、error 報告なし | 3,541,365 |
+| driver の `MarshalItem`（reflection） | 3,586,193 |
+| 手書き codec、driver を直接呼ぶ | 3,586,568 |
+| 手書き codec + `dynamobind` | 3,625,798 |
+| **生成 codec + `dynamobind`** | **3,626,010** |
 
-生成 codec は同じ形の手書き codec より 170 byte 大きく、reflection mapper より約 19 KB
-小さいという結果です。上 2 行の間にある 24 KB は codec ではなく `dynamobind` の API 面
-そのものです。どちらも要らない program は、生成された method を直接呼べます。
+読み取るべきことは 2 つです。
+
+**生成 codec は同じ形の手書き codec より 212 byte 大きい。** generator が責任を負うのは
+この数字で、このプロジェクトが守ると決めた予算でもあります。
+
+**Context から client を取る方式が約 38 KB かかっていて**、ここでは他のすべてを圧倒して
+います。client が引数だった 1 つ前の API に対して同じ program を build すると 3,587,827 で、
+Context への移動は +37,971 byte です。これはこのパッケージ側で削れる分ではありません。
+`dynamobind` を一切使わず `context.WithValue` と型 assertion を 1 回ずつ書くだけで、同じ
+program が 48,409 byte 増えます。assertion が、TinyGo なら本来落とせる型記述子の機構を
+引き込むからです。
+
+結果ははっきり書いておきます。**生成 path は driver の reflection mapper より約 40 KB
+大きくなりました**。小さくはありません。型付き codec が driver を直接呼ぶ形なら reflection
+とほぼ同じ（+375 byte）で、差はすべて API 面、その大半が Context です。40 KB が効く
+ほど厳しい target なら、生成された `EncodeItem`・`DecodeItem`・`ItemKey` を使って driver を
+直接呼べば、型の安全だけを取れます。普通の method なので、このパッケージを link する必要は
+ありません。
+
+codec を生成する drift の理由はこれに影響されません。名前が食い違わないことが論点であり、
+サイズがいくつであっても成り立ちます。
 
 `encoding/json` と `reflect` はどちらにせよ link されます。driver が request body を
-`encoding/json` で marshal するからで、生成コードをいくら足しても消えません。
+`encoding/json` で marshal するからで、生成コードをいくら足しても消えません。それを取り
+戻すには driver 側に byte 単位の JSON path が要りますが、それが入っても上の API は
+変わりません。
 
 ## 未実装
 

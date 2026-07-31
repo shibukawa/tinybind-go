@@ -16,8 +16,9 @@ problems:
     detail: TableDefinition.PartitionKey.Name, the item tag, and the Key passed to GetItem are three unrelated strings
     failure: a rename compiles and fails at run time with ValidationException
   reflection_cost:
-    statement: the driver reflection path costs binary size and time for a struct known at compile time
-    measured: 24 KB linked, 0.8 us and 21 allocations per MarshalItem
+    statement: the driver reflection path costs time for a struct known at compile time
+    measured: 0.8 us and 21 allocations per MarshalItem
+    not_size: as of requirement:dynamobind-verification 2026-08-01 the generated path through dynamobind is larger than the reflection mapper, so drift rather than size is the argument for generating
 goals:
   - one declaration produces codec, key builder, and table definition, so they cannot drift
   - no application-field reflection, per decision:reflection-free
@@ -43,7 +44,7 @@ out_of_scope:
   - secondary index key tags; defer until the primary key path is proven
 acceptance:
   - a tagged struct round trips through the driver without the caller naming an attribute string
-  - generated path stays within the size budget in requirement:dynamobind-verification
+  - the generated codec stays within the size budget in requirement:dynamobind-verification, which is its cost against the same codec written by hand
   - regenerating is unnecessary for a runtime fix, per decision:generated-runtime-in-module
 target_state:
   property: no application source names a DynamoDB attribute or a client, and a declared query names no table either; every name lives in a tag, a declaration, a Context set once, or generated code
