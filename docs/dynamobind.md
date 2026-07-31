@@ -12,7 +12,7 @@ every driver error, every retry decision and every page boundary is still yours.
 - [The `dynamo` tag](#the-dynamo-tag)
 - [Attribute types](#attribute-types)
 - [Query declarations](#query-declarations)
-- [Resolving the client from a Context](#resolving-the-client-from-a-context)
+- [The client comes from the Context](#the-client-comes-from-the-context)
 - [Runtime operations](#runtime-operations)
 - [Pages and iterators](#pages-and-iterators)
 - [Batches](#batches)
@@ -57,16 +57,18 @@ Generation writes two files:
 | `dynamobind_gen.go` | `EncodeItem`, `DecodeItem`, `ItemKey`, `<Type>Table`, interface assertions |
 | `dynamoquery_gen.go` | one function per declaration, plus its expression constants |
 
-and you call them:
+and you call them, having installed the client once:
 
 ```go
-if err := dynamobind.Store(ctx, client, "readings", reading); err != nil {
+ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTablePrefix(""))
+
+if err := dynamobind.Store(ctx, "readings", reading); err != nil {
 	return err
 }
 
-got, err := dynamobind.Load[Reading](ctx, client, "readings", reading.ItemKey())
+got, err := dynamobind.Load[Reading](ctx, "readings", reading.ItemKey())
 
-for reading, err := range ReadingsSince(ctx, client, "room-1", from) {
+for reading, err := range ReadingsSince(ctx, "room-1", from) {
 	if err != nil {
 		return err
 	}
@@ -76,7 +78,8 @@ for reading, err := range ReadingsSince(ctx, client, "room-1", from) {
 
 None of that names an attribute. Every attribute name lives in a tag and in
 generated code, so renaming a tag breaks compilation or generation rather than
-production. A declared query names no table either: the declaration does.
+production. Nothing names a client either, and a declared query names no table:
+the declaration does.
 
 ### Why not the driver's `MarshalItem`
 
@@ -215,7 +218,7 @@ DynamoDB allows nothing else there.
 ### Generated signature
 
 ```go
-func ReadingsSince(ctx context.Context, c *dynamodb.Client,
+func ReadingsSince(ctx context.Context,
 	sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
 ```
 
@@ -224,9 +227,8 @@ reach the driver, so `dynamodb.WithLimit`, `WithScanForward`, `WithConsistentRea
 and `WithIndex` all work. The generated expression names and values are appended
 last, so a caller option cannot replace the condition the declaration describes.
 
-With `-dynamo-context-api`, a second function is generated beside this one that
-takes neither the client nor the table. See
-[Resolving the client from a Context](#resolving-the-client-from-a-context).
+There is no client either. It comes from the Context; see
+[The client comes from the Context](#the-client-comes-from-the-context).
 
 ### Why the `table` clause is in the body
 
@@ -289,119 +291,78 @@ reserved words above are yours to alias:
 
 ```go
 // ValidationException: Attribute name is a reserved keyword
-dynamobind.Query[Event](ctx, c, "events", "status = :s", values)
+dynamobind.Query[Event](ctx, "events", "status = :s", values)
 
 // Alias it yourself
-dynamobind.Query[Event](ctx, c, "events", "#n0 = :s",
+dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 	dynamodb.WithExpressionNames(map[string]string{"#n0": "status"}),
 	values)
 ```
 
-## Resolving the client from a Context
+## The client comes from the Context
 
-A client and a deployment table prefix are facts of one process, and threading
-both through every handler is noise. Generation can add a Context-resolved
-wrapper beside the explicit function:
-
-```bash
-go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -dynamo-context-api
-```
-
-```go
-func ReadingsSince(ctx context.Context, c *dynamodb.Client, sensor Sensor, from int64,
-	opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
-
-func ReadingsSinceContext(ctx context.Context, sensor Sensor, from int64,
-	opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
-```
-
-The explicit form is always generated and never changes shape. The wrapper
-resolves and delegates; it opens nothing and closes nothing.
-
-Middleware installs the client once:
+A client and a deployment table prefix are facts of one process. Nothing takes
+them as a parameter: install them once, and no call site and no generated
+signature carries them.
 
 ```go
 ctx := dynamobind.WithClient(r.Context(), client, dynamobind.WithTablePrefix("staging-"))
 ```
 
-and `ReadingsSinceContext` reads `staging-readings`, the declared name with the
-prefix prepended.
-
-### A missing prefix is an error
-
 ```go
 WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption) context.Context
 WithTablePrefix(prefix string) ClientOption
 
-ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
 TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
+ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
 ```
+
+Every entry of this package resolves through `TableFromContext`, so the table
+name it sends is the one you wrote with the prefix prepended: `Load(ctx,
+"readings", key)` reads `staging-readings`, and so does a declared query whose
+`table` clause says `readings`. `ClientFromContext` is the escape hatch, for
+reaching the driver directly for something this package does not wrap.
+
+Testing against a second client, or reaching a second region, is a second
+Context rather than a second signature.
+
+### A missing prefix is an error
 
 There is no empty-prefix default. A Context carrying a client and no prefix is
 `ErrNoTablePrefix`, and a deployment that uses the declared names unchanged says
 so with `WithTablePrefix("")`.
 
-That is stricter than the SQL executor of the same shape, and deliberately: a
-missing executor cannot execute at all, while a missing prefix would read the
-unprefixed table and answer with a normal empty page. Silently reading the wrong
-table is indistinguishable from a table holding nothing.
+The reason is that the failure would otherwise be silent. A missing client
+cannot issue a request at all, so `ErrNoClient` is unavoidable. A missing prefix
+would read the unprefixed table and answer with a normal empty page — reading
+the wrong table is indistinguishable from a table holding nothing.
 
-The `dynamo.page` form returns the resolver error. The `dynamo.many` form cannot,
-so it yields the error once and stops, which is how a failed page already reports.
-
-### Item operations
-
-`Load`, `Store` and the rest keep their client and table parameters. They are
-runtime generics rather than generated code, so a Context variant of each would
-double the exported surface for a line the caller can write:
-
-```go
-c, table, err := dynamobind.TableFromContext(ctx, "readings")
-if err != nil {
-	return err
-}
-return dynamobind.Store(ctx, c, table, reading)
-```
-
-`ClientFromContext` returns the client alone, for a table name the prefix does
-not apply to.
-
-### The two other modes
-
-`-dynamo-context-only-api` publishes only the Context-resolved surface under the
-declared name: `ReadingsSince` becomes the Context form, the client-taking one
-becomes unexported, and no `ReadingsSinceContext` is generated, so that name stays
-free.
-
-`Options.DynamoClientResolver` selects a framework resolver instead of
-`TableFromContext`, and implies the Context API. It has the same signature, so a
-framework can map a declared name onto a physical one however it likes:
-
-```go
-func Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
-```
-
-The mode is fixed at generation time and applies to the whole package.
+Both errors reach the caller in whatever way its result shape allows: a function
+returning an error returns it, and an iterator yields it once with the zero value
+and stops, which is how a failed page already reports.
 
 ## Runtime operations
 
 ```go
-Load[T](ctx, c, table, key, opts...) (T, error)
-Store(ctx, c, table, v, opts...) error
-Remove(ctx, c, table, v, opts...) error
-Update(ctx, c, table, v, expression, opts...) error
+Load[T](ctx, table, key, opts...) (T, error)
+Store(ctx, table, v, opts...) error
+Remove(ctx, table, v, opts...) error
+Update(ctx, table, v, expression, opts...) error
 
-StoreReturning(ctx, c, table, v, opts...) (T, bool, error)
-RemoveReturning(ctx, c, table, v, opts...) (T, bool, error)
+StoreReturning(ctx, table, v, opts...) (T, bool, error)
+RemoveReturning(ctx, table, v, opts...) (T, bool, error)
 
-QueryPage[T](ctx, c, table, keyCond, opts...) (Page[T], error)
-ScanPage[T](ctx, c, table, opts...) (Page[T], error)
-Query[T](ctx, c, table, keyCond, opts...) iter.Seq2[T, error]
-Scan[T](ctx, c, table, opts...) iter.Seq2[T, error]
+QueryPage[T](ctx, table, keyCond, opts...) (Page[T], error)
+ScanPage[T](ctx, table, opts...) (Page[T], error)
+Query[T](ctx, table, keyCond, opts...) iter.Seq2[T, error]
+Scan[T](ctx, table, opts...) iter.Seq2[T, error]
 
-StoreAll(ctx, c, table, vs) (unprocessed []T, err error)
-LoadAll[T](ctx, c, table, keys, opts...) (items []T, unprocessed []dynamodb.Key, err error)
+StoreAll(ctx, table, vs) (unprocessed []T, err error)
+LoadAll[T](ctx, table, keys, opts...) (items []T, unprocessed []dynamodb.Key, err error)
 ```
+
+These still take a table name, because they have no declaration to read one
+from. A declared query does, and takes none.
 
 Dispatch is by type constraint, not by a registry. A type with no generated codec
 fails to compile, instead of failing at run time on a registration nobody made.
@@ -438,7 +399,7 @@ and it lives in the runtime.
 Retrying is not arithmetic and does not. What the service declined comes back:
 
 ```go
-unprocessed, err := dynamobind.StoreAll(ctx, c, "readings", readings)
+unprocessed, err := dynamobind.StoreAll(ctx, "readings", readings)
 if err != nil {
 	return err
 }
@@ -455,7 +416,7 @@ matches nothing is simply absent — not an error and not an unprocessed key.
 Every driver sentinel survives:
 
 ```go
-_, err := dynamobind.Load[Reading](ctx, c, "readings", key)
+_, err := dynamobind.Load[Reading](ctx, "readings", key)
 if errors.Is(err, dynamodb.ErrItemNotFound) {
 	// a miss stays a miss; it never arrives as a zero value
 }
@@ -506,7 +467,7 @@ still gets the decoder its generated query needs.
 
 The key builder is the exception: a type that declares a `partitionkey` gets
 `ItemKey` and its table definition whether or not a call needs them. The
-documented way to read an item is `Load(ctx, c, table, v.ItemKey())`, and using a
+documented way to read an item is `Load(ctx, table, v.ItemKey())`, and using a
 method is not a call the generator can discover — waiting for one would mean the
 method never existed to call. It is three lines, and the linker drops it when
 nothing calls it.
@@ -515,21 +476,14 @@ Every generated file records the SHA-256 of its inputs, so a rerun whose sources
 `.tb.dynamo` files, `go.mod`, options and generator binary all hash to the
 recorded value exits without regenerating. `-force` regenerates regardless.
 
-CLI flags:
-
-| Flag | Effect |
-|------|--------|
-| `-dynamo-context-api` | also generate `<Name>Context` wrappers |
-| `-dynamo-context-only-api` | publish only the Context-resolved surface |
-| `-force` | regenerate regardless of the recorded input hash |
-
-The rest live on `generator.Options` rather than on the CLI:
+There is one generated surface, so there is nothing to switch on. `-force`
+regenerates regardless of the hash; the remaining knobs live on
+`generator.Options`:
 
 ```go
 options := generator.DefaultOptions()
 options.DisableFeatures = []generator.Feature{generator.FeatureItemTable}
 options.DynamoTemplatePattern = "*.query.dynamo"
-options.DynamoClientResolver = &generator.SymbolPattern{PackagePath: "app/dynactx", Name: "Table"}
 ```
 
 | Setting | Effect |
@@ -537,7 +491,6 @@ options.DynamoClientResolver = &generator.SymbolPattern{PackagePath: "app/dynact
 | `FeatureItemCodec` | turns the whole DynamoDB mode off, queries included |
 | `FeatureItemTable` | drops `<Type>Table` only; the codec and key builder stay |
 | `DynamoTemplatePattern` | the declaration glob; the default is `*.tb.dynamo` |
-| `DynamoClientResolver` | a framework Context resolver; implies the Context API |
 
 There is no CLI flag for these yet, unlike `-html-template-pattern` and
 `-sql-template-pattern`. Drive them through `generator.New` for now.
@@ -573,8 +526,7 @@ Query checks:
 - `begins_with` on an attribute that is not stored as a string
 - a parameter whose type does not match the attribute's Go type
 - a placeholder naming no declared parameter, or a parameter never used
-- two statements with one name, or, under the Context API, a statement whose name
-  another statement's wrapper would take
+- two statements with one name
 
 ## Sizes
 

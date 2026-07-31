@@ -42,12 +42,6 @@ type GenerateRequest struct {
 	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
 	// turn the option on, never off.
 	SQLContextOnlyAPI bool
-	// DynamoContextAPI adds Context-resolved wrappers for declared DynamoDB
-	// queries. Like the SQL switches, it can turn the option on, never off.
-	DynamoContextAPI bool
-	// DynamoContextOnlyAPI enables the context-only DynamoDB query API for this
-	// run.
-	DynamoContextOnlyAPI bool
 }
 
 // GenerateResult records generated artifacts or check diagnostics.

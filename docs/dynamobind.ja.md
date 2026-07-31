@@ -12,7 +12,7 @@ error も、retry の判断も、page の境界も、すべて利用者の手元
 - [`dynamo` tag](#dynamo-tag)
 - [属性の型](#属性の型)
 - [クエリ宣言](#クエリ宣言)
-- [client を Context から解決する](#client-を-context-から解決する)
+- [client は Context から来ます](#client-は-context-から来ます)
 - [ランタイム操作](#ランタイム操作)
 - [page と iterator](#page-と-iterator)
 - [batch](#batch)
@@ -57,16 +57,18 @@ export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading
 | `dynamobind_gen.go` | `EncodeItem`、`DecodeItem`、`ItemKey`、`<Type>Table`、interface assertion |
 | `dynamoquery_gen.go` | 宣言 1 つにつき 1 関数と、その式の定数 |
 
-呼び出しはこうなります。
+client を一度だけ入れておけば、呼び出しはこうなります。
 
 ```go
-if err := dynamobind.Store(ctx, client, "readings", reading); err != nil {
+ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTablePrefix(""))
+
+if err := dynamobind.Store(ctx, "readings", reading); err != nil {
 	return err
 }
 
-got, err := dynamobind.Load[Reading](ctx, client, "readings", reading.ItemKey())
+got, err := dynamobind.Load[Reading](ctx, "readings", reading.ItemKey())
 
-for reading, err := range ReadingsSince(ctx, client, "room-1", from) {
+for reading, err := range ReadingsSince(ctx, "room-1", from) {
 	if err != nil {
 		return err
 	}
@@ -75,8 +77,8 @@ for reading, err := range ReadingsSince(ctx, client, "room-1", from) {
 ```
 
 どこにも属性名が出てきません。属性名は tag と生成コードの中だけに存在するので、tag を
-rename すると本番ではなく compile か生成が失敗します。宣言したクエリは table 名も書き
-ません。宣言側が持っているからです。
+rename すると本番ではなく compile か生成が失敗します。client もどこにも出てきませんし、
+宣言したクエリは table 名も書きません。宣言側が持っているからです。
 
 ### driver の `MarshalItem` を使わない理由
 
@@ -211,7 +213,7 @@ partition key の述語は必須で、先頭に置き、常に `=` です。Dyna
 ### 生成されるシグネチャ
 
 ```go
-func ReadingsSince(ctx context.Context, c *dynamodb.Client,
+func ReadingsSince(ctx context.Context,
 	sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
 ```
 
@@ -220,8 +222,8 @@ table は引数にありません。`table` 節が与えるからです。可変
 使えます。生成された式の名前と値は最後に追加されるので、呼び出し側の option が宣言した
 条件を置き換えることはありません。
 
-`-dynamo-context-api` を付けると、client も table も取らない関数がこの隣に生成されます。
-[client を Context から解決する](#client-を-context-から解決する)を参照してください。
+client も引数にありません。Context から来ます。
+[client は Context から来ます](#client-は-context-から来ます)を参照してください。
 
 ### `table` 節が本体にある理由
 
@@ -278,125 +280,84 @@ var readingsSinceAttributeNames = map[string]string{"#k0": "sensor", "#k1": "at"
 
 ```go
 // ValidationException: Attribute name is a reserved keyword
-dynamobind.Query[Event](ctx, c, "events", "status = :s", values)
+dynamobind.Query[Event](ctx, "events", "status = :s", values)
 
 // 自分で alias する
-dynamobind.Query[Event](ctx, c, "events", "#n0 = :s",
+dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 	dynamodb.WithExpressionNames(map[string]string{"#n0": "status"}),
 	values)
 ```
 
-## client を Context から解決する
+## client は Context から来ます
 
-client と deployment の table prefix は、process ごとに固定される事実です。それを
-handler ごとに引き回すのは雑音でしかありません。生成時に、明示形の隣に Context から
-解決する wrapper を足せます。
-
-```bash
-go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -dynamo-context-api
-```
-
-```go
-func ReadingsSince(ctx context.Context, c *dynamodb.Client, sensor Sensor, from int64,
-	opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
-
-func ReadingsSinceContext(ctx context.Context, sensor Sensor, from int64,
-	opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
-```
-
-明示形は常に生成され、形が変わることはありません。wrapper は解決して委譲するだけで、
-何も open せず何も close しません。
-
-middleware が一度だけ client を入れます。
+client と deployment の table prefix は、process ごとに固定される事実です。どこも引数に
+取りません。一度入れておけば、呼び出し側にも生成されたシグネチャにも現れません。
 
 ```go
 ctx := dynamobind.WithClient(r.Context(), client, dynamobind.WithTablePrefix("staging-"))
 ```
 
-`ReadingsSinceContext` はこれで `staging-readings`、つまり宣言された名前に prefix を
-前置した table を読みます。
-
-### prefix の未設定は error です
-
 ```go
 WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption) context.Context
 WithTablePrefix(prefix string) ClientOption
 
-ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
 TableFromContext(ctx context.Context, table string) (*dynamodb.Client, string, error)
+ClientFromContext(ctx context.Context) (*dynamodb.Client, error)
 ```
+
+このパッケージの入口はすべて `TableFromContext` を通るので、実際に送られる table 名は
+書いた名前に prefix を前置したものになります。`Load(ctx, "readings", key)` は
+`staging-readings` を読みますし、`table readings` と宣言したクエリも同じです。
+`ClientFromContext` は escape hatch で、このパッケージが包んでいない操作のために driver へ
+直接届きます。
+
+別の client でテストする、別 region に届く、といった場合は、別のシグネチャではなく別の
+Context を作ります。
+
+### prefix の未設定は error です
 
 空 prefix への fallback はありません。client はあるが prefix が設定されていない Context は
 `ErrNoTablePrefix` になり、宣言どおりの名前をそのまま使う deployment は
 `WithTablePrefix("")` と明示します。
 
-これは同じ形の SQL executor より厳しく、意図的にそうしています。executor が無ければそもそも
-実行できませんが、prefix が無いと prefix 無しの table を読んで**正常な空 page**を返します。
-違う table を黙って読んだ結果は、中身が空の table と区別できません。
+理由は、そうしないと失敗が静かになるからです。client が無ければそもそも request を出せない
+ので `ErrNoClient` は避けようがありません。一方 prefix が無いと prefix 無しの table を読んで
+**正常な空 page**を返します。違う table を読んだ結果は、中身が空の table と区別できません。
 
-`dynamo.page` 形は解決 error をそのまま返します。`dynamo.many` 形は返せないので、error を
-1 度 yield して終わります。page の失敗と同じ報告のしかたです。
-
-### item 操作
-
-`Load` や `Store` などは client と table の引数を保ちます。生成コードではなくランタイムの
-generics なので、Context 版を各操作に足すと公開面が倍になります。呼び出し側が 1 行書けば
-済むものです。
-
-```go
-c, table, err := dynamobind.TableFromContext(ctx, "readings")
-if err != nil {
-	return err
-}
-return dynamobind.Store(ctx, c, table, reading)
-```
-
-prefix が当たらない table 名のためには、client だけを返す `ClientFromContext` があります。
-
-### 残り 2 つの mode
-
-`-dynamo-context-only-api` は Context 解決版だけを宣言された名前で公開します。
-`ReadingsSince` が Context 形になり、client を取る側は非公開になり、
-`ReadingsSinceContext` は生成されないのでその名前は空いたままです。
-
-`Options.DynamoClientResolver` は `TableFromContext` の代わりに framework の resolver を
-選び、Context API を含意します。signature が同じなので、framework は宣言された名前を
-好きな物理名に写せます。
-
-```go
-func Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
-```
-
-mode は生成時に固定され、package 全体に適用されます。
+どちらの error も、結果の形が許す方法で呼び出し側に届きます。error を返す関数はそのまま
+返し、iterator は zero value と一緒に 1 度 yield して終わります。page の失敗と同じ報告の
+しかたです。
 
 ## ランタイム操作
 
 ```go
-Load[T](ctx, c, table, key, opts...) (T, error)
-Store(ctx, c, table, v, opts...) error
-Remove(ctx, c, table, v, opts...) error
-Update(ctx, c, table, v, expression, opts...) error
+Load[T](ctx, table, key, opts...) (T, error)
+Store(ctx, table, v, opts...) error
+Remove(ctx, table, v, opts...) error
+Update(ctx, table, v, expression, opts...) error
 
-StoreReturning(ctx, c, table, v, opts...) (T, bool, error)
-RemoveReturning(ctx, c, table, v, opts...) (T, bool, error)
+StoreReturning(ctx, table, v, opts...) (T, bool, error)
+RemoveReturning(ctx, table, v, opts...) (T, bool, error)
 
-QueryPage[T](ctx, c, table, keyCond, opts...) (Page[T], error)
-ScanPage[T](ctx, c, table, opts...) (Page[T], error)
-Query[T](ctx, c, table, keyCond, opts...) iter.Seq2[T, error]
-Scan[T](ctx, c, table, opts...) iter.Seq2[T, error]
+QueryPage[T](ctx, table, keyCond, opts...) (Page[T], error)
+ScanPage[T](ctx, table, opts...) (Page[T], error)
+Query[T](ctx, table, keyCond, opts...) iter.Seq2[T, error]
+Scan[T](ctx, table, opts...) iter.Seq2[T, error]
 
-StoreAll(ctx, c, table, vs) (unprocessed []T, err error)
-LoadAll[T](ctx, c, table, keys, opts...) (items []T, unprocessed []dynamodb.Key, err error)
+StoreAll(ctx, table, vs) (unprocessed []T, err error)
+LoadAll[T](ctx, table, keys, opts...) (items []T, unprocessed []dynamodb.Key, err error)
 ```
 
-dispatch は registry ではなく型制約で行います。codec が生成されていない型は compile
-error になります。誰も登録しなかった registry を実行時に探して失敗することはありません。
+これらが table 名を取るのは、読み取る宣言が無いからです。宣言のあるクエリは取りません。
+
+dispatch は registry ではなく型制約です。生成された codec を持たない型は、登録漏れによる
+実行時失敗ではなく compile error になります。
 
 `Store` は `PutItem` で、item 全体を置き換えます。`Update` は DynamoDB の update 式を
-そのまま受け取り、key だけを供給します。struct tag から導けるのは key だけだからです。
+そのまま受け取り、key だけを供給します。struct tag が実際に供給できるのはそこだけです。
 
-`StoreReturning` と `RemoveReturning` は `ALL_OLD` を要求し、置き換えた／削除した item を
-decode して返します。bool は「元の item が無かった」を表し、error ではありません。
+`StoreReturning` と `RemoveReturning` は `ALL_OLD` を要求し、置き換え／削除されたものを
+decode します。bool は何も無かったときに false で、error ではありません。
 
 ## page と iterator
 
@@ -420,7 +381,7 @@ loop を break すると、次の request を出さずに終わります。
 retry は算術ではないので置いていません。service が断った分はそのまま返ります。
 
 ```go
-unprocessed, err := dynamobind.StoreAll(ctx, c, "readings", readings)
+unprocessed, err := dynamobind.StoreAll(ctx, "readings", readings)
 if err != nil {
 	return err
 }
@@ -437,7 +398,7 @@ error でもなく、unprocessed key でもありません。
 driver の sentinel はすべて生き残ります。
 
 ```go
-_, err := dynamobind.Load[Reading](ctx, c, "readings", key)
+_, err := dynamobind.Load[Reading](ctx, "readings", key)
 if errors.Is(err, dynamodb.ErrItemNotFound) {
 	// 存在しない key は存在しないまま。zero value になって届くことはありません
 }
@@ -486,7 +447,7 @@ package でも、生成されたクエリが必要とする decoder は出ます
 
 key builder だけが例外で、`partitionkey` を宣言した型には、それを必要とする呼び出しが
 無くても `ItemKey` と table 定義が生成されます。item を読む標準的な書き方は
-`Load(ctx, c, table, v.ItemKey())` であり、method の使用は generator が発見できる呼び出し
+`Load(ctx, table, v.ItemKey())` であり、method の使用は generator が発見できる呼び出し
 ではありません。発見を待つと、呼ぶべき method が永遠に生成されないことになります。3 行の
 method なので、呼ばれなければ linker が落とします。
 
@@ -494,21 +455,13 @@ method なので、呼ばれなければ linker が落とします。
 generator binary のすべてが記録値と一致する再実行は、再生成せずに終了します。`-force` は
 無条件に再生成します。
 
-CLI flag:
-
-| flag | 効果 |
-|------|------|
-| `-dynamo-context-api` | `<Name>Context` wrapper も生成します |
-| `-dynamo-context-only-api` | Context 解決版だけを公開します |
-| `-force` | 記録された入力 hash に関わらず再生成します |
-
-残りは CLI flag ではなく `generator.Options` にあります。
+生成される面は 1 つなので、切り替える対象はありません。`-force` は hash に関わらず
+再生成します。残りの調整は `generator.Options` にあります。
 
 ```go
 options := generator.DefaultOptions()
 options.DisableFeatures = []generator.Feature{generator.FeatureItemTable}
 options.DynamoTemplatePattern = "*.query.dynamo"
-options.DynamoClientResolver = &generator.SymbolPattern{PackagePath: "app/dynactx", Name: "Table"}
 ```
 
 | 設定 | 効果 |
@@ -516,7 +469,6 @@ options.DynamoClientResolver = &generator.SymbolPattern{PackagePath: "app/dynact
 | `FeatureItemCodec` | DynamoDB mode 全体を止めます。クエリも含みます |
 | `FeatureItemTable` | `<Type>Table` だけを止めます。codec と key builder は残ります |
 | `DynamoTemplatePattern` | 宣言 file の glob。既定は `*.tb.dynamo` |
-| `DynamoClientResolver` | framework の Context resolver。Context API を含意します |
 
 `-html-template-pattern` や `-sql-template-pattern` と違い、これらに対応する CLI flag は
 まだありません。当面は `generator.New` 経由で指定してください。
@@ -549,8 +501,7 @@ tag と型の検査:
 - 文字列として格納されていない属性への `begins_with`
 - 属性の Go の型と一致しない引数の型
 - 宣言されていない引数を指す placeholder、使われない引数
-- 同じ名前の statement が 2 つ、または Context API 有効時に、他の statement の wrapper が
-  取る名前を持つ statement
+- 同じ名前の statement が 2 つ
 
 ## サイズ
 

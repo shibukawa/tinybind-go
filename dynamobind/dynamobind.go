@@ -10,7 +10,12 @@
 //		Celsius float64 `dynamo:"celsius"`
 //	}
 //
-//	got, err := dynamobind.Load[Reading](ctx, client, "readings", want.ItemKey())
+//	ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTablePrefix(""))
+//	got, err := dynamobind.Load[Reading](ctx, "readings", want.ItemKey())
+//
+// The client is not a parameter. It and the deployment table prefix are facts of
+// one process, installed once with WithClient, so no call site and no generated
+// signature carries them; see context.go.
 //
 // Dispatch is by type constraint rather than by a registry, so a type without
 // generated code fails to compile instead of failing at run time on a missing

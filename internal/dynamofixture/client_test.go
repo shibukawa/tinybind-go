@@ -18,14 +18,13 @@ import (
 )
 
 func TestStoreAndFetch(t *testing.T) {
-	ctx := context.Background()
-	client, _ := newFakeDynamo(t)
+	ctx, _ := newFakeContext(t)
 	want := sample()
 
-	if err := dynamofixture.Save(ctx, client, table, want); err != nil {
+	if err := dynamofixture.Save(ctx, table, want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	got, err := dynamofixture.Fetch(ctx, client, table, want.ItemKey())
+	got, err := dynamofixture.Fetch(ctx, table, want.ItemKey())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -40,10 +39,9 @@ func TestStoreAndFetch(t *testing.T) {
 // TestFetchMissKeepsTheDriverSentinel is the rule that no helper may swallow a
 // driver error.
 func TestFetchMissKeepsTheDriverSentinel(t *testing.T) {
-	ctx := context.Background()
-	client, _ := newFakeDynamo(t)
+	ctx, _ := newFakeContext(t)
 
-	_, err := dynamofixture.Fetch(ctx, client, table, dynamodb.Key{
+	_, err := dynamofixture.Fetch(ctx, table, dynamodb.Key{
 		"sensor": dynamodb.S("absent"), "at": dynamodb.N(1),
 	})
 	if !errors.Is(err, dynamodb.ErrItemNotFound) {
@@ -59,11 +57,10 @@ func TestFetchMissKeepsTheDriverSentinel(t *testing.T) {
 }
 
 func TestReplaceAndRetireReturnTheOldItem(t *testing.T) {
-	ctx := context.Background()
-	client, _ := newFakeDynamo(t)
+	ctx, _ := newFakeContext(t)
 	first := sample()
 
-	old, existed, err := dynamofixture.Replace(ctx, client, table, first)
+	old, existed, err := dynamofixture.Replace(ctx, table, first)
 	if err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
@@ -73,7 +70,7 @@ func TestReplaceAndRetireReturnTheOldItem(t *testing.T) {
 
 	second := first
 	second.Note = "corrected"
-	old, existed, err = dynamofixture.Replace(ctx, client, table, second)
+	old, existed, err = dynamofixture.Replace(ctx, table, second)
 	if err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
@@ -81,43 +78,41 @@ func TestReplaceAndRetireReturnTheOldItem(t *testing.T) {
 		t.Fatalf("replaced item: existed=%v %+v", existed, old)
 	}
 
-	deleted, existed, err := dynamofixture.Retire(ctx, client, table, second)
+	deleted, existed, err := dynamofixture.Retire(ctx, table, second)
 	if err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if !existed || deleted.Note != "corrected" {
 		t.Fatalf("deleted item: existed=%v %+v", existed, deleted)
 	}
-	if _, err := dynamofixture.Fetch(ctx, client, table, second.ItemKey()); !errors.Is(err, dynamodb.ErrItemNotFound) {
+	if _, err := dynamofixture.Fetch(ctx, table, second.ItemKey()); !errors.Is(err, dynamodb.ErrItemNotFound) {
 		t.Fatalf("item survived Retire: %v", err)
 	}
 }
 
 func TestDeleteUsesOnlyTheKey(t *testing.T) {
-	ctx := context.Background()
-	client, _ := newFakeDynamo(t)
+	ctx, _ := newFakeContext(t)
 	stored := sample()
-	if err := dynamofixture.Save(ctx, client, table, stored); err != nil {
+	if err := dynamofixture.Save(ctx, table, stored); err != nil {
 		t.Fatal(err)
 	}
 
 	// Only the key fields are filled in: Remove must not need the rest.
-	if err := dynamofixture.Delete(ctx, client, table, dynamofixture.Reading{
+	if err := dynamofixture.Delete(ctx, table, dynamofixture.Reading{
 		Sensor: stored.Sensor, At: stored.At,
 	}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := dynamofixture.Fetch(ctx, client, table, stored.ItemKey()); !errors.Is(err, dynamodb.ErrItemNotFound) {
+	if _, err := dynamofixture.Fetch(ctx, table, stored.ItemKey()); !errors.Is(err, dynamodb.ErrItemNotFound) {
 		t.Fatalf("item survived Delete: %v", err)
 	}
 }
 
 func TestQueryPageReportsItsContinuation(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 5)
 
-	page, err := dynamofixture.Page(ctx, client, table, "sensor = :s")
+	page, err := dynamofixture.Page(ctx, table, "sensor = :s")
 	if err != nil {
 		t.Fatalf("Page: %v", err)
 	}
@@ -133,12 +128,11 @@ func TestQueryPageReportsItsContinuation(t *testing.T) {
 }
 
 func TestQueryIteratorWalksEveryPage(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 5)
 
 	var seen []int64
-	for reading, err := range dynamofixture.Each(ctx, client, table, "sensor = :s") {
+	for reading, err := range dynamofixture.Each(ctx, table, "sensor = :s") {
 		if err != nil {
 			t.Fatalf("iterate: %v", err)
 		}
@@ -155,11 +149,10 @@ func TestQueryIteratorWalksEveryPage(t *testing.T) {
 }
 
 func TestQueryIteratorStopsWithoutAnotherRequest(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 5)
 
-	for _, err := range dynamofixture.Each(ctx, client, table, "sensor = :s") {
+	for _, err := range dynamofixture.Each(ctx, table, "sensor = :s") {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,12 +164,11 @@ func TestQueryIteratorStopsWithoutAnotherRequest(t *testing.T) {
 }
 
 func TestScanIteratorWalksTheTable(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 3)
 
 	count := 0
-	for _, err := range dynamofixture.Sweep(ctx, client, table) {
+	for _, err := range dynamofixture.Sweep(ctx, table) {
 		if err != nil {
 			t.Fatalf("scan: %v", err)
 		}
@@ -191,14 +183,13 @@ func TestScanIteratorWalksTheTable(t *testing.T) {
 }
 
 func TestStoreAllChunksAtTheServiceLimit(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 
 	readings := make([]dynamofixture.Reading, 30)
 	for i := range readings {
 		readings[i] = dynamofixture.Reading{Sensor: "s", At: int64(i)}
 	}
-	unprocessed, err := dynamofixture.SaveAll(ctx, client, table, readings)
+	unprocessed, err := dynamofixture.SaveAll(ctx, table, readings)
 	if err != nil {
 		t.Fatalf("SaveAll: %v", err)
 	}
@@ -213,8 +204,7 @@ func TestStoreAllChunksAtTheServiceLimit(t *testing.T) {
 }
 
 func TestStoreAllReturnsDeclinedWritesUnretried(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	fake.declineWrites = 3
 
 	readings := []dynamofixture.Reading{
@@ -223,7 +213,7 @@ func TestStoreAllReturnsDeclinedWritesUnretried(t *testing.T) {
 		{Sensor: "s", At: 3, Note: "three"},
 		{Sensor: "s", At: 4, Note: "four"},
 	}
-	unprocessed, err := dynamofixture.SaveAll(ctx, client, table, readings)
+	unprocessed, err := dynamofixture.SaveAll(ctx, table, readings)
 	if err != nil {
 		t.Fatalf("SaveAll: %v", err)
 	}
@@ -242,15 +232,14 @@ func TestStoreAllReturnsDeclinedWritesUnretried(t *testing.T) {
 }
 
 func TestLoadAllChunksAndDecodes(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 120)
 
 	keys := make([]dynamodb.Key, 120)
 	for i := range keys {
 		keys[i] = dynamodb.Key{"sensor": dynamodb.S("s"), "at": dynamodb.N(int64(i))}
 	}
-	items, unprocessed, err := dynamofixture.FetchAll(ctx, client, table, keys)
+	items, unprocessed, err := dynamofixture.FetchAll(ctx, table, keys)
 	if err != nil {
 		t.Fatalf("FetchAll: %v", err)
 	}
@@ -263,13 +252,12 @@ func TestLoadAllChunksAndDecodes(t *testing.T) {
 }
 
 func TestUpdatePassesTheExpressionThrough(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	stored := sample()
-	if err := dynamofixture.Save(ctx, client, table, stored); err != nil {
+	if err := dynamofixture.Save(ctx, table, stored); err != nil {
 		t.Fatal(err)
 	}
-	err := dynamofixture.Correct(ctx, client, table, stored, "SET note = :n",
+	err := dynamofixture.Correct(ctx, table, stored, "SET note = :n",
 		dynamodb.WithExpressionValues(map[string]dynamodb.AttributeValue{":n": dynamodb.S("fixed")}))
 	if err != nil {
 		t.Fatalf("Correct: %v", err)
@@ -290,12 +278,11 @@ func store(t *testing.T, fake *fakeDynamo, n int) {
 // TestDeclaredQueryRunsAgainstTheWire drives a generated query function end to
 // end. Nothing in the call names an attribute, a placeholder or an expression.
 func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 5)
 
 	var seen []int64
-	for reading, err := range dynamofixture.ReadingsSince(ctx, client, "s", 0) {
+	for reading, err := range dynamofixture.ReadingsSince(ctx, "s", 0) {
 		if err != nil {
 			t.Fatalf("ReadingsSince: %v", err)
 		}
@@ -305,7 +292,7 @@ func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
 		t.Fatalf("iterated %d of 5: %v", len(seen), seen)
 	}
 
-	page, err := dynamofixture.ReadingsBetween(ctx, client, "s", 0, 10)
+	page, err := dynamofixture.ReadingsBetween(ctx, "s", 0, 10)
 	if err != nil {
 		t.Fatalf("ReadingsBetween: %v", err)
 	}
@@ -317,11 +304,10 @@ func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
 // TestDeclaredQuerySendsAliasesAndValues proves the request carries the aliased
 // expression and the bound values the declaration described.
 func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
-	ctx := context.Background()
-	client, fake := newFakeDynamo(t)
+	ctx, fake := newFakeContext(t)
 	store(t, fake, 1)
 
-	for _, err := range dynamofixture.ReadingsSince(ctx, client, "s", 3) {
+	for _, err := range dynamofixture.ReadingsSince(ctx, "s", 3) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,18 +326,18 @@ func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
 	}
 }
 
-// TestContextQueryResolvesClientAndTable drives the generated Context wrapper.
-// The call names neither the client nor the table: both come from the Context,
-// and the declared name is what the prefix is applied to.
-func TestContextQueryResolvesClientAndTable(t *testing.T) {
+// TestDeployedPrefixReachesTheWire proves the declared table name is what the
+// prefix is applied to, in both result shapes. The calls name neither the
+// client nor the table.
+func TestDeployedPrefixReachesTheWire(t *testing.T) {
 	client, fake := newFakeDynamo(t)
 	store(t, fake, 3)
 	ctx := dynamobind.WithClient(context.Background(), client, dynamobind.WithTablePrefix("staging-"))
 
 	var seen []int64
-	for reading, err := range dynamofixture.ReadingsSinceContext(ctx, "s", 0) {
+	for reading, err := range dynamofixture.ReadingsSince(ctx, "s", 0) {
 		if err != nil {
-			t.Fatalf("ReadingsSinceContext: %v", err)
+			t.Fatalf("ReadingsSince: %v", err)
 		}
 		seen = append(seen, reading.At)
 	}
@@ -362,9 +348,9 @@ func TestContextQueryResolvesClientAndTable(t *testing.T) {
 		t.Fatalf("table name on the wire: %q", name)
 	}
 
-	page, err := dynamofixture.ReadingsBetweenContext(ctx, "s", 0, 10)
+	page, err := dynamofixture.ReadingsBetween(ctx, "s", 0, 10)
 	if err != nil {
-		t.Fatalf("ReadingsBetweenContext: %v", err)
+		t.Fatalf("ReadingsBetween: %v", err)
 	}
 	if len(page.Items) != 2 {
 		t.Fatalf("page: %+v", page)
@@ -372,12 +358,20 @@ func TestContextQueryResolvesClientAndTable(t *testing.T) {
 	if name := fake.lastRequest().TableName; name != "staging-readings" {
 		t.Fatalf("table name on the wire: %q", name)
 	}
+
+	// An item operation names its own table, so the prefix applies there too.
+	if err := dynamofixture.Save(ctx, table, sample()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if name := fake.lastRequest().TableName; name != "staging-readings" {
+		t.Fatalf("table name on the wire: %q", name)
+	}
 }
 
-// TestContextQueryReportsAnUnresolvableContext proves the wrapper fails loudly
-// rather than reading the unprefixed table, in both result shapes. An iterator
-// cannot return the error, so it yields it once and stops.
-func TestContextQueryReportsAnUnresolvableContext(t *testing.T) {
+// TestUnresolvableContextReachesNothing proves every entry fails loudly rather
+// than reading the unprefixed table. An iterator cannot return the error, so it
+// yields it once and stops.
+func TestUnresolvableContextReachesNothing(t *testing.T) {
 	client, fake := newFakeDynamo(t)
 	store(t, fake, 3)
 
@@ -394,10 +388,10 @@ func TestContextQueryReportsAnUnresolvableContext(t *testing.T) {
 		},
 	} {
 		t.Run(unresolvable.name, func(t *testing.T) {
-			before := fake.count("Query")
+			before := fake.count("Query") + fake.count("GetItem") + fake.count("PutItem")
 
 			yields := 0
-			for reading, err := range dynamofixture.ReadingsSinceContext(unresolvable.ctx, "s", 0) {
+			for reading, err := range dynamofixture.ReadingsSince(unresolvable.ctx, "s", 0) {
 				yields++
 				if !errors.Is(err, unresolvable.want) {
 					t.Fatalf("iterator error = %v, want %v", err, unresolvable.want)
@@ -410,10 +404,24 @@ func TestContextQueryReportsAnUnresolvableContext(t *testing.T) {
 				t.Fatalf("the iterator yielded %d times, want 1", yields)
 			}
 
-			if _, err := dynamofixture.ReadingsBetweenContext(unresolvable.ctx, "s", 0, 10); !errors.Is(err, unresolvable.want) {
+			if _, err := dynamofixture.ReadingsBetween(unresolvable.ctx, "s", 0, 10); !errors.Is(err, unresolvable.want) {
 				t.Fatalf("page error = %v, want %v", err, unresolvable.want)
 			}
-			if fake.count("Query") != before {
+			// The item operations resolve through the same door.
+			if _, err := dynamofixture.Fetch(unresolvable.ctx, table, sample().ItemKey()); !errors.Is(err, unresolvable.want) {
+				t.Fatalf("Fetch error = %v, want %v", err, unresolvable.want)
+			}
+			if err := dynamofixture.Save(unresolvable.ctx, table, sample()); !errors.Is(err, unresolvable.want) {
+				t.Fatalf("Save error = %v, want %v", err, unresolvable.want)
+			}
+			if _, err := dynamofixture.SaveAll(unresolvable.ctx, table, []dynamofixture.Reading{sample()}); !errors.Is(err, unresolvable.want) {
+				t.Fatalf("SaveAll error = %v, want %v", err, unresolvable.want)
+			}
+			if _, _, err := dynamofixture.FetchAll(unresolvable.ctx, table, []dynamodb.Key{sample().ItemKey()}); !errors.Is(err, unresolvable.want) {
+				t.Fatalf("FetchAll error = %v, want %v", err, unresolvable.want)
+			}
+
+			if fake.count("Query")+fake.count("GetItem")+fake.count("PutItem") != before {
 				t.Fatal("an unresolvable Context still reached the service")
 			}
 		})

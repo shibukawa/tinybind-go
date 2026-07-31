@@ -115,7 +115,7 @@ func (g *Generator) generateDynamoQueries(load *packageLoad, outDir, outName str
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitDynamoQueries(pkg, plans, g.Options.dynamoQueryOptions())
+	src, err := EmitDynamoQueries(pkg, plans)
 	if err != nil || len(src) == 0 {
 		return "", err
 	}
@@ -158,7 +158,7 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
 	for _, source := range order {
-		code, err := EmitDynamoQueries(pkg, grouped[source], g.Options.dynamoQueryOptions())
+		code, err := EmitDynamoQueries(pkg, grouped[source])
 		if err != nil {
 			return nil, err
 		}
@@ -183,5 +183,5 @@ func (g *Generator) EmitDynamoQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitDynamoQueries(pkg, plans, g.Options.dynamoQueryOptions())
+	return EmitDynamoQueries(pkg, plans)
 }

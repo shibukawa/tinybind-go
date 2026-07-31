@@ -13,9 +13,13 @@ import (
 func Load[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error) {
+}](ctx context.Context, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error) {
 	var out T
-	item, err := c.GetItem(ctx, table, key, opts...)
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return out, err
+	}
+	item, err := c.GetItem(ctx, name, key, opts...)
 	if err != nil {
 		return out, err
 	}
@@ -29,8 +33,12 @@ func Load[T any, PT interface {
 //
 // It is PutItem, not a partial update: every attribute of the stored item comes
 // from v. Use Update for a partial change.
-func Store[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table string, v T, opts ...dynamodb.WriteOption) error {
-	_, err := c.PutItem(ctx, table, v.EncodeItem(), opts...)
+func Store[T ItemEncoder](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) error {
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return err
+	}
+	_, err = c.PutItem(ctx, name, v.EncodeItem(), opts...)
 	return err
 }
 
@@ -42,9 +50,13 @@ func Store[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table string,
 func StoreReturning[T ItemEncoder, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
+}](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
 	var old T
-	result, err := c.PutItem(ctx, table, v.EncodeItem(), withAllOld(opts)...)
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return old, false, err
+	}
+	result, err := c.PutItem(ctx, name, v.EncodeItem(), withAllOld(opts)...)
 	if err != nil {
 		return old, false, err
 	}
@@ -58,8 +70,12 @@ func StoreReturning[T ItemEncoder, PT interface {
 }
 
 // Remove deletes the item identified by v's key. Only the key of v is read.
-func Remove[T Keyer](ctx context.Context, c *dynamodb.Client, table string, v T, opts ...dynamodb.WriteOption) error {
-	_, err := c.DeleteItem(ctx, table, v.ItemKey(), opts...)
+func Remove[T Keyer](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) error {
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return err
+	}
+	_, err = c.DeleteItem(ctx, name, v.ItemKey(), opts...)
 	return err
 }
 
@@ -69,9 +85,13 @@ func Remove[T Keyer](ctx context.Context, c *dynamodb.Client, table string, v T,
 func RemoveReturning[T Keyer, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
+}](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
 	var old T
-	result, err := c.DeleteItem(ctx, table, v.ItemKey(), withAllOld(opts)...)
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return old, false, err
+	}
+	result, err := c.DeleteItem(ctx, name, v.ItemKey(), withAllOld(opts)...)
 	if err != nil {
 		return old, false, err
 	}
@@ -91,10 +111,14 @@ func RemoveReturning[T Keyer, PT interface {
 // actually supply. Attribute values in the expression come from
 // dynamodb.WithExpressionValues as usual:
 //
-//	err := dynamobind.Update(ctx, c, "readings", key, "SET celsius = :c",
+//	err := dynamobind.Update(ctx, "readings", key, "SET celsius = :c",
 //		dynamodb.WithExpressionValues(map[string]dynamodb.AttributeValue{":c": dynamodb.N(21.5)}))
-func Update[T Keyer](ctx context.Context, c *dynamodb.Client, table string, v T, update string, opts ...dynamodb.WriteOption) error {
-	_, err := c.UpdateItem(ctx, table, v.ItemKey(), update, opts...)
+func Update[T Keyer](ctx context.Context, table string, v T, update string, opts ...dynamodb.WriteOption) error {
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return err
+	}
+	_, err = c.UpdateItem(ctx, name, v.ItemKey(), update, opts...)
 	return err
 }
 

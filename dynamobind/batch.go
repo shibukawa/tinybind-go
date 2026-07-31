@@ -25,8 +25,15 @@ const (
 // second attempt is the caller's decision, not this package's. Passing
 // unprocessed back to StoreAll is the retry, and it belongs in caller code
 // where a backoff can live.
-func StoreAll[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table string, vs []T) ([]T, error) {
+func StoreAll[T ItemEncoder](ctx context.Context, table string, vs []T) ([]T, error) {
 	var unprocessed []T
+	if len(vs) == 0 {
+		return nil, nil
+	}
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return nil, err
+	}
 	for start := 0; start < len(vs); start += MaxBatchWrite {
 		end := min(start+MaxBatchWrite, len(vs))
 		chunk := vs[start:end]
@@ -38,7 +45,7 @@ func StoreAll[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table stri
 			items = append(items, item)
 			requests = append(requests, dynamodb.PutRequest(item))
 		}
-		result, err := c.BatchWriteItem(ctx, map[string][]dynamodb.WriteRequest{table: requests})
+		result, err := c.BatchWriteItem(ctx, map[string][]dynamodb.WriteRequest{name: requests})
 		if err != nil {
 			return unprocessed, err
 		}
@@ -50,7 +57,7 @@ func StoreAll[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table stri
 		// encoded items are matched by value; a matched entry is consumed so
 		// duplicate inputs report the right count.
 		matched := make([]bool, len(chunk))
-		for _, request := range result.UnprocessedItems[table] {
+		for _, request := range result.UnprocessedItems[name] {
 			if request.Put == nil {
 				continue
 			}
@@ -77,28 +84,35 @@ func StoreAll[T ItemEncoder](ctx context.Context, c *dynamodb.Client, table stri
 func LoadAll[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, c *dynamodb.Client, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
+}](ctx context.Context, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
 	var (
 		items       []T
 		unprocessed []dynamodb.Key
 	)
+	if len(keys) == 0 {
+		return nil, nil, nil
+	}
+	c, name, err := TableFromContext(ctx, table)
+	if err != nil {
+		return nil, nil, err
+	}
 	for start := 0; start < len(keys); start += MaxBatchGet {
 		end := min(start+MaxBatchGet, len(keys))
-		result, err := c.BatchGetItem(ctx, map[string][]dynamodb.Key{table: keys[start:end]}, opts...)
+		result, err := c.BatchGetItem(ctx, map[string][]dynamodb.Key{name: keys[start:end]}, opts...)
 		if err != nil {
 			return items, unprocessed, err
 		}
 		if result == nil {
 			continue
 		}
-		for _, item := range result.Items[table] {
+		for _, item := range result.Items[name] {
 			var decoded T
 			if err := PT(&decoded).DecodeItem(item); err != nil {
 				return items, unprocessed, err
 			}
 			items = append(items, decoded)
 		}
-		unprocessed = append(unprocessed, result.UnprocessedKeys[table]...)
+		unprocessed = append(unprocessed, result.UnprocessedKeys[name]...)
 	}
 	return items, unprocessed, nil
 }

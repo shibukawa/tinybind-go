@@ -14,16 +14,6 @@ import (
 	"github.com/shibukawa/tinybind-go/generator"
 )
 
-// fixtureOptions is what generated this package. The Context query API is on,
-// so both generated surfaces run against the fake server here; the default,
-// where no wrapper is generated at all, is covered in the generator's own
-// tests.
-func fixtureOptions() generator.Options {
-	options := generator.DefaultOptions()
-	options.DynamoContextAPI = true
-	return options
-}
-
 func TestGeneratedFilesHaveNoReflect(t *testing.T) {
 	for _, name := range []string{"dynamobind_gen.go", "dynamoquery_gen.go"} {
 		source, err := os.ReadFile(name)
@@ -40,7 +30,7 @@ func TestGeneratedFilesHaveNoReflect(t *testing.T) {
 // what this generator emits, so a stale codec is a test failure rather than a
 // wrong item or a wrong query.
 func TestCommittedCodecIsCurrent(t *testing.T) {
-	options := fixtureOptions()
+	options := generator.DefaultOptions()
 	plan, err := generator.AnalyzeDynamoItemsWithOptions(".", options)
 	if err != nil {
 		t.Fatalf("analyze items: %v", err)

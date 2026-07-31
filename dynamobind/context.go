@@ -61,10 +61,9 @@ func WithClient(ctx context.Context, c *dynamodb.Client, options ...ClientOption
 
 // ClientFromContext returns the client installed by WithClient.
 //
-// It is what an item operation uses: Load, Store and the rest keep their client
-// and table parameters, and a caller resolving from a Context spends one line
-// rather than a doubled API. Use TableFromContext when the table name is a
-// declared one that the prefix applies to.
+// It is the escape hatch for reaching the driver directly, for an operation this
+// package does not wrap. Everything this package does wrap resolves through
+// TableFromContext instead, so the prefix is applied.
 func ClientFromContext(ctx context.Context) (*dynamodb.Client, error) {
 	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
 	if !ok || entry.client == nil {

@@ -3,6 +3,7 @@
 package dynamofixture_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/shibukawa/tinybind-go/dynamobind"
 	"github.com/shibukawa/tinygodriver/cloud/aws"
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
@@ -64,6 +66,15 @@ func newFakeDynamo(t *testing.T) (*dynamodb.Client, *fakeDynamo) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client, fake
+}
+
+// newFakeContext is what nearly every test wants: the client installed where
+// dynamobind looks for it, with no prefix. Nothing below passes a client, since
+// no entry of the package takes one.
+func newFakeContext(t *testing.T) (context.Context, *fakeDynamo) {
+	t.Helper()
+	client, fake := newFakeDynamo(t)
+	return dynamobind.WithClient(context.Background(), client, dynamobind.WithTablePrefix("")), fake
 }
 
 func (f *fakeDynamo) count(op string) int {
