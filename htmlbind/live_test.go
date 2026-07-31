@@ -174,15 +174,18 @@ func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
 	// failing source is exactly when it is most likely to. Holding the lock
 	// across it would freeze the boundary that is failing, which is the one
 	// whose remaining sources most need to keep delivering.
-	type scope struct{ A, B string }
+	// Named for this test rather than plainly `scope`: see the note on
+	// awaitScope in context_op_test.go for why a function-local parameter type
+	// needs a package-unique name under TinyGo.
+	type reporterScope struct{ A, B string }
 
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	aDelivered := make(chan struct{})
 	firstRender := make(chan struct{})
 
-	failing := func(deliver func(func(*scope), error) bool) error {
-		deliver(func(s *scope) { s.A = "a" }, nil)
+	failing := func(deliver func(func(*reporterScope), error) bool) error {
+		deliver(func(s *reporterScope) { s.A = "a" }, nil)
 		close(aDelivered)
 		<-firstRender
 		// Renders recover, and then blocks in the reporter for as long as this
@@ -190,14 +193,14 @@ func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
 		deliver(nil, errors.New("source failed"))
 		return nil
 	}
-	healthy := func(deliver func(func(*scope), error) bool) error {
+	healthy := func(deliver func(func(*reporterScope), error) bool) error {
 		<-aDelivered
-		deliver(func(s *scope) { s.B = "1" }, nil)
+		deliver(func(s *reporterScope) { s.B = "1" }, nil)
 		close(firstRender)
 		<-entered
 		// The reporter is blocked right now. This delivery can only be rendered
 		// if the lock was released before the report was made.
-		deliver(func(s *scope) { s.B = "2" }, nil)
+		deliver(func(s *reporterScope) { s.B = "2" }, nil)
 		return nil
 	}
 
@@ -206,12 +209,12 @@ func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
 		HasLiveBlock:  true,
 		Ops: []Op[struct{}]{
 			Live(
-				func(context.Context, struct{}) []LiveBinding[scope] {
-					return []LiveBinding[scope]{failing, healthy}
+				func(context.Context, struct{}) []LiveBinding[reporterScope] {
+					return []LiveBinding[reporterScope]{failing, healthy}
 				},
-				func(struct{}) scope { return scope{} },
+				func(struct{}) reporterScope { return reporterScope{} },
 				func(_ struct{}, err AsyncError) AsyncError { return err },
-				[]Op[scope]{Builder[scope]{}.Text(func(s scope) string { return s.A + s.B })},
+				[]Op[reporterScope]{Builder[reporterScope]{}.Text(func(s reporterScope) string { return s.A + s.B })},
 				[]Op[struct{}]{Builder[struct{}]{}.Static("pending")},
 				recoverHandler(),
 			),
