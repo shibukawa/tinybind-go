@@ -55,11 +55,16 @@ type DynamoPredicate struct {
 
 // DynamoQueryDecl is one declared access pattern.
 type DynamoQueryDecl struct {
-	Name       string
-	Exported   bool
-	Params     []DynamoQueryParam
-	Shape      DynamoResultShape
-	ItemType   string
+	Name     string
+	Exported bool
+	Params   []DynamoQueryParam
+	Shape    DynamoResultShape
+	ItemType string
+	// Table is the declared table name. It is required: an access pattern names
+	// exactly one table, so the fact is complete where it is written and the
+	// generated function needs no table parameter.
+	Table      string
+	TableLine  int
 	Key        []DynamoPredicate
 	SourcePath string
 	Line       int
@@ -106,7 +111,7 @@ func lexDynamo(source string) []dynamoToken {
 			}
 			out = append(out, dynamoToken{string(c), line})
 			i++
-		case strings.ContainsRune("(){},:=[]", rune(c)):
+		case strings.ContainsRune("(){},;:=[]", rune(c)):
 			out = append(out, dynamoToken{string(c), line})
 			i++
 		default:
@@ -128,7 +133,10 @@ func lexDynamo(source string) []dynamoToken {
 }
 
 func isDynamoWordByte(c byte) bool {
-	return c == '_' || c == '.' || c == '*' ||
+	// A hyphen is a word byte because DynamoDB accepts one in a table name and
+	// in an attribute name. Nothing in this grammar subtracts, so no expression
+	// wants it as an operator.
+	return c == '_' || c == '.' || c == '*' || c == '-' ||
 		(c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 		c >= 0x80 // a multi-byte identifier stays one token, since Go permits one
 }
@@ -214,6 +222,15 @@ func (p *dynamoParser) statement() (DynamoQueryDecl, error) {
 		return decl, p.errorf(name.line, "expected a statement name, found %s", describeDynamoToken(name))
 	}
 	decl.Name = name.text
+	// Go decides visibility by the name, so export has to agree with it rather
+	// than rename anything. A keyword that parsed and did nothing would be the
+	// silent no-op this generator rejects everywhere else.
+	if exportedName := dynamoNameIsExported(decl.Name); exportedName != decl.Exported {
+		if decl.Exported {
+			return decl, p.errorf(name.line, "statement %s is declared export but its name is unexported; capitalize it or drop export", decl.Name)
+		}
+		return decl, p.errorf(name.line, "statement %s has an exported name; write \"export statement %s\" or lowercase it", decl.Name, decl.Name)
+	}
 
 	params, err := p.params()
 	if err != nil {
@@ -243,6 +260,19 @@ func (p *dynamoParser) statement() (DynamoQueryDecl, error) {
 			return decl, p.errorf(t.line, "unterminated statement %s", decl.Name)
 		}
 		switch t.text {
+		case ";":
+			// A clause separator, so a one-line body reads as one.
+			p.next()
+		case "table":
+			p.next()
+			if decl.Table != "" {
+				return decl, p.errorf(t.line, "statement %s declares more than one table clause", decl.Name)
+			}
+			decl.Table, err = p.tableClause()
+			if err != nil {
+				return decl, err
+			}
+			decl.TableLine = t.line
 		case "key":
 			p.next()
 			if decl.Key != nil {
@@ -258,10 +288,27 @@ func (p *dynamoParser) statement() (DynamoQueryDecl, error) {
 			return decl, p.errorf(t.line, "expected a clause, found %s", describeDynamoToken(t))
 		}
 	}
+	// The table clause is required rather than optional, because one declaration
+	// form has to yield one signature: an optional clause would produce a
+	// function with a table parameter and one without, from bodies that look
+	// alike.
+	if decl.Table == "" {
+		return decl, p.errorf(decl.Line, "statement %s declares no table clause; write \"table <name>\" in its body", decl.Name)
+	}
 	if len(decl.Key) == 0 {
 		return decl, p.errorf(decl.Line, "statement %s declares no key clause", decl.Name)
 	}
 	return decl, nil
+}
+
+// tableClause reads the table this access pattern runs against. The name is the
+// declared one; a deployment prefix is resolved at run time.
+func (p *dynamoParser) tableClause() (string, error) {
+	t := p.next()
+	if !isDynamoTableName(t.text) {
+		return "", p.errorf(t.line, "expected a table name, found %s", describeDynamoToken(t))
+	}
+	return t.text, nil
 }
 
 func (p *dynamoParser) params() ([]DynamoQueryParam, error) {
@@ -435,6 +482,14 @@ func (p *dynamoParser) placeholder() (string, error) {
 	return name.text, nil
 }
 
+// dynamoNameIsExported reports Go's own visibility rule for a declaration name.
+func dynamoNameIsExported(name string) bool {
+	for _, r := range name {
+		return unicode.IsUpper(r)
+	}
+	return false
+}
+
 func isDynamoIdentifier(s string) bool {
 	if s == "" {
 		return false
@@ -444,6 +499,27 @@ func isDynamoIdentifier(s string) bool {
 		case r == '_' || unicode.IsLetter(r):
 		case i > 0 && unicode.IsDigit(r):
 		case i > 0 && r == '.': // a qualified type such as time.Time
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isDynamoTableName accepts what DynamoDB accepts as a table name: three to
+// 255 characters of letters, digits, underscore, hyphen and dot. Checking here
+// turns a name the service would reject into a generation error rather than a
+// ValidationException on the first call.
+func isDynamoTableName(s string) bool {
+	if len(s) < 3 || len(s) > 255 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r == '_' || r == '-' || r == '.':
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
 		default:
 			return false
 		}

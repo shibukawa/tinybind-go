@@ -37,6 +37,38 @@ func discoverDynamoQueryFiles(dir, pattern string) ([]string, error) {
 	return files, nil
 }
 
+// declaredDynamoItemTypes lists the item types the query declarations of dir
+// decode into. It is the item pass's view of the declarations: which types are
+// bound, without the checking the query pass does.
+func declaredDynamoItemTypes(dir string, opts Options) ([]string, error) {
+	if opts.featureDisabled(FeatureItemCodec) {
+		return nil, nil
+	}
+	files, err := discoverDynamoQueryFiles(dir, opts.DynamoTemplatePattern)
+	if err != nil || len(files) == 0 {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range files {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		decls, err := parseDynamoQueries(path, source)
+		if err != nil {
+			return nil, err
+		}
+		for _, decl := range decls {
+			if !seen[decl.ItemType] {
+				seen[decl.ItemType] = true
+				out = append(out, decl.ItemType)
+			}
+		}
+	}
+	return out, nil
+}
+
 // dynamoQueryPlans reads and checks every declaration of the package.
 func (g *Generator) dynamoQueryPlans(load *packageLoad) (string, []DynamoQueryPlan, error) {
 	if g.Options.featureDisabled(FeatureItemCodec) {
@@ -83,7 +115,7 @@ func (g *Generator) generateDynamoQueries(load *packageLoad, outDir, outName str
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitDynamoQueries(pkg, plans)
+	src, err := EmitDynamoQueries(pkg, plans, g.Options.dynamoQueryOptions())
 	if err != nil || len(src) == 0 {
 		return "", err
 	}
@@ -126,7 +158,7 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
 	for _, source := range order {
-		code, err := EmitDynamoQueries(pkg, grouped[source])
+		code, err := EmitDynamoQueries(pkg, grouped[source], g.Options.dynamoQueryOptions())
 		if err != nil {
 			return nil, err
 		}
@@ -151,5 +183,5 @@ func (g *Generator) EmitDynamoQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitDynamoQueries(pkg, plans)
+	return EmitDynamoQueries(pkg, plans, g.Options.dynamoQueryOptions())
 }

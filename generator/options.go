@@ -90,6 +90,19 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// DynamoContextAPI adds Context-resolved wrappers for declared DynamoDB
+	// queries. The wrapper resolves both the client and the deployment name of
+	// the declared table.
+	DynamoContextAPI bool
+	// DynamoContextOnlyAPI publishes only the Context-resolved DynamoDB surface
+	// under the name declared in the statement. The client-taking function
+	// becomes unexported and no <Name>Context wrapper is generated. It implies
+	// DynamoContextAPI.
+	DynamoContextOnlyAPI bool
+	// DynamoClientResolver selects a framework-specific Context resolver of the
+	// shape func(context.Context, string) (*dynamodb.Client, string, error) and
+	// implies DynamoContextAPI. Nil uses dynamobind.TableFromContext.
+	DynamoClientResolver *SymbolPattern
 	// GeneratedHeaders names header prefixes, beside this module's own, whose
 	// files every discovery pass must skip. A framework generating with tinybind
 	// and branding its output writes a header nothing here recognizes on its own,
@@ -142,6 +155,15 @@ func (o Options) featureDisabled(feature Feature) bool {
 		}
 	}
 	return false
+}
+
+// dynamoQueryOptions selects the surfaces generated DynamoDB queries publish.
+func (o Options) dynamoQueryOptions() DynamoQueryOptions {
+	return DynamoQueryOptions{
+		ContextAPI:  o.DynamoContextAPI,
+		ContextOnly: o.DynamoContextOnlyAPI,
+		Resolver:    o.DynamoClientResolver,
+	}
 }
 
 func (o Options) normalized() (normalizedOptions, error) {

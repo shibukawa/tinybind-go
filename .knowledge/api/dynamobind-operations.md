@@ -60,6 +60,9 @@ partial_update:
   Update: takes the driver update expression verbatim and supplies only the key from v.ItemKey()
   no_expression_generation: no per-field setter or expression builder is generated; that is a separate project
   contrast: Store is PutItem, which replaces the whole item, so it is not a partial update
+context_client:
+  resolvers: ClientFromContext and TableFromContext, per decision:dynamo-context-client-api
+  item_operations: keep their client and table parameters; a caller resolving from a Context spends one line rather than a doubled API
 string_key_condition:
   status: the escape hatch, now that requirement:dynamo-typed-queries generates the declared form
   unchecked: keyCond and its expression values are untyped here, so a renamed attribute still compiles, and reserved words are the caller's to alias

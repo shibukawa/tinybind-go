@@ -6,13 +6,14 @@ title: Typed DynamoDB Queries
 Generate one named function per declared access pattern, so a query names no attribute, no placeholder and no expression at the call site.
 
 ```yaml
-status: implemented 2026-07-31
-implementation:
+status: implemented
+built:
   parser: generator/dynamoquery.go
   checks: generator/dynamoquery_plan.go
   emitter: generator/dynamoquery_emit.go
   wiring: generator/dynamoquery_generate.go, writing dynamoquery_gen.go
   fixture: internal/dynamofixture/readings.tb.dynamo
+  context_wrappers: per decision:dynamo-context-client-api, generated when the option is set
 scope: decision:dynamo-framework-requests
 checks: rule:dynamo-query-checks
 problem:
@@ -23,23 +24,38 @@ declaration:
   file: a template source discovered beside the package, as the .tb.sql and .tb.html of requirement:configurable-template-file-patterns are
   outer_structure: reused from .tb.sql - export statement, a typed parameter list, a result type after a colon, a braced body
   body: DynamoDB clauses rather than SQL text
-  example: "export statement ReadingsBySensor(sensor: string, from: int64): dynamo.many<Reading> { key sensor = {sensor} and at > {from} }"
+  example: "export statement ReadingsSince(sensor: Sensor, from: int64): dynamo.many<Reading> { table reading; key sensor = {sensor} and at > {from} }"
   parameters: named in the caller's vocabulary and bound to attributes where the condition names them, so the two namespaces stay separate
+  export_keyword: must agree with the name's own casing, since Go decides visibility by the name; either without the other is an error rather than a silent rename
 result_type_slot:
   chooses: the request shape rather than a row count, since a Query always returns many
   page: one request, returning Page[T]
   many: the iterator over every page
   reason: rule:dynamobind-driver-passthrough keeps the request count visible, so the author picks rather than a default
-no_table_clause:
-  shape: the generated function takes the table name, as every other dynamobind entry does
-  why: validation needs the attribute names and the key definitions, which come from the bound type's tags; the table name contributes nothing to it
-  deployment_prefix: unchanged and not this requirement's problem, because Load and Store already take the table name
-  later: an optional table clause could omit the parameter, but one declaration form yielding two signatures is the surprise this codebase avoids elsewhere; wait for a request
+table_clause:
+  form: "table <name>", required in every statement body
+  effect: the generated function takes no table parameter
+  name_check: the DynamoDB rule, three to 255 characters of letters, digits, underscore, hyphen and dot, so a name the service would reject fails generation rather than the first call
+  order: either clause may come first, and ";" separates them on one line
+  why_the_statement_owns_it:
+    a_type_is_not_one_table: the same struct can be stored in a test table and a production one, so binding the table to the type asserts something untrue
+    a_statement_is_one_table: an access pattern names exactly one, so the fact is complete where it is written and a reader needs no second file
+    direction: the result type is the decode target, an output; the table is an input, and inputs belong in the body with the key clause and the parameters
+  required_not_optional: one declaration form must yield one signature; an optional clause would produce two, which is the surprise this codebase avoids elsewhere
+  item_operations: Load, Store and the rest keep their table parameter, having no declaration to read it from; that is the absence of a declaration rather than an inconsistency
+  deployment_prefix: resolved at run time, per decision:dynamo-context-client-api
 generated:
   one_function_per_declaration: named by the declaration, returning the page or iterator form its result type selects
+  signature: context, client, the declared parameters, then variadic driver query options; the generated names and values are appended last so a caller option cannot replace the condition
   expression: a constant, with the attribute aliases and the placeholder names fixed at generation time
+  table: a constant beside the expression, so the declared name is one string in one place
+  core: an unexported "<name>Query" taking the table, which both published surfaces delegate to; a Context wrapper therefore costs no second copy of the body
   values: built per call from the typed parameters, through the same attribute encoders the codec uses
   no_builder: the function embeds its condition directly; no per-type condition builder is generated
+counts_as_usage:
+  what: a declaration is a use of its result type, feeding DynamoDecode into the item pass
+  why: the generated function instantiates dynamobind.Query with that type, which does not compile without the decoder
+  effect: a package whose only DynamoDB use is a declaration still gets a codec, per rule:usage-directed-generation
 scope:
   in: key condition, limit, scan direction, consistent read
   out: filter, projection, condition and update expressions

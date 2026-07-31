@@ -46,10 +46,16 @@ acceptance:
   - generated path stays within the size budget in requirement:dynamobind-verification
   - regenerating is unnecessary for a runtime fix, per decision:generated-runtime-in-module
 target_state:
-  property: no application source names a DynamoDB attribute; every name lives in a tag and in generated code
-  test: grepping the application for an attribute name returns nothing
-  reached: the item path, where the codec, the key builder and the table definition all come from the tags
-  not_reached: the read path, where a key condition is still text, its placeholders correspond by convention, its values are encoded by hand and its reserved words are the caller's problem
+  property: no application source names a DynamoDB attribute, and a declared query names no table either; every name lives in a tag, a declaration or generated code
+  test: grepping the application for an attribute name returns nothing, and for a table name only where an item operation is called without a declaration
+  reached:
+    - the item path, where the codec, the key builder and the table definition all come from the tags
+    - the read path of a declared query, whose attributes, placeholders and reserved-word aliases are all generated
+    - the table name of a declared query, which comes from its table clause
+    - the client of a declared query, when decision:dynamo-context-client-api is on
+  not_reached:
+    - the table name of an item operation, which has no declaration to read one from
+    - a key condition written as text, which stays unchecked as the escape hatch
   stages:
     1_item_codec: done
     2_declared_queries: done; requirement:dynamo-typed-queries generates one named function per access pattern, closing the read path for a primary key and with it the reserved-word hazard

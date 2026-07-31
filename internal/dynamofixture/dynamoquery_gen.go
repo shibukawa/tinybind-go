@@ -10,6 +10,9 @@ import (
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
 
+// readingsSinceTable is the table ReadingsSince declares.
+const readingsSinceTable = "readings"
+
 // readingsSinceKeyCondition is the key condition of ReadingsSince.
 const readingsSinceKeyCondition = "#k0 = :v0 AND #k1 > :v1"
 
@@ -18,8 +21,7 @@ var readingsSinceAttributeNames = map[string]string{
 	"#k1": "at",
 }
 
-// ReadingsSince queries Reading.
-func ReadingsSince(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+func readingsSinceQuery(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
 	values := map[string]dynamodb.AttributeValue{
 		":v0": dynamodb.S(string(sensor)),
 		":v1": dynamodb.N(from),
@@ -31,6 +33,23 @@ func ReadingsSince(ctx context.Context, c *dynamodb.Client, table string, sensor
 	return dynamobind.Query[Reading](ctx, c, table, readingsSinceKeyCondition, opts...)
 }
 
+// ReadingsSince queries Reading in readings.
+func ReadingsSince(ctx context.Context, c *dynamodb.Client, sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+	return readingsSinceQuery(ctx, c, readingsSinceTable, sensor, from, opts...)
+}
+
+// ReadingsSinceContext queries Reading, resolving the client and the deployment name of readings from ctx.
+func ReadingsSinceContext(ctx context.Context, sensor Sensor, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+	c, table, err := dynamobind.TableFromContext(ctx, readingsSinceTable)
+	if err != nil {
+		return func(yield func(Reading, error) bool) { yield(Reading{}, err) }
+	}
+	return readingsSinceQuery(ctx, c, table, sensor, from, opts...)
+}
+
+// readingsBetweenTable is the table ReadingsBetween declares.
+const readingsBetweenTable = "readings"
+
 // readingsBetweenKeyCondition is the key condition of ReadingsBetween.
 const readingsBetweenKeyCondition = "#k0 = :v0 AND #k1 BETWEEN :v1 AND :v2"
 
@@ -39,8 +58,7 @@ var readingsBetweenAttributeNames = map[string]string{
 	"#k1": "at",
 }
 
-// ReadingsBetween queries Reading.
-func ReadingsBetween(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, low int64, high int64, opts ...dynamodb.QueryOption) (dynamobind.Page[Reading], error) {
+func readingsBetweenQuery(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, low int64, high int64, opts ...dynamodb.QueryOption) (dynamobind.Page[Reading], error) {
 	values := map[string]dynamodb.AttributeValue{
 		":v0": dynamodb.S(string(sensor)),
 		":v1": dynamodb.N(low),
@@ -53,6 +71,23 @@ func ReadingsBetween(ctx context.Context, c *dynamodb.Client, table string, sens
 	return dynamobind.QueryPage[Reading](ctx, c, table, readingsBetweenKeyCondition, opts...)
 }
 
+// ReadingsBetween queries Reading in readings.
+func ReadingsBetween(ctx context.Context, c *dynamodb.Client, sensor Sensor, low int64, high int64, opts ...dynamodb.QueryOption) (dynamobind.Page[Reading], error) {
+	return readingsBetweenQuery(ctx, c, readingsBetweenTable, sensor, low, high, opts...)
+}
+
+// ReadingsBetweenContext queries Reading, resolving the client and the deployment name of readings from ctx.
+func ReadingsBetweenContext(ctx context.Context, sensor Sensor, low int64, high int64, opts ...dynamodb.QueryOption) (dynamobind.Page[Reading], error) {
+	c, table, err := dynamobind.TableFromContext(ctx, readingsBetweenTable)
+	if err != nil {
+		return dynamobind.Page[Reading]{}, err
+	}
+	return readingsBetweenQuery(ctx, c, table, sensor, low, high, opts...)
+}
+
+// readingsForSensorTable is the table ReadingsForSensor declares.
+const readingsForSensorTable = "readings"
+
 // readingsForSensorKeyCondition is the key condition of ReadingsForSensor.
 const readingsForSensorKeyCondition = "#k0 = :v0"
 
@@ -60,8 +95,7 @@ var readingsForSensorAttributeNames = map[string]string{
 	"#k0": "sensor",
 }
 
-// ReadingsForSensor queries Reading.
-func ReadingsForSensor(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+func readingsForSensorQuery(ctx context.Context, c *dynamodb.Client, table string, sensor Sensor, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
 	values := map[string]dynamodb.AttributeValue{
 		":v0": dynamodb.S(string(sensor)),
 	}
@@ -70,4 +104,18 @@ func ReadingsForSensor(ctx context.Context, c *dynamodb.Client, table string, se
 		dynamodb.WithExpressionValues(values),
 	)
 	return dynamobind.Query[Reading](ctx, c, table, readingsForSensorKeyCondition, opts...)
+}
+
+// ReadingsForSensor queries Reading in readings.
+func ReadingsForSensor(ctx context.Context, c *dynamodb.Client, sensor Sensor, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+	return readingsForSensorQuery(ctx, c, readingsForSensorTable, sensor, opts...)
+}
+
+// ReadingsForSensorContext queries Reading, resolving the client and the deployment name of readings from ctx.
+func ReadingsForSensorContext(ctx context.Context, sensor Sensor, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error] {
+	c, table, err := dynamobind.TableFromContext(ctx, readingsForSensorTable)
+	if err != nil {
+		return func(yield func(Reading, error) bool) { yield(Reading{}, err) }
+	}
+	return readingsForSensorQuery(ctx, c, table, sensor, opts...)
 }

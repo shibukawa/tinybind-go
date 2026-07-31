@@ -30,6 +30,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
+	dynamoContextAPI := flags.Bool("dynamo-context-api", false, "generate Context-resolved DynamoDB query wrappers")
+	dynamoContextOnlyAPI := flags.Bool("dynamo-context-only-api", false, "publish only the Context-resolved DynamoDB query API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
@@ -56,7 +58,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		SQLTemplatePattern:  *sqlTemplatePattern,
 		SQLDialect:          *sqlDialect,
 		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
-		SQLContextOnlyAPI: *sqlContextOnlyAPI,
+		SQLContextOnlyAPI:    *sqlContextOnlyAPI,
+		DynamoContextAPI:     *dynamoContextAPI,
+		DynamoContextOnlyAPI: *dynamoContextOnlyAPI,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)

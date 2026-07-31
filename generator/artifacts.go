@@ -125,6 +125,8 @@ func (request GenerateRequest) applyTo(base Options) Options {
 	options.GenerateAll = options.GenerateAll || request.GenerateAll
 	options.SQLContextAPI = options.SQLContextAPI || request.SQLContextAPI
 	options.SQLContextOnlyAPI = options.SQLContextOnlyAPI || request.SQLContextOnlyAPI
+	options.DynamoContextAPI = options.DynamoContextAPI || request.DynamoContextAPI
+	options.DynamoContextOnlyAPI = options.DynamoContextOnlyAPI || request.DynamoContextOnlyAPI
 	if request.HTMLTemplatePattern != "" {
 		options.HTMLTemplatePattern = request.HTMLTemplatePattern
 	}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/shibukawa/tinybind-go/dynamobind"
 	"github.com/shibukawa/tinybind-go/internal/dynamofixture"
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
@@ -294,7 +295,7 @@ func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
 	store(t, fake, 5)
 
 	var seen []int64
-	for reading, err := range dynamofixture.ReadingsSince(ctx, client, table, "s", 0) {
+	for reading, err := range dynamofixture.ReadingsSince(ctx, client, "s", 0) {
 		if err != nil {
 			t.Fatalf("ReadingsSince: %v", err)
 		}
@@ -304,7 +305,7 @@ func TestDeclaredQueryRunsAgainstTheWire(t *testing.T) {
 		t.Fatalf("iterated %d of 5: %v", len(seen), seen)
 	}
 
-	page, err := dynamofixture.ReadingsBetween(ctx, client, table, "s", 0, 10)
+	page, err := dynamofixture.ReadingsBetween(ctx, client, "s", 0, 10)
 	if err != nil {
 		t.Fatalf("ReadingsBetween: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
 	client, fake := newFakeDynamo(t)
 	store(t, fake, 1)
 
-	for _, err := range dynamofixture.ReadingsSince(ctx, client, table, "s", 3) {
+	for _, err := range dynamofixture.ReadingsSince(ctx, client, "s", 3) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -336,5 +337,85 @@ func TestDeclaredQuerySendsAliasesAndValues(t *testing.T) {
 	from, _ := request.ExpressionAttributeValues[":v1"].AsNumber()
 	if sensor != "s" || from != "3" {
 		t.Fatalf("values: sensor=%q from=%q", sensor, from)
+	}
+}
+
+// TestContextQueryResolvesClientAndTable drives the generated Context wrapper.
+// The call names neither the client nor the table: both come from the Context,
+// and the declared name is what the prefix is applied to.
+func TestContextQueryResolvesClientAndTable(t *testing.T) {
+	client, fake := newFakeDynamo(t)
+	store(t, fake, 3)
+	ctx := dynamobind.WithClient(context.Background(), client, dynamobind.WithTablePrefix("staging-"))
+
+	var seen []int64
+	for reading, err := range dynamofixture.ReadingsSinceContext(ctx, "s", 0) {
+		if err != nil {
+			t.Fatalf("ReadingsSinceContext: %v", err)
+		}
+		seen = append(seen, reading.At)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("iterated %d of 3: %v", len(seen), seen)
+	}
+	if name := fake.lastRequest().TableName; name != "staging-readings" {
+		t.Fatalf("table name on the wire: %q", name)
+	}
+
+	page, err := dynamofixture.ReadingsBetweenContext(ctx, "s", 0, 10)
+	if err != nil {
+		t.Fatalf("ReadingsBetweenContext: %v", err)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("page: %+v", page)
+	}
+	if name := fake.lastRequest().TableName; name != "staging-readings" {
+		t.Fatalf("table name on the wire: %q", name)
+	}
+}
+
+// TestContextQueryReportsAnUnresolvableContext proves the wrapper fails loudly
+// rather than reading the unprefixed table, in both result shapes. An iterator
+// cannot return the error, so it yields it once and stops.
+func TestContextQueryReportsAnUnresolvableContext(t *testing.T) {
+	client, fake := newFakeDynamo(t)
+	store(t, fake, 3)
+
+	for _, unresolvable := range []struct {
+		name string
+		ctx  context.Context
+		want error
+	}{
+		{name: "no client", ctx: context.Background(), want: dynamobind.ErrNoClient},
+		{
+			name: "no prefix",
+			ctx:  dynamobind.WithClient(context.Background(), client),
+			want: dynamobind.ErrNoTablePrefix,
+		},
+	} {
+		t.Run(unresolvable.name, func(t *testing.T) {
+			before := fake.count("Query")
+
+			yields := 0
+			for reading, err := range dynamofixture.ReadingsSinceContext(unresolvable.ctx, "s", 0) {
+				yields++
+				if !errors.Is(err, unresolvable.want) {
+					t.Fatalf("iterator error = %v, want %v", err, unresolvable.want)
+				}
+				if reading.At != 0 || reading.Sensor != "" {
+					t.Fatalf("a failed resolution yielded an item: %+v", reading)
+				}
+			}
+			if yields != 1 {
+				t.Fatalf("the iterator yielded %d times, want 1", yields)
+			}
+
+			if _, err := dynamofixture.ReadingsBetweenContext(unresolvable.ctx, "s", 0, 10); !errors.Is(err, unresolvable.want) {
+				t.Fatalf("page error = %v, want %v", err, unresolvable.want)
+			}
+			if fake.count("Query") != before {
+				t.Fatal("an unresolvable Context still reached the service")
+			}
+		})
 	}
 }
