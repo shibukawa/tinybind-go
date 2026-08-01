@@ -34,6 +34,9 @@ const (
 	ArtifactStylesheet ArtifactKind = "stylesheet"
 	// ArtifactScript is the component JavaScript extracted from one template.
 	ArtifactScript ArtifactKind = "script"
+	// ArtifactDerivedAsset is a file a reference hook transform produced from an
+	// authored source the template points at.
+	ArtifactDerivedAsset ArtifactKind = "derived_asset"
 )
 
 // ArtifactDestination says where an artifact is written, because a stylesheet
@@ -212,6 +215,9 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
+	cache := newConversionCache(g.Options.ConversionCacheDir)
+	hooks := runScopedHooks(g.Options.ReferenceHooks, cache)
+	var produced []htmlbind.ProducedFile
 	generated := make([][]byte, len(files))
 	assets := make([][]htmlbind.Asset, len(files))
 	for i, file := range files {
@@ -219,15 +225,41 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 		if err != nil {
 			return nil, err
 		}
-		if generated[i], assets[i], err = g.generateTemplate(file, source, pkg, withContext); err != nil {
+		code, compiled, err := g.generateTemplate(file, source, pkg, withContext, hooks)
+		if err != nil {
 			return nil, err
 		}
+		generated[i], assets[i] = code, compiled.Assets
+		produced = append(produced, compiled.Produced...)
 	}
 	artifacts, err := splitTemplateArtifacts(pkg, files, generated)
 	if err != nil {
 		return nil, err
 	}
-	return append(artifacts, assetArtifacts(files, assets)...), nil
+	artifacts = append(artifacts, assetArtifacts(files, assets)...)
+	return append(artifacts, producedArtifacts(produced)...), nil
+}
+
+// producedArtifacts turns the files a run's conversions created into artifacts,
+// so a caller taking artifacts instead of written files still receives them.
+//
+// They carry no source path: the batch spans the run, and a file two templates
+// both depend on belongs to neither of them.
+//
+// The output base carries the whole relative name, extension included, because
+// a hook owns naming: an image hook appends to make a.png.webp and a TypeScript
+// hook replaces to make app.js, and no rule here can satisfy both.
+func producedArtifacts(produced []htmlbind.ProducedFile) []Artifact {
+	artifacts := make([]Artifact, 0, len(produced))
+	for _, output := range produced {
+		artifacts = append(artifacts, Artifact{
+			Kind:        ArtifactDerivedAsset,
+			Destination: DestinationPublicAsset,
+			OutputBase:  output.Name,
+			Content:     output.Content,
+		})
+	}
+	return artifacts
 }
 
 // assetArtifacts turns extracted static files into artifacts bound to the

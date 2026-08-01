@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/parser"
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 // ErrNothingToGenerate reports a package with no enabled artifacts.
@@ -58,8 +59,30 @@ type GenerateResult struct {
 	OpenAPIPath     string
 	TemplatesPath   string
 	// AssetPaths holds the static files extracted from component style and
-	// script blocks, in generation order.
-	AssetPaths  []string
+	// script blocks, then the files reference hook conversions produced, in
+	// generation order.
+	AssetPaths []string
+	// Rewrites reports what the reference hooks did, including what they
+	// declined and why. An author cannot see a build-time rewrite by reading
+	// the template, so the build is the only place it is visible.
+	//
+	// It reports rather than interprets: whether a converted file is small
+	// enough is the caller's judgment, and a caller measuring sizes owns its
+	// own transform and can measure inside it.
+	Rewrites []htmlbind.Rewrite
+	// ReadSet holds every authored file the run depended on through a hook: the
+	// sources each cache key named, plus whatever each transform reported
+	// reading beyond them, sorted. A transform that under-reports produces a
+	// stale output on the next run, which is the one correctness property this
+	// package cannot verify for the caller.
+	ReadSet []string
+	// DynamicReferences are the attributes a hook was registered for whose
+	// value is a template expression, and so could not be rewritten.
+	DynamicReferences []htmlbind.DynamicReference
+	// DepsPath is the recorded read set, written only when a transform reported
+	// reading something. The next run verifies it before trusting its own skip,
+	// because a file read by a transform is not otherwise a hashed input.
+	DepsPath    string
 	Diagnostics []parser.Diagnostic
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
@@ -74,6 +97,9 @@ func (result GenerateResult) Paths() []string {
 	}
 	// The extracted assets follow the template file that produced them.
 	paths = append(paths, result.AssetPaths...)
+	if result.DepsPath != "" {
+		paths = append(paths, result.DepsPath)
+	}
 	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
@@ -145,7 +171,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	// A fingerprint that cannot be computed only disables the cache; generation
 	// itself reports the underlying problem with better context.
 	fingerprint, fingerprintErr := generationFingerprint(request.Dir, outDir, request, options)
-	if fingerprintErr == nil && !request.Force {
+	// The recorded read set is checked beside the fingerprint rather than
+	// folded into it: it describes files a transform read during the previous
+	// run, which the fingerprint cannot know before this one starts.
+	if fingerprintErr == nil && !request.Force && depsUnchanged(outDir) {
 		if cached, ok := cachedGeneration(outDir, fingerprint, request); ok {
 			return cached, nil
 		}
@@ -153,9 +182,17 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 
 	runner := New(options)
 	result := GenerateResult{}
-	if result.TemplatesPath, result.AssetPaths, err = runner.generateTemplateFiles(request.Dir, request.Out, request.TemplatesName); err != nil {
+	templates, err := runner.generateTemplateFiles(request.Dir, request.Out, request.TemplatesName)
+	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate templates: %w", err)
 	}
+	result.TemplatesPath, result.AssetPaths = templates.goPath, templates.assetPaths
+	result.Rewrites, result.ReadSet = templates.rewrites, templates.readSet
+	result.DynamicReferences = templates.dynamic
+	if err := writeDeps(outDir, templates.readSet); err != nil {
+		return GenerateResult{}, fmt.Errorf("record reference hook inputs: %w", err)
+	}
+	result.DepsPath = depsPath(outDir, templates.readSet)
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
