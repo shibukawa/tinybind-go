@@ -58,6 +58,24 @@ type GenerateOptions struct {
 	// [DefaultActionAttr]. A framework driving an existing client library points
 	// it at that library's vocabulary, such as hx-post.
 	ServerActionAttr string
+	// ReferenceHooks rewrite the static values of the attributes they are
+	// registered for, before analysis and before asset extraction, and declare
+	// the conversions those rewrites depend on. They are how a build converts a
+	// file the template points at, such as an image to a modern format or a
+	// TypeScript entry point to JavaScript, without this package holding a
+	// converter or a naming rule.
+	//
+	// A hook converts and returns the bytes, so it may decide the rewrite from
+	// how the conversion turned out. A hook declaring a CacheKey lets the caller
+	// reuse a stored result instead of converting again.
+	//
+	// Registering none leaves output byte-identical.
+	ReferenceHooks []ReferenceHook
+	// StrictReferenceHooks turns an expression-valued attribute at a registered
+	// element and attribute pair into a compile error. It is off by default,
+	// because a project may legitimately mix authored references with
+	// user-supplied ones; [Result.DynamicReferences] reports them either way.
+	StrictReferenceHooks bool
 }
 
 // Result is one compiled template module: the generated Go source and the
@@ -65,6 +83,22 @@ type GenerateOptions struct {
 type Result struct {
 	GoSource []byte
 	Assets   []Asset
+	// Produced holds the files the hooks' conversions created, sorted by name.
+	// They may outnumber the rewrites, because a conversion may write a file no
+	// attribute names, and the caller writes them so they join the run's
+	// declared outputs rather than appearing behind it.
+	Produced []ProducedFile
+	// Rewrites reports what the hooks did, including what they declined and
+	// why. A build-time rewrite is invisible in the template, so the build is
+	// the only place it can be seen.
+	Rewrites []Rewrite
+	// ReadSet lists the files the transforms reported reading beyond the sources
+	// their cache keys named. What is named by neither is not hashed, and an
+	// edit to it will not regenerate.
+	ReadSet []string
+	// DynamicReferences are the attributes a hook was registered for whose
+	// value is an expression, and so could not be rewritten.
+	DynamicReferences []DynamicReference
 }
 
 // Generate compiles an HTML template module to Go, discarding the extracted
@@ -86,6 +120,20 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	// Hooks run on the parsed module before analysis, so a rewritten value is
+	// type checked, escaped, and folded exactly as an authored one, and before
+	// extraction decides an external script or link is a passthrough, so
+	// extraction sees the rewritten URL.
+	hooks, err := applyReferenceHooks(filename, module, options.ReferenceHooks, options.StrictReferenceHooks)
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{
+		Produced:          hooks.produced,
+		Rewrites:          hooks.rewrites,
+		ReadSet:           hooks.read,
+		DynamicReferences: hooks.dynamic,
+	}
 	compiler := newCompiler(filename, string(source), module, !options.PreserveWhitespace)
 	if err := compiler.analyze(); err != nil {
 		return Result{}, err
@@ -96,15 +144,18 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	result.Assets = assets
 	generated, err := compiler.emit(options)
 	if err != nil {
 		return Result{}, err
 	}
 	formatted, err := format.Source(generated)
 	if err != nil {
-		return Result{GoSource: generated, Assets: assets}, fmt.Errorf("format generated HTML code: %w\n%s", err, generated)
+		result.GoSource = generated
+		return result, fmt.Errorf("format generated HTML code: %w\n%s", err, generated)
 	}
-	return Result{GoSource: formatted, Assets: assets}, nil
+	result.GoSource = formatted
+	return result, nil
 }
 
 type goEmitter struct {

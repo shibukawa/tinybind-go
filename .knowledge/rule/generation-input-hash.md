@@ -16,6 +16,13 @@ hashed_inputs:
 excluded_inputs:
   - files this run writes, listed as data:generation-stamp outputs
   - _test.go files, which no generation phase loads
+recorded_inputs:
+  what: the files a requirement:element-reference-hook transform reported reading, with their digests, written to tinybind_deps_gen.json beside the generated Go
+  why_not_hashed_here: this hash decides whether the run happens and that set is known only once it has, so it is verified beside the hash rather than folded into it
+  skip_requires: every recorded file still hashes to its recorded value, in addition to the conditions below
+  absent: no record means no transform read anything, which is the ordinary case and stays skippable
+  unverifiable: a missing, malformed, or older record regenerates
+  limit: a transform that under-reports what it read produces a stale output no diagnostic catches
 generator_identity:
   value: hash of the executable content
   reason: go run reports no usable version yet links a binary that follows generator sources

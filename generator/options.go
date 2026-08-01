@@ -122,6 +122,32 @@ type Options struct {
 	// requires setting the other.
 	PublicURLBase string
 
+	// ReferenceHooks rewrite the static values of the attributes they are
+	// registered for, at generation time, and declare the conversions those
+	// rewrites depend on. They are how a build converts a file a template points
+	// at, such as an image to a modern format or a TypeScript entry point to
+	// JavaScript.
+	//
+	// A hook converts and returns the bytes, so the rewrite may depend on how
+	// the conversion turned out; an encode larger than its source is worth
+	// declining, and only the converted bytes can say so.
+	ReferenceHooks []htmlbind.ReferenceHook
+	// ConversionCacheDir stores the outcome of each conversion, keyed by what
+	// the hook's CacheKey declared it depends on. An unchanged asset then costs
+	// a digest instead of an encode, and a source that once lost a size
+	// comparison is never re-encoded to rediscover it.
+	//
+	// Empty converts every build, which is correct and slow. It is a plain
+	// directory of generated data: deleting it costs time and nothing else.
+	ConversionCacheDir string
+	// DerivedAssetDir receives the files those conversions produce. It is
+	// deliberately not derived from PublicDir: a hook chooses the URL it rewrites
+	// to, and only the caller knows which directory is served there.
+	//
+	// A produced file with no directory configured is a configuration error
+	// rather than a silent discard.
+	DerivedAssetDir string
+
 	DisableFeatures []Feature
 	GenerateAll     bool
 }
@@ -209,6 +235,12 @@ func (o Options) featureDisabled(feature Feature) bool {
 
 func (o Options) normalized() (normalizedOptions, error) {
 	if err := checkPublicAssetPairing(o.PublicDir, o.PublicURLBase); err != nil {
+		return normalizedOptions{}, err
+	}
+	// A malformed hook is a fault in the generate command, so it is reported
+	// against the registration rather than against the first template position
+	// that happens to reach it.
+	if err := htmlbind.ValidateReferenceHooks(o.ReferenceHooks); err != nil {
 		return normalizedOptions{}, err
 	}
 	disabled := make(map[Feature]bool, len(o.DisableFeatures))
