@@ -24,7 +24,7 @@ logical_lowering:
   - await fallback, success, recover, and completion coordinator where pending effects are consumed
   - data:async-boundary-content yield sites where an await boundary settles
   - cache lookup, isolated render, successful publication, and replay for eligible settled regions
-  - partial-update markers, validators, continuation, and api:client-component-update metadata
+  - partial-update markers, validators, and redraw registration metadata
   - serialized response writes and optional encoding flush
 generation:
   - emit only handlers required by the capability set

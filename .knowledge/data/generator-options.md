@@ -43,6 +43,7 @@ options:
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
   PublicDir: filesystem directory for requirement:static-asset-extraction output; empty uses 'public/generated'
   PublicURLBase: URL path or full URL prefixed to generated asset file names; empty uses '/public/generated'; independent of PublicDir and required together with an explicit PublicDir
+  DataAttributePrefix: decision:update-manifest-transport generated data-attribute namespace; empty uses 'tb'
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]
@@ -65,6 +66,7 @@ default_options:
   SQLTemplatePattern: '*.tb.sql'
   PublicDir: public/generated
   PublicURLBase: /public/generated
+  DataAttributePrefix: tb
 zero_options: no discovery identities; CLI capabilities remain subject to rule:generator-feature-disable
 identity_reason:
   use: package import path plus declared name

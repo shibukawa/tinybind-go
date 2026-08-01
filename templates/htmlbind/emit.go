@@ -80,7 +80,15 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	info := e.c.components[component.Name]
 	e.scope = info.scope
 	e.shell = info.shell
-	defer func() { e.scope, e.shell = nil, false }()
+	e.boundaryRoot = e.boundaryCandidate(component)
+	e.reloadable = component.Reloadable
+	e.kindConst = e.c.componentGoName(component.Name) + "Kind"
+	defer func() { e.scope, e.shell, e.boundaryRoot, e.reloadable = nil, false, nil, false }()
+	if component.Reloadable {
+		if err := e.checkReloadable(component); err != nil {
+			return err
+		}
+	}
 
 	params := e.c.paramsGoName(component.Name)
 	prefix := e.planPrefix(component.Name)
@@ -103,8 +111,20 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if transitive := e.c.transitiveHead(component.Name); len(transitive) > 0 {
 		head = "[]string{" + strings.Join(transitive, ", ") + "}"
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n\tOps: %s,\n}\n\n",
-		prefix, params, head, indentBlock(plan.literal(), "\t"))
+	literal := plan.literal()
+	boundaryField := ""
+	kind := componentKind(e.c.packageName(), e.c.filename, component.Name)
+	if e.boundaryRoot != nil {
+		e.emitBoundary(component, prefix, params, kind)
+		boundaryField = fmt.Sprintf("\tBoundary: %sBoundary,\n", prefix)
+	}
+	if component.Reloadable {
+		if err := e.emitReloadable(component, params, kind); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s\tOps: %s,\n}\n\n",
+		prefix, params, head, boundaryField, indentBlock(literal, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -170,6 +190,24 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 
 func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 	p.static("<" + node.Name)
+	// The instance attribute goes first, so it stays in a predictable position
+	// and cannot be displaced by an author attribute rendered conditionally.
+	if node == e.boundaryRoot {
+		p.flush()
+		p.op("BoundaryAttr()")
+		// A reloadable component carries its id and its kind on every render,
+		// initial and redrawn alike. Without the kind on the replacement the
+		// region could be redrawn exactly once.
+		if e.reloadable {
+			p.op(fmt.Sprintf("Attr(%q, func(p %s) (string, bool) { return htmlbind.Escape(p.%s), true })",
+				"id", p.scope.goType, goPublicName(reloadableIDParameter)))
+			// The kind is a hash of this very instruction list, so it cannot be
+			// a literal here. A package-level constant closes the loop, since
+			// Go declarations are order independent.
+			p.op(fmt.Sprintf("Attr(%q, func(%s) (string, bool) { return %s, true })",
+				"data-"+e.prefix+"-kind", p.scope.goType, e.kindConst))
+		}
+	}
 	for _, attribute := range node.Attributes {
 		if err := e.emitAttributeOp(p, attribute); err != nil {
 			return err

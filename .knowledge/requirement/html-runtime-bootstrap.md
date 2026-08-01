@@ -15,7 +15,13 @@ input:
 selection:
   no_client_features: omit runtime script and update metadata
   async_boundary: include streamed-template observer and replacement runtime
-  partial_update: include manifest, delta application, and api:client-component-update runtime
+  partial_update: include manifest, delta application, and api:client-component-update redraw runtime
+  client_navigation: include requirement:client-navigation interception, history handling, and api:client-navigate
+  shared_consumer: delta records and async completions use one record consumer, per requirement:streaming-delta-response
+implementation:
+  owner: each framework ships its own browser runtime; the generator does not synthesize update logic per project
+  hardcoded: protocol details including the decision:update-manifest-transport prefix are compiled into that runtime rather than negotiated
+  compatibility: the protocol version in the mode header remains the only negotiated axis
 injection:
   - emit one same-origin external module script after document content or at validated body-end slot
   - emit collision-resistant metadata in head only when required

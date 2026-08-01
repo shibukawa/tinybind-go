@@ -10,7 +10,7 @@ source: concept:filesystem-html-routing
 boundary:
   activation: every layout in data:html-render-route-plan
   identity: stable route-prefix and layout declaration identity through rule:component-instance-identity
-  direct_client_mutation: disabled unless separately enabled by requirement:boundary-parameter-updates
+  direct_redraw: unavailable; a layout is not a requirement:component-redraw-endpoint target
 reuse_model:
   frame: layout markup and own typed inputs excluding child slot output
   frame_validator:

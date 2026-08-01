@@ -23,6 +23,8 @@ cache:
   - per-request token and nonce are injected after reusable document or layout frame rendering
   - exclude request-specific bootstrap values from component cache keys and frame content validators
   - a complete response containing user-specific token follows application private-cache or no-store policy
+excluded:
+  - the decision:update-manifest-transport data-attribute prefix, which the framework-owned runtime hardcodes
 safety:
   - HTML-escape all metadata values
   - never write token to URL, logs, localStorage, or sessionStorage

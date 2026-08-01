@@ -105,6 +105,14 @@ func (p *moduleParser) parse() (*Module, error) {
 			if err != nil {
 				return nil, err
 			}
+			// A reloadable component is published as an endpoint, so the
+			// modifier follows export rather than standing on its own.
+			reloadable := rootKeyword == "reloadable"
+			if reloadable {
+				if rootKeyword, err = p.identifier(); err != nil {
+					return nil, err
+				}
+			}
 			root, ok := p.roots[rootKeyword]
 			if !ok {
 				return nil, p.errAt(start, "unsupported exported declaration "+strconv.Quote(rootKeyword))
@@ -112,6 +120,9 @@ func (p *moduleParser) parse() (*Module, error) {
 			decl, err := p.parseTemplateDecl(root, true, start)
 			if err != nil {
 				return nil, err
+			}
+			if reloadable {
+				decl.Reloadable = true
 			}
 			module.Declarations = append(module.Declarations, decl)
 		default:

@@ -1,0 +1,162 @@
+package htmlupdate_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlupdate"
+)
+
+// badge stands in for a generated component whose root carries an author id.
+type badgeParams struct {
+	ID    string
+	Count int
+}
+
+var badgeOps = htmlbind.Builder[badgeParams]{}
+
+var badgePlan = &htmlbind.Plan[badgeParams]{
+	Ops: []htmlbind.Op[badgeParams]{
+		badgeOps.Static("<span"),
+		badgeOps.Attr("id", func(p badgeParams) (string, bool) { return htmlbind.Escape(p.ID), true }),
+		badgeOps.Static(">"),
+		badgeOps.Text(func(p badgeParams) string { return strconv.Itoa(p.Count) }),
+		badgeOps.Static("</span>"),
+	},
+}
+
+// api is an ordinary JSON endpoint that additionally knows how to answer with
+// the regions its action changed. One branch point decides which.
+func api(count int, status int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if options.WantsUpdate(r) {
+			_ = options.WriteUpdateStatus(w, status,
+				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count})))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
+	})
+}
+
+func post(t *testing.T, handler http.Handler, headers map[string]string) *http.Response {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder.Result()
+}
+
+var actionHeader = map[string]string{
+	"X-Tinybind-Render": "action;v=" + strconv.Itoa(htmlupdate.Version),
+	"X-Tinybind-Build":  htmlupdate.BuildID(),
+}
+
+// Without the header the endpoint stays an ordinary API, which is what keeps a
+// non-browser client and a page without the runtime working.
+func TestActionWithoutTheHeaderStaysOrdinary(t *testing.T) {
+	response := post(t, api(3, http.StatusOK), nil)
+	body := read(t, response)
+	if !strings.Contains(body, `"count":3`) {
+		t.Fatalf("want the ordinary JSON body, got %q", body)
+	}
+	if response.Header.Get("X-Tinybind-Render") != "" {
+		t.Fatal("an ordinary response must not claim to be an update")
+	}
+}
+
+// One round trip performs the action and returns the regions it changed.
+func TestActionReturnsTheChangedRegions(t *testing.T) {
+	response := post(t, api(3, http.StatusOK), actionHeader)
+	if got := response.Header.Get("X-Tinybind-Render"); got != "action;v="+strconv.Itoa(htmlupdate.Version) {
+		t.Fatalf("render header = %q", got)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	var body deltaBody
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Operations) != 1 {
+		t.Fatalf("want one operation, got %+v", body.Operations)
+	}
+	operation := body.Operations[0]
+	if operation.ID != "cart" || operation.Kind != "replace" {
+		t.Fatalf("unexpected operation %+v", operation)
+	}
+	// The replacement has to keep the id, or the region becomes unaddressable
+	// after the first update.
+	if !strings.Contains(operation.HTML, `id="cart"`) || !strings.Contains(operation.HTML, ">3<") {
+		t.Fatalf("unexpected markup %q", operation.HTML)
+	}
+	// An action changes state rather than reporting a render, so it carries no
+	// manifest and must not disturb the navigation validators the client holds.
+	if len(body.Manifest) != 0 {
+		t.Fatalf("an action must not restate the manifest, got %+v", body.Manifest)
+	}
+}
+
+// A rejected submission returns its real status and still carries the regions
+// showing why, which is the whole reason the client ignores status.
+func TestActionKeepsItsStatus(t *testing.T) {
+	response := post(t, api(0, http.StatusUnprocessableEntity), actionHeader)
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	var body deltaBody
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Operations) != 1 {
+		t.Fatalf("a failed action must still be able to rewrite a region, got %+v", body.Operations)
+	}
+}
+
+// An action that changed where the user belongs says so rather than guessing
+// which regions to rewrite.
+func TestActionCanNavigate(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = options.WriteNavigate(w, "/orders/17")
+	})
+	response := post(t, handler, actionHeader)
+	var body struct {
+		Navigate string `json:"navigate"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Navigate != "/orders/17" {
+		t.Fatalf("navigate = %q", body.Navigate)
+	}
+}
+
+func TestWantsUpdateRejectsWhatItCannotServe(t *testing.T) {
+	for _, header := range []string{"", "navigation;v=1", "action;v=0", "action", "action;v=" + strconv.Itoa(htmlupdate.Version+1)} {
+		request := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
+		if header != "" {
+			request.Header.Set("X-Tinybind-Render", header)
+		}
+		request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+		if options.WantsUpdate(request) {
+			t.Fatalf("header %q was accepted", header)
+		}
+	}
+	// The right render header from a page another build rendered is refused
+	// too, because its regions are not ones this binary can hand back.
+	stale := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
+	stale.Header.Set("X-Tinybind-Render", "action;v="+strconv.Itoa(htmlupdate.Version))
+	stale.Header.Set("X-Tinybind-Build", "older-revision")
+	if options.WantsUpdate(stale) {
+		t.Fatal("a page from another build was accepted")
+	}
+}

@@ -33,6 +33,7 @@ merge:
     title: the innermost contributor wins; the root value is the default
     charset_and_viewport: exactly one survives; a conflicting value is a generation error
   bootstrap: requirement:html-runtime-bootstrap injects after merging and is never deduplicated away
+  partial_update: requirement:delta-head-sync installs contributions a delta introduces, because a delta reuses the already-written head
   extracted_assets: requirement:static-asset-extraction replaces style and inline script content with link and script reference tags before merging
 constraints:
   - merged nodes keep rule:template-context-safety escaping from their declaring context

@@ -62,8 +62,8 @@ acceptance:
   - an async layout wrapping a sync page streams its own boundaries the same way
   - a slow boundary in one member does not delay a resolved boundary in another
   - a chain with no async member emits byte-identical output to the current writer path
+delta_mode: requirement:streaming-delta-response reuses this merged sequence and emits delta records instead of document bytes
 open_questions:
   - whether the merged sequence is generated per route or assembled by a shared runtime driver
   - concurrency limit across members versus per-member boundary limits
-  - interaction with requirement:component-delta-rendering when a navigation delta and chain streaming overlap
 ```

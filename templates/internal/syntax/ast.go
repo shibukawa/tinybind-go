@@ -65,9 +65,13 @@ type ExternalDecl struct {
 func (*ExternalDecl) declarationNode() {}
 
 type TemplateDecl struct {
-	Kind       string      `json:"kind"`
-	Pos        Position    `json:"pos"`
-	Exported   bool        `json:"exported"`
+	Kind     string   `json:"kind"`
+	Pos      Position `json:"pos"`
+	Exported bool     `json:"exported"`
+	// Reloadable marks a component the browser may re-render on its own. It is
+	// an opt-in because it publishes an HTTP endpoint whose parameters the
+	// caller supplies.
+	Reloadable bool        `json:"reloadable,omitempty"`
 	Name       string      `json:"name"`
 	Parameters []Parameter `json:"parameters,omitempty"`
 	Output     TypeRef     `json:"output"`

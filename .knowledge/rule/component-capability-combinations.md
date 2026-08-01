@@ -26,7 +26,7 @@ rules:
     status: requires an explicit policy for settled-primary caching versus complete streamed interaction replay
     initial_policy: diagnostic until that policy is selected
   update_and_slot:
-    requirement: boundary continuation captures child identity and immutable inputs; replacement preserves or regenerates descendant manifest state
+    requirement: re-execution reproduces child identity per decision:boundary-update-execution; replacement preserves or regenerates descendant manifest state
   update_and_async:
     requirement: pending work is consumed by an await boundary inside the updated subtree and uses the boundary revision
     stale_completion: discard success and recover updates instead of updating a newer revision

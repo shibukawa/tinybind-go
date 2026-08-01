@@ -23,7 +23,7 @@ handler_pipeline:
   - finalize response and observability
 generated_endpoints:
   page_navigation: GET complete HTML and negotiated partial navigation response
-  component_update: protected endpoint for api:client-component-update
+  component_redraw: requirement:component-redraw-endpoint for a registered component
 errors:
   invalid_path_or_query: configured 400 or 404 mapping before component execution
   external_or_render: before-commit error mapping or decision:async-boundary-syntax recover flow

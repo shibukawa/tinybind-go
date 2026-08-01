@@ -10,10 +10,26 @@ type HelloParams struct{}
 
 var planHelloOps = htmlbind.Builder[HelloParams]{}
 
+// planHelloInput canonically encodes the declared inputs of Hello.
+// Slot arguments are excluded: their content belongs to the child boundary,
+// so a frame stays comparable when only its child changed.
+func planHelloInput(p HelloParams) string {
+	return htmlbind.CanonJoin()
+}
+
+var planHelloBoundary = &htmlbind.Boundary[HelloParams]{
+	ComponentID: "pages.input.Hello",
+	Attr:        "data-tb-id",
+	Input:       planHelloInput,
+}
+
 var planHelloPlan = &htmlbind.Plan[HelloParams]{
-	Head: nil,
+	Head:     nil,
+	Boundary: planHelloBoundary,
 	Ops: []htmlbind.Op[HelloParams]{
-		planHelloOps.Static("\n<!DOCTYPE html>\n<h1>Hello &amp; welcome</h1>\n"),
+		planHelloOps.Static("\n<!DOCTYPE html>\n<h1"),
+		planHelloOps.BoundaryAttr(),
+		planHelloOps.Static(">Hello &amp; welcome</h1>\n"),
 	},
 }
 

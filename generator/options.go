@@ -71,6 +71,11 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// DataAttributePrefix names the data attributes generated HTML uses for
+	// partial update boundaries. Empty uses the standard prefix. A project
+	// overriding it must use a browser runtime built for the same prefix,
+	// because the runtime hardcodes it rather than discovering it.
+	DataAttributePrefix string
 
 	DisableFeatures []Feature
 	GenerateAll     bool

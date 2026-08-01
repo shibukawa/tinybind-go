@@ -26,11 +26,25 @@ extensions:
   - requirement:cross-template-components
   - requirement:partial-update-boundaries
   - requirement:component-delta-rendering
-  - requirement:boundary-parameter-updates
+  - requirement:render-mode-negotiation
+  - requirement:streaming-delta-response
+  - requirement:client-navigation
+  - requirement:delta-head-sync
+  - requirement:component-redraw-endpoint
+  - requirement:live-reconnect
+  - requirement:action-response-update
+two_mechanisms:
+  navigation_delta: the server discovers what changed by re-executing and comparing, for URL-driven page updates
+  component_redraw: the browser names one instance and supplies its inputs, for deliberate region reloads
+  distinction: the first needs identity derivation and validators; the second needs neither
+  action_response: requirement:action-response-update reuses the second shape from a mutating endpoint, so acting and refreshing cost one round trip
 runtime_flow: flow:suspense-html-render
 partial_update_flow: flow:html-partial-update
-boundary_update_flow: flow:boundary-parameter-update
+client_apis:
+  - api:client-component-update
+  - api:client-navigate
 component_analysis: decision:component-capability-lowering
+dom_application: decision:dom-application-strategy
 route_generation: concept:filesystem-html-routing
 scope:
   - preserve generated, statically checked rendering
@@ -38,6 +52,9 @@ scope:
   - preserve HTML context safety across deferred and cached output
   - avoid sending unchanged update-boundary HTML after search parameter changes
   - rerender one explicit boundary after a declared client parameter changes
+  - serve document, navigation-delta, and boundary-delta renders from one route without changing the URL
+  - apply each delta boundary as soon as it renders, reusing the async completion stream
   - generate typed pages and reusable layout chains from an opt-in route tree
 milestone: follows requirement:template-v1-scope; async remains outside v1
+rollout: requirement:client-update-rollout sequences the client update extensions
 ```

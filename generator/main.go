@@ -27,6 +27,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	templatesName := flags.String("templates-name", DefaultTemplatesName, "HTML/SQL template output file name")
 	htmlTemplatePattern := flags.String("html-template-pattern", templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern), "HTML template file glob")
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
+	dataAttributePrefix := flags.String("data-attribute-prefix", options.DataAttributePrefix, "data attribute namespace for HTML partial updates")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
@@ -45,6 +46,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 			*out = filepath.Join(streams.WorkingDirectory, *out)
 		}
 	}
+
+	options.DataAttributePrefix = *dataAttributePrefix
 
 	result, err := New(options).GeneratePackage(ctx, GenerateRequest{
 		Dir: *dir, Out: *out, Name: *name,

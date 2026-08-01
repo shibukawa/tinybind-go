@@ -19,18 +19,19 @@ instances:
     input_validator: opaque digest of component version and canonical typed inputs
     content_validator: opaque digest of canonical rendered boundary HTML
     position: optional structural ordering token
-    direct_update:
-      handle: stable public boundary reference accepted by api:client-component-update
-      continuation: opaque authenticated token or server-state reference
-      mutable_parameters: rule:client-mutable-component-parameters descriptors
+    redraw: decision:author-declared-boundary-id value, present only for a registered component
+ownership: decision:manifest-state-ownership keeps this state on the client
 transport:
-  initial_html: encoded near boundary markers or in one manifest payload
+  shape: decision:update-manifest-transport splits element attributes from one inert document payload
   update_request: client returns prior render version and instance validators
+  streamed_updates: requirement:streaming-delta-response merges per-record entries instead of replacing a whole manifest
+validators: rule:update-validator-computation
+consistency: rule:delta-consistency-model
 privacy:
   - omit raw component arguments by default
   - validators may be keyed or opaque when plain hashes expose sensitive low-entropy values
   - server reconstructs arguments from the new request and generated render plan
-  - continuation never replaces current authentication or authorization checks
+  - re-execution supplies current authentication and authorization; no stored capability substitutes for them
 canonicalization:
   - exclude compression and request-unique transport markers from content hashing
   - include component generated-code version in input validation

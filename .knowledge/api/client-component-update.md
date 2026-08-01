@@ -1,34 +1,35 @@
 ---
 id: api:client-component-update
 type: api
-title: Client Component Update API
+title: Client Component Redraw API
 ---
-Request a typed rerender of one explicit component boundary from browser code.
+Redraw one registered component instance from the browser, naming it by its DOM id and supplying its inputs.
 
 ```yaml
-source: requirement:boundary-parameter-updates
-conceptual_signature: update(boundaryHandle, params, options?) -> Promise<UpdateResult>
-preferred_surface: namespaced runtime export rather than a global update symbol
+source: requirement:component-redraw-endpoint
+surface: the same namespaced runtime module as api:client-navigate; no global symbols
+conceptual_signature: redraw(elementId, params, options?) -> Promise<RedrawResult>
 arguments:
-  boundaryHandle: stable reference published by data:component-update-manifest
-  params: partial object allowed by rule:client-mutable-component-parameters
+  elementId: the decision:author-declared-boundary-id the author wrote at the call site
+  params: every declared parameter of the component, since nothing is reconstructed server side
   options:
     debounce: optional duration or scheduling policy
 behavior:
-  - resolve current boundary instance, revision, continuation, and subtree validators
-  - encode data:boundary-parameter-update-request
-  - cancel or supersede older in-flight updates for the same handle
-  - apply data:component-delta-response only when revision is current
-  - resolve after DOM operations and next manifest state are installed
+  - resolve the element, refusing without a network request when no such id exists
+  - issue the requirement:component-redraw-endpoint GET with the parameters as query values
+  - supersede and abort an older in-flight redraw for the same id
+  - replace the element with the returned root element, which arrives carrying the same id
+  - resolve after the swap, reporting applied, superseded, or fell back
 security:
-  - apply policy:html-update-csrf-protection when ambient cookie credentials are used
-  - send configured CSRF token in a custom request header, never in target URL
-  - target only the generated same-origin update endpoint; attacker-controlled URL input is forbidden
+  - the endpoint is public input, per rule:redraw-input-trust; the browser API is not an authorization boundary
+  - target only the generated same-origin endpoint; an attacker-controlled URL is never fetched
+  - apply policy:html-update-csrf-protection when the deployment requires it for credentialed reads
 errors:
-  unknown_handle: reject without a network request
-  invalid_params: reject locally when schema is available and always validate on server
-  stale_or_reload: refresh enclosing boundary or navigate by server policy
+  unknown_id: reject locally
+  unknown_kind: the component changed since the page loaded, so fall back to a complete page load
+  invalid_params: rejected by the generated typed decoder on the server
 constraints:
-  - API updates boundary state; callers do not rewrite runtime marker attributes directly
+  - the API replaces the element; callers do not hand-edit runtime attributes, per decision:update-manifest-transport
+  - a redraw is repeatable and free of side effects, because it may be retried or superseded
   - exact JavaScript namespace and generated typing strategy remain open
 ```

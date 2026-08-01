@@ -289,6 +289,259 @@ func TestRenderChainRejectsMissingLeaf(t *testing.T) {
 	runGeneratedTests(t, generated, companion)
 }
 
+// TestUpdateManifest covers the server half of partial updates: rendering one
+// chain twice with different search parameters must identify the same
+// instances and mark only the boundary whose markup actually changed.
+func TestUpdateManifest(t *testing.T) {
+	source := []byte(`package pages
+
+export component Document(children: html): html {
+<!doctype html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body><slot required /></body>
+</html>
+}
+
+export component Layout(section: string, children: html): html {
+<main class="layout"><h1>{section}</h1><slot required /></main>
+}
+
+export component Page(query: string, page: int): html {
+<p>results for {query} on page {page}</p>
+}
+`)
+	generated, err := htmlbind.Generate("chain.pw.html", source, htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companion := []byte(`package pages
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
+)
+
+var key = []byte("test validator key")
+
+func collect(t *testing.T, section, query string, page int) (htmlbind.Manifest, string) {
+	t.Helper()
+	var out bytes.Buffer
+	wrappers := []htmlbind.Wrapper{
+		BindDocument(DocumentParams{}),
+		BindLayout(LayoutParams{Section: section}),
+	}
+	manifest, err := htmlbind.CollectChain(&out, key, wrappers, Page(PageParams{Query: query, Page: page}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest, out.String()
+}
+
+// The document shell owns the head and is retained across partial navigation,
+// so it is not an instance. The layout and the page are.
+func TestManifestCoversChainMembersExceptShell(t *testing.T) {
+	manifest, html := collect(t, "Docs", "go", 1)
+	if len(manifest.Instances) != 2 {
+		t.Fatalf("want 2 instances, got %d: %+v", len(manifest.Instances), manifest.Instances)
+	}
+	if _, ok := manifest.Find("c1"); !ok {
+		t.Fatalf("layout instance missing: %+v", manifest.Instances)
+	}
+	if _, ok := manifest.Find("c2"); !ok {
+		t.Fatalf("page instance missing: %+v", manifest.Instances)
+	}
+	for _, want := range []string{` + "`" + `<main data-tb-id="c1"` + "`" + `, ` + "`" + `<p data-tb-id="c2"` + "`" + `} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("output %q is missing %q", html, want)
+		}
+	}
+	if strings.Contains(html, ` + "`" + `<html data-tb-id` + "`" + `) {
+		t.Fatalf("document shell must not be a boundary: %q", html)
+	}
+}
+
+// The page's frame changes with its own parameters while the layout frame,
+// which excludes its child's output, stays comparable.
+func TestSearchParameterChangeMovesOnlyThePage(t *testing.T) {
+	before, _ := collect(t, "Docs", "go", 1)
+	after, _ := collect(t, "Docs", "go", 2)
+	changed := after.Changed(before)
+	if len(changed) != 1 || changed[0].ID != "c2" {
+		t.Fatalf("want only the page changed, got %+v", changed)
+	}
+	layoutBefore, _ := before.Find("c1")
+	layoutAfter, _ := after.Find("c1")
+	if layoutBefore.FrameValidator != layoutAfter.FrameValidator {
+		t.Fatal("layout frame must not change when only a page parameter changed")
+	}
+	if layoutBefore.InputValidator != layoutAfter.InputValidator {
+		t.Fatal("layout input must not change when only a page parameter changed")
+	}
+	pageBefore, _ := before.Find("c2")
+	pageAfter, _ := after.Find("c2")
+	if pageBefore.InputValidator == pageAfter.InputValidator {
+		t.Fatal("page input validator must change with its parameters")
+	}
+	if pageBefore.ComponentID != pageAfter.ComponentID {
+		t.Fatal("component identity must survive a parameter change")
+	}
+}
+
+// A layout parameter changes the layout frame without disturbing the page.
+func TestLayoutParameterChangeMovesOnlyTheLayout(t *testing.T) {
+	before, _ := collect(t, "Docs", "go", 1)
+	after, _ := collect(t, "Guides", "go", 1)
+	changed := after.Changed(before)
+	if len(changed) != 1 || changed[0].ID != "c1" {
+		t.Fatalf("want only the layout changed, got %+v", changed)
+	}
+}
+
+// An unchanged render reports nothing, which is what lets a delta omit every
+// boundary.
+func TestIdenticalRenderReportsNoChange(t *testing.T) {
+	before, _ := collect(t, "Docs", "go", 1)
+	after, _ := collect(t, "Docs", "go", 1)
+	if changed := after.Changed(before); len(changed) != 0 {
+		t.Fatalf("want no change, got %+v", changed)
+	}
+}
+
+// Parent tracking is what later lets a delta replace an ancestor, and document
+// order is what lets a structural operation precede the operations it anchors.
+func TestNestingIsRecorded(t *testing.T) {
+	manifest, _ := collect(t, "Docs", "go", 1)
+	if manifest.Instances[0].ID != "c1" || manifest.Instances[1].ID != "c2" {
+		t.Fatalf("want document order, got %+v", manifest.Instances)
+	}
+	layout, _ := manifest.Find("c1")
+	page, _ := manifest.Find("c2")
+	if layout.ParentID != "" {
+		t.Fatalf("outermost boundary must have no parent, got %q", layout.ParentID)
+	}
+	if page.ParentID != "c1" {
+		t.Fatalf("page parent must be the layout, got %q", page.ParentID)
+	}
+}
+
+// An ordinary render must be unaffected by update support, including the
+// instance attributes, so existing templates keep their exact bytes.
+func TestOrdinaryRenderEmitsNoUpdateMarkup(t *testing.T) {
+	var out bytes.Buffer
+	wrappers := []htmlbind.Wrapper{
+		BindDocument(DocumentParams{}),
+		BindLayout(LayoutParams{Section: "Docs"}),
+	}
+	if err := htmlbind.RenderChain(&out, wrappers, Page(PageParams{Query: "go", Page: 1})); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "data-tb-") {
+		t.Fatalf("ordinary render leaked update markup: %q", out.String())
+	}
+}
+`)
+	runGeneratedTests(t, generated, companion)
+}
+
+// TestBoundaryEligibility pins which components become update boundaries.
+// Boundaries are automatic here, so a component that cannot carry an instance
+// attribute is silently excluded rather than failing generation; the error form
+// belongs with the explicit update flag.
+func TestBoundaryEligibility(t *testing.T) {
+	tests := []struct {
+		name, source string
+		want         bool
+	}{
+		{"single root", `export component A(): html {<p>x</p>}`, true},
+		{"root with leading doctype", `export component A(): html {<!doctype html><p>x</p>}`, true},
+		{"root with surrounding whitespace", "export component A(): html {\n  <p>x</p>\n}", true},
+		{"sibling roots", `export component A(): html {<p>x</p><p>y</p>}`, false},
+		{"text beside root", `export component A(): html {lead<p>x</p>}`, false},
+		{"conditional root", `export component A(flag: bool): html {{if flag}<p>x</p>{/if}}`, false},
+		{"loop root", `export component A(items: string[]): html {{for item in items}<li>{item}</li>{/for}}`, false},
+		{"component root", `component Inner(): html {<p>x</p>} export component A(): html {<Inner />}`, false},
+		{"unexported", `component A(): html {<p>x</p>}`, false},
+		{"document shell", `export component A(children: html): html {<html><head></head><body><slot required /></body></html>}`, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generated, err := htmlbind.Generate("boundary.pw.html", []byte("package pages\n"+test.source), htmlbind.GenerateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := bytes.Contains(generated, []byte("htmlbind.Boundary["))
+			if got != test.want {
+				t.Fatalf("boundary emitted = %v, want %v\n%s", got, test.want, generated)
+			}
+			if attr := bytes.Contains(generated, []byte("BoundaryAttr()")); attr != test.want {
+				t.Fatalf("instance attribute emitted = %v, want %v\n%s", attr, test.want, generated)
+			}
+		})
+	}
+}
+
+// TestDataAttributePrefix covers the configurable namespace. The prefix is
+// baked into generated code rather than negotiated, because the browser runtime
+// hardcodes it.
+func TestDataAttributePrefix(t *testing.T) {
+	source := []byte("package pages\nexport component A(): html {<p>x</p>}")
+	generated, err := htmlbind.Generate("prefix.pw.html", source, htmlbind.GenerateOptions{DataAttributePrefix: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte(`Attr:        "data-app-id"`)) {
+		t.Fatalf("configured prefix missing:\n%s", generated)
+	}
+	// An empty option selects the default, matching how the asset options
+	// behave; only a value that cannot form an attribute name is an error.
+	if _, err := htmlbind.Generate("prefix.pw.html", source, htmlbind.GenerateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"App", "tb_", "-tb", "tb-"} {
+		if _, err := htmlbind.Generate("prefix.pw.html", source, htmlbind.GenerateOptions{DataAttributePrefix: invalid}); err == nil {
+			t.Fatalf("prefix %q was accepted", invalid)
+		}
+	}
+}
+
+// TestComponentKindNamesRatherThanVersions pins the split between identity and
+// version. The kind names a component so its endpoint URL survives an unrelated
+// edit; detecting that the page is stale is the build identity's job, and it
+// covers changes a per-component digest cannot see anyway.
+func TestComponentKindNamesRatherThanVersions(t *testing.T) {
+	kind := func(file, source string) []byte {
+		generated, err := htmlbind.Generate(file, []byte(source), htmlbind.GenerateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := bytes.Index(generated, []byte("const AKind = "))
+		if start < 0 {
+			t.Fatalf("no kind in:\n%s", generated)
+		}
+		rest := generated[start:]
+		return rest[:bytes.IndexByte(rest, '\n')]
+	}
+	base := kind("pages/card.tb.html", "package pages\nexport reloadable component A(id: string, n: int): html {<p>{n}</p>}")
+	if !bytes.Contains(base, []byte(`"pages.card.A"`)) {
+		t.Fatalf("want a readable package.file.name kind, got %s", base)
+	}
+	// A template edit must not move the endpoint.
+	if edited := kind("pages/card.tb.html", "package pages\nexport reloadable component A(id: string, n: int): html {<div>{n}</div>}"); !bytes.Equal(base, edited) {
+		t.Fatalf("an edit changed the kind: %s vs %s", base, edited)
+	}
+	// The file and the package are what make it unique.
+	if other := kind("pages/badge.tb.html", "package pages\nexport reloadable component A(id: string, n: int): html {<p>{n}</p>}"); bytes.Equal(base, other) {
+		t.Fatal("two files must not share a kind")
+	}
+	if other := kind("admin/card.tb.html", "package admin\nexport reloadable component A(id: string, n: int): html {<p>{n}</p>}"); bytes.Equal(base, other) {
+		t.Fatal("two packages must not share a kind")
+	}
+}
+
 // TestScopedStyleAndHeadMerging covers the single-file-component behaviour:
 // styles live next to the markup, class names are scoped per component, and
 // every reachable component's head contributions land in the document shell.
@@ -374,4 +627,112 @@ func TestShellRendersWithoutAChain(t *testing.T) {
 }
 `)
 	runGeneratedTests(t, generated, companion)
+}
+
+// TestReloadableComponent covers the whole redraw path from template syntax to
+// a served endpoint: the modifier, the generated typed decoder, the id and kind
+// on the root element, and registration.
+func TestReloadableComponent(t *testing.T) {
+	source := []byte(`package pages
+
+export reloadable component Counter(id: string, page: int, label: string?): html {
+<span class="counter">page {page}</span>
+}
+`)
+	generated, err := htmlbind.Generate("counter.pw.html", source, htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companion := []byte(`package pages
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlupdate"
+)
+
+func serve(t *testing.T, query url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	options := htmlupdate.Options{Key: []byte("k")}
+	registry := &htmlupdate.Registry{}
+	registry.Register(CounterReloadable)
+	mux := http.NewServeMux()
+	options.Mount(mux, registry)
+	recorder := httptest.NewRecorder()
+	path := options.RedrawPath(CounterKind, "counter-1", query)
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	// A real page carries the build it was rendered by, from its script tag.
+	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+	mux.ServeHTTP(recorder, request)
+	return recorder
+}
+
+// The rendered root carries both the author's id and the kind, so the region
+// stays addressable and redrawable after the first redraw replaced it.
+func TestRedrawRendersTheRegisteredComponent(t *testing.T) {
+	recorder := serve(t, url.Values{"page": {"7"}, "label": {"item"}})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body)
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{` + "`" + `id="counter-1"` + "`" + `, ` + "`" + `data-tb-kind="` + "`" + `, "page 7"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body %q is missing %q", body, want)
+		}
+	}
+}
+
+// An optional parameter may be absent; a present but undecodable one is still
+// an error, because these arguments come from the caller.
+func TestRedrawDecodesTypedParameters(t *testing.T) {
+	if code := serve(t, url.Values{"page": {"7"}}).Code; code != http.StatusOK {
+		t.Fatalf("an absent optional should be fine, got %d", code)
+	}
+	for name, query := range map[string]url.Values{
+		"not an integer": {"page": {"seven"}},
+		"missing":        {"label": {"x"}},
+		"repeated":       {"page": {"1", "2"}},
+	} {
+		if code := serve(t, query).Code; code != http.StatusBadRequest {
+			t.Fatalf("%s gave %d, want 400", name, code)
+		}
+	}
+}
+
+// The kind names the component rather than versioning it: package, file, and
+// declaration, readable in a URL and in a log line.
+func TestKindIsTheComponentIdentity(t *testing.T) {
+	if CounterKind != "pages.counter.Counter" {
+		t.Fatalf("kind = %q", CounterKind)
+	}
+	if CounterReloadable.KindID != CounterKind {
+		t.Fatal("the registration and the markup must agree on the kind")
+	}
+}
+`)
+	runGeneratedTests(t, generated, companion)
+}
+
+// TestReloadableDiagnostics covers the rules an explicit opt-in must satisfy.
+// Unlike an automatic boundary these are errors, because the author asked.
+func TestReloadableDiagnostics(t *testing.T) {
+	tests := []struct{ name, source, want string }{
+		{"not exported", `reloadable component A(id: string): html {<p>x</p>}`, "unknown root declaration"},
+		{"no id", `export reloadable component A(): html {<p>x</p>}`, "must declare an id parameter"},
+		{"optional id", `export reloadable component A(id: string?): html {<p>x</p>}`, "required string"},
+		{"two roots", `export reloadable component A(id: string): html {<p>x</p><p>y</p>}`, "exactly one root element"},
+		{"undecodable parameter", `type R { n: int } export reloadable component A(id: string, r: R): html {<p>x</p>}`, "query string"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := htmlbind.Generate("bad.pw.html", []byte("package pages\n"+test.source), htmlbind.GenerateOptions{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
 }

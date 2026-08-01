@@ -20,10 +20,29 @@ type LabelParams struct {
 
 var planLabelOps = htmlbind.Builder[LabelParams]{}
 
+// planLabelInput canonically encodes the declared inputs of Label.
+// Slot arguments are excluded: their content belongs to the child boundary,
+// so a frame stays comparable when only its child changed.
+func planLabelInput(p LabelParams) string {
+	return htmlbind.CanonJoin(
+		htmlbind.CanonString[string](p.Value),
+		htmlbind.CanonString[Tone](p.Tone),
+	)
+}
+
+var planLabelBoundary = &htmlbind.Boundary[LabelParams]{
+	ComponentID: "pages.input.Label",
+	Attr:        "data-tb-id",
+	Input:       planLabelInput,
+}
+
 var planLabelPlan = &htmlbind.Plan[LabelParams]{
-	Head: nil,
+	Head:     nil,
+	Boundary: planLabelBoundary,
 	Ops: []htmlbind.Op[LabelParams]{
-		planLabelOps.Static("\n<span>"),
+		planLabelOps.Static("\n<span"),
+		planLabelOps.BoundaryAttr(),
+		planLabelOps.Static(">"),
 		planLabelOps.Text(func(p LabelParams) string { return Decorate(p.Value, p.Tone) }),
 		planLabelOps.Static("</span>\n"),
 	},

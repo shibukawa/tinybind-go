@@ -27,6 +27,11 @@ type Plan[P any] struct {
 	// Head holds this component's document head contributions as ready to
 	// write HTML. They merge into the shell head before any body byte.
 	Head []string
+	// Boundary describes this component as a partial update boundary. It is
+	// set only for a component that can be a chain member and renders exactly
+	// one root element; a boundary only becomes an instance when the component
+	// is actually rendered as a chain member.
+	Boundary *Boundary[P]
 	// Ops is the instruction list executed in order.
 	Ops []Op[P]
 }
@@ -53,15 +58,17 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 // The zero Fragment is absent, which is how an optional slot with no argument
 // is represented.
 type Fragment struct {
-	head   []string
-	render func(*Renderer) error
+	head     []string
+	boundary *boundary
+	render   func(*Renderer) error
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func Bind[P any](plan *Plan[P], params P) Fragment {
 	return Fragment{
-		head:   plan.Head,
-		render: func(r *Renderer) error { return plan.Exec(r, params) },
+		head:     plan.Head,
+		boundary: bindBoundary(plan.Boundary, params),
+		render:   func(r *Renderer) error { return plan.Exec(r, params) },
 	}
 }
 
@@ -77,11 +84,17 @@ func (f Fragment) Head() []string { return f.head }
 type Renderer struct {
 	w    io.Writer
 	head []string
+	// collect is nil for an ordinary render, which is what keeps the bytes of
+	// an unchanged template identical to before update support existed.
+	collect *collector
 }
 
 // Write emits raw bytes. Instructions call it after applying their own
 // context-appropriate escaping.
 func (r *Renderer) Write(value string) error {
+	if r.collect != nil {
+		r.collect.write(value)
+	}
 	_, err := io.WriteString(r.w, value)
 	return err
 }

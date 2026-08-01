@@ -14,6 +14,14 @@ relation: manual-handler counterpart of api:register-generated-html-routes
 conceptual_signature:
   sync: func Render(w io.Writer, chain ...Component) error
   async: func RenderAsync(ctx context.Context, w io.Writer, chain ...Component) iter.Seq2[Content, error]
+  collecting: func CollectChain(w io.Writer, key []byte, wrappers []Wrapper, leaf Fragment) (Manifest, error)
+update_boundaries:
+  members: each chain member declaring a boundary becomes one data:component-update-manifest instance, which is how requirement:layout-reuse-boundaries activates before filesystem routing exists
+  excluded: the decision:html-document-shell member, because partial navigation retains the shell
+  identity: chain position, so a member keeps its instance ID when only its parameters change
+  frame: a member's validator covers its own markup and excludes the output of nested boundaries
+  key: the caller supplies the validator key, so rule:update-validator-computation keying stays outside the render path and works without crypto/rand on constrained targets
+  opt_in: only the collecting entry emits instance attributes, so the ordinary entries keep byte-identical output per requirement:html-rendering-compatibility
 member:
   type: the decision:async-component-signature bound component value
   built_by: a generated binder pairing a component with its params struct

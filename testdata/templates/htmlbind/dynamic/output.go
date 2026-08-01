@@ -20,6 +20,16 @@ type ProfileParams struct {
 	User User
 }
 
+func _tinybindCanonUser(value User) string {
+	return htmlbind.CanonRecord(htmlbind.CanonJoin(
+		htmlbind.CanonString[string](value.Name),
+		htmlbind.CanonBool(value.Active),
+		htmlbind.CanonOptional(value.Nickname, htmlbind.CanonString[string]),
+		htmlbind.CanonURL(value.ProfileURL),
+		htmlbind.CanonArray(value.Tags, htmlbind.CanonString[string]),
+	))
+}
+
 type planProfileOpsScope1 struct {
 	Outer ProfileParams
 	Item  string
@@ -30,10 +40,27 @@ var planProfileOpsScope1Ops = htmlbind.Builder[planProfileOpsScope1]{}
 
 var planProfileOps = htmlbind.Builder[ProfileParams]{}
 
+// planProfileInput canonically encodes the declared inputs of Profile.
+// Slot arguments are excluded: their content belongs to the child boundary,
+// so a frame stays comparable when only its child changed.
+func planProfileInput(p ProfileParams) string {
+	return htmlbind.CanonJoin(
+		_tinybindCanonUser(p.User),
+	)
+}
+
+var planProfileBoundary = &htmlbind.Boundary[ProfileParams]{
+	ComponentID: "pages.input.Profile",
+	Attr:        "data-tb-id",
+	Input:       planProfileInput,
+}
+
 var planProfilePlan = &htmlbind.Plan[ProfileParams]{
-	Head: nil,
+	Head:     nil,
+	Boundary: planProfileBoundary,
 	Ops: []htmlbind.Op[ProfileParams]{
 		planProfileOps.Static("\n<article"),
+		planProfileOps.BoundaryAttr(),
 		planProfileOps.BoolAttr("hidden", func(p ProfileParams) bool { return !(p.User.Active) }),
 		planProfileOps.Attr("title", func(p ProfileParams) (string, bool) {
 			if p.User.Nickname == nil {

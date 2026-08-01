@@ -10,12 +10,23 @@ source: requirement:component-delta-rendering
 fields:
   render_version: server version for compatibility checks
   next_manifest: data:component-update-manifest
+  head_operations: requirement:delta-head-sync contributions, ordered before dependent content operations
   operations:
-    - kind: replace, insert, remove, or move
+    - kind: replace, insert, remove, move, or replace_with_retained
       instance_id: rule:component-instance-identity
       anchor_or_parent: optional structural target
       content_validator: omitted for removals
       html_template: safe HTML fragment for insertions and replacements
+      retained: descendant instance IDs whose existing DOM the client moves into holes in html_template
+  directives: navigate, reload, or in-band error once the response has committed
+retain_holes:
+  purpose: replace a changed ancestor without resending or recreating unchanged descendant boundaries
+  mechanism: the fragment carries an empty placeholder per retained instance; the client moves the live node in
+  benefit: preserves rule:preserved-client-subtree state that wholesale ancestor replacement would destroy
+  fallback: a server that cannot express holes sends the full ancestor subtree
+transport:
+  streamed: requirement:streaming-delta-response emits these fields as records, each carrying its own manifest entry
+  buffered: a non-streaming response may carry one whole next_manifest instead
 behavior:
   unchanged: no HTML operation; carry its validator in next_manifest
   incompatible_version: instruct full navigation or return complete HTML
@@ -24,4 +35,5 @@ safety:
   - HTML fragments preserve rule:template-context-safety
   - operation metadata is encoded separately from script source
   - client applies operations through fixed trusted update runtime
+  - retained IDs are matched against live DOM state; an unknown ID falls back to rendering that region absent
 ```

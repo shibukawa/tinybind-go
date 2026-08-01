@@ -202,7 +202,10 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
 			return nil, err
 		}
-		return htmlbind.Generate(file.path, source, htmlbind.GenerateOptions{Package: pkg})
+		return htmlbind.Generate(file.path, source, htmlbind.GenerateOptions{
+			Package:             pkg,
+			DataAttributePrefix: g.Options.DataAttributePrefix,
+		})
 	}
 	module, err := templatesql.Parse(file.path, source)
 	if err != nil {

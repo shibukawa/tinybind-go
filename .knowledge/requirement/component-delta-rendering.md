@@ -8,26 +8,32 @@ Transmit only changed partial-update boundaries after page navigation or direct 
 ```yaml
 source: concept:html-render-runtime-extensions
 flow: flow:html-partial-update
+mode_selection: requirement:render-mode-negotiation
 request:
   navigation: target path, new search parameters, and prior data:component-update-manifest validators
-  boundary: data:boundary-parameter-update-request
 execution_modes:
   navigation:
     - authenticate and validate the request normally
     - execute the generated route, runtime layouts, and page with current request state
     - build the next document update-boundary graph and validators
-  boundary:
-    - validate requirement:boundary-parameter-updates capability and typed changes
-    - execute only the target boundary subtree with reconstructed immutable inputs
-    - build the next subtree boundary graph and validators
 common_execution:
   - use requirement:component-output-cache when eligible; otherwise render boundary output before comparison
+disappearance:
+  case: the browser holds a boundary this render did not produce, which a shorter chain causes
+  problem: the hints carry ids and validators but no structure, so the server cannot say where it was
+  behavior: replace the outermost boundary, which removes it along with everything else that moved
+  otherwise: the stale region survives whenever the boundary above it rendered identical markup
 comparison:
   match: rule:component-instance-identity
+  validators: rule:update-validator-computation
   unchanged: same content validator; omit boundary HTML
   changed: return replacement template and new validator
-  structural: return insert, remove, or move; safely replace an ancestor when a granular operation is unavailable
+  structural: return insert, remove, or move; retain unchanged descendants or safely replace an ancestor when a granular operation is unavailable
 response: data:component-delta-response
+delivery: requirement:streaming-delta-response
+assets: requirement:delta-head-sync
+consistency: rule:delta-consistency-model
+dom_state: rule:preserved-client-subtree
 security:
   - client validators are optimization hints and cannot bypass authorization, validation, or page execution
   - server-derived current request values are the source of truth
@@ -43,8 +49,8 @@ acceptance:
   - changed, inserted, removed, and reordered instances converge to the server render
   - next manifest represents the DOM state after all operations apply
 open_questions:
-  - request and response media types
-  - validator hash algorithm, keyed mode, and wire compression
-  - maximum manifest size and compact encoding
-  - combining navigation deltas with requirement:suspense-html-streaming completions
+  - request and response media types, deferred to requirement:render-mode-negotiation
+  - validator hash length and wire compression, deferred to rule:update-validator-computation
+  - maximum manifest size and compact encoding, deferred to decision:manifest-state-ownership
+  - whether retain holes ship in the first milestone or ancestor replacement is the only structural fallback
 ```

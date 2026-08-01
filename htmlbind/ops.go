@@ -68,6 +68,26 @@ func (o boolAttrOp[P]) Exec(r *Renderer, params P) error {
 	return r.Write(" " + o.name)
 }
 
+// BoundaryAttr writes the instance attribute of the boundary this component
+// opened. It sits in the attribute position of the component's single root
+// element, which is the reason an update boundary must have exactly one.
+//
+// The instruction writes nothing during an ordinary render, and nothing when
+// the component was rendered as an ordinary call rather than as a chain
+// member, so a nested component can never claim its parent's instance ID.
+func (Builder[P]) BoundaryAttr() Op[P] { return boundaryAttrOp[P]{} }
+
+type boundaryAttrOp[P any] struct{}
+
+func (boundaryAttrOp[P]) Exec(r *Renderer, _ P) error {
+	if r.collect == nil || r.collect.pending == nil {
+		return nil
+	}
+	state := r.collect.pending
+	r.collect.pending = nil
+	return r.Write(" " + state.attr + `="` + state.id + `"`)
+}
+
 // If selects one of two instruction lists.
 func (Builder[P]) If(condition func(P) bool, then, otherwise []Op[P]) Op[P] {
 	return ifOp[P]{condition: condition, then: then, otherwise: otherwise}
