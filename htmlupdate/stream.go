@@ -8,9 +8,10 @@ import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-// StreamContentType marks a delta delivered as a record stream. One JSON record
-// per line, which is the framing the module already uses for streamed values.
-const StreamContentType = "application/x-ndjson; charset=utf-8"
+// DefaultStreamContentType marks a delta delivered as a record stream. One JSON
+// record per line, which is the framing the module already uses for streamed
+// values. Options.StreamContentType overrides it.
+const DefaultStreamContentType = "application/x-ndjson; charset=utf-8"
 
 // record is one line of a streamed delta.
 //
@@ -58,7 +59,7 @@ type DeltaStream struct {
 // because after it the status is fixed and a failure can only be reported in
 // band through Fail.
 func (o Options) OpenStream(w http.ResponseWriter, head []string) *DeltaStream {
-	w.Header().Set("Content-Type", StreamContentType)
+	w.Header().Set("Content-Type", o.streamContentType())
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(o.renderHeader(), modeNavigation+";v="+versionText)
 	stream := &DeltaStream{writer: newRecordWriter(w)}
@@ -122,17 +123,17 @@ func (o Options) RenderStreamAsync(ctx context.Context, w http.ResponseWriter, r
 	negotiated := o.Negotiate(r)
 	if negotiated.Mode != ModeNavigation {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, options...)
+		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 		return err
 	}
 	// The head is known before the first record, so a stylesheet a newly
 	// reachable component brought is installed before its markup arrives.
-	head, err := htmlbind.DeltaStreamHead(wrappers, leaf, options...)
+	head, err := htmlbind.DeltaStreamHead(wrappers, leaf, o.renderOptions(options)...)
 	if err != nil {
 		return err
 	}
 	stream := o.OpenStream(w, head)
-	for item, err := range htmlbind.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, options...) {
+	for item, err := range htmlbind.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...) {
 		if err != nil {
 			// The response committed with the head record, so the status cannot
 			// change and the failure has to travel in band.
@@ -174,12 +175,12 @@ func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers [
 	negotiated := o.Negotiate(r)
 	if negotiated.Mode != ModeNavigation {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf)
+		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
 		return err
 	}
 	// Rendering happens before the first byte, so a failure here is still an
 	// ordinary error the caller can turn into a status.
-	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf)
+	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
 	if err != nil {
 		return err
 	}

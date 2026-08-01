@@ -46,6 +46,9 @@ response:
   content_type: HTML fragment
   cache: private by default, because a redraw usually renders per-user content
   conditional: an ETag over the rendered bytes lets an unchanged redraw answer 304, reusing HTTP instead of a bespoke manifest
+  as_built_conflict: redraw.go sets no-store, which forbids the conditional request above; requirement:redraw-cache-policy resolves it and moves the choice to the caller
+  as_built_errors: the handler writes its four failures as plain text, so requirement:update-error-hook is what makes a redraw failure visible to the caller
+  as_built_registration: Register panics rather than returning an error, per requirement:update-registration-diagnostics
 no_manifest:
   rule: a redraw needs no data:component-update-manifest, no validators, and no continuation
   reason: the client names the target and supplies the inputs, so there is nothing to compare or reconstruct

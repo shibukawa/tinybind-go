@@ -47,8 +47,13 @@ protocol_modes:
     distinct_logic: no parser is running, so there is no marker to connect and nothing to observe; the two modes share only the boundary identity vocabulary
     head: requirement:client-managed-head makes retiring and installing head tags part of this mode, which the streaming mode never has to do because the shell wrote the head
   consequence: one script cannot be assumed to cover both, which is the concrete reason the module stops shipping the runtime automatically
+deviation_in_htmlupdate:
+  what: htmlupdate embeds, digests, serves, and references its own runtime.js as of v0.3.0, which is this decision inverted inside the package holding the net/http half
+  recorded_as: requirement:client-update-rollout m1 deviations.runtime_delivery, taken because requirement:static-asset-extraction and requirement:html-runtime-bootstrap injection did not exist yet
+  read_downstream_as: a reversal, because the deviation is invisible from the package surface and from docs/htmlbind_frameworkowner.md
+  exit: requirement:browser-runtime-asset-ownership, per decision:update-runtime-ownership-seams
 reference_runtime:
-  today: a conforming streaming client is published in the htmlbind guides as reference code the caller copies or reimplements; the module ships no script
+  today: a conforming streaming client is published in the htmlbind guides as reference code the caller copies or reimplements; htmlbind ships no script, while htmlupdate does until the deviation above is retired
   planned: register it as an opt-in requirement:framework-script-contribution so a project using the module directly need not write protocol code
   not_automatic: whichever form it takes, it is selected like any other contribution and never prepended by an entry point
   reason: a project using the module directly should not have to write protocol code, while a framework must be able to replace it

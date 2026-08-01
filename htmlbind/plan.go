@@ -257,9 +257,25 @@ func (r *Renderer) nextBoundaryID() string {
 	*r.idCount++
 	prefix := r.idPrefix
 	if prefix == "" {
-		prefix = "tb"
+		prefix = r.boundaryPrefix()
 	}
 	return prefix + "-" + strconv.Itoa(*r.idCount)
+}
+
+// boundaryPrefix names the placeholder element and the root identifier
+// namespace. A nested boundary inherits its parent's id instead, so this is
+// consulted once per render tree.
+func (r *Renderer) boundaryPrefix() string {
+	if r.opts != nil && r.opts.boundaryPrefix != "" {
+		return r.opts.boundaryPrefix
+	}
+	return DefaultBoundaryPrefix
+}
+
+// boundaryElement is the placeholder tag name, derived from the same prefix as
+// everything else the protocol puts in the document.
+func (r *Renderer) boundaryElement() string {
+	return r.boundaryPrefix() + "-boundary"
 }
 
 // context returns the context this render runs under. The async entries take

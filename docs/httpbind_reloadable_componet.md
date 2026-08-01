@@ -120,13 +120,15 @@ The response also carries head operations. A component appearing for the first t
 ## Client API
 
 ```js
-await window.tinybind.update("/search?q=rust");   // re-render the current route
-await window.tinybind.navigate("/guides/intro");  // move to another route
-await window.tinybind.redraw("card-1", { page: 2 }); // re-render one component
-await window.tinybind.apply(response);            // install what an action returned
+await tinybind.update("/search?q=rust");   // re-render the current route
+await tinybind.navigate("/guides/intro");  // move to another route
+await tinybind.redraw("card-1", { page: 2 }); // re-render one component
+await tinybind.apply(response);            // install what an action returned
 ```
 
-Links and GET forms are intercepted for same-origin navigation; put `data-tinybind-ignore` on an element or an ancestor to return it to the browser. A form's fields become the query, so a search form refines the page it is on and replaces the URL rather than stacking a history entry per submit. Non-GET submission is left to the browser, which is what makes post-redirect-get work unchanged.
+`tinybind` is the default name, not a fixed one. `GlobalName` renames it, so a framework building on this module gives its users its own name rather than a dependency's. A framework merging this runtime into its own asset calls `createPartialUpdateRuntime(config)` instead and never loads a second script.
+
+Links and GET forms are intercepted for same-origin navigation; put `data-tb-ignore` on an element or an ancestor to return it to the browser. That attribute follows the configured prefix like every other one, so a project using `pw` writes `data-pw-ignore`. A form's fields become the query, so a search form refines the page it is on and replaces the URL rather than stacking a history entry per submit. Non-GET submission is left to the browser, which is what makes post-redirect-get work unchanged.
 
 `subscribe` delivers `start`, `applied`, `superseded`, `fellBack`, and `redrawn`, carrying outcomes rather than component arguments — enough for a progress indicator, an analytics call, or a third-party widget that must reinitialize after its region was replaced. A failing subscriber cannot break the update it is watching. Modified clicks, `target`, `download`, and cross-origin URLs are left to the browser.
 
@@ -156,14 +158,20 @@ The declaration generates a typed query decoder and a registration value; the ap
 
 ```go
 registry := &htmlupdate.Registry{}
-registry.Register(pages.UserCardReloadable)
+if err := registry.Register(pages.UserCardReloadable); err != nil {
+    return err // a duplicate kind, which must not be discovered in production
+}
 options.Mount(mux, registry)
 ```
+
+Registering a repeated kind fails, because the kind covers a component's name, parameters, and markup but not its package: silently keeping the last one would serve a component that looks the same but calls another package's external functions. The failure is returned rather than raised, so a caller running a startup validation pass collects every problem and reports them together; `MustRegister` is there for a caller with nowhere to return one.
+
+`Mount` takes any router with a `Handle(string, http.Handler)` method, so a framework installs the whole surface on its own mux.
 
 The `id` parameter is required and is filled from the path, not the query. The framework writes it and the component's kind onto the root element on every render, so a region stays addressable and redrawable after a redraw replaced it. A reloadable component must be exported and single-rooted, and every other parameter must be a type a query string carries deterministically — a record, a slice, and `html` are refused at generation time. Unlike an automatic boundary these are errors, because the author asked for the endpoint.
 
 ```js
-await window.tinybind.redraw("card-1", { userId: 42 });
+await tinybind.redraw("card-1", { userId: 42 });
 ```
 
 That becomes a plain GET:
@@ -221,10 +229,10 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
 ```js
 const response = await fetch("/cart/add", {
   method: "POST",
-  headers: { ...window.tinybind.updateHeaders(), "X-CSRF-Token": token },
+  headers: { ...tinybind.updateHeaders(), "X-CSRF-Token": token },
   body,
 });
-await window.tinybind.apply(response);
+await tinybind.apply(response);
 ```
 
 Without the render header the endpoint answers the way it always did — JSON for an API, a redirect for a form handler — so a non-browser client and a page without the runtime are unaffected. `WantsUpdate` is the single branch point, which is what keeps the two paths from drifting apart.
@@ -322,8 +330,10 @@ A file input is the exception to all of this: its selection cannot be restored b
 Some regions the server cannot patch at all: a third-party widget, a canvas, a media element it does not own. Mark one and the runtime moves the live node into the replacement instead of accepting the server's version, so the node and everything the browser attached to it survive:
 
 ```html
-<div data-tinybind-preserve="player">…</div>
+<div data-tb-preserve="player">…</div>
 ```
+
+The marker follows the configured prefix, so a project using `pw` writes `data-pw-preserve`.
 
 The key matches the region across renders. A key with no counterpart in the replacement is a new region, so the server's version stands rather than being handed an unrelated node.
 
@@ -335,19 +345,26 @@ Generation:
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. Override it only if your markup already uses that prefix; the browser runtime hardcodes the names, so an override needs a runtime built to match.
+`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. The same prefix names the placeholder element and the boundary identifiers, so a project setting `pw` gets `data-pw-id` on its boundaries and `<pw-boundary id="pw-1">` for its placeholders — one naming system rather than two. Set the same value on `Options.DataAttributePrefix`, because the generator writes those attributes and the runtime reads them.
 
-Serving. Two namespaces are configurable, and everything the framework owns lives inside them:
+Serving. Every name the protocol puts in a document is configurable, and everything the framework owns lives inside the two namespaces:
 
 ```go
 options := htmlupdate.Options{
-    Key:              validatorKey, // required for non-public pages
-    PathPrefix:       "/_tb",       // every framework endpoint
-    HeaderPrefix:     "X-Tinybind", // every framework header
-    MaxManifestBytes: 8 << 10,      // oversized hints are dropped, not rejected
+    Key:                 validatorKey, // required for non-public pages
+    PathPrefix:          "/_tb",       // every framework endpoint
+    HeaderPrefix:        "X-Tinybind", // every framework header
+    DataAttributePrefix: "tb",         // every attribute, element, and identifier
+    GlobalName:          "tinybind",   // what the runtime installs itself as
+    MaxManifestBytes:    8 << 10,      // oversized hints are dropped, not rejected
+    MaxQueryBytes:       4 << 10,      // an oversized redraw query is rejected
 }
 
-options.Mount(mux) // installs the runtime asset, and later the redraw endpoint
+if err := options.Validate(); err != nil {
+    return err // a prefix that cannot name an element, found at startup
+}
+
+options.Mount(mux, registry) // the runtime asset and the redraw endpoint
 
 mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
     wrappers := []htmlbind.Wrapper{BindDocument(...), BindLayout(...)}
@@ -362,7 +379,38 @@ One prefix for every endpoint means one routing rule, one cache rule, and one ac
 
 `options.Render` negotiates the mode, sets `Vary`, and writes either the document or the delta. Everything else about the response stays yours, as elsewhere in this module.
 
-The runtime is served at a content-hashed path under the same prefix, so it is immutably cacheable and a deploy invalidates it. `options.ScriptTag()` returns the element that loads it, and that element carries the prefix, so one shared runtime asset works for any namespace without being rebuilt. The header names are different: the runtime hardcodes those, so overriding `HeaderPrefix` needs a runtime built to match.
+The runtime is served at a content-hashed path under the same prefix, so it is immutably cacheable and a deploy invalidates it. `options.ScriptTag()` returns the element that loads it, and that element carries the whole configuration, so one shared runtime asset works for any set of names without being rebuilt. Nothing is compiled into the bytes except the protocol version.
+
+### Owning the runtime
+
+A framework that already ships a browser runtime must not add a second one: two runtimes on one document means two boundary id spaces, two build identities, and two script tags with nothing deciding which owns a region. So take the bytes and merge them:
+
+```go
+options := htmlupdate.Options{Key: validatorKey, CallerOwnsRuntime: true}
+
+source := htmlupdate.RuntimeSource()      // the bytes, naming-independent
+asset := options.RuntimeAsset()           // bytes, digest, media type, file name
+config := options.RuntimeConfig()         // what the merged runtime must be given
+```
+
+With `CallerOwnsRuntime` set, `Mount` registers no asset route and `ScriptTag` returns nothing — a tag pointing at an asset this build does not serve is worse than no tag. Your merged asset calls `createPartialUpdateRuntime(config)` with a config carrying the same names, and installs the result wherever it likes.
+
+Taking a copy of `runtime.js` instead is the shape to avoid: a copy is not a version-pinned dependency, so it drifts on upgrade with nothing in your build failing, and a drifted browser runtime is a silently dead page rather than a compile error.
+
+### Reporting failures
+
+The redraw endpoint has to write a response, because it owns the URL. It does not decide what a failure looks like:
+
+```go
+options.OnFailure = func(w http.ResponseWriter, r *http.Request, f htmlupdate.Failure) {
+    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+    problem.Write(w, r, f.Status, f.Kind.String()) // or htmlupdate.WriteFailure(w, f)
+}
+```
+
+Every refused redraw arrives here — a malformed path, an unpublished kind, a page from another build, an oversized query, a rejected argument, a failed render — with the status and body the package would have written, and the underlying cause where there is one. Without a hook it writes those defaults itself, unchanged.
+
+A redraw response carries an `ETag` over its rendered bytes and `private, no-cache`, so an unchanged region costs a `304` instead of its whole markup. `RedrawCacheControl` replaces that policy for a deployment whose redraws are public or whose proxy needs different terms.
 
 The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render runtime stays free of `net/http` so generated template code keeps working on TinyGo and WebAssembly targets.
 

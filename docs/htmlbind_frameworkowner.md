@@ -89,9 +89,14 @@ fallback:
 <tb-boundary id="tb-1" style="display:contents">…fallback…</tb-boundary>
 ```
 
-That element and its id are the module's. Everything after it is yours: a
-settled boundary arrives as a `Content` holding the rendered fragment and the id
-of the placeholder it replaces, and `Content.WriteTo` writes that fragment alone.
+That element and its id are the module's, but not its name: `WithBoundaryPrefix`
+renames both, so `pw` yields `<pw-boundary id="pw-1">`. Pass the prefix the
+generator wrote the instance attributes with, or one document carries two naming
+systems.
+
+Everything after the placeholder is yours: a settled boundary arrives as a
+`Content` holding the rendered fragment and the id of the placeholder it
+replaces, and `Content.WriteTo` writes that fragment alone.
 
 So what follows is a recommendation the module does not enforce — but it is the
 shape the module was designed around, and the marker rule below is load-bearing.

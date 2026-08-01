@@ -1,6 +1,10 @@
 package htmlupdate
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,29 +40,48 @@ type Registry struct {
 
 // Register adds a component to the redraw surface.
 //
-// A repeated kind panics rather than overwriting. The kind covers a component's
-// name, parameters, and compiled markup but not its package, so two identical
-// templates in different packages produce the same one; silently keeping the
-// last registration would then serve a component that looks the same but calls
-// its own package's external functions. Registration happens at startup, so
-// failing there is the cheapest place to find it.
-func (reg *Registry) Register(component Reloadable) {
+// A repeated kind is refused rather than overwritten. The kind covers a
+// component's name, parameters, and compiled markup but not its package, so two
+// identical templates in different packages produce the same one; silently
+// keeping the last registration would then serve a component that looks the
+// same but calls its own package's external functions.
+//
+// This must fail at startup, and failing at startup is not the same as
+// panicking: a caller running its own startup validation pass collects what is
+// wrong and reports all of it, rather than aborting the process on the first
+// one. So the failure is returned, and a caller that wants the abort still has
+// it one line away.
+func (reg *Registry) Register(component Reloadable) error {
 	if component.KindID == "" {
-		panic("htmlupdate: reloadable component has no kind")
+		return errors.New("htmlupdate: reloadable component has no kind")
 	}
 	if reg.kinds == nil {
 		reg.kinds = map[string]Reloadable{}
 	}
 	if _, taken := reg.kinds[component.KindID]; taken {
-		panic("htmlupdate: two components registered as " + component.KindID +
+		return errors.New("htmlupdate: two components registered as " + component.KindID +
 			"; the kind covers name, parameters, and markup but not the package, so rename one or change its markup")
 	}
 	reg.kinds[component.KindID] = component
+	return nil
 }
 
-// MaxQueryBytes bounds the arguments a redraw may carry, since a GET puts every
-// one of them in the URL.
-const MaxQueryBytes = 4 << 10
+// MustRegister is Register for a caller with nowhere to return an error, such
+// as a package-level registry value.
+func (reg *Registry) MustRegister(component Reloadable) {
+	if err := reg.Register(component); err != nil {
+		panic(err.Error())
+	}
+}
+
+// DefaultMaxQueryBytes bounds the arguments a redraw may carry, since a GET
+// puts every one of them in the URL. Options.MaxQueryBytes overrides it, for a
+// deployment behind a proxy with its own URL limit.
+const DefaultMaxQueryBytes = 4 << 10
+
+// notFoundMessage is what http.NotFound writes, kept as a value so a caller
+// that takes over the response can still reproduce the default body.
+const notFoundMessage = "404 page not found"
 
 // RedrawHandler serves the registered components.
 //
@@ -70,13 +93,23 @@ func (o Options) RedrawHandler(reg *Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		kind, instance, ok := splitRedrawPath(strings.TrimPrefix(r.URL.Path, base))
 		if !ok {
-			http.NotFound(w, r)
+			o.fail(w, r, Failure{
+				Kind:    FailureMalformedPath,
+				Status:  http.StatusNotFound,
+				Message: notFoundMessage,
+			})
 			return
 		}
 		component, known := reg.kinds[kind]
 		if !known {
 			// This deployment does not publish that component at all.
-			http.NotFound(w, r)
+			o.fail(w, r, Failure{
+				Kind:       FailureUnknownComponent,
+				Status:     http.StatusNotFound,
+				Message:    notFoundMessage,
+				KindID:     kind,
+				InstanceID: instance,
+			})
 			return
 		}
 		// A kind is stable across builds on purpose, so it cannot say whether
@@ -84,33 +117,128 @@ func (o Options) RedrawHandler(reg *Registry) http.Handler {
 		// every change a kind cannot see: a component this one calls, an
 		// external function, the render runtime itself.
 		if r.Header.Get(o.buildHeader()) != o.buildID() {
-			http.Error(w, "stale page", http.StatusConflict)
+			o.fail(w, r, Failure{
+				Kind:       FailureStalePage,
+				Status:     http.StatusConflict,
+				Message:    "stale page",
+				KindID:     kind,
+				InstanceID: instance,
+			})
 			return
 		}
-		if len(r.URL.RawQuery) > MaxQueryBytes {
-			http.Error(w, "redraw arguments too large", http.StatusRequestURITooLong)
+		if len(r.URL.RawQuery) > o.maxQueryBytes() {
+			o.fail(w, r, Failure{
+				Kind:       FailureArgumentsTooLarge,
+				Status:     http.StatusRequestURITooLong,
+				Message:    "redraw arguments too large",
+				KindID:     kind,
+				InstanceID: instance,
+			})
 			return
 		}
 		fragment, err := component.Render(r, instance, r.URL.Query())
 		if err != nil {
-			http.Error(w, "invalid redraw arguments", http.StatusBadRequest)
+			o.fail(w, r, Failure{
+				Kind:       FailureInvalidArguments,
+				Status:     http.StatusBadRequest,
+				Message:    "invalid redraw arguments",
+				Err:        err,
+				KindID:     kind,
+				InstanceID: instance,
+			})
 			return
 		}
 		var out strings.Builder
 		if err := htmlbind.Render(&out, fragment); err != nil {
-			http.Error(w, "render failed", http.StatusInternalServerError)
+			o.fail(w, r, Failure{
+				Kind:       FailureRenderFailed,
+				Status:     http.StatusInternalServerError,
+				Message:    "render failed",
+				Err:        err,
+				KindID:     kind,
+				InstanceID: instance,
+			})
+			return
+		}
+		body := out.String()
+		// A redraw response is identified by its URL and its bytes, so it can
+		// be revalidated like any other resource. Sending the digest is what
+		// lets an unchanged region cost a 304 instead of its whole markup.
+		etag := `"` + o.redrawETag(body) + `"`
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", o.redrawCacheControl())
+		// The response depends on the build the page was rendered by, so a
+		// cache holding it must key on that too.
+		w.Header().Add("Vary", o.buildHeader())
+		w.Header().Set(o.renderHeader(), modeRedraw+";v="+versionText)
+		if matchesETag(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		// The URL alone identifies the response and the content is usually
-		// per-user, so a shared cache must never hold it.
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set(o.renderHeader(), modeRedraw+";v="+versionText)
-		_, _ = w.Write([]byte(out.String()))
+		_, _ = w.Write([]byte(body))
 	})
 }
 
 const modeRedraw = "redraw"
+
+// DefaultRedrawCacheControl keeps a redraw out of every shared cache and makes
+// a private one revalidate.
+//
+// It is private rather than public because a redraw usually renders per-user
+// content, and no-cache rather than no-store because no-store would forbid the
+// conditional request the ETag exists for: a browser that may not keep the
+// bytes can never ask whether they changed.
+const DefaultRedrawCacheControl = "private, no-cache"
+
+func (o Options) redrawCacheControl() string {
+	if o.RedrawCacheControl == "" {
+		return DefaultRedrawCacheControl
+	}
+	return o.RedrawCacheControl
+}
+
+// redrawETag identifies the rendered bytes. It is a content digest rather than
+// a version, because the point is to detect that nothing changed.
+//
+// It is keyed for the same reason a frame validator is: a conditional request
+// answered 304 confirms a guess, and a redraw usually renders low-entropy
+// per-user content that is cheap to guess. Without a key, anyone able to reach
+// the endpoint could enumerate what a region says by digesting candidates. An
+// unkeyed digest is the fallback for a deployment that set no key, which is
+// only supportable for public pages either way.
+func (o Options) redrawETag(body string) string {
+	if len(o.Key) == 0 {
+		sum := sha256.Sum256([]byte(body))
+		return base64.RawURLEncoding.EncodeToString(sum[:16])
+	}
+	mac := hmac.New(sha256.New, o.Key)
+	mac.Write([]byte(body))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
+}
+
+// matchesETag reads an If-None-Match header, which is a comma-separated list of
+// tags or the wildcard, and reports whether the response's tag is in it.
+//
+// A weak comparison is the right one here: the two representations differ only
+// if the bytes differ, so the weak prefix carries no extra information.
+func matchesETag(header, etag string) bool {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		if candidate == etag {
+			return true
+		}
+	}
+	return false
+}
 
 // splitRedrawPath reads "<kind>/<instance>" and rejects anything else, so a
 // missing or extra segment cannot be read as a valid target.

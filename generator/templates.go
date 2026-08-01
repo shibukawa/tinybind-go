@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -99,53 +100,86 @@ func discoverTemplateFiles(dir, htmlPattern, sqlPattern string) ([]templateFile,
 // files extracted from component style and script blocks. It returns an empty
 // path when no templates exist.
 func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, error) {
-	path, _, err := g.generateTemplateFiles(dir, outDir, outName)
-	return path, err
+	outputs, err := g.generateTemplateFiles(dir, outDir, outName)
+	return outputs.goPath, err
 }
 
-// generateTemplateFiles writes the generated Go file and every extracted asset,
-// returning the Go path and the asset paths in generation order.
-func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, []string, error) {
+// templateOutputs is everything one template phase wrote and learned.
+//
+// The hook fields are carried out rather than logged here, because the caller
+// owns what a measurement means: this package reports what it did.
+type templateOutputs struct {
+	goPath string
+	// assetPaths holds the extracted stylesheets and scripts, then the files
+	// reference hook transforms produced, each in generation order.
+	assetPaths []string
+	rewrites   []htmlbind.Rewrite
+	// readSet holds every authored file a transform reported reading, sorted
+	// and deduplicated across the templates of the run.
+	readSet []string
+	dynamic []htmlbind.DynamicReference
+}
+
+// generateTemplateFiles writes the generated Go file, every extracted asset,
+// and every file a reference hook produced.
+func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (templateOutputs, error) {
 	files, err := discoverTemplateFiles(dir, g.Options.HTMLTemplatePattern, g.Options.SQLTemplatePattern)
 	if err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	if len(files) == 0 {
-		return "", nil, nil
+		return templateOutputs{}, nil
 	}
 	if err := checkPublicAssetPairing(g.Options.PublicDir, g.Options.PublicURLBase); err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	// The dialect is a configuration error, not a template diagnostic, so it is
 	// reported once against the discovered set and before anything is written.
 	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	withContext, err := contextExternals(dir)
 	if err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
+	cache := newConversionCache(g.Options.ConversionCacheDir)
+	hooks := runScopedHooks(g.Options.ReferenceHooks, cache)
+	var produced []htmlbind.ProducedFile
 	var generated [][]byte
 	var assets []htmlbind.Asset
+	var outputs templateOutputs
+	read := map[string]bool{}
 	for _, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
-			return "", nil, err
+			return templateOutputs{}, err
 		}
-		code, extracted, err := g.generateTemplate(file, source, pkg, withContext)
+		code, compiled, err := g.generateTemplate(file, source, pkg, withContext, hooks)
 		if err != nil {
-			return "", nil, err
+			return templateOutputs{}, err
 		}
 		generated = append(generated, code)
-		assets = append(assets, extracted...)
+		assets = append(assets, compiled.Assets...)
+		produced = append(produced, compiled.Produced...)
+		outputs.rewrites = append(outputs.rewrites, compiled.Rewrites...)
+		outputs.dynamic = append(outputs.dynamic, compiled.DynamicReferences...)
+		for _, name := range compiled.ReadSet {
+			read[name] = true
+		}
 	}
+	// A source named by a cache key is a build input whether its conversion ran
+	// or was answered from the store, so an edit to it regenerates either way.
+	for _, source := range cache.namedSources() {
+		read[source] = true
+	}
+	outputs.readSet = sortedKeys(read)
 	combined, err := combineGeneratedTemplates(pkg, generated)
 	if err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	if outDir == "" {
 		outDir = dir
@@ -154,22 +188,84 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, 
 		outName = DefaultTemplatesName
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	path := filepath.Join(outDir, outName)
 	if err := os.WriteFile(path, combined, 0o644); err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
 	assetPaths, err := g.writeAssets(assets)
 	if err != nil {
-		return "", nil, err
+		return templateOutputs{}, err
 	}
-	abs, err := filepath.Abs(path)
+	derivedPaths, err := g.writeProduced(produced)
 	if err != nil {
-		return path, assetPaths, nil
+		return templateOutputs{}, err
 	}
-	return abs, assetPaths, nil
+	outputs.assetPaths = append(assetPaths, derivedPaths...)
+	outputs.goPath = path
+	if abs, err := filepath.Abs(path); err == nil {
+		outputs.goPath = abs
+	}
+	return outputs, nil
 }
+
+func sortedKeys(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// writeProduced writes the files reference hook transforms created, into the
+// configured derived directory.
+//
+// A transform could write these itself and hand back only the rewritten string,
+// and that is exactly what must not happen: a file written behind the generator
+// is absent from the recorded output set, so --check cannot compare it, the
+// skip path cannot verify it, and nothing can ever clean it up. Byte production
+// belongs to the transform; the bookkeeping belongs here.
+func (g *Generator) writeProduced(produced []htmlbind.ProducedFile) ([]string, error) {
+	if len(produced) == 0 {
+		return nil, nil
+	}
+	if g.Options.DerivedAssetDir == "" {
+		return nil, ErrDerivedAssetDir
+	}
+	written := map[string]bool{}
+	var paths []string
+	for _, file := range produced {
+		if written[file.Name] {
+			continue
+		}
+		written[file.Name] = true
+		path := filepath.Join(g.Options.DerivedAssetDir, filepath.FromSlash(file.Name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, file.Content, 0o644); err != nil {
+			return nil, err
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+// ErrDerivedAssetDir reports a hook that produced a file with nowhere to put
+// it. Discarding it silently would leave the rewritten reference dangling,
+// which is the one property this seam exists to guarantee.
+var ErrDerivedAssetDir = errors.New(
+	"generator: a reference hook produced a file but DerivedAssetDir is not set; " +
+		"it is not derived from PublicDir, because a transform chooses the URL it rewrites to " +
+		"and only the caller knows which directory is served there")
 
 // writeAssets writes extracted static files into the configured public
 // directory, exactly as the generator writes Go artifacts. A file name carries
@@ -251,14 +347,14 @@ func (g *Generator) templatePackageName(dir string, files []templateFile) (strin
 // generated API shape, returning the Go source and the static files extracted
 // from it. Diagnostics keep the discovered path, so custom input suffixes are
 // reported exactly as they exist on disk.
-func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, contextExternals map[string]bool) ([]byte, []htmlbind.Asset, error) {
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, contextExternals map[string]bool, hooks []htmlbind.ReferenceHook) ([]byte, htmlbind.Result, error) {
 	if file.kind == htmlTemplate {
 		module, err := htmlbind.Parse(file.path, source)
 		if err != nil {
-			return nil, nil, err
+			return nil, htmlbind.Result{}, err
 		}
 		if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-			return nil, nil, err
+			return nil, htmlbind.Result{}, err
 		}
 		result, err := htmlbind.GenerateModule(file.path, source, htmlbind.GenerateOptions{
 			Package:             pkg,
@@ -267,18 +363,19 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			ContextExternals:    contextExternals,
 			PreserveWhitespace:  g.Options.PreserveTemplateWhitespace,
 			DataAttributePrefix: g.Options.DataAttributePrefix,
+			ReferenceHooks:      hooks,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, htmlbind.Result{}, err
 		}
-		return result.GoSource, result.Assets, nil
+		return result.GoSource, result, nil
 	}
 	module, err := templatesql.Parse(file.path, source)
 	if err != nil {
-		return nil, nil, err
+		return nil, htmlbind.Result{}, err
 	}
 	if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-		return nil, nil, err
+		return nil, htmlbind.Result{}, err
 	}
 	options := templatesql.GenerateOptions{
 		Package:     pkg,
@@ -290,7 +387,7 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
 	}
 	code, err := templatesql.Generate(file.path, source, options)
-	return code, nil, err
+	return code, htmlbind.Result{}, err
 }
 
 // checkSQLDialect validates the configured dialect when the run discovers a SQL

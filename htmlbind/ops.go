@@ -292,13 +292,13 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 	id := r.nextBoundaryID()
 	// display:contents keeps the placeholder out of layout, so a boundary
 	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<tb-boundary id="` + id + `" style="display:contents">`); err != nil {
+	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</tb-boundary>`); err != nil {
+	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
 		return err
 	}
 	boundaryCtx := r.boundaryContext()
@@ -541,13 +541,13 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 	id := r.nextBoundaryID()
 	// display:contents keeps the placeholder out of layout, so a boundary
 	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<tb-boundary id="` + id + `" style="display:contents">`); err != nil {
+	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</tb-boundary>`); err != nil {
+	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
 		return err
 	}
 	keepOpen := coordinator.liveMode()

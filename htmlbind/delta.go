@@ -43,9 +43,9 @@ type Delta struct {
 //
 // The document markup outside every boundary is discarded, because a delta
 // reuses the browser's existing document shell.
-func RenderDelta(key []byte, known Manifest, wrappers []Wrapper, leaf Fragment) (Delta, error) {
+func RenderDelta(key []byte, known Manifest, wrappers []Wrapper, leaf Fragment, options ...Option) (Delta, error) {
 	collect := &collector{key: key, capture: true}
-	manifest, head, err := collectChain(io.Discard, collect, wrappers, leaf, nil)
+	manifest, head, err := collectChain(io.Discard, collect, wrappers, leaf, options)
 	if err != nil {
 		return Delta{}, err
 	}

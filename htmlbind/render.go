@@ -92,6 +92,31 @@ type renderOptions struct {
 	// live keeps live subscriptions open instead of taking one delivery and
 	// unsubscribing. Only the live render entries set it.
 	live bool
+	// boundaryPrefix names the placeholder element and the boundary
+	// identifiers. Empty means DefaultBoundaryPrefix.
+	boundaryPrefix string
+}
+
+// DefaultBoundaryPrefix names the placeholder element a progressive render
+// writes and the identifiers it allocates: <tb-boundary id="tb-1">.
+//
+// It matches the generator's default data-attribute prefix, because a document
+// carrying data-tb-id on its boundaries and <tb-boundary> placeholders is one
+// naming system rather than two.
+const DefaultBoundaryPrefix = "tb"
+
+// WithBoundaryPrefix renames the placeholder element and the boundary
+// identifiers, so a framework's markup carries the framework's own prefix.
+//
+// It must be the prefix the generator wrote the instance attributes with. A
+// document naming its attributes data-pw-id and its placeholders <tb-boundary>
+// has two naming systems in it, only one of which anything can configure.
+//
+// The value must be a valid custom element name prefix: lowercase letters and
+// digits, starting with a letter, with no leading or trailing hyphen. Anything
+// else produces markup a browser will not parse as an element.
+func WithBoundaryPrefix(prefix string) Option {
+	return func(o *renderOptions) { o.boundaryPrefix = prefix }
 }
 
 // WithCache supplies the store used by components declared with the cache

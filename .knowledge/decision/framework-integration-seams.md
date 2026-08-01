@@ -81,6 +81,7 @@ principle:
 later_rounds:
   live: decision:live-integration-seams applies this principle to the live runtime, reported 2026-07-31
   components: decision:library-component-seams applies it to the component and asset seams, reported the same day
+  runtime: decision:update-runtime-ownership-seams applies it to the browser asset and the protocol names, reported 2026-08-01; its mux item is this round's deferred interface_or_generic_mux found again in the runtime package, where no MuxType escape exists
 related:
   - requirement:generated-route-registration
   - requirement:custom-framework-generation-profile

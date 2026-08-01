@@ -49,6 +49,10 @@ options:
   DataAttributePrefix: decision:update-manifest-transport generated data-attribute namespace; empty uses 'tb'
   BuiltinElements: proposed requirement:builtin-element-registration whitelist closing the decision:builtin-element-syntax hyphenated element space; holds data:builtin-element-definition builtin entries and passthrough names or patterns
   ScriptContributions: proposed requirement:framework-script-contribution registration set; an always entry reaches every document, an on-demand entry only its builtin element, and each states a global or module load mode
+  ReferenceHooks: implemented requirement:element-reference-hook set; holds data:element-hook-definition entries matching a standard element and attribute, each carrying a generation-time Go func rather than a symbol pattern, and marshalling to its registration rather than its behavior so the options value stays hashable
+  ConversionCacheDir: implemented requirement:derived-asset-generation store for the outcome of each conversion, keyed by the hook's declared inputs; empty converts every build, which is correct and slow; it holds generated data only, so deleting it costs time and nothing else
+  DerivedAssetDir: implemented requirement:derived-asset-generation output root for files a conversion produces; empty makes a produced file a configuration error, because it is not derived from PublicDir and a discarded file would leave the rewritten reference dangling
+  AssetMounts: proposed requirement:derived-asset-generation URL prefix to directory pairs for the authored asset tree; not built, because a transform resolves its own paths today
   HeadMarkerAttribute: proposed requirement:client-managed-head ownership marker written onto merged head contributions at generation time; empty uses the module default
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
