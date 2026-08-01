@@ -27,9 +27,9 @@ var planHelloPlan = &htmlbind.Plan[HelloParams]{
 	Head:     nil,
 	Boundary: planHelloBoundary,
 	Ops: []htmlbind.Op[HelloParams]{
-		planHelloOps.Static("\n<!DOCTYPE html>\n<h1"),
+		planHelloOps.Static("<!DOCTYPE html><h1"),
 		planHelloOps.BoundaryAttr(),
-		planHelloOps.Static(">Hello &amp; welcome</h1>\n"),
+		planHelloOps.Static(">Hello &amp; welcome</h1>"),
 	},
 }
 

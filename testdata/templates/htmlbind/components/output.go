@@ -28,11 +28,11 @@ var planBadgeOps = htmlbind.Builder[renderBadgeParams]{}
 var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[renderBadgeParams]{
-		planBadgeOps.Static("\n<span class=\"badge\"><strong>"),
+		planBadgeOps.Static(" <span class=\"badge\"><strong>"),
 		planBadgeOps.Text(func(p renderBadgeParams) string { return p.Label }),
 		planBadgeOps.Static("</strong>"),
 		planBadgeOps.Slot(func(p renderBadgeParams) htmlbind.Fragment { return p.Children }, nil),
-		planBadgeOps.Static("</span>\n"),
+		planBadgeOps.Static("</span> "),
 	},
 }
 
@@ -46,11 +46,11 @@ var planCardOps = htmlbind.Builder[CardParams]{}
 var planCardPlan = &htmlbind.Plan[CardParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[CardParams]{
-		planCardOps.Static("\n"),
+		planCardOps.Static(" "),
 		planCardOps.Component(func(p CardParams) htmlbind.Fragment {
 			return renderBadge(renderBadgeParams{Label: p.User.Name, Children: htmlbind.Bind(planCardOpsFill1Plan, p)})
 		}),
-		planCardOps.Static("\n"),
+		planCardOps.Static(" "),
 	},
 }
 

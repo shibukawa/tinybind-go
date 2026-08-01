@@ -30,6 +30,15 @@ analysis:
   - accept extra and reordered arguments
   - accept compile-time string and integer constants, not only literal syntax
   - report dynamic values when generation requires a static prefix, route, or status
+type_parameter_call_sites:
+  case: a wrapper body calls the wrapped operation with its own type parameter
+  rule: skip the call site; a type parameter names no concrete config type there
+  why_not_an_error:
+    - unresolvable and not-a-generation-target are different outcomes
+    - one such call currently aborts analysis of the whole package, so unrelated
+      config types in that package generate nothing
+  where_the_type_is_read: the instantiation site, matched through its own registered call pattern
+  keep_as_error: a role index outside the signature, and a concrete type that fails to resolve
 consistency:
   - one normalized pattern set drives mapping generation, configbind generation, routes, OpenAPI, checks, and diagnostics
   - configbind analysis receives the same generator options as other analyzers
@@ -46,7 +55,10 @@ acceptance:
   - a role index outside a resolved wrapper signature fails package analysis with an actionable diagnostic
   - a framework command registers its wrapper catalog once and reuses the resulting immutable options across packages
   - direct tinybind calls are represented by default call patterns, not special analyzer branches
+  - 'a generic helper calling configbind.Bind[T](prefix) is skipped, and other config types in that package still generate'
+  - the same package holding both the generic helper and its own config types needs no package split
 related:
+  - requirement:alias-transparent-type-analysis
   - requirement:configurable-generator-discovery
   - data:generator-call-pattern
   - data:generator-options

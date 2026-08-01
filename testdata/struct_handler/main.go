@@ -13,6 +13,7 @@ type UserResponse struct {
 	Name string
 }
 
+// UserHandler serves one user by name.
 type UserHandler struct{}
 
 func (h *UserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -26,6 +26,13 @@ func EnvName(longOpt string) string {
 // stored under def.ConfigKey. Unset vars are absent from the result.
 // environ is "KEY=value" lines as from os.Environ(); if nil, os.Environ() is used.
 func ReadEnv(defs []cliparser.Def, environ []string) map[string]string {
+	return readEnvMap(defs, environMap(environ))
+}
+
+// environMap turns "KEY=value" lines into a lookup map, defaulting to the
+// process environment. Load builds it once so the env layer and the file layer's
+// ${NAME} expansion can never read different environments.
+func environMap(environ []string) map[string]string {
 	if environ == nil {
 		environ = os.Environ()
 	}
@@ -35,6 +42,10 @@ func ReadEnv(defs []cliparser.Def, environ []string) map[string]string {
 			envMap[line[:i]] = line[i+1:]
 		}
 	}
+	return envMap
+}
+
+func readEnvMap(defs []cliparser.Def, envMap map[string]string) map[string]string {
 	out := make(map[string]string)
 	for _, d := range defs {
 		if d.ConfigKey == "" || d.Env == "-" {

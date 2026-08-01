@@ -30,10 +30,12 @@ generate_flags:
   - sql-context-api
   - check
   - generate-all
+  - force
 option_behavior:
   - normalize data:generator-options before package loading
   - use one normalized option for mapping generation, route parsing, checks, and OpenAPI
   - command-line flags may disable configured artifacts but cannot re-enable a disabled feature
+  - print artifact paths on stdout whether the run generated or skipped, and report a skip separately
 stdlib_command: "func main() { generator.Main(generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))) }"
 custom_command: |
   func main() {
@@ -47,6 +49,7 @@ custom_command: |
   }
 related:
   - data:generator-options
+  - rule:generation-input-hash
   - requirement:configurable-generator-discovery
   - rule:generator-feature-disable
   - flow:code-generation

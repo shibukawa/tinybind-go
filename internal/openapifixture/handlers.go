@@ -6,6 +6,10 @@ import (
 	"github.com/shibukawa/tinybind-go"
 )
 
+// createUserHandler creates one organization user.
+//
+// Input is accepted from the JSON body, form body, or query string; the
+// organization comes from the path and the caller from the Authorization header.
 func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[CreateUserRequest](r)
 	if err != nil {
@@ -34,6 +38,7 @@ func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// searchHandler searches users by keyword.
 func searchHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[SearchRequest](r)
 	if err != nil {
@@ -56,6 +61,9 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getMissingHandler always reports the user as missing.
+//
+// Deprecated: kept only to exercise NotFound discovery.
 func getMissingHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := httpbind.Bind[CreateUserRequest](r)
 	if err != nil {

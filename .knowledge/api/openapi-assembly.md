@@ -8,7 +8,7 @@ Public httpbind functions set application info and assemble registered data:open
 ```yaml
 signatures:
   - func SetOpenAPIInfo(info OpenAPIInfo) error
-  - func AssembleOpenAPI() (jsonDoc []byte, yamlDoc []byte, err error)
+  - func AssembleOpenAPI() (jsonDoc []byte, err error)
 defaults:
   title: Application API
   version: 0.0.0
@@ -20,6 +20,6 @@ errors:
   - conflicting component identity
 handlers:
   - api:openapi-json
-  - api:openapi-yaml
+serialization: decision:openapi-json-only
 requirement: requirement:openapi-fragment-aggregation
 ```

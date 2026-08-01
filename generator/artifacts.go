@@ -16,9 +16,10 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 
 	cbcg "github.com/shibukawa/tinybind-go/configbind/codegen"
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
-// ArtifactKind classifies one generated Go source unit.
+// ArtifactKind classifies one generated output unit.
 type ArtifactKind string
 
 const (
@@ -26,22 +27,54 @@ const (
 	ArtifactSQLTemplate  ArtifactKind = "sql_template"
 	ArtifactBinding      ArtifactKind = "binding"
 	ArtifactConfigBind   ArtifactKind = "configbind"
+	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
+	ArtifactDynamoQuery  ArtifactKind = "dynamo_query"
 	ArtifactOpenAPI      ArtifactKind = "openapi"
+	// ArtifactStylesheet is the component CSS extracted from one template.
+	ArtifactStylesheet ArtifactKind = "stylesheet"
+	// ArtifactScript is the component JavaScript extracted from one template.
+	ArtifactScript ArtifactKind = "script"
 )
 
-// Artifact is one formatted Go source unit and the source file that owns it.
-// The caller maps OutputBase to its own generated file name; nothing is written
-// to disk by the API that produces Artifacts.
+// ArtifactDestination says where an artifact is written, because a stylesheet
+// is served, not compiled.
+type ArtifactDestination string
+
+const (
+	DestinationGoPackage   ArtifactDestination = "go_package"
+	DestinationPublicAsset ArtifactDestination = "public_asset"
+)
+
+// Artifact extensions, without a leading dot.
+const (
+	ExtensionGo  = "go"
+	ExtensionCSS = "css"
+	ExtensionJS  = "js"
+)
+
+// Artifact is one generated output unit and the source file that owns it. The
+// caller maps OutputBase to its own generated file name; nothing is written to
+// disk by the API that produces Artifacts.
+//
+// Go formatting and import correctness apply to a go_package destination only;
+// a public asset is written verbatim.
 type Artifact struct {
 	// SourcePath is the real on-disk path of the owning source. It is empty for
 	// package-wide artifacts.
-	SourcePath string
-	Kind       ArtifactKind
+	SourcePath  string
+	Kind        ArtifactKind
+	Destination ArtifactDestination
 	// OutputBase is the suggested output base name, without directory,
 	// extension, or generated-file suffix.
-	OutputBase  string
+	OutputBase string
+	// Extension is the output file extension without a dot.
+	Extension string
+	// PackageName is meaningful for a go_package destination only.
 	PackageName string
-	GoSource    []byte
+	Content     []byte
+	// PublicPath is the URL a public asset is referenced by. It is empty for a
+	// go_package destination.
+	PublicPath string
 }
 
 // openAPIArtifactBase names the only remaining package-wide artifact.
@@ -60,6 +93,9 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if request.Dir == "" {
 		request.Dir = "."
 	}
+	if err := request.validate(); err != nil {
+		return nil, err
+	}
 	runner := New(request.applyTo(g.Options))
 	normalized, err := runner.Options.normalized()
 	if err != nil {
@@ -73,7 +109,9 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	binding, err := runner.bindingArtifacts(request.Dir)
+	// Every remaining phase reads the same type-checked package.
+	load := newPackageLoad(request.Dir)
+	binding, err := runner.bindingArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate mapping: %w", err)
 	}
@@ -81,7 +119,7 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	config, err := runner.configBindArtifacts(request.Dir)
+	config, err := runner.configBindArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate configbind: %w", err)
 	}
@@ -89,8 +127,24 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	items, err := runner.dynamoItemArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate dynamobind: %w", err)
+	}
+	artifacts = append(artifacts, items...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	queries, err := runner.dynamoQueryArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate dynamobind queries: %w", err)
+	}
+	artifacts = append(artifacts, queries...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if request.OpenAPI && normalized.openAPI {
-		openAPI, err := runner.openAPIArtifact(request.Dir)
+		openAPI, err := runner.openAPIArtifact(load)
 		if err != nil {
 			return nil, fmt.Errorf("generate OpenAPI: %w", err)
 		}
@@ -111,7 +165,22 @@ func (request GenerateRequest) applyTo(base Options) Options {
 	if request.SQLTemplatePattern != "" {
 		options.SQLTemplatePattern = request.SQLTemplatePattern
 	}
+	if request.PublicDir != "" {
+		options.PublicDir = request.PublicDir
+	}
+	if request.PublicURLBase != "" {
+		options.PublicURLBase = request.PublicURLBase
+	}
+	if request.SQLDialect != "" {
+		options.SQLDialect = request.SQLDialect
+	}
 	return options
+}
+
+// validate rejects a request that half-configures the public asset pair, which
+// the option defaults would otherwise silently complete.
+func (request GenerateRequest) validate() error {
+	return checkPublicAssetPairing(request.PublicDir, request.PublicURLBase)
 }
 
 // artifactBase strips every extension from a source base name, so
@@ -132,21 +201,63 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return nil, err
+	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
 		return nil, err
 	}
+	withContext, err := contextExternals(dir)
+	if err != nil {
+		return nil, err
+	}
 	generated := make([][]byte, len(files))
+	assets := make([][]htmlbind.Asset, len(files))
 	for i, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
 			return nil, err
 		}
-		if generated[i], err = g.generateTemplate(file, source, pkg); err != nil {
+		if generated[i], assets[i], err = g.generateTemplate(file, source, pkg, withContext); err != nil {
 			return nil, err
 		}
 	}
-	return splitTemplateArtifacts(pkg, files, generated)
+	artifacts, err := splitTemplateArtifacts(pkg, files, generated)
+	if err != nil {
+		return nil, err
+	}
+	return append(artifacts, assetArtifacts(files, assets)...), nil
+}
+
+// assetArtifacts turns extracted static files into artifacts bound to the
+// template that produced them. Two templates emitting the same file name emit
+// identical bytes, so the duplicate is dropped rather than written twice.
+func assetArtifacts(files []templateFile, assets [][]htmlbind.Asset) []Artifact {
+	var artifacts []Artifact
+	seen := map[string]bool{}
+	for index, file := range files {
+		for _, asset := range assets[index] {
+			if seen[asset.FileName()] {
+				continue
+			}
+			seen[asset.FileName()] = true
+			kind := ArtifactStylesheet
+			if asset.Kind == htmlbind.AssetScript {
+				kind = ArtifactScript
+			}
+			artifacts = append(artifacts, Artifact{
+				SourcePath:  file.path,
+				Kind:        kind,
+				Destination: DestinationPublicAsset,
+				OutputBase:  asset.Base,
+				Extension:   asset.Extension,
+				Content:     asset.Content,
+				PublicPath:  asset.URL,
+			})
+		}
+	}
+	return artifacts
 }
 
 // splitTemplateArtifacts turns each template source into its own artifact.
@@ -206,9 +317,11 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  file.path,
 			Kind:        kind,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(file.path),
+			Extension:   ExtensionGo,
 			PackageName: pkg,
-			GoSource:    source,
+			Content:     source,
 		})
 	}
 	return artifacts, nil
@@ -269,8 +382,8 @@ func dropUnusedImports(source []byte) ([]byte, error) {
 	return formatted, nil
 }
 
-func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
-	plan, err := g.Analyze(dir)
+func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -300,16 +413,18 @@ func (g *Generator) bindingArtifacts(dir string) ([]Artifact, error) {
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  source,
 			Kind:        ArtifactBinding,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
 			PackageName: plan.Package,
-			GoSource:    code,
+			Content:     code,
 		})
 	}
 	return artifacts, nil
 }
 
-func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
-	pkgName, specs, err := AnalyzeConfigBindSources(dir, g.Options)
+func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {
+	pkgName, specs, err := configBindSources(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -335,21 +450,73 @@ func (g *Generator) configBindArtifacts(dir string) ([]Artifact, error) {
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  specs[start].SourcePath,
 			Kind:        ArtifactConfigBind,
+			Destination: DestinationGoPackage,
 			OutputBase:  artifactBase(specs[start].SourcePath),
+			Extension:   ExtensionGo,
 			PackageName: pkgName,
-			GoSource:    code,
+			Content:     code,
 		})
 		start = end
 	}
 	return artifacts, nil
 }
 
-func (g *Generator) openAPIArtifact(dir string) ([]Artifact, error) {
-	doc, err := g.BuildOpenAPI(dir)
+// dynamoItemArtifacts emits one item codec artifact per source file that
+// declares a bound type, so a package with two DynamoDB sources generates two
+// files and neither owns the other's declarations.
+func (g *Generator) dynamoItemArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.featureDisabled(FeatureItemCodec) {
+		return nil, nil
+	}
+	plan, err := analyzeDynamoItems(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := g.Analyze(dir)
+	grouped := map[string][]string{}
+	var order []string
+	for _, item := range plan.Items {
+		if item.Usage == 0 {
+			continue
+		}
+		if _, seen := grouped[item.SourcePath]; !seen {
+			order = append(order, item.SourcePath)
+		}
+		grouped[item.SourcePath] = append(grouped[item.SourcePath], item.Name)
+	}
+	sort.Strings(order)
+	emitTable := !g.Options.featureDisabled(FeatureItemTable)
+	artifacts := make([]Artifact, 0, len(order))
+	for _, source := range order {
+		selected := make(map[string]bool, len(grouped[source]))
+		for _, name := range grouped[source] {
+			selected[name] = true
+		}
+		code, err := emitDynamoSelected(plan, selected, emitTable)
+		if err != nil {
+			return nil, err
+		}
+		if len(code) == 0 {
+			continue
+		}
+		artifacts = append(artifacts, Artifact{
+			SourcePath:  source,
+			Kind:        ArtifactDynamoItem,
+			Destination: DestinationGoPackage,
+			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
+			PackageName: plan.Package,
+			Content:     code,
+		})
+	}
+	return artifacts, nil
+}
+
+func (g *Generator) openAPIArtifact(load *packageLoad) ([]Artifact, error) {
+	doc, err := g.buildOpenAPI(load)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return nil, err
 	}
@@ -359,8 +526,10 @@ func (g *Generator) openAPIArtifact(dir string) ([]Artifact, error) {
 	}
 	return []Artifact{{
 		Kind:        ArtifactOpenAPI,
+		Destination: DestinationGoPackage,
 		OutputBase:  openAPIArtifactBase,
+		Extension:   ExtensionGo,
 		PackageName: plan.Package,
-		GoSource:    code,
+		Content:     code,
 	}}, nil
 }

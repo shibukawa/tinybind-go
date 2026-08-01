@@ -43,17 +43,42 @@ type moduleParser struct {
 
 func (p *moduleParser) parse() (*Module, error) {
 	module := &Module{Pos: Position{Line: 1, Col: 1}, Declarations: []Declaration{}}
+	// pending collects the annotation lines read since the last declaration.
+	var pending []Annotation
 	for {
 		if err := p.skipSpaceAndComments(); err != nil {
 			return nil, err
 		}
 		if p.eof() {
+			if len(pending) > 0 {
+				return nil, p.errAt(p.pos, "annotation is not attached to a declaration")
+			}
 			return module, nil
+		}
+		if p.source[p.pos] == '@' {
+			annotation, err := p.parseAnnotation()
+			if err != nil {
+				return nil, err
+			}
+			for _, existing := range pending {
+				if existing.Name == annotation.Name {
+					return nil, p.errAt(p.pos, "duplicate annotation @"+annotation.Name)
+				}
+			}
+			pending = append(pending, annotation)
+			continue
 		}
 		start := p.pos
 		keyword, err := p.identifier()
 		if err != nil {
 			return nil, err
+		}
+		if len(pending) > 0 {
+			// Only a template declaration carries annotations today, and
+			// dropping them silently would read as enabled behavior.
+			if _, isRoot := p.roots[keyword]; keyword != "export" && !isRoot {
+				return nil, p.errAt(start, "annotation cannot precede a "+keyword+" declaration")
+			}
 		}
 		switch keyword {
 		case "package", "module":
@@ -105,24 +130,13 @@ func (p *moduleParser) parse() (*Module, error) {
 			if err != nil {
 				return nil, err
 			}
-			// A reloadable component is published as an endpoint, so the
-			// modifier follows export rather than standing on its own.
-			reloadable := rootKeyword == "reloadable"
-			if reloadable {
-				if rootKeyword, err = p.identifier(); err != nil {
-					return nil, err
-				}
-			}
 			root, ok := p.roots[rootKeyword]
 			if !ok {
 				return nil, p.errAt(start, "unsupported exported declaration "+strconv.Quote(rootKeyword))
 			}
-			decl, err := p.parseTemplateDecl(root, true, start)
+			decl, err := p.parseTemplateDecl(root, true, start, pending)
 			if err != nil {
 				return nil, err
-			}
-			if reloadable {
-				decl.Reloadable = true
 			}
 			module.Declarations = append(module.Declarations, decl)
 		default:
@@ -130,11 +144,64 @@ func (p *moduleParser) parse() (*Module, error) {
 			if !ok {
 				return nil, p.errAt(start, "unknown root declaration "+strconv.Quote(keyword))
 			}
-			decl, err := p.parseTemplateDecl(root, false, start)
+			decl, err := p.parseTemplateDecl(root, false, start, pending)
 			if err != nil {
 				return nil, err
 			}
 			module.Declarations = append(module.Declarations, decl)
+		}
+		pending = nil
+	}
+}
+
+// parseAnnotation reads one `@name(key: "value", ...)` line. Values are string
+// literals so every annotation argument is validated by the format that owns
+// the name, with a position to report against.
+func (p *moduleParser) parseAnnotation() (Annotation, error) {
+	start := p.pos
+	p.pos++
+	name, err := p.identifier()
+	if err != nil {
+		return Annotation{}, err
+	}
+	if err := requireLowerCamel(name); err != nil {
+		return Annotation{}, p.errAt(p.pos-len(name), err.Error())
+	}
+	annotation := Annotation{Pos: positionAt(p.source, start), Name: name}
+	if !p.accept('(') {
+		return annotation, nil
+	}
+	if p.accept(')') {
+		return annotation, nil
+	}
+	for {
+		p.skipSpaceAndComments()
+		argStart := p.pos
+		argName, err := p.identifier()
+		if err != nil {
+			return Annotation{}, err
+		}
+		if err := requireLowerCamel(argName); err != nil {
+			return Annotation{}, p.errAt(p.pos-len(argName), err.Error())
+		}
+		if err := p.expect(':'); err != nil {
+			return Annotation{}, err
+		}
+		value, err := p.stringLiteral()
+		if err != nil {
+			return Annotation{}, err
+		}
+		for _, existing := range annotation.Args {
+			if existing.Name == argName {
+				return Annotation{}, p.errAt(argStart, "duplicate annotation argument "+argName)
+			}
+		}
+		annotation.Args = append(annotation.Args, AnnotationArg{Pos: positionAt(p.source, argStart), Name: argName, Value: value})
+		if p.accept(')') {
+			return annotation, nil
+		}
+		if err := p.expect(','); err != nil {
+			return Annotation{}, err
 		}
 	}
 }
@@ -215,6 +282,23 @@ func (p *moduleParser) parseEnumDecl(start int) (*EnumDecl, error) {
 }
 
 func (p *moduleParser) parseExternalDecl(start int) (*ExternalDecl, error) {
+	// An external name must be PascalCase, so a lowercase `async` or `live` here
+	// can only be the modifier.
+	async := p.peekIdentifier() == "async"
+	if async {
+		if _, err := p.identifier(); err != nil {
+			return nil, err
+		}
+	}
+	live := p.peekIdentifier() == "live"
+	if live {
+		if _, err := p.identifier(); err != nil {
+			return nil, err
+		}
+		if async {
+			return nil, p.errAt(start, "external cannot be both async and live; a live source already reports failures per delivery")
+		}
+	}
 	name, err := p.identifier()
 	if err != nil {
 		return nil, err
@@ -234,10 +318,10 @@ func (p *moduleParser) parseExternalDecl(start int) (*ExternalDecl, error) {
 		return nil, err
 	}
 	p.optionalSemicolon()
-	return &ExternalDecl{Kind: "template:external", Pos: positionAt(p.source, start), Name: name, Parameters: params, Result: result}, nil
+	return &ExternalDecl{Kind: "template:external", Pos: positionAt(p.source, start), Name: name, Async: async, Live: live, Parameters: params, Result: result}, nil
 }
 
-func (p *moduleParser) parseTemplateDecl(root RootDeclaration, exported bool, start int) (*TemplateDecl, error) {
+func (p *moduleParser) parseTemplateDecl(root RootDeclaration, exported bool, start int, annotations []Annotation) (*TemplateDecl, error) {
 	name, err := p.identifier()
 	if err != nil {
 		return nil, err
@@ -272,7 +356,7 @@ func (p *moduleParser) parseTemplateDecl(root RootDeclaration, exported bool, st
 	}
 	p.pos = context.Offset()
 	p.optionalSemicolon()
-	return &TemplateDecl{Kind: root.NodeType, Pos: positionAt(p.source, start), Exported: exported, Name: name, Parameters: params, Output: output, Body: body}, nil
+	return &TemplateDecl{Kind: root.NodeType, Pos: positionAt(p.source, start), Exported: exported, Annotations: annotations, Name: name, Parameters: params, Output: output, Body: body}, nil
 }
 
 func (p *moduleParser) parseParameters() ([]Parameter, error) {
@@ -313,6 +397,24 @@ func (p *moduleParser) parseParameters() ([]Parameter, error) {
 func (p *moduleParser) parseTypeRef() (TypeRef, error) {
 	p.skipSpaceAndComments()
 	start := p.pos
+	// A type name is PascalCase or one of the primitives, so a lowercase
+	// `async` here can only be the modifier, exactly as it is on an external
+	// declaration.
+	if p.peekIdentifier() == "async" {
+		if _, err := p.identifier(); err != nil {
+			return TypeRef{}, err
+		}
+		inner, err := p.parseTypeRef()
+		if err != nil {
+			return TypeRef{}, err
+		}
+		if inner.Async {
+			return TypeRef{}, p.errAt(start, "async cannot modify another async type")
+		}
+		inner.Async = true
+		inner.Pos = positionAt(p.source, start)
+		return inner, nil
+	}
 	if p.accept('[') {
 		inner, err := p.parseTypeRef()
 		if err != nil {
@@ -320,6 +422,12 @@ func (p *moduleParser) parseTypeRef() (TypeRef, error) {
 		}
 		if err := p.expect(']'); err != nil {
 			return TypeRef{}, err
+		}
+		if inner.Async {
+			// The modifier covers the whole type expression, so there is no
+			// array-of-pending form; a per-item wait is an array of records
+			// each holding an async field.
+			return TypeRef{}, p.errAt(start, "async applies to the whole type; write async [T] rather than [async T]")
 		}
 		inner.Array = true
 		if p.accept('?') {

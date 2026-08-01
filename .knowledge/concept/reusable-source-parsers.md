@@ -16,6 +16,9 @@ components:
     output: map of bare key paths to scalar or primitive-array values
     constraints: decision:toml-shape-constraints
     path: decision:config-file-path-resolution
+    note: >
+      returns values verbatim; ${NAME} expansion belongs to configbind per
+      decision:env-interpolation-layer
   cli:
     input: argv tokens
     output: map of flag keys to raw string values plus positional tokens
@@ -25,6 +28,7 @@ components:
   env:
     input: process environment
     output: map of env names to string values
+    second_consumer: requirement:config-env-interpolation reads the same map
   config_dirs:
     library: system:configdir
     input: vendor_name, tool_name, and file_name from API

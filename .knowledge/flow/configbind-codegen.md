@@ -19,6 +19,18 @@ flow:
         - decision:prefix-table-binding
         - requirement:framework-wrapper-discovery
         - api:generator-call-registration
+    - id: read-doc-comments
+      action: correlate go/types struct fields with AST fields to recover struct and field godoc text
+      refs:
+        - requirement:godoc-config-descriptions
+        - rule:godoc-comment-normalization
+        - decision:godoc-help-precedence
+    - id: backfill-help
+      action: write help:"..." into source struct tags for fields lacking one, then re-read tags
+      refs:
+        - rule:help-tag-backfill
+        - decision:godoc-help-precedence
+        - decision:struct-field-tags
     - id: parse-fields
       action: read fields, supported types, and default|help|opt|enum|secret|arg tags at compile time
       refs:
@@ -58,9 +70,10 @@ flow:
         - concept:config-overlay
         - term:config-key
     - id: emit-definitions
-      action: register one configbind Definition per Bind type and prefix plus one SubCommandDefinition per CLI branch; api:config-scaffold-output renders only Bind fields
+      action: register one configbind Definition per Bind type and prefix plus one SubCommandDefinition per CLI branch; Definition carries Doc from struct godoc; api:config-scaffold-output renders only Bind fields
       refs:
         - requirement:scaffold-generation
+        - requirement:godoc-config-descriptions
         - requirement:modular-package-generation
         - concept:scaffold-templates
         - data:config-scaffold-fragment

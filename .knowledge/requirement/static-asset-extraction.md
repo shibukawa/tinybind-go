@@ -60,9 +60,14 @@ acceptance:
   - a full URL base emits absolute references without changing where files are written
   - configuring only a URL base or only a directory fails with an actionable message
   - a component referencing an external CDN script emits no file
+library_case:
+  covered_here: a component declared in a template file of the generation unit being compiled
+  not_covered: a component a library registers or a template file in another package, which owns no route, no scaffold, and no shell, and therefore cannot reference its own file
+  extension: requirement:component-asset-requirements, which adds the declaration, the embedded table, the statically known required set, and the caller-supplied URL function
+  reported: 2026-07-31 against v0.2.8, where component script had no counterpart to the style path at all; that half closed the same day
 open_questions:
   - whether script blocks bundle per generation unit like styles or emit one file per component
   - default script type and whether module is assumed
   - asset cleanup of files left by removed components
-  - single-binary mode that embeds assets instead of writing them, for requirement:tinygo-wasm targets
+  - single-binary mode that embeds assets instead of writing them, for requirement:tinygo-wasm targets; requirement:component-asset-requirements now carries this one
 ```

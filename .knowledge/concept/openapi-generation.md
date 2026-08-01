@@ -30,6 +30,7 @@ responses:
   - rule:openapi-error-statuses
 diagnostics: requirement:analysis-diagnostics
 validation_tags: rule:openapi-validation-metadata
+documentation_text: rule:openapi-godoc-descriptions
 errors: policy:problem-details
 route_analysis:
   - concept:route-discovery
@@ -39,7 +40,6 @@ artifacts:
   - data:openapi-fragment
   - concept:openapi-embed
   - api:openapi-json
-  - api:openapi-yaml
   - concept:openapi-ui
 goals: requirement:openapi-goals
 pipeline:
@@ -50,6 +50,7 @@ pipeline:
   - validation
   - error mapping
   - OpenAPI
+serialization: decision:openapi-json-only
 related:
   - requirement:modular-package-generation
   - requirement:openapi-fragment-aggregation

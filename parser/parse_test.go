@@ -51,7 +51,13 @@ func TestParsePackage_testdata(t *testing.T) {
 
 			expectedPath := filepath.Join(dir, "expected.json")
 			if *update {
-				if err := os.WriteFile(expectedPath, append(gotJSON, '\n'), 0o644); err != nil {
+				// Written with paths normalized, so the golden does not pin itself to
+				// the checkout that produced it.
+				normalized, err := normalizeGoldenJSON(gotJSON, dir)
+				if err != nil {
+					t.Fatalf("normalize golden: %v", err)
+				}
+				if err := os.WriteFile(expectedPath, append(normalized, '\n'), 0o644); err != nil {
 					t.Fatalf("write golden: %v", err)
 				}
 				return
@@ -201,7 +207,52 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 	if err := json.Unmarshal(b, &bj); err != nil {
 		t.Fatalf("got json: %v", err)
 	}
-	ab, _ := json.Marshal(aj)
-	bb, _ := json.Marshal(bj)
+	ab, _ := json.Marshal(normalizeGoldenPaths(aj))
+	bb, _ := json.Marshal(normalizeGoldenPaths(bj))
 	return bytes.Equal(ab, bb)
+}
+
+// normalizeGoldenJSON strips the fixture directory from the paths in a parse
+// result, leaving the encoding otherwise byte for byte. Re-encoding through a
+// map would reorder every key, so the prefix is removed from the raw bytes.
+func normalizeGoldenJSON(raw []byte, dir string) ([]byte, error) {
+	// ParsePackage reports absolute paths while dir arrives relative to the test.
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	quoted, err := json.Marshal(absolute + string(filepath.Separator))
+	if err != nil {
+		return nil, err
+	}
+	// Drop the surrounding quotes to get the escaped prefix as it appears inside
+	// a JSON string value.
+	prefix := quoted[1 : len(quoted)-1]
+	return bytes.ReplaceAll(raw, prefix, nil), nil
+}
+
+// normalizeGoldenPaths reduces every diagnostic file path to its base name.
+// ParsePackage reports absolute paths, which are correct for a diagnostic but
+// would pin a golden to the checkout that wrote it — a worktree or another
+// machine then fails on the path alone.
+func normalizeGoldenPaths(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, field := range value {
+			if key == "file" {
+				if path, ok := field.(string); ok {
+					value[key] = filepath.Base(path)
+					continue
+				}
+			}
+			value[key] = normalizeGoldenPaths(field)
+		}
+		return value
+	case []any:
+		for index, item := range value {
+			value[index] = normalizeGoldenPaths(item)
+		}
+		return value
+	}
+	return value
 }

@@ -2,11 +2,13 @@
 
 [日本語](README.ja.md)
 
-Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, and SQL packages.
+Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [reloadable components](docs/httpbind_reloadable_componet.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [reloadable components](docs/httpbind_reloadable_componet.md)
 
-Define request/response structs once. The generator emits type-specific binders and writers, so the same model covers **JSON, form, multipart, and query** (plus path / header / cookie via tags). Responses adapt to the client **`Accept`** (and streaming negotiation where used). From the same analysis it also **generates OpenAPI 3.1**, kept in sync with binders and writers. Route registration is discovered by **static analysis of real `net/http` styles** (`HandleFunc`, `Handle`, method values, wrappers, and so on)—not by a separate DSL.
+Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md).
+
+Define request/response structs once. The generator emits type-specific binders and writers, so the same model covers **JSON, form, multipart, and query** (plus path / header / cookie via tags). Responses adapt to the client **`Accept`** (and streaming negotiation where used). From the same analysis it also **generates OpenAPI 3.1** (JSON), kept in sync with binders and writers, with **godoc comments carried into `summary` / `description`**. Route registration is discovered by **static analysis of real `net/http` styles** (`HandleFunc`, `Handle`, method values, wrappers, and so on)—not by a separate DSL.
 
 ```go
 type CreateUserRequest struct {
@@ -113,6 +115,7 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / NewStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
+| `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |
 | `templates/htmlbind/` | Typed, context-safe HTML template compiler |
@@ -126,10 +129,18 @@ _ = stream.Write(ChatEvent{Type: "done"})
 go run ./cmd/tinybind-gen generate -dir ./path/to/package
 ```
 
+Every generated file records a `// tinybind:generated` comment holding the
+SHA-256 of the inputs that produced it, so a run whose package sources,
+templates, `go.mod`, options, and generator binary all hash to the recorded
+value exits without regenerating. `-force` regenerates regardless. See
+[docs/httpbind.md](docs/httpbind.md#skipping-unchanged-packages).
+
 The CLI automatically discovers `.tb.html` and `.tb.sql` files in the target
-package and writes `tinybind_templates_gen.go`. SQL value expressions become
-driver arguments; PostgreSQL-style `$1`, `$2`, … placeholders are generated in
-encounter order:
+package and writes `tinybind_templates_gen.go`. A package containing SQL
+templates must name its database with `-sql-dialect postgresql`, `mysql`, or
+`sqlite`; there is no default. SQL value expressions become driver arguments,
+and placeholders are generated in encounter order in the style that dialect
+requires — `$1`, `$2`, … for PostgreSQL and `?` for MySQL and SQLite:
 
 ```text
 package store

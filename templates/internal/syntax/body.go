@@ -16,11 +16,14 @@ type FormatParser interface {
 type TerminatorKind string
 
 const (
-	TerminatorRoot   TerminatorKind = "root"
-	TerminatorElse   TerminatorKind = "else"
-	TerminatorElseIf TerminatorKind = "else-if"
-	TerminatorEndIf  TerminatorKind = "end-if"
-	TerminatorEndFor TerminatorKind = "end-for"
+	TerminatorRoot     TerminatorKind = "root"
+	TerminatorElse     TerminatorKind = "else"
+	TerminatorElseIf   TerminatorKind = "else-if"
+	TerminatorEndIf    TerminatorKind = "end-if"
+	TerminatorEndFor   TerminatorKind = "end-for"
+	TerminatorFallback TerminatorKind = "fallback"
+	TerminatorRecover  TerminatorKind = "recover"
+	TerminatorEndAwait TerminatorKind = "end-await"
 )
 
 // Terminator is discovered by a format parser and interpreted by the shared
@@ -92,6 +95,19 @@ func (c *BodyContext) ParseEmbedded(fragment Embedded, context string) (Node, *T
 		return nil, &Terminator{Kind: TerminatorEndIf, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
 	case trimmed == "/for":
 		return nil, &Terminator{Kind: TerminatorEndFor, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
+	case trimmed == "fallback":
+		return nil, &Terminator{Kind: TerminatorFallback, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
+	case trimmed == "recover" || strings.HasPrefix(trimmed, "recover "):
+		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "recover"))
+		offset := headerOffset + len(trimmed) - len(header)
+		return nil, &Terminator{Kind: TerminatorRecover, Pos: pos, Header: header, HeaderOffset: offset, ContentOffset: fragment.ContentOffset}, nil
+	case trimmed == "/await":
+		return nil, &Terminator{Kind: TerminatorEndAwait, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
+	case strings.HasPrefix(trimmed, "await "):
+		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "await "))
+		offset := headerOffset + strings.Index(trimmed, header)
+		node, err := c.parseAwait(header, offset, pos, context)
+		return node, nil, err
 	case strings.HasPrefix(trimmed, "if "):
 		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "if "))
 		offset := headerOffset + strings.Index(trimmed, header)
@@ -183,6 +199,131 @@ func (c *BodyContext) parseFor(header string, headerOffset int, pos Position, co
 		return nil, c.ErrorAt(c.offset, "expected {/for}")
 	}
 	return &ForNode{Kind: "template:for", Pos: pos, Context: context, Variable: variable, Index: index, Iterable: iterable, Body: body}, nil
+}
+
+// parseAwait reads one boundary. The clause binds its own asynchronous calls,
+// so the primary subtree's dependencies are readable at the wait site instead
+// of inferred from everything the subtree reaches.
+//
+// One clause covers a settle-once source and a live one alike, because how often
+// a value arrives is what the source declares rather than what the wait site
+// asks for.
+func (c *BodyContext) parseAwait(header string, headerOffset int, pos Position, context string) (*AwaitNode, error) {
+	keyword, end := "await", TerminatorEndAwait
+	node := &AwaitNode{Kind: "template:await", Pos: pos, Context: context}
+	for _, part := range splitTopLevel(header, ',') {
+		text := strings.TrimSpace(part.text)
+		offset := headerOffset + part.offset + (len(part.text) - len(strings.TrimLeftFunc(part.text, unicode.IsSpace)))
+		name, callText, found := strings.Cut(text, "=")
+		if !found {
+			return nil, c.ErrorAt(offset, keyword+" binding syntax is {"+keyword+" name = Call(args)}")
+		}
+		name = strings.TrimSpace(name)
+		if !lowerCamelIdentifier(name) {
+			return nil, c.ErrorAt(offset, keyword+" binding name must be lowerCamelCase")
+		}
+		for _, existing := range node.Bindings {
+			if existing.Name == name {
+				return nil, c.ErrorAt(offset, "duplicate "+keyword+" binding "+name)
+			}
+		}
+		callBody := strings.TrimSpace(callText)
+		callOffset := offset + strings.Index(text, callBody)
+		call, err := ParseExpressionAt(c.filename, callBody, callOffset, c.Position(callOffset))
+		if err != nil {
+			return nil, err
+		}
+		node.Bindings = append(node.Bindings, AwaitBinding{Pos: c.Position(offset), Name: name, Call: call})
+	}
+	if len(node.Bindings) == 0 {
+		return nil, c.ErrorAt(headerOffset, keyword+" needs at least one binding")
+	}
+
+	primary, terminator, err := c.format.ParseBody(c, context)
+	if err != nil {
+		return nil, err
+	}
+	node.Primary = primary
+	// The fallback subtree is what commits first, so a boundary without one
+	// would have nothing to show while its bindings run.
+	if terminator == nil || terminator.Kind != TerminatorFallback {
+		return nil, c.ErrorAt(c.offset, "expected {fallback} inside {"+keyword+"}")
+	}
+	fallback, terminator, err := c.format.ParseBody(c, context)
+	if err != nil {
+		return nil, err
+	}
+	node.Fallback = fallback
+	if terminator == nil {
+		return nil, c.ErrorAt(c.offset, "expected {recover} or {/"+keyword+"}")
+	}
+	switch terminator.Kind {
+	case end:
+		return node, nil
+	case TerminatorRecover:
+		if terminator.Header != "" {
+			if !lowerCamelIdentifier(terminator.Header) {
+				return nil, c.ErrorAt(terminator.HeaderOffset, "recover error name must be lowerCamelCase")
+			}
+			node.ErrorName = terminator.Header
+			node.ErrorPos = c.Position(terminator.HeaderOffset)
+		}
+		node.HasRecover = true
+		recovery, closing, err := c.format.ParseBody(c, context)
+		if err != nil {
+			return nil, err
+		}
+		if closing == nil || closing.Kind != end {
+			return nil, c.ErrorAt(c.offset, "expected {/"+keyword+"} after {recover}")
+		}
+		node.Recover = recovery
+		return node, nil
+	default:
+		return nil, c.ErrorAt(c.offset, "expected {recover} or {/"+keyword+"}")
+	}
+}
+
+// segment is one comma-separated piece of an await header with its offset in
+// that header.
+type segment struct {
+	text   string
+	offset int
+}
+
+// splitTopLevel splits on a separator that is not nested in brackets, quotes,
+// or a call's argument list, so {await a = F(x, y)} stays one binding.
+func splitTopLevel(value string, separator byte) []segment {
+	var out []segment
+	depth := 0
+	quote := byte(0)
+	start := 0
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if quote != 0 {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case separator:
+			if depth == 0 {
+				out = append(out, segment{text: value[start:i], offset: start})
+				start = i + 1
+			}
+		}
+	}
+	return append(out, segment{text: value[start:], offset: start})
 }
 
 func lowerCamelIdentifier(value string) bool {

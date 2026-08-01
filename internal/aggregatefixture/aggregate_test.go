@@ -14,12 +14,9 @@ import (
 )
 
 func TestGeneratedPackageFragmentsAggregate(t *testing.T) {
-	jsonDoc, yamlDoc, err := httpbind.AssembleOpenAPI()
+	jsonDoc, err := httpbind.AssembleOpenAPI()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(yamlDoc) == 0 {
-		t.Fatal("empty assembled YAML")
 	}
 	var document map[string]any
 	if err := json.Unmarshal(jsonDoc, &document); err != nil {

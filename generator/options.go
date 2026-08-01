@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/shibukawa/tinybind-go/parser"
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 // ErrFeatureDisabled is returned when a disabled generator artifact is invoked directly.
@@ -45,6 +46,16 @@ const (
 	FeatureStreaming      Feature = "streaming"
 	FeatureScanRows       Feature = "scan-rows"
 	FeatureMultipartFile  Feature = "multipart-file"
+	// FeatureItemCodec turns off DynamoDB item codec generation entirely.
+	FeatureItemCodec Feature = "item-codec"
+	// FeatureItemTable turns off only the generated table definition, leaving
+	// the codec and the key builder in place. Emitting it is the default,
+	// because it is what makes a key name single-source; a project that manages
+	// tables with IaC and never creates one in Go can drop it.
+	FeatureItemTable Feature = "item-table"
+	// FeatureHelpBackfill writes help tags derived from godoc into config
+	// structs. Disable it to keep hand-written sources untouched.
+	FeatureHelpBackfill Feature = "help-backfill"
 )
 
 // Options configures discovery identities and generated template APIs. A zero
@@ -61,6 +72,15 @@ type Options struct {
 	// applied to file base names. Empty values use the standard patterns.
 	HTMLTemplatePattern string
 	SQLTemplatePattern  string
+	// DynamoTemplatePattern is the base-name glob for DynamoDB query
+	// declarations. An empty value uses DefaultDynamoTemplatePattern.
+	DynamoTemplatePattern string
+	// SQLDialect names the target database for SQL templates: "postgresql",
+	// "mysql", or "sqlite". A run that discovers a SQL template must set it.
+	// There is no default, because an assumed dialect emits placeholders the
+	// target engine rejects, and nothing about the templates reveals the
+	// mistake.
+	SQLDialect string
 	// SQLContextAPI adds Context-resolved wrappers for exported SQL templates.
 	SQLContextAPI bool
 	// SQLContextOnlyAPI publishes only the Context-resolved SQL surface under
@@ -76,9 +96,76 @@ type Options struct {
 	// overriding it must use a browser runtime built for the same prefix,
 	// because the runtime hardcodes it rather than discovering it.
 	DataAttributePrefix string
+	// GeneratedHeaders names header prefixes, beside this module's own, whose
+	// files every discovery pass must skip. A framework generating with tinybind
+	// and branding its output writes a header nothing here recognizes on its own,
+	// and an unrecognized generated registry is analyzed as if a user had written
+	// it: its page registrations become routes, and an HTML page enters an OpenAPI
+	// document. Each entry still requires the conventional "DO NOT EDIT." ending.
+	GeneratedHeaders []string
+	// PreserveTemplateWhitespace keeps the authoring indentation and newlines of
+	// HTML templates in generated static output instead of collapsing each run
+	// to one space. The default collapses, which renders identically and drops
+	// every indentation byte from the generated source and the binary.
+	PreserveTemplateWhitespace bool
+
+	// PublicDir is the filesystem directory receiving the static files
+	// extracted from component style and script blocks. Empty uses
+	// DefaultPublicDir.
+	PublicDir string
+	// PublicURLBase is the URL prefix under which those files are served. It is
+	// either an absolute URL path or a full URL, and is used verbatim either
+	// way, so a CDN base changes the reference and nothing else. Empty uses
+	// DefaultPublicURLBase.
+	//
+	// Neither option is derived from the other, and setting one explicitly
+	// requires setting the other.
+	PublicURLBase string
 
 	DisableFeatures []Feature
 	GenerateAll     bool
+}
+
+const (
+	// DefaultPublicDir receives extracted static assets when a project
+	// configures no directory. Extraction always happens, so a
+	// zero-configuration project still gets working asset URLs.
+	DefaultPublicDir = "public/generated"
+	// DefaultPublicURLBase serves those files when a project configures no URL
+	// base.
+	DefaultPublicURLBase = htmlbind.DefaultPublicURLBase
+)
+
+// ErrPublicAssetPairing reports a public asset configuration that sets only one
+// of the two independent options.
+var ErrPublicAssetPairing = errors.New(
+	"generator: PublicDir and PublicURLBase must be set together; " +
+		"neither is derived from the other, so configure both or leave both empty for " +
+		DefaultPublicDir + " and " + DefaultPublicURLBase)
+
+// resolvedPublicDir is the directory extracted assets are written to.
+func (o Options) resolvedPublicDir() string {
+	if o.PublicDir == "" {
+		return DefaultPublicDir
+	}
+	return o.PublicDir
+}
+
+// resolvedPublicURLBase is the URL prefix extracted assets are referenced by.
+func (o Options) resolvedPublicURLBase() string {
+	if o.PublicURLBase == "" {
+		return DefaultPublicURLBase
+	}
+	return o.PublicURLBase
+}
+
+// checkPublicAssetPairing rejects a half-configured pair rather than inferring
+// the missing half from the other.
+func checkPublicAssetPairing(dir, urlBase string) error {
+	if (dir == "") != (urlBase == "") {
+		return ErrPublicAssetPairing
+	}
+	return nil
 }
 
 // DefaultOptions returns the standard tinybind runtime setup.
@@ -92,10 +179,13 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:     PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath}},
-		FileTypes:           PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
-		HTMLTemplatePattern: DefaultHTMLTemplatePattern,
-		SQLTemplatePattern:  DefaultSQLTemplatePattern,
+		RuntimePackages:       PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath}},
+		FileTypes:             PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
+		HTMLTemplatePattern:   DefaultHTMLTemplatePattern,
+		SQLTemplatePattern:    DefaultSQLTemplatePattern,
+		DynamoTemplatePattern: DefaultDynamoTemplatePattern,
+		PublicDir:             DefaultPublicDir,
+		PublicURLBase:         DefaultPublicURLBase,
 	}
 }
 
@@ -107,7 +197,20 @@ type normalizedOptions struct {
 	openAPI      bool
 }
 
+// featureDisabled reports whether one feature was turned off for this run.
+func (o Options) featureDisabled(feature Feature) bool {
+	for _, disabled := range o.DisableFeatures {
+		if disabled == feature {
+			return true
+		}
+	}
+	return false
+}
+
 func (o Options) normalized() (normalizedOptions, error) {
+	if err := checkPublicAssetPairing(o.PublicDir, o.PublicURLBase); err != nil {
+		return normalizedOptions{}, err
+	}
 	disabled := make(map[Feature]bool, len(o.DisableFeatures))
 	for _, feature := range o.DisableFeatures {
 		disabled[feature] = true
@@ -175,6 +278,8 @@ func (o Options) normalized() (normalizedOptions, error) {
 		}
 	}
 
+	n.parserConfig.GeneratedHeaders = o.GeneratedHeaders
+
 	if !o.FileTypes.Disabled && !disabled[FeatureMultipartFile] {
 		n.fileTypes = append(n.fileTypes, o.FileTypes.Set...)
 	}
@@ -219,6 +324,24 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
 		RowsScanCall(Function(path, "ScanRows"), GenericType("row", 0)),
+		ItemDecodeCall(Function(path, "Load"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "LoadAll"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "Query"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "QueryPage"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "Scan"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "ScanPage"), GenericType("item", 0)),
+		// The write side reads its type from the value argument, not from the
+		// type parameter. Its constraints are the generated interfaces, so
+		// before the first generation the call does not type-check and no
+		// instantiation is recorded; the argument's own type resolves anyway.
+		// Index 2 is the value: the signature is (ctx, table, v, opts...), the
+		// client having moved into the Context.
+		ItemEncodeCall(Function(path, "Store"), ArgumentType("item", 2)),
+		ItemEncodeCall(Function(path, "StoreAll"), ArgumentType("item", 2)),
+		ItemEncodeDecodeCall(Function(path, "StoreReturning"), ArgumentType("item", 2)),
+		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 2)),
+		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 2)),
+		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 2)),
 	}
 	statuses := map[string]int{
 		"BadRequest": 400, "Validation": 400, "Unauthorized": 401, "Forbidden": 403,
@@ -244,6 +367,16 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageDecodeJSON
 	case OperationRowsScan:
 		return UsageScanRows
+	case OperationItemEncode:
+		return UsageEncodeItem
+	case OperationItemDecode:
+		return UsageDecodeItem
+	case OperationItemKey:
+		return UsageItemKey
+	case OperationItemEncodeDecode:
+		return UsageEncodeItem | UsageDecodeItem
+	case OperationItemKeyDecode:
+		return UsageItemKey | UsageDecodeItem
 	default:
 		return 0
 	}
@@ -265,13 +398,16 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureEncodeJSON]
 	case OperationRowsScan:
 		return disabled[FeatureScanRows]
+	case OperationItemEncode, OperationItemDecode, OperationItemKey,
+		OperationItemEncodeDecode, OperationItemKeyDecode:
+		return disabled[FeatureItemCodec]
 	default:
 		return false
 	}
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "decode", "encode", "row", "config"}
+	roles := []string{"request", "response", "stream", "decode", "encode", "row", "item", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source

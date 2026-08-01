@@ -22,7 +22,7 @@ var planPageOpsFill1Plan = &htmlbind.Plan[PageParams]{Ops: []htmlbind.Op[PagePar
 }}
 
 var planPageOpsFill2Plan = &htmlbind.Plan[PageParams]{Ops: []htmlbind.Op[PageParams]{
-	planPageOps.Static("\n  \n  <p>body text</p>\n"),
+	planPageOps.Static("<p>body text</p> "),
 }}
 
 var planPanelOps = htmlbind.Builder[renderPanelParams]{}
@@ -30,20 +30,20 @@ var planPanelOps = htmlbind.Builder[renderPanelParams]{}
 var planPanelPlan = &htmlbind.Plan[renderPanelParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[renderPanelParams]{
-		planPanelOps.Static("\n<section class=\"panel\">\n  <div class=\"head\">"),
+		planPanelOps.Static(" <section class=\"panel\"> <div class=\"head\">"),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Header },
 			[]htmlbind.Op[renderPanelParams]{
 				planPanelOps.Static("<b>"),
 				planPanelOps.Text(func(p renderPanelParams) string { return p.Title }),
 				planPanelOps.Static("</b>"),
 			}),
-		planPanelOps.Static("</div>\n  <div class=\"body\">"),
+		planPanelOps.Static("</div> <div class=\"body\">"),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Children },
 			nil),
-		planPanelOps.Static("</div>\n  "),
+		planPanelOps.Static("</div> "),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Footer },
 			nil),
-		planPanelOps.Static("\n</section>\n"),
+		planPanelOps.Static(" </section> "),
 	},
 }
 
@@ -57,11 +57,11 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static("\n"),
+		planPageOps.Static(" "),
 		planPageOps.Component(func(p PageParams) htmlbind.Fragment {
 			return renderPanel(renderPanelParams{Title: p.Caption, Header: htmlbind.Bind(planPageOpsFill1Plan, p), Children: htmlbind.Bind(planPageOpsFill2Plan, p)})
 		}),
-		planPageOps.Static("\n"),
+		planPageOps.Static(" "),
 	},
 }
 

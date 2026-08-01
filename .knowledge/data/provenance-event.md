@@ -18,12 +18,30 @@ fields:
     type: string
     ref: term:config-source
     description: winning source layer (default, file_toml, env, cli)
-go_shape: '{Key, Value, Place string}'
-helper_return: '[]struct{Key, Value, Place string} or named type alias'
+  - name: Masked
+    type: bool
+    description: >
+      Value is the redaction placeholder rather than the configured value, so a
+      caller re-rendering these records never compares against the mask text
+go_shape: '{Key, Value, Place string, Masked bool, ArrayKey string, Index int}'
+element_detail: requirement:array-of-tables-provenance
+element_fields:
+  - name: ArrayKey
+    type: string
+    description: >
+      the array-of-tables key this record is an element of; empty means the record
+      is not an element, following the empty-means-absent convention already used
+      for the tag fields
+  - name: Index
+    type: int
+    description: element position, so a caller groups and orders a tree without splitting Key on a bracket
 notes:
   - hide mode drops the record instead of returning empty Value
-  - mask mode sets Value to asterisks with length jitter
+  - mask mode sets Value to a fixed-width asterisk run per rule:secret-redaction, never length-jittered
   - show mode sets Value to string form of the effective value
+  - rule:dependent-key-visibility can drop the record before redaction runs
+  - duration Value is the time.Duration String() form
+  - slice position follows rule:config-output-ordering
 used_by:
   - concept:provenance-callback
   - concept:provenance-log-helper

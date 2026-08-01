@@ -1,0 +1,29 @@
+package pages
+
+export component Badge(label: string): html {
+<head>
+<link rel="stylesheet" href="/shared.css" />
+<style>.badge { color: red }</style>
+</head>
+<span class="badge">{label}</span>
+}
+
+export component Note(text: string): html {
+<head>
+<link rel="stylesheet" href="/shared.css" />
+<style>.note { color: blue }</style>
+</head>
+<p class="note">{text}</p>
+}
+
+export component Panel(label: string, text: string): html {
+<div><Badge label={label} /><Note text={text} /></div>
+}
+
+export component Document(label: string, text: string, children: html): html {
+<!DOCTYPE html>
+<html>
+  <head><title>t</title></head>
+  <body><slot required /></body>
+</html>
+}

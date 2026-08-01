@@ -28,10 +28,14 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	htmlTemplatePattern := flags.String("html-template-pattern", templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern), "HTML template file glob")
 	sqlTemplatePattern := flags.String("sql-template-pattern", templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern), "SQL template file glob")
 	dataAttributePrefix := flags.String("data-attribute-prefix", options.DataAttributePrefix, "data attribute namespace for HTML partial updates")
+	publicDir := flags.String("public-dir", "", "directory receiving extracted component assets (default: "+DefaultPublicDir+"; requires -public-url-base)")
+	publicURLBase := flags.String("public-url-base", "", "URL path or full URL prefixing extracted asset names (default: "+DefaultPublicURLBase+"; requires -public-dir)")
+	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
+	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -45,6 +49,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		if *out != "" && !filepath.IsAbs(*out) {
 			*out = filepath.Join(streams.WorkingDirectory, *out)
 		}
+		if *publicDir != "" && !filepath.IsAbs(*publicDir) {
+			*publicDir = filepath.Join(streams.WorkingDirectory, *publicDir)
+		}
 	}
 
 	options.DataAttributePrefix = *dataAttributePrefix
@@ -55,7 +62,10 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		TemplatesName:       *templatesName,
 		HTMLTemplatePattern: *htmlTemplatePattern,
 		SQLTemplatePattern:  *sqlTemplatePattern,
-		Check:               *check, GenerateAll: *generateAll, SQLContextAPI: *sqlContextAPI,
+		PublicDir:           *publicDir,
+		PublicURLBase:       *publicURLBase,
+		SQLDialect:          *sqlDialect,
+		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
 		SQLContextOnlyAPI: *sqlContextOnlyAPI,
 	})
 	if err != nil {
@@ -72,6 +82,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		}
 		fmt.Fprintln(stdout, "ok")
 		return 0
+	}
+	if result.Cached {
+		fmt.Fprintf(stderr, "generate: %s is up to date\n", *dir)
 	}
 	for _, path := range result.Paths() {
 		fmt.Fprintln(stdout, path)

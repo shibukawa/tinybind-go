@@ -532,7 +532,7 @@ func emitBinder(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 
 	hasChecks := false
 	for _, f := range t.Fields {
-		if f.Check.NeedsPresence() {
+		if f.NeedsPresence() {
 			hasChecks = true
 			fmt.Fprintf(b, "\tvar present%s bool\n", f.Name)
 		}
@@ -672,7 +672,7 @@ func quoteStringList(ss []string) string {
 }
 
 func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
-	track := f.Check.NeedsPresence()
+	track := f.NeedsPresence()
 	switch f.Source {
 	case SourcePath:
 		if f.Kind == "string" {
@@ -806,7 +806,7 @@ func emitConvertFromStringIndented(b *bytes.Buffer, f FieldPlan, varName, locati
 func emitValidate(b *bytes.Buffer, t TypePlan) {
 	b.WriteString("\tvar checkFields []httpbind.FieldError\n")
 	for _, f := range t.Fields {
-		if !f.Check.HasRules() {
+		if !f.HasValidation() {
 			continue
 		}
 		loc := checkLocation(f.Source)
@@ -826,7 +826,7 @@ func emitValidate(b *bytes.Buffer, t TypePlan) {
 
 		hasValueConstraints := c.Min != nil || c.Max != nil ||
 			c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
-			len(c.Enum) > 0 || c.Email || c.UUID || c.Date || c.Time || c.DateTime || c.Pattern != ""
+			f.Enum.Set || c.Email || c.UUID || c.Date || c.Time || c.DateTime || c.Pattern != ""
 		if hasValueConstraints {
 			fmt.Fprintf(b, "\tif present%s {\n", f.Name)
 			if c.Min != nil {
@@ -870,15 +870,15 @@ func emitValidate(b *bytes.Buffer, t TypePlan) {
 					b.WriteString("\t\t}\n")
 				}
 			}
-			if len(c.Enum) > 0 {
+			if f.Enum.Set {
 				b.WriteString("\t\t{\n")
 				b.WriteString("\t\t\tenumOK := false\n")
-				for _, v := range c.Enum {
+				for _, v := range f.Enum.Values {
 					lit, _ := defaultGoLiteral(f.Kind, v)
 					fmt.Fprintf(b, "\t\t\tif out.%s == %s {\n\t\t\t\tenumOK = true\n\t\t\t}\n", f.Name, lit)
 				}
 				b.WriteString("\t\t\tif !enumOK {\n")
-				msg := "must be one of: " + joinEnumMsg(c.Enum)
+				msg := "must be one of: " + joinEnumMsg(f.Enum.Values)
 				fmt.Fprintf(b, "\t\t\t\tcheckFields = append(checkFields, httpbind.Field(%q, %q, %q))\n", f.Wire, loc, msg)
 				b.WriteString("\t\t\t}\n")
 				b.WriteString("\t\t}\n")
@@ -927,10 +927,10 @@ func emitValidate(b *bytes.Buffer, t TypePlan) {
 
 func emitDefaults(b *bytes.Buffer, t TypePlan) {
 	for _, f := range t.Fields {
-		if !f.Check.HasDefault {
+		if !f.Default.Set {
 			continue
 		}
-		lit, err := defaultGoLiteral(f.Kind, f.Check.Default)
+		lit, err := defaultGoLiteral(f.Kind, f.Default.Value)
 		if err != nil {
 			continue
 		}

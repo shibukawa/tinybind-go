@@ -59,7 +59,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 	Head:     nil,
 	Boundary: planProfileBoundary,
 	Ops: []htmlbind.Op[ProfileParams]{
-		planProfileOps.Static("\n<article"),
+		planProfileOps.Static(" <article"),
 		planProfileOps.BoundaryAttr(),
 		planProfileOps.BoolAttr("hidden", func(p ProfileParams) bool { return !(p.User.Active) }),
 		planProfileOps.Attr("title", func(p ProfileParams) (string, bool) {
@@ -68,14 +68,14 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 			}
 			return htmlbind.Escape(*(p.User.Nickname)), true
 		}),
-		planProfileOps.Static(">\n  <a"),
+		planProfileOps.Static("> <a"),
 		planProfileOps.Attr("href", func(p ProfileParams) (string, bool) { return htmlbind.Escape(p.User.ProfileURL.String()), true }),
 		planProfileOps.Static(">"),
 		planProfileOps.Text(func(p ProfileParams) string { return p.User.Name }),
-		planProfileOps.Static("</a>\n  "),
+		planProfileOps.Static("</a> "),
 		planProfileOps.If(func(p ProfileParams) bool { return p.User.Active },
 			[]htmlbind.Op[ProfileParams]{
-				planProfileOps.Static("\n    <ul>"),
+				planProfileOps.Static(" <ul>"),
 				htmlbind.For(
 					func(p ProfileParams) []string { return p.User.Tags },
 					func(p ProfileParams, item string, index int) planProfileOpsScope1 {
@@ -88,12 +88,12 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 						planProfileOpsScope1Ops.Text(func(p planProfileOpsScope1) string { return p.Item }),
 						planProfileOpsScope1Ops.Static("</li>"),
 					}),
-				planProfileOps.Static("</ul>\n  "),
+				planProfileOps.Static("</ul> "),
 			},
 			[]htmlbind.Op[ProfileParams]{
-				planProfileOps.Static("\n    <p>inactive</p>\n  "),
+				planProfileOps.Static(" <p>inactive</p> "),
 			}),
-		planProfileOps.Static("\n</article>\n"),
+		planProfileOps.Static(" </article> "),
 	},
 }
 

@@ -148,7 +148,7 @@ func (e *goEmitter) checkReloadable(component *TemplateDecl) error {
 // queryDecodable reports whether a value can travel in a query string
 // deterministically. A record, a slice, and html cannot.
 func queryDecodable(t valueType) bool {
-	if t.kind == kindArray || t.kind == kindRecord || t.kind == kindHTML {
+	if t.kind == kindArray || t.kind == kindRecord || t.kind == kindHTML || t.async {
 		return false
 	}
 	switch t.kind {
@@ -213,7 +213,11 @@ func (e *goEmitter) emitBoundary(component *TemplateDecl, prefix, params, kind s
 	fmt.Fprintf(&e.b, "func %sInput(p %s) string {\n\treturn htmlbind.CanonJoin(\n", prefix, params)
 	for _, parameter := range component.Parameters {
 		t, err := e.c.resolveType(parameter.Type)
-		if err != nil || t.required().kind == kindHTML {
+		// A slot argument belongs to the child boundary, and an async parameter
+		// is a handle rather than a value: neither is an input this component
+		// can be compared by. What either one renders shows up in the frame
+		// validator instead.
+		if err != nil || t.required().kind == kindHTML || t.async {
 			continue
 		}
 		fmt.Fprintf(&e.b, "\t\t%s,\n", canonEncodeCall(t, "p."+goPublicName(parameter.Name)))
@@ -280,7 +284,7 @@ func (e *goEmitter) collectCanonRecords() []valueType {
 		}
 		for _, parameter := range component.Parameters {
 			t, err := e.c.resolveType(parameter.Type)
-			if err != nil {
+			if err != nil || t.async || t.required().kind == kindHTML {
 				continue
 			}
 			collectJSONTypes(types, t, e.c)
@@ -314,6 +318,11 @@ func (e *goEmitter) emitCanonHelpers() {
 		e.b.WriteString("\treturn htmlbind.CanonRecord(htmlbind.CanonJoin(\n")
 		for _, f := range e.c.records[record.name].Fields {
 			ft, _ := e.c.resolveType(f.Type)
+			// An async field is a handle, not a value, on the same terms as an
+			// async parameter.
+			if ft.async || ft.required().kind == kindHTML {
+				continue
+			}
 			fmt.Fprintf(&e.b, "\t\t%s,\n", canonEncodeCall(ft, "value."+goPublicName(f.Name)))
 		}
 		e.b.WriteString("\t))\n}\n\n")

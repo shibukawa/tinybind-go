@@ -18,12 +18,17 @@ example:
   - 'Bind[WebServiceConfig]("webservice") reads [webservice]'
   - nested struct fields use [webservice.child] tables
   - primitive arrays use TOML arrays of scalars
+  - slices of structs use arrays of tables [[prefix.child]]
+  - string values may carry ${NAME}, expanded by configbind after parse
+interpolation:
+  requirement: requirement:config-env-interpolation
+  note: not a TOML feature; decision:env-interpolation-layer keeps it out of the parser
 out_of_scope_v1:
   - YAML
   - JSON config files
   - HCL
   - inline tables
-  - arrays of tables
+  - arrays of inline tables
   - quoted keys
 related:
   - requirement:layered-config-load

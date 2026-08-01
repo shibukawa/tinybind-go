@@ -12,7 +12,9 @@ func TestRenderedOutput(t *testing.T) {
 	if err := htmlbind.Render(&output, Hello(HelloParams{})); err != nil {
 		t.Fatal(err)
 	}
-	want := "\n<!DOCTYPE html>\n<h1>Hello &amp; welcome</h1>\n"
+	// The document body drops its formatting whitespace entirely; the parser
+	// discards a run before the doctype anyway.
+	want := "<!DOCTYPE html><h1>Hello &amp; welcome</h1>"
 	if output.String() != want {
 		t.Fatalf("output = %q, want %q", output.String(), want)
 	}

@@ -38,15 +38,21 @@ options:
   FileTypes: TypePattern set
   HTMLTemplatePattern: base-name glob; empty uses '*.tb.html'
   SQLTemplatePattern: base-name glob; empty uses '*.tb.sql'
+  SQLDialect: data:sql-dialect value; required by requirement:sql-dialect-selection when the run discovers a SQL template, and hashed by rule:generation-input-hash so a dialect change forces regeneration
   SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
+  PreserveTemplateWhitespace: bool; turns off requirement:static-whitespace-normalization so HTML static output keeps authoring indentation byte for byte
   PublicDir: filesystem directory for requirement:static-asset-extraction output; empty uses 'public/generated'
   PublicURLBase: URL path or full URL prefixed to generated asset file names; empty uses '/public/generated'; independent of PublicDir and required together with an explicit PublicDir
   DataAttributePrefix: decision:update-manifest-transport generated data-attribute namespace; empty uses 'tb'
+  BuiltinElements: proposed requirement:builtin-element-registration whitelist closing the decision:builtin-element-syntax hyphenated element space; holds data:builtin-element-definition builtin entries and passthrough names or patterns
+  ScriptContributions: proposed requirement:framework-script-contribution registration set; an always entry reaches every document, an on-demand entry only its builtin element, and each states a global or module load mode
+  HeadMarkerAttribute: proposed requirement:client-managed-head ownership marker written onto merged head contributions at generation time; empty uses the module default
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
   functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]
+  dynamobind: [Load, Store, StoreReturning, Remove, RemoveReturning, Update, QueryPage, Query, Scan, StoreAll, LoadAll] under github.com/shibukawa/tinybind-go/dynamobind, per api:dynamobind-operations
   rule: non-nil Calls.Set replaces all RuntimePackages expansion; CallRegistry.Options merges base expansion and registered wrappers into one explicit Calls snapshot
 wrapper_package:
   arbitrary_name: explicit data:generator-call-pattern
@@ -67,6 +73,7 @@ default_options:
   PublicDir: public/generated
   PublicURLBase: /public/generated
   DataAttributePrefix: tb
+  SQLDialect: unset; DefaultOptions supplies no dialect, because requirement:sql-dialect-selection forbids an implicit one
 zero_options: no discovery identities; CLI capabilities remain subject to rule:generator-feature-disable
 identity_reason:
   use: package import path plus declared name
@@ -88,4 +95,5 @@ related:
   - requirement:configurable-template-file-patterns
   - decision:sql-context-executor-api
   - requirement:custom-framework-generation-profile
+  - requirement:sql-dialect-selection
 ```

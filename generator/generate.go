@@ -25,12 +25,21 @@ func (g *Generator) Analyze(dir string) (*PackagePlan, error) {
 
 // Generate analyzes dir and writes generated source.
 func (g *Generator) Generate(dir, outDir, outName string) (string, error) {
-	plan, err := g.Analyze(dir)
+	return g.generate(newPackageLoad(dir), outDir, outName)
+}
+
+// generate is Generate over a package the run already loaded.
+func (g *Generator) generate(load *packageLoad, outDir, outName string) (string, error) {
+	dir := load.dir
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return "", err
 	}
 	if len(plan.Types) == 0 {
-		return "", fmt.Errorf("no generatable structs in %s", dir)
+		// Wrapped so a caller generating over a whole set of packages can skip the
+		// ones with nothing to bind, which is what the route tree of
+		// routetree.Tree.Packages leaves it holding.
+		return "", fmt.Errorf("%w: no generatable structs in %s", ErrNothingToGenerate, dir)
 	}
 	src, err := Emit(plan)
 	if err != nil {

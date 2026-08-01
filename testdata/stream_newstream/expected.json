@@ -5,7 +5,8 @@
       "path": "/chat",
       "handler": {
         "form": "named",
-        "name": "chatHandler"
+        "name": "chatHandler",
+        "doc": "Preferred incremental streaming path: NewStream + repeated Write."
       },
       "request": "ChatRequest",
       "response": "httpbind.Stream[ChatEvent]",

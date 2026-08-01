@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -9,6 +10,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
 // ParsePackage analyzes Go sources in dir (same package only) and returns
@@ -29,6 +32,16 @@ func ParsePackageWithConfig(dir string, config Config) (*Result, error) {
 	return parseLoadedPackage(pkg, config)
 }
 
+// ParseLoadedPackage analyzes a package that the caller already type-checked.
+// Loading dominates the cost of analysis, so a generator run that needs both
+// routes and type plans loads the package once and shares it.
+func ParseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
+	if pkg == nil {
+		return nil, fmt.Errorf("parser: no loaded package")
+	}
+	return parseLoadedPackage(pkg, config)
+}
+
 // ParsePackageFiles is like ParsePackage but accepts an explicit file list
 // (used by tests when embedding small snippets). Each path must exist.
 func ParsePackageFiles(files []string) (*Result, error) {
@@ -41,15 +54,16 @@ func ParsePackageFiles(files []string) (*Result, error) {
 
 func parseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
 	fset := fileSetFromPackage(pkg)
-	files := orderedSyntaxFiles(pkg)
+	files := orderedSyntaxFiles(pkg, config.GeneratedHeaders)
 	p := &packageParser{
-		fset:   fset,
-		pkg:    pkg,
-		info:   pkg.TypesInfo,
-		files:  files,
-		config: config,
-		funcs:  map[string]*ast.FuncDecl{},
-		types:  map[string]*ast.TypeSpec{},
+		fset:     fset,
+		pkg:      pkg,
+		info:     pkg.TypesInfo,
+		files:    files,
+		config:   config,
+		funcs:    map[string]*ast.FuncDecl{},
+		types:    map[string]*ast.TypeSpec{},
+		typeDocs: map[string]string{},
 	}
 	p.indexDecls()
 	routes, diags := p.discoverRoutes()
@@ -74,14 +88,15 @@ func CheckPackageWithConfig(dir string, config Config) ([]Diagnostic, error) {
 }
 
 type packageParser struct {
-	fset   *token.FileSet
-	pkg    *packages.Package
-	info   *types.Info
-	files  []*ast.File
-	config Config
-	funcs  map[string]*ast.FuncDecl // name -> func (non-method)
-	types  map[string]*ast.TypeSpec
-	diags  []Diagnostic
+	fset     *token.FileSet
+	pkg      *packages.Package
+	info     *types.Info
+	files    []*ast.File
+	config   Config
+	funcs    map[string]*ast.FuncDecl // name -> func (non-method)
+	types    map[string]*ast.TypeSpec
+	typeDocs map[string]string // type name -> godoc text
+	diags    []Diagnostic
 }
 
 func (p *packageParser) indexDecls() {
@@ -104,6 +119,13 @@ func (p *packageParser) indexDecls() {
 				ts, ok := spec.(*ast.TypeSpec)
 				if ok && ts.Name != nil {
 					p.types[ts.Name.Name] = ts
+					// An ungrouped declaration carries its doc on the GenDecl;
+					// a group's own doc describes the group, not each spec.
+					var declDoc *ast.CommentGroup
+					if len(gd.Specs) == 1 {
+						declDoc = gd.Doc
+					}
+					p.typeDocs[ts.Name.Name] = godoc.Text(ts.Doc, declDoc)
 				}
 			}
 		}

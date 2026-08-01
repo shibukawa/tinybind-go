@@ -3,33 +3,56 @@ id: decision:async-boundary-syntax
 type: decision
 title: Await Fallback Recover Syntax
 ---
-Use one three-state boundary syntax for pending, successful, and failed asynchronous component rendering.
+Use one three-state boundary syntax for pending, successful, and failed asynchronous component rendering, with the await clause binding its own results.
 
 ```yaml
 source:
   - concept:html-render-runtime-extensions
   - user syntax discussion 2026-07-22
   - user syntax decision 2026-07-25
-review_gate: approved 2026-07-25
-shape: await { primary subtree } fallback { pending subtree } recover(error) { failure subtree }
+  - user binding decision 2026-07-26
+review_gate: approved 2026-07-25; binding form approved 2026-07-26
+shape: |
+  {await user = LoadUser(id), posts = LoadPosts(id)}
+    primary subtree
+  {fallback}
+    pending subtree
+  {recover err}
+    failure subtree
+  {/await}
 semantics:
-  await: primary subtree may consume requirement:async-external-functions values
-  fallback: emitted and flushed while dependencies are pending
-  recover: replaces fallback when a dependency returns error, panics, or times out
-  error: typed data:async-render-error; raw Go error is unavailable
+  await: binds one or more requirement:async-external-functions calls; the primary subtree reads the bound names
+  fallback: emitted and flushed while dependencies are pending; required, because a boundary always commits something first
+  recover: replaces fallback when a dependency returns error, panics, or times out; optional
+  error: typed data:async-render-error bound by the recover clause; the raw Go error is unavailable
+binding_form:
+  chosen: explicit binding at the wait site, like the loop variable of a for clause
+  rejected: propagating a pending effect through the component call graph until an await clause encloses it
+  reason:
+    - the dependency of a boundary is readable at the boundary instead of inferred from a whole subtree
+    - typing needs no effect system; a bound name is an ordinary typed identifier in the primary scope
+    - an async call outside an await clause is a local error with a precise position
+  consequence: a component cannot make its caller asynchronous; every wait site is written where it is awaited
+scoping:
+  primary: outer scope plus the bound names
+  fallback: outer scope only; the bound names do not exist yet
+  recover: outer scope plus the error name, and never the bound names
+concurrency: bindings of one await clause start together and settle together; the first failure decides the boundary
 compiler:
-  - await clause introduces a boundary that consumes propagated pending effects
   - fallback and recover clauses must be synchronously renderable
-  - recover cannot reference unavailable successful values
-  - nested failure is handled by the nearest enclosing matching recover clause
+  - a nested await clause inside a primary subtree opens its own boundary
+  - an await clause inside a for body opens one boundary per iteration
+  - a requirement:html-slot-syntax slot may not appear in any await clause, because fallback and primary would both render it
   - expected request cancellation and stale partial-update completion bypass recover
-  - enclosing component takes the async render signature in requirement:template-code-generation
   - each boundary yields at most one data:async-boundary-content item after the initial document write
+omitted_recover:
+  decision: the failure leaves the boundary and reaches the caller instead of being absorbed, approved 2026-07-28
+  sync_entry: returns the failure without writing the fallback, because a finished document holding a loading state is a completed lie and nothing is committed yet
+  async_entry: yields the failure with the committed placeholder's boundary ID and ends the sequence, because the alternative is a fallback nothing will ever replace
+  screen: the committed fallback stays until the caller replaces it; a caller that streams is expected to swap the whole document for an error
+  reporting: the original failure still goes to the render error hook, so it stays observable server-side
 naming:
   benefit: await marks the wait site; async stays the external declaration modifier; fallback preserves the pending term; recover describes error UI replacement
   rejected: async clause keyword; it collided with the async external modifier and read as a declaration rather than a wait site
   caveat: unlike Go recover, this clause handles returned errors and timeouts as well as normalized panics
-  alternative: error(error) clause if Go panic association proves misleading
-optional_recover:
-  proposal: allow omission only when a configured safe default preserves fallback and logs the failure
 ```

@@ -3,7 +3,7 @@ id: decision:configbind-supported-types
 type: decision
 title: configbind Supported Field Types
 ---
-v1 field types target web-server options; primitives, primitive arrays, and nested structs are allowed.
+v1 field types target web-server options; primitives, primitive arrays, nested structs, and struct slices are allowed.
 
 ```yaml
 status: accepted
@@ -18,33 +18,72 @@ supported_scalars:
 supported_composites:
   - array of supported scalars only
   - nested struct fields mapped to nested TOML tables
+  - slice of a same-package named struct, mapped to a TOML array of tables
 go_type_hints:
   bool: bool
-  int: int or sized integer TBD
+  int: int and every sized integer, signed or unsigned, per requirement:sized-integer-config-fields
   string: string
   duration: time.Duration
   datetime: time.Time
   url: net/url.URL or string-parsed URL type TBD
   array: '[]T where T is a supported scalar'
   nested_struct: named Go struct fields
+  struct_slice: '[]T where T is a named struct in the same package; []*T is rejected'
+codegen_field_kinds:
+  - FieldString
+  - FieldBool
+  - FieldInt
+  - FieldDuration
+  - FieldStringSlice
+  - FieldStruct
+  - FieldStructSlice
+duration:
+  requirement: requirement:duration-config-fields
+  value_form: rule:duration-value-parsing
+  detection_hazard: >
+    time.Duration has underlying int64, so kind detection must match the named
+    type first or duration silently binds as int
+  array_of_duration: out of scope in v1
+integer:
+  requirement: requirement:sized-integer-config-fields
+  value_form: rule:integer-value-parsing
+  codegen_hazard: >
+    one FieldInt kind for every width makes generated apply narrow a 64-bit
+    parse to int, which fails to compile for int64 and truncates on a 32-bit
+    target
+alias_transparency:
+  requirement: requirement:alias-transparent-type-analysis
+  hazard: an alias of a supported type must classify as that type, not fall through to its underlying form
 out_of_scope_v1:
   - file paths as first-class config value types
   - multipart or file upload handling
   - binary blobs
   - arbitrary nested maps of mixed types
-  - arrays of structs
-  - arrays of tables in TOML
+  - flags or env vars for array-of-tables elements; element values still take
+    outside input through requirement:config-env-interpolation
+  - recursive config structs
   - inline tables in TOML
+  - arrays of inline tables in TOML
   - quoted keys in TOML
 toml_shape: decision:toml-shape-constraints
 rationale:
   - configbind is an option parser for services, not a general file binder
   - primitive arrays cover multi-value flags such as origins or tags
-  - nested structs use standard tables, not inline or table arrays
+  - nested structs use standard tables, never inline tables
+  - repeated settings are data, so struct slices read from arrays of tables
+  - an element count has no CLI or env form, so those layers skip struct slices
+  - a per-value ${NAME} reference injects element secrets without giving the env
+    layer any say over the element count
   - smaller shape simplifies codegen and TinyGo portability
 related:
   - requirement:configbind-product-goals
+  - requirement:sized-integer-config-fields
+  - requirement:alias-transparent-type-analysis
+  - rule:integer-value-parsing
   - requirement:configbind-tinygo
+  - requirement:duration-config-fields
+  - requirement:config-env-interpolation
+  - rule:duration-value-parsing
   - concept:config-struct-mapping
   - decision:toml-shape-constraints
   - rule:toml-shape-validation

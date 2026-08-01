@@ -19,7 +19,6 @@ example: |
 mount_freedom: applications may mount handlers at any path
 related:
   - api:openapi-json
-  - api:openapi-yaml
   - concept:openapi-embed
   - concept:openapi-generation
 ```

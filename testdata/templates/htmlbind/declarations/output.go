@@ -40,11 +40,11 @@ var planLabelPlan = &htmlbind.Plan[LabelParams]{
 	Head:     nil,
 	Boundary: planLabelBoundary,
 	Ops: []htmlbind.Op[LabelParams]{
-		planLabelOps.Static("\n<span"),
+		planLabelOps.Static(" <span"),
 		planLabelOps.BoundaryAttr(),
 		planLabelOps.Static(">"),
 		planLabelOps.Text(func(p LabelParams) string { return Decorate(p.Value, p.Tone) }),
-		planLabelOps.Static("</span>\n"),
+		planLabelOps.Static("</span> "),
 	},
 }
 

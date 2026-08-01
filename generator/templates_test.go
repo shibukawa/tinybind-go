@@ -30,7 +30,9 @@ export statement FindUser(id: int): sql.optional<User> {SELECT id, name FROM use
 			t.Fatal(err)
 		}
 	}
-	path, err := generator.New(generator.DefaultOptions()).GenerateTemplates(dir, dir, "")
+	options := generator.DefaultOptions()
+	options.SQLDialect = "postgresql"
+	path, err := generator.New(options).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 	}
 	var stdout, stderr bytes.Buffer
 	set := generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))
-	exit := set.Run(context.Background(), []string{"generate", "-dir", dir, "-openapi=false", "-sql-context-api"}, generator.CommandIO{
+	exit := set.Run(context.Background(), []string{"generate", "-dir", dir, "-openapi=false", "-sql-context-api", "-sql-dialect=postgresql"}, generator.CommandIO{
 		Stdout: &stdout, Stderr: &stderr,
 	})
 	if exit != 0 {
@@ -135,6 +137,7 @@ export statement Ping(): sql.exec {SELECT 1}`,
 	opts := generator.DefaultOptions()
 	opts.HTMLTemplatePattern = "*.tmpl"
 	opts.SQLTemplatePattern = "*.sqlt"
+	opts.SQLDialect = "postgresql"
 	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +180,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 	set := generator.MustCommandSet(generator.GenerateCommand(generator.DefaultOptions()))
 	exit := set.Run(context.Background(), []string{
 		"generate", "-dir", dir, "-openapi=false",
-		"-html-template-pattern=*.page", "-sql-template-pattern=*.query",
+		"-html-template-pattern=*.page", "-sql-template-pattern=*.query", "-sql-dialect=postgresql",
 	}, generator.CommandIO{Stdout: &stdout, Stderr: &stderr})
 	if exit != 0 {
 		t.Fatalf("exit=%d stderr=%s", exit, stderr.String())
@@ -224,6 +227,7 @@ func Executor(context.Context) (ExecutorInterface, error) { return nil, nil }`,
 	}
 	opts := generator.DefaultOptions()
 	opts.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "fixture/dbctx", Name: "Executor"}
+	opts.SQLDialect = "postgresql"
 	path, err := generator.New(opts).GenerateTemplates(dir, dir, "")
 	if err != nil {
 		t.Fatal(err)

@@ -17,11 +17,17 @@ func GenerateOpenAPI(dir, outDir, outName string) (string, error) {
 
 // GenerateOpenAPI writes OpenAPI generated with this generator's identities.
 func (g *Generator) GenerateOpenAPI(dir, outDir, outName string) (string, error) {
-	doc, err := g.BuildOpenAPI(dir)
+	return g.generateOpenAPI(newPackageLoad(dir), outDir, outName)
+}
+
+// generateOpenAPI is GenerateOpenAPI over a package the run already loaded.
+func (g *Generator) generateOpenAPI(load *packageLoad, outDir, outName string) (string, error) {
+	dir := load.dir
+	doc, err := g.buildOpenAPI(load)
 	if err != nil {
 		return "", err
 	}
-	plan, err := g.Analyze(dir)
+	plan, err := analyzeLoadedPackage(load, g.Options)
 	if err != nil {
 		return "", err
 	}

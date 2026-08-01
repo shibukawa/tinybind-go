@@ -22,6 +22,10 @@ implementation:
   owner: each framework ships its own browser runtime; the generator does not synthesize update logic per project
   hardcoded: protocol details including the decision:update-manifest-transport prefix are compiled into that runtime rather than negotiated
   compatibility: the protocol version in the mode header remains the only negotiated axis
+  script_invoked_action: emit the CSRF token metadata even when no async or partial update capability is present, because a decision:server-action-lowering element posts from script and cannot read a hidden form field
+  script_free_mode: emit neither the runtime script nor the token metadata under decision:script-free-render-mode, where the hidden field carries the token instead
+  async_boundary: include the boundary replacement runtime, which per decision:client-runtime-ownership the caller supplies rather than an api:render-html-chain entry point
+  partial_update: include manifest, delta application, and api:client-component-update runtime
 injection:
   - emit one same-origin external module script after document content or at validated body-end slot
   - emit collision-resistant metadata in head only when required

@@ -27,6 +27,9 @@ retain_holes:
 transport:
   streamed: requirement:streaming-delta-response emits these fields as records, each carrying its own manifest entry
   buffered: a non-streaming response may carry one whole next_manifest instead
+head:
+  carried: the merged tag list of the new composition, per requirement:delta-head-sync
+  was_missing: recorded as a gap on main until this response gained the field
 behavior:
   unchanged: no HTML operation; carry its validator in next_manifest
   incompatible_version: instruct full navigation or return complete HTML

@@ -95,35 +95,57 @@ func discoverTemplateFiles(dir, htmlPattern, sqlPattern string) ([]templateFile,
 }
 
 // GenerateTemplates discovers files using the configured template patterns and
-// writes one Go file containing all generated declarations. It returns an empty
+// writes one Go file containing all generated declarations, plus the static
+// files extracted from component style and script blocks. It returns an empty
 // path when no templates exist.
 func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, error) {
+	path, _, err := g.generateTemplateFiles(dir, outDir, outName)
+	return path, err
+}
+
+// generateTemplateFiles writes the generated Go file and every extracted asset,
+// returning the Go path and the asset paths in generation order.
+func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (string, []string, error) {
 	files, err := discoverTemplateFiles(dir, g.Options.HTMLTemplatePattern, g.Options.SQLTemplatePattern)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(files) == 0 {
-		return "", nil
+		return "", nil, nil
+	}
+	if err := checkPublicAssetPairing(g.Options.PublicDir, g.Options.PublicURLBase); err != nil {
+		return "", nil, err
+	}
+	// The dialect is a configuration error, not a template diagnostic, so it is
+	// reported once against the discovered set and before anything is written.
+	if err := checkSQLDialect(files, g.Options.SQLDialect); err != nil {
+		return "", nil, err
 	}
 	pkg, err := g.templatePackageName(dir, files)
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	withContext, err := contextExternals(dir)
+	if err != nil {
+		return "", nil, err
 	}
 	var generated [][]byte
+	var assets []htmlbind.Asset
 	for _, file := range files {
 		source, err := os.ReadFile(file.path)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		code, err := g.generateTemplate(file, source, pkg)
+		code, extracted, err := g.generateTemplate(file, source, pkg, withContext)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		generated = append(generated, code)
+		assets = append(assets, extracted...)
 	}
 	combined, err := combineGeneratedTemplates(pkg, generated)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if outDir == "" {
 		outDir = dir
@@ -132,17 +154,52 @@ func (g *Generator) GenerateTemplates(dir, outDir, outName string) (string, erro
 		outName = DefaultTemplatesName
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	path := filepath.Join(outDir, outName)
 	if err := os.WriteFile(path, combined, 0o644); err != nil {
-		return "", err
+		return "", nil, err
+	}
+	assetPaths, err := g.writeAssets(assets)
+	if err != nil {
+		return "", nil, err
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return path, nil
+		return path, assetPaths, nil
 	}
-	return abs, nil
+	return abs, assetPaths, nil
+}
+
+// writeAssets writes extracted static files into the configured public
+// directory, exactly as the generator writes Go artifacts. A file name carries
+// no separator, so a written asset cannot escape that directory.
+func (g *Generator) writeAssets(assets []htmlbind.Asset) ([]string, error) {
+	if len(assets) == 0 {
+		return nil, nil
+	}
+	publicDir := g.Options.resolvedPublicDir()
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		return nil, err
+	}
+	written := map[string]bool{}
+	var paths []string
+	for _, asset := range assets {
+		name := asset.FileName()
+		if written[name] {
+			continue
+		}
+		written[name] = true
+		path := filepath.Join(publicDir, name)
+		if err := os.WriteFile(path, asset.Content, 0o644); err != nil {
+			return nil, err
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 // templatePackageName resolves the Go package the generated templates join:
@@ -191,38 +248,68 @@ func (g *Generator) templatePackageName(dir string, files []templateFile) (strin
 }
 
 // generateTemplate compiles one discovered template source with the configured
-// generated API shape. Diagnostics keep the discovered path, so custom input
-// suffixes are reported exactly as they exist on disk.
-func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string) ([]byte, error) {
+// generated API shape, returning the Go source and the static files extracted
+// from it. Diagnostics keep the discovered path, so custom input suffixes are
+// reported exactly as they exist on disk.
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, contextExternals map[string]bool) ([]byte, []htmlbind.Asset, error) {
 	if file.kind == htmlTemplate {
 		module, err := htmlbind.Parse(file.path, source)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return htmlbind.Generate(file.path, source, htmlbind.GenerateOptions{
+		result, err := htmlbind.GenerateModule(file.path, source, htmlbind.GenerateOptions{
 			Package:             pkg,
+			Unit:                artifactBase(file.path),
+			PublicURLBase:       g.Options.resolvedPublicURLBase(),
+			ContextExternals:    contextExternals,
+			PreserveWhitespace:  g.Options.PreserveTemplateWhitespace,
 			DataAttributePrefix: g.Options.DataAttributePrefix,
 		})
+		if err != nil {
+			return nil, nil, err
+		}
+		return result.GoSource, result.Assets, nil
 	}
 	module, err := templatesql.Parse(file.path, source)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := checkTemplatePackage(file.path, module.Package, pkg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	options := templatesql.GenerateOptions{
 		Package:     pkg,
+		Dialect:     g.Options.SQLDialect,
 		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
 		ContextOnly: g.Options.SQLContextOnlyAPI,
 	}
 	if resolver := g.Options.SQLExecutorResolver; resolver != nil {
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
 	}
-	return templatesql.Generate(file.path, source, options)
+	code, err := templatesql.Generate(file.path, source, options)
+	return code, nil, err
+}
+
+// checkSQLDialect validates the configured dialect when the run discovers a SQL
+// template. A package holding only HTML templates needs no dialect.
+func checkSQLDialect(files []templateFile, dialect string) error {
+	found := false
+	for _, file := range files {
+		if file.kind == sqlTemplate {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	if err := templatesql.ValidateDialect(dialect); err != nil {
+		return fmt.Errorf("%w; set Options.SQLDialect or -sql-dialect", err)
+	}
+	return nil
 }
 
 func checkTemplatePackage(filename string, declaration *htmlbind.PackageDecl, pkg string) error {
@@ -254,6 +341,64 @@ func packageName(dir string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// contextExternals names the package-level functions in dir whose first
+// parameter is a context.Context.
+//
+// An external is an ordinary Go function, so the template declaration says
+// nothing about a context. Reading the implementation lets a function that needs
+// one receive it without a second declaration form: write the parameter and it
+// is passed, leave it out and the function is called plainly.
+//
+// An async external gets the boundary's context, which is what lets a call that
+// can abort observe cancellation. A synchronous one gets the render context at
+// the position it occupies, which is what lets a value belonging to the request
+// — a CSRF token, a nonce — render inline without travelling through the
+// parameter struct of every page that needs it.
+//
+// Detection is syntactic on purpose. It runs before the package compiles, so a
+// file that does not parse is skipped rather than failing generation; a call
+// shape that then does not match is an ordinary Go compile error at the
+// generated call site.
+func contextExternals(dir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	found := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, entry.Name()), nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			// A method cannot be an external, so a receiver rules it out.
+			if !ok || function.Recv != nil || function.Name == nil {
+				continue
+			}
+			if takesLeadingContext(function.Type) {
+				found[function.Name.Name] = true
+			}
+		}
+	}
+	return found, nil
+}
+
+func takesLeadingContext(signature *ast.FuncType) bool {
+	if signature.Params == nil || len(signature.Params.List) == 0 {
+		return false
+	}
+	selector, ok := signature.Params.List[0].Type.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Context" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "context"
 }
 
 func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {

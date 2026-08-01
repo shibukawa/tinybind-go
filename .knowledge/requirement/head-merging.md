@@ -17,10 +17,17 @@ allowed_content:
   - link, meta, style, script, and title nodes
   - nothing that belongs in the body
   - style and inline script blocks are authored here but leave through requirement:static-asset-extraction rather than merging inline
+  - every attribute of a contributed node is static text, which is what keeps the set writable before the first body byte
+  noscript:
+    status: accepted into both sets and shipped 2026-07-31, per decision:library-component-seams
+    found: a scriptless-client handoff is one noscript refresh in the head, and this set was what blocked it rather than the missing caller channel
+    children: link, style, and meta only; anything else there is body content
+    the_only_one_with_element_children: every other contributed node accepts static text alone
 static_requirement:
   rule: head contributions are statically known markup, not values computed from request data
   reason: the root head must be written before body streaming, so contributions cannot wait for render results
   dynamic_values: attribute expressions are allowed; which nodes exist is not conditional on request data
+  render_call_exception: requirement:render-time-script-contribution lets a render-call argument add a script contribution, which is available strictly before the head pass and therefore satisfies the reason above; nothing discovered during plan walking qualifies
 collection:
   static_composition: the generation-time call graph yields the contribution set for a fixed composition
   runtime_composition: a slot filled at runtime carries its contributions on its decision:generated-render-plan component value
@@ -29,6 +36,12 @@ collection:
 merge:
   order: root contributions first, then contributors in deterministic composition order
   dedup: identical nodes collapse to one; identity uses element name and normalized attributes
+  granularity:
+    rule: a contribution is carried as one entry per tag, so identity is per tag as dedup above requires
+    was: one concatenated string per contributing component, which collapsed only when two components' whole contributions matched
+    fixed: 2026-07-30 with requirement:head-contribution-provenance; the 'two components declaring the same stylesheet emit one link' acceptance below did not hold before it
+    layers: generation collapses a repeated tag within one member's reachable set, and MergeHead collapses across chain members
+  provenance: requirement:head-contribution-provenance keeps a parallel source list naming the declaring component of each entry
   singleton:
     title: the innermost contributor wins; the root value is the default
     charset_and_viewport: exactly one survives; a conflicting value is a generation error

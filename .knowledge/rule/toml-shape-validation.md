@@ -11,10 +11,13 @@ must_accept:
   - dotted bare keys as nested path sugar
   - nested standard tables under Bind prefix
   - arrays of primitive scalars only
+  - arrays of tables [[key]] as slices of structs
 must_reject:
   - quoted keys
   - inline tables
-  - arrays of tables
+  - a [table] header that reopens an array of tables
+  - a key whose ancestor is an array of tables reached from outside its element
+  - a scalar where the target field is a slice of structs
 on_reject: load error with diagnostics identifying the forbidden construct
 applies_to:
   - flow:config-load

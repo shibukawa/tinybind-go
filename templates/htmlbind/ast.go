@@ -30,6 +30,10 @@ type ExpressionNode = syntax.ExpressionNode
 type IfNode = syntax.IfNode
 type ForNode = syntax.ForNode
 
+type AwaitNode = syntax.AwaitNode
+type AwaitBinding = syntax.AwaitBinding
+type Annotation = syntax.Annotation
+
 type Node = syntax.Node
 
 // Body is the body stored in TemplateDecl.Body.

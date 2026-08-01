@@ -45,7 +45,7 @@ type Delta struct {
 // reuses the browser's existing document shell.
 func RenderDelta(key []byte, known Manifest, wrappers []Wrapper, leaf Fragment) (Delta, error) {
 	collect := &collector{key: key, capture: true}
-	manifest, head, err := renderChainHead(io.Discard, collect, wrappers, leaf)
+	manifest, head, err := collectChain(io.Discard, collect, wrappers, leaf, nil)
 	if err != nil {
 		return Delta{}, err
 	}

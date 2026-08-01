@@ -17,10 +17,19 @@ const (
 	OperationJSONDecode          CallOperation = "json_decode"
 	OperationJSONEncode          CallOperation = "json_encode"
 	OperationRowsScan            CallOperation = "rows_scan"
-	OperationConfigBind          CallOperation = "config_bind"
-	OperationConfigSubCommand    CallOperation = "config_subcommand"
-	OperationRouteRegister       CallOperation = "route_register"
-	OperationErrorResponse       CallOperation = "error_response"
+	OperationItemEncode          CallOperation = "item_encode"
+	OperationItemDecode          CallOperation = "item_decode"
+	OperationItemKey             CallOperation = "item_key"
+	// OperationItemEncodeDecode is a write that reads back what it replaced, and
+	// OperationItemKeyDecode a delete that does. One call needs two generated
+	// methods, and a call target carries exactly one operation, so the pair gets
+	// its own operation rather than two patterns for one function.
+	OperationItemEncodeDecode CallOperation = "item_encode_decode"
+	OperationItemKeyDecode    CallOperation = "item_key_decode"
+	OperationConfigBind       CallOperation = "config_bind"
+	OperationConfigSubCommand CallOperation = "config_subcommand"
+	OperationRouteRegister    CallOperation = "route_register"
+	OperationErrorResponse    CallOperation = "error_response"
 )
 
 // CallTarget identifies either a package function or a named-receiver method.
@@ -151,6 +160,33 @@ func JSONEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern
 // RowsScanCall declares a SQL row scanner wrapper.
 func RowsScanCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationRowsScan, target, options...)
+}
+
+// ItemEncodeCall declares a DynamoDB item writer wrapper.
+func ItemEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationItemEncode, target, options...)
+}
+
+// ItemDecodeCall declares a DynamoDB item reader wrapper.
+func ItemDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationItemDecode, target, options...)
+}
+
+// ItemKeyCall declares a wrapper that needs only a type's primary key.
+func ItemKeyCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationItemKey, target, options...)
+}
+
+// ItemEncodeDecodeCall declares a wrapper that writes an item and decodes the
+// item it replaced.
+func ItemEncodeDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationItemEncodeDecode, target, options...)
+}
+
+// ItemKeyDecodeCall declares a wrapper that deletes by key and decodes the item
+// it deleted.
+func ItemKeyDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationItemKeyDecode, target, options...)
 }
 
 // ConfigBindCall declares a configbind registration wrapper.
@@ -310,7 +346,9 @@ func supportedCallOperation(operation CallOperation) bool {
 	case OperationRequestBind, OperationResponseWrite, OperationResponseWriteStatus,
 		OperationStreamCreate, OperationJSONDecode, OperationJSONEncode,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
-		OperationRouteRegister, OperationErrorResponse:
+		OperationRouteRegister, OperationErrorResponse,
+		OperationItemEncode, OperationItemDecode, OperationItemKey,
+		OperationItemEncodeDecode, OperationItemKeyDecode:
 		return true
 	default:
 		return false
@@ -333,6 +371,9 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"encode"}, nil
 	case OperationRowsScan:
 		return []string{"row"}, nil
+	case OperationItemEncode, OperationItemDecode, OperationItemKey,
+		OperationItemEncodeDecode, OperationItemKeyDecode:
+		return []string{"item"}, nil
 	case OperationConfigBind:
 		return []string{"config"}, []string{"prefix"}
 	case OperationConfigSubCommand:

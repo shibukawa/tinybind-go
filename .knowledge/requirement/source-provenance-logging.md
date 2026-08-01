@@ -3,7 +3,7 @@ id: requirement:source-provenance-logging
 type: requirement
 title: Source Provenance Logging
 ---
-Log helpers report effective Bind keys as {Key, Value, Place} with secret redaction.
+Log helpers report effective Bind keys as an ordered {Key, Value, Place} slice with secret redaction and dependency filtering.
 
 ```yaml
 priority: must
@@ -17,6 +17,8 @@ record_fields:
   - Place: winning source layer
 secret_policy: rule:secret-redaction
 secret_tag: 'secret:"hide|mask|show"'
+dependency_policy: rule:dependent-key-visibility
+ordering_policy: rule:config-output-ordering
 auto_mask_key_tokens:
   - password
   - secret
@@ -40,15 +42,21 @@ non_goals:
 related:
   - concept:provenance-callback
   - concept:provenance-log-helper
+  - api:configbind-provenance
   - data:provenance-event
   - decision:struct-field-tags
+  - requirement:dependent-field-visibility
+  - requirement:deterministic-config-output-order
+  - rule:dependent-key-visibility
+  - rule:config-output-ordering
   - rule:secret-redaction
   - term:config-key
   - term:config-source
   - rule:source-precedence
   - flow:config-load
 acceptance:
-  - helper returns []{Key, Value, Place}
+  - helper returns []{Key, Value, Place} in registration then declaration order
+  - a key whose dependon parent is empty or false is absent from the slice
   - Place distinguishes default vs file vs env vs CLI
   - secret:"hide" omits the key from the slice
   - secret:"mask" returns asterisk Value with length jitter around 5

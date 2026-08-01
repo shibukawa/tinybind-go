@@ -13,6 +13,10 @@ symbol_identity: rule:go-types-symbol-identity
 must_be: github.com/shibukawa/tinybind-go.Bind
 reject: same-named Bind from other packages
 alias_ok: true
+scope:
+  reads: every call site in the package being analyzed
+  consults_no_registration: a handler needs no discovered registration for its request model to be found, which is why requirement:action-request-binding is a package list rather than a registration-site list
+  skips: rule:generated-source-not-discovered
 related:
   - api:bind
   - concept:request-binding

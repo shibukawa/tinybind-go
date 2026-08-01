@@ -18,6 +18,7 @@ extensions:
   - requirement:nested-layout-composition
   - requirement:component-output-cache
   - requirement:async-external-functions
+  - requirement:awaitable-parameters
   - requirement:suspense-html-streaming
   - requirement:chain-render-pipeline
   - requirement:head-merging
@@ -38,14 +39,24 @@ two_mechanisms:
   component_redraw: the browser names one instance and supplies its inputs, for deliberate region reloads
   distinction: the first needs identity derivation and validators; the second needs neither
   action_response: requirement:action-response-update reuses the second shape from a mutating endpoint, so acting and refreshing cost one round trip
+  - requirement:fragment-capability-introspection
+  - requirement:client-managed-head
 runtime_flow: flow:suspense-html-render
+declaration_syntax:
+  annotations: decision:template-annotation-syntax
+  cache: decision:cache-component-declaration
+  await: decision:async-boundary-syntax
+cache_store: api:cache-store
 partial_update_flow: flow:html-partial-update
 client_apis:
   - api:client-component-update
   - api:client-navigate
 component_analysis: decision:component-capability-lowering
 dom_application: decision:dom-application-strategy
+client_runtime: decision:client-runtime-ownership
 route_generation: concept:filesystem-html-routing
+follow_on:
+  live_updates: concept:live-boundary-updates extends the one-shot await boundary into a repeatedly re-rendered one, and depends on both the async and partial-update halves of this concept
 scope:
   - preserve generated, statically checked rendering
   - add request-time composition without runtime template parsing

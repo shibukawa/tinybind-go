@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -61,6 +62,7 @@ func NewBuilder(style PlaceholderStyle) Builder {
 // emitting its placeholder is a single operation, so numbering always matches
 // argument order.
 func (b *Builder) Arg(value any) {
+	value = bindValue(value)
 	if b.style == Question {
 		b.WriteByte('?')
 		b.args = append(b.args, value)
@@ -69,6 +71,23 @@ func (b *Builder) Arg(value any) {
 	b.args = append(b.args, value)
 	b.WriteByte('$')
 	b.WriteString(strconv.Itoa(len(b.args)))
+}
+
+// bindValue converts a value database/sql cannot carry into one it can. Only
+// url.URL needs this: driver.DefaultParameterConverter rejects a struct, and
+// url.URL implements neither driver.Valuer nor a text form Scan can reverse.
+// Handling it here also covers optional parameters and AppendValues.
+func bindValue(value any) any {
+	switch v := value.(type) {
+	case url.URL:
+		return v.String()
+	case *url.URL:
+		if v == nil {
+			return nil
+		}
+		return v.String()
+	}
+	return value
 }
 
 // Statement returns the accumulated SQL and arguments.

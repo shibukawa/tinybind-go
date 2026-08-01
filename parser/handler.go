@@ -3,6 +3,8 @@ package parser
 import (
 	"go/ast"
 	"go/token"
+
+	"github.com/shibukawa/tinybind-go/internal/godoc"
 )
 
 // resolveHandler classifies the leaf expression and returns its body for analysis.
@@ -13,7 +15,7 @@ func (p *packageParser) resolveHandler(leaf ast.Expr) (Handler, *ast.BlockStmt) 
 		return Handler{Form: "inline"}, e.Body
 	case *ast.Ident:
 		if fd, ok := p.funcs[e.Name]; ok {
-			return Handler{Form: "named", Name: e.Name}, fd.Body
+			return Handler{Form: "named", Name: e.Name, Doc: godoc.Text(fd.Doc)}, fd.Body
 		}
 		// unknown named reference in package — still record as named without body
 		return Handler{Form: "named", Name: e.Name}, nil
@@ -50,8 +52,15 @@ func (p *packageParser) resolveStructHandler(expr ast.Expr) (Handler, *ast.Block
 	if typeName == "" {
 		return Handler{}, nil
 	}
-	body := p.findServeHTTP(typeName)
-	return Handler{Form: "struct", Name: typeName}, body
+	serve := p.findServeHTTP(typeName)
+	handler := Handler{Form: "struct", Name: typeName, Doc: p.typeDocs[typeName]}
+	if handler.Doc == "" && serve != nil {
+		handler.Doc = godoc.Text(serve.Doc)
+	}
+	if serve == nil {
+		return handler, nil
+	}
+	return handler, serve.Body
 }
 
 func typeNameOf(expr ast.Expr) string {
@@ -69,7 +78,7 @@ func typeNameOf(expr ast.Expr) string {
 	return ""
 }
 
-func (p *packageParser) findServeHTTP(typeName string) *ast.BlockStmt {
+func (p *packageParser) findServeHTTP(typeName string) *ast.FuncDecl {
 	for _, f := range p.files {
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
@@ -77,7 +86,7 @@ func (p *packageParser) findServeHTTP(typeName string) *ast.BlockStmt {
 				continue
 			}
 			if recvTypeName(fd.Recv) == typeName {
-				return fd.Body
+				return fd
 			}
 		}
 	}

@@ -73,6 +73,13 @@ func TestParserDiagnostics(t *testing.T) {
 		{"mismatched tag", `component Bad(): html {<div></span>}`, "expected closing tag </div>"},
 		{"control in attribute", `component Bad(ok: bool): html {<p class="{if ok}x{/if}">x</p>}`, "control blocks are forbidden in attributes"},
 		{"unknown root", `statement Bad(): sql.exec {SELECT 1}`, "unknown root declaration"},
+		{"raw text names its element", `component Bad(): html {<script>{js.}</script>}`, "inside <script> content"},
+		{"raw text names its escapes", `component Bad(): html {<style>{css.}</style>}`, "insert a value with RawCSS"},
+		{
+			"shell head names the contribution form",
+			"component Bad(): html {<html><head><script>{a.}</script></head><body><p>x</p></body></html>}",
+			"a contribution, whose script and style bodies are verbatim",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,4 +140,95 @@ func TestDiagnosticPositionUsesWholeFile(t *testing.T) {
 	if parseErr.Line != 4 {
 		t.Fatalf("diagnostic line = %d, want 4: %v", parseErr.Line, err)
 	}
+}
+
+// TestRawTextBracesStayAuthoredContent covers rule:raw-text-insertion-gate: a
+// brace inside script or style content belongs to the authored language unless
+// it opens one of the recognized insertion shapes.
+func TestRawTextBracesStayAuthoredContent(t *testing.T) {
+	authored := []struct {
+		name    string
+		open    string
+		close   string
+		content string
+	}{
+		{"empty block", "<script>", "</script>", `class X {}`},
+		{"block on its own line", "<script>", "</script>", "function f() {\n  return 1\n}"},
+		{"minified function", "<script>", "</script>", `function f(){return 1}`},
+		{"object literal", "<script>", "</script>", `const o = { a: 1 };`},
+		{"numeric key", "<script>", "</script>", `const o = {0: 'a'};`},
+		{"multiple shorthands", "<script>", "</script>", `const o = {a, b};`},
+		{"method body assigning this", "<script>", "</script>", `class C { m() { this.v = 1; } }`},
+		{"single statement block", "<script>", "</script>", `if (x) { render() }`},
+		{"template literal placeholder", "<script>", "</script>", "const s = `hi ${name}`;"},
+		{"declaration block", "<style>", "</style>", `.a { color: red; }`},
+		{"minified declaration", "<style>", "</style>", `.a{color:red}`},
+		{"nested at-rule", "<style>", "</style>", "@media print {\n.a { color: #000; }\n}"},
+		{"json script", `<script type="speculationrules">`, "</script>", `{"prerender": [{"where": {}}]}`},
+	}
+	for _, test := range authored {
+		t.Run(test.name, func(t *testing.T) {
+			source := "component W(): html {" + test.open + test.content + test.close + "}"
+			module, err := htmlbind.Parse("raw.txt", []byte(source))
+			if err != nil {
+				t.Fatalf("authored content did not survive: %v", err)
+			}
+			if got := rawTextOf(t, module); got != test.content {
+				t.Fatalf("raw text = %q, want %q", got, test.content)
+			}
+		})
+	}
+}
+
+// TestRawTextInsertionShapes covers the other side of the same rule: every shape
+// the gate recognizes still reaches the shared expression parser.
+func TestRawTextInsertionShapes(t *testing.T) {
+	shapes := []struct {
+		name string
+		body string
+	}{
+		{"bare value", `<script>{js}</script>`},
+		{"member access", `<script>{cfg.js}</script>`},
+		{"call", `<script>{JsonForScript(payload)}</script>`},
+		{"parenthesized expression", `<script>{(ok ? a : b)}</script>`},
+		{"style call", `<style>{RawCSS(css)}</style>`},
+		{"control block", `<script>{if ok}console.log(1){/if}</script>`},
+	}
+	for _, test := range shapes {
+		t.Run(test.name, func(t *testing.T) {
+			source := "component W(): html {" + test.body + "}"
+			module, err := htmlbind.Parse("raw.txt", []byte(source))
+			if err != nil {
+				// A shape the gate accepts may still fail type analysis, which is
+				// the point: it reaches the compiler instead of becoming text.
+				t.Fatalf("recognized shape failed to parse: %v", err)
+			}
+			if got := rawTextOf(t, module); strings.Contains(got, "{") {
+				t.Fatalf("raw text = %q, want the insertion parsed rather than kept as text", got)
+			}
+		})
+	}
+}
+
+// rawTextOf concatenates every text node of the module's single component.
+func rawTextOf(t *testing.T, module *htmlbind.Module) string {
+	t.Helper()
+	decl, ok := module.Declarations[0].(*htmlbind.TemplateDecl)
+	if !ok {
+		t.Fatalf("declaration type = %T", module.Declarations[0])
+	}
+	var out strings.Builder
+	var walk func(nodes []htmlbind.Node)
+	walk = func(nodes []htmlbind.Node) {
+		for _, node := range nodes {
+			switch node := node.(type) {
+			case *htmlbind.TextNode:
+				out.WriteString(node.Text)
+			case *htmlbind.ElementNode:
+				walk(node.Children)
+			}
+		}
+	}
+	walk(decl.Body.(htmlbind.Body))
+	return out.String()
 }

@@ -11,9 +11,10 @@ order:
   - run validateXxx on bound values
   - apply defaults for still-absent values
   - return value or error
+default_source: default tag per rule:default-tag-semantics; check carries only failing rules
 rationale:
   - check before default lets defaults sit outside valid ranges as sentinels
-  - example: min=1 with default=-1 distinguishes undefined (becomes -1) from explicit invalid -1 (fails min)
+  - example: 'check:"min=1" default:"-1"' distinguishes undefined (becomes -1) from explicit invalid -1 (fails min)
   - default-first would validate the sentinel and reject legitimate absences
 validate_presence:
   optional_absent: skip value constraints (min/max/minlen/format/enum/pattern) when field absent
@@ -53,4 +54,5 @@ related:
   - decision:reflection-free
   - rule:check-required-semantics
   - rule:check-v1-rule-set
+  - rule:default-tag-semantics
 ```

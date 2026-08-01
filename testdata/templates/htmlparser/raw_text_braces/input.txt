@@ -1,0 +1,16 @@
+component Widget(payload: Payload, css: string, ok: bool): html {
+<style>
+.badge { color: red; }
+.badge::after{content:"{"}
+</style>
+<script>
+class Counter extends HTMLElement {
+  connectedCallback() { this.textContent = 'hi'; }
+}
+const shorthand = {{name}};
+const template = `hi ${name}`;
+window.payload = {JsonForScript(payload)};
+</script>
+<style>{RawCSS(css)}</style>
+<script>{if ok}console.log('on'){/if}</script>
+}

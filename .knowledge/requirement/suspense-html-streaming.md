@@ -36,8 +36,10 @@ ordering:
   - replacements may be yielded in completion order
   - each boundary updates at most once
   - the returned sequence stays open until all request-owned boundaries finish or cancel
+  - proposed requirement:live-boundary-rendering is the one boundary kind that updates repeatedly, and it does so on a separate request rather than by extending this one
 safety:
   - generated IDs are unique, opaque, and safe for HTML and script use
+  - proposed requirement:client-managed-head raises that uniqueness to the document lifetime, because a navigation inserts boundaries into a document that may still hold earlier ones
   - resolved content is emitted as template content, never interpolated into script source
   - recover content receives only safe public error fields; raw Go errors remain server-side
   - update helper is fixed trusted runtime code loaded through requirement:html-runtime-bootstrap
@@ -45,7 +47,7 @@ safety:
   - flushing remains correct when the caller wraps the writer in a compressing encoder
 failure:
   before_commit: yield zero data:async-boundary-content with the error and end the sequence
-  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy
+  after_fallback_commit: yield recover content; if recovery rendering fails, keep fallback and apply outer or server policy; a clause with no recover subtree yields the unrecovered failure and ends the sequence
   http_status: once fallback commits the response, failure cannot change the already-sent status; report through recover UI and server observability
   cancellation: do not yield recover content for expected request cancellation or superseded boundary revision
 acceptance:
@@ -53,10 +55,28 @@ acceptance:
   - success yields primary content the caller appends without rewriting earlier bytes
   - async failure replaces fallback with recover content without exposing internal error details
   - client disconnect or early consumer stop cancels pending request work
+markup:
+  placeholder: one custom element carrying the opaque boundary ID and holding the fallback subtree, laid out transparently so it adds no box
+  completion: an inert template element referencing the same boundary ID, written after the initial document; the caller writes this framing around the fragment the module yields
+  commit_marker: an empty custom element written immediately after the template's closing tag, naming the same boundary ID
+  terminal_marker: one inert element written as the last bytes of the response when the sequence exits, naming whether anything more is coming, per rule:stream-termination-marker
+  runtime: a client script defining the marker element and applying a boundary from its connected callback; decision:client-runtime-ownership makes supplying it the caller's responsibility instead of an api:render-html-chain prepend, and makes the marker rule a normative protocol requirement rather than a property of one bundled script
+  no_runtime: a response whose client never loads that script keeps its committed fallback as the final content
+commit_marker_rationale:
+  problem: an HTML parser inserts an element when it reads the start tag, so a runtime watching for the template could read one whose content had not arrived
+  observed: with the template start tag delivered in its own network chunk, a mutation-observer runtime replaced the placeholder with empty content and removed the template, losing the fallback as well as the result
+  invisible_in_development: a small completion arrives in one chunk and parses in one task, so the failure only appears once a proxy, TLS record, or compressing encoder splits the bytes
+  fix: drive the swap from a marker that follows the closing tag in the byte stream, so the template is complete however the bytes were chunked
+  promptness: the marker's connected callback runs during parsing, so the swap is as immediate as an inline script would be
+  csp: the completion chunk still carries no script, so no nonce and no unsafe-inline is required
+  truncated_stream: a completion whose marker never arrives is simply not applied, leaving the committed fallback
+  truncation_is_invisible: the page cannot detect that outcome, because a truncated chunked document parses to end of file and fires DOMContentLoaded and load with no error; rule:stream-termination-marker adds the terminal marker precisely so its absence is the signal
+no_javascript:
+  behavior: the committed fallback stays visible and completions are inert templates
+  alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients
+recover_omitted: decision:async-boundary-syntax ends the sequence with the unrecovered failure carrying the committed placeholder's boundary ID; the fallback stays on screen until the caller's runtime replaces the document, and the render error hook still sees the original error
+multiple_dependencies: the first failing binding of one clause decides the boundary; siblings are cancelled and not aggregated
 open_questions:
-  - exact placeholder markup and update helper delivery
   - Content Security Policy nonce or external-script integration
-  - default behavior when recover clause is omitted
-  - multiple dependency failure selection and aggregation
-  - browser behavior without JavaScript
+  - serving the update runtime as a cacheable external module instead of an inline head script
 ```

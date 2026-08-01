@@ -46,6 +46,7 @@ func customFrameworkOptions(t *testing.T) generator.Options {
 	options.SQLTemplatePattern = "*.pw.sql"
 	options.SQLContextOnlyAPI = true
 	options.SQLExecutorResolver = &generator.SymbolPattern{PackagePath: "tempmod/pw", Name: "SQLExecutor"}
+	options.SQLDialect = "postgresql"
 	return options
 }
 
@@ -136,7 +137,7 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 		t.Fatalf("binding artifact base = %q, want handler", base)
 	}
 
-	html := byKind[generator.ArtifactHTMLTemplate][0].GoSource
+	html := byKind[generator.ArtifactHTMLTemplate][0].Content
 	for _, want := range []string{
 		"type UserPageParams struct {",
 		"func UserPage(params UserPageParams) htmlbind.Fragment",
@@ -149,7 +150,7 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 		t.Fatalf("HTML artifact is not HTTP independent:\n%s", html)
 	}
 
-	sql := byKind[generator.ArtifactSQLTemplate][0].GoSource
+	sql := byKind[generator.ArtifactSQLTemplate][0].Content
 	for _, want := range []string{
 		"func FindUser(ctx context.Context, id int) (UserRow, error)",
 		"func BuildFindUser(id int) (_tinybindsql.Statement, error)",
@@ -163,7 +164,7 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 		t.Fatalf("SQL artifact still exposes a Context wrapper:\n%s", sql)
 	}
 
-	config := byKind[generator.ArtifactConfigBind][0].GoSource
+	config := byKind[generator.ArtifactConfigBind][0].Content
 	for _, want := range []string{`"generate-config"`, `"write merged configuration scaffolds"`} {
 		if !bytes.Contains(config, []byte(want)) {
 			t.Fatalf("configbind artifact lacks %q:\n%s", want, config)
@@ -178,8 +179,11 @@ func TestCustomFrameworkGenerationProfile(t *testing.T) {
 func writeArtifacts(t *testing.T, dir string, artifacts []generator.Artifact) {
 	t.Helper()
 	for _, artifact := range artifacts {
+		if artifact.Destination != generator.DestinationGoPackage {
+			continue
+		}
 		name := artifact.OutputBase + "_pw_gen.go"
-		if err := os.WriteFile(filepath.Join(dir, name), artifact.GoSource, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), artifact.Content, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -215,7 +219,7 @@ func TestCustomFrameworkArtifactsAreDeterministic(t *testing.T) {
 		if first[i].SourcePath != second[i].SourcePath || first[i].Kind != second[i].Kind {
 			t.Fatalf("artifact %d identity changed: %+v vs %+v", i, first[i], second[i])
 		}
-		if !bytes.Equal(first[i].GoSource, second[i].GoSource) {
+		if !bytes.Equal(first[i].Content, second[i].Content) {
 			t.Fatalf("artifact %s is not byte-identical across runs", first[i].OutputBase)
 		}
 	}
@@ -295,8 +299,8 @@ func TestGenerateArtifactsUsesDefaultTemplateSuffixes(t *testing.T) {
 		if filepath.Base(artifact.SourcePath) != "page.tb.html" {
 			t.Fatalf("owner = %q", artifact.SourcePath)
 		}
-		if !bytes.Contains(artifact.GoSource, []byte("func Page(params PageParams) htmlbind.Fragment")) {
-			t.Fatalf("generated shape changed:\n%s", artifact.GoSource)
+		if !bytes.Contains(artifact.Content, []byte("func Page(params PageParams) htmlbind.Fragment")) {
+			t.Fatalf("generated shape changed:\n%s", artifact.Content)
 		}
 	}
 	if !found {

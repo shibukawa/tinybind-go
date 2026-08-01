@@ -10,6 +10,7 @@ runtime_packages:
   - github.com/shibukawa/tinybind-go/jsonbind: standalone JSON codec runtime
   - github.com/shibukawa/tinybind-go: package httpbind; net/http runtime
   - github.com/shibukawa/tinybind-go/sqlbind: database/sql runtime
+  - github.com/shibukawa/tinybind-go/dynamobind: proposed decision:dynamobind-runtime-package DynamoDB item runtime over system:tinygodriver-dynamodb
 generator_command: cmd/tinybind-gen
 package_boundary: decision:runtime-package-boundaries
 runtime_style: generated code only; no reflection
@@ -51,7 +52,6 @@ related:
   - concept:openapi-generation
   - concept:openapi-embed
   - api:openapi-json
-  - api:openapi-yaml
   - api:decode-json
   - api:encode-json
   - api:write-status
@@ -59,4 +59,6 @@ related:
   - rule:analysis-diagnostics-check
   - rule:same-package-convention
   - decision:runtime-package-boundaries
+  - requirement:dynamobind-product-goals
+  - api:dynamobind-operations
 ```

@@ -32,6 +32,11 @@ classes:
     form: lowercase or kebab-case
     includes: [elements, attributes]
     examples: [div, aria-label, data-user-id]
+  framework_builtin_elements:
+    form: kebab-case, whitelisted at generate time per proposed decision:builtin-element-syntax
+    includes: [requirement:builtin-element-registration elements]
+    examples: [csrf-token]
+    note: the hyphenated space is closed; an undeclared hyphenated name is a generation error, and a Web Component is declared as a passthrough entry
   sql_builtin_names:
     form: lowercase unless classified as a dialect keyword
     includes: [functions, type names]

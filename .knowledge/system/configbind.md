@@ -22,7 +22,7 @@ primary_inputs:
   - developer-defined Go structs via api:configbind-bind
   - optional CLI-only subcommand structs via api:configbind-subcommand
   - prefix string per Bind call (TOML table name)
-  - field tags default, help, opt, enum, secret, arg via decision:struct-field-tags
+  - field tags default, help, opt, enum, secret, dependon, falsy, arg via decision:struct-field-tags
   - CLI flag naming via decision:cli-flag-naming
   - TOML config file path for Bind fields only
   - vendor name, tool name, and file name for configdir discovery via API
@@ -37,7 +37,9 @@ outputs:
   - *T or nil from each SubCommand
   - generated CLI option and subcommand parser code
   - public TOML and .env scaffold output from registered data:config-scaffold-fragment values
-  - provenance log records []{Key, Value, Place} for Bind keys
+  - ordered provenance log records []{Key, Value, Place} for Bind keys via api:configbind-provenance
+output_order: rule:config-output-ordering
+output_visibility: rule:dependent-key-visibility
 load_order_bind:
   - defaults into overlay
   - TOML map into overlay
@@ -54,6 +56,7 @@ field_tags: decision:struct-field-tags
 public_api:
   - api:configbind-bind
   - api:configbind-subcommand
+  - api:configbind-provenance
 related:
   - vision:configbind
   - requirement:configbind-product-goals
@@ -65,6 +68,12 @@ related:
   - requirement:struct-field-metadata
   - requirement:scaffold-generation
   - requirement:cli-subcommands
+  - requirement:duration-config-fields
+  - requirement:dependent-field-visibility
+  - requirement:deterministic-config-output-order
+  - decision:dependon-tag-form
+  - decision:falsy-tag-form
+  - rule:falsy-value-resolution
   - flow:config-load
   - flow:configbind-codegen
   - decision:toml-config-format
