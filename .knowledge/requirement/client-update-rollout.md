@@ -99,17 +99,17 @@ milestones:
     was: parameter patches applied during handler re-execution
     reason: decision:boundary-update-execution found the third execution mode unnecessary and its contract misleading; m3 covers the remaining need
   - id: m5
-    status: transport delivered, producer blocked
+    status: delivered
     goal: requirement:streaming-delta-response
     delivered: record framing, per-record manifest entries, the terminator, incremental application, and the truncation rule
-    blocked_by: requirement:suspense-html-streaming and decision:async-component-signature, which supply the asynchronous producer and are not in this branch
-    reason: the transport turned out to be independent of the producer, so only wiring the async sequence in remains
-    seam: the open-stream API is the join, so wiring is a call per completion rather than a redesign
+    producer: the async render sequence drives the same records, so a region travels with its fallback and its replacement follows
+    seam: the open-stream API was the join, and wiring it took a call per completion rather than a redesign
+    two_record_kinds: a boundary operation addresses an instance, a completion addresses a placeholder inside one; they share a stream because both mean a region is ready
   - id: m6
-    status: client mechanism delivered, producer blocked
+    status: delivered
     goal: requirement:live-reconnect
-    delivered: the truncation rule the reconnect depends on, since a dropped stream and a dropped delivery stream end the same way
-    blocked_by: live sources, which are not in this branch
+    delivered: a live stream entry that keeps subscriptions open, and a client that reopens a dropped one with bounded backoff before degrading to a reload
+    why_simple: reconnecting is the same request again, because a delivery carries whole state and boundary ids are reproduced by position
   - id: m3a
     status: delivered
     goal: requirement:action-response-update

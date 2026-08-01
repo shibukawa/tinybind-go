@@ -246,7 +246,9 @@ A delta can arrive as a stream of records rather than one buffered body, so each
 {"r":"end"}
 ```
 
-This matters most when a boundary awaits an asynchronous dependency, because then a slow region never delays a fast one — but the transport does not depend on that: it works today over a synchronous render, and the asynchronous producer plugs into the same records when it ships.
+`options.RenderStreamAsync` adds await boundaries to the same stream: a region travels with its fallback and its replacement follows, so a slow dependency delays only itself. `options.RenderLiveStream` keeps live subscriptions open on it.
+
+Two record kinds share the stream because both mean a region is ready. An `op` addresses a boundary by its instance; an `await` addresses a placeholder inside one that was already installed.
 
 Each record carries its own manifest entry, because a trailing manifest cannot be written before the operations it describes. An unchanged boundary still appears, carrying a validator and no markup, so the client can rebuild its whole manifest from what it received.
 
@@ -382,7 +384,8 @@ The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render 
 | Preserved islands | Available |
 | Lifecycle events and GET form interception | Available |
 | Streamed delta records | Available |
-| Asynchronous and live producers for that stream | Planned, after asynchronous rendering ships |
+| Await completions on the same stream | Available |
+| Live delivery and reconnection | Available |
 | Acting and refreshing in one round trip | Available |
 
 | Morphing or static-dynamic application | Planned |

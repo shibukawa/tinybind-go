@@ -1,6 +1,7 @@
 package htmlupdate_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -196,5 +197,86 @@ func TestProducerReportsLateFailureInBand(t *testing.T) {
 	// see the stream end twice.
 	if got := strings.Count(recorder.Body.String(), `"r":"end"`); got != 1 {
 		t.Fatalf("terminator written %d times", got)
+	}
+}
+
+// asyncPage stands in for a generated component with an await boundary: the
+// initial pass writes the fallback, and the settled subtree follows.
+type asyncParams struct{ Query string }
+
+type asyncScope struct{ Value string }
+
+var asyncOps = htmlbind.Builder[asyncParams]{}
+var asyncScopeOps = htmlbind.Builder[asyncScope]{}
+
+var asyncPlan = &htmlbind.Plan[asyncParams]{
+	Boundary: &htmlbind.Boundary[asyncParams]{
+		ComponentID: "Async@v1",
+		Attr:        "data-tb-id",
+		Input:       func(p asyncParams) string { return htmlbind.CanonString(p.Query) },
+	},
+	HasAwaitBlock: true,
+	Ops: []htmlbind.Op[asyncParams]{
+		asyncOps.Static("<section"),
+		asyncOps.BoundaryAttr(),
+		asyncOps.Static(">"),
+		htmlbind.Await(
+			func(ctx context.Context, p asyncParams) (asyncScope, error) {
+				return asyncScope{Value: "settled " + p.Query}, nil
+			},
+			func(asyncParams, htmlbind.AsyncError) asyncScope { return asyncScope{} },
+			[]htmlbind.Op[asyncScope]{asyncScopeOps.Text(func(s asyncScope) string { return s.Value })},
+			[]htmlbind.Op[asyncParams]{asyncOps.Static("loading")},
+			nil,
+		),
+		asyncOps.Static("</section>"),
+	},
+}
+
+// A slow region reaches the browser with its fallback, and its replacement
+// follows on the same stream, so one dependency delays only itself.
+func TestStreamCarriesAwaitCompletions(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaf := htmlbind.Bind(asyncPlan, asyncParams{Query: r.URL.Query().Get("q")})
+		if err := options.RenderStreamAsync(r.Context(), w, r, nil, leaf); err != nil {
+			http.Error(w, "render failed", http.StatusInternalServerError)
+		}
+	})
+	request := httptest.NewRequest(http.MethodGet, "/search?q=go", nil)
+	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(htmlupdate.Version))
+	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	var kinds []string
+	var settled map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(recorder.Body.String()), "\n") {
+		var item map[string]any
+		if err := json.Unmarshal([]byte(line), &item); err != nil {
+			t.Fatalf("record %q: %v", line, err)
+		}
+		kinds = append(kinds, item["r"].(string))
+		if item["r"] == "await" {
+			settled = item
+		}
+		if item["r"] == "op" {
+			// The region travels with its fallback, not with the settled value,
+			// because that is what the browser can paint immediately.
+			if html, _ := item["html"].(string); html != "" && !strings.Contains(html, "loading") {
+				t.Fatalf("the initial pass should carry the fallback, got %q", html)
+			}
+		}
+	}
+	if len(kinds) < 3 || kinds[0] != "head" || kinds[len(kinds)-1] != "end" {
+		t.Fatalf("framing = %q", kinds)
+	}
+	if settled == nil {
+		t.Fatalf("no completion in %q", kinds)
+	}
+	if html, _ := settled["html"].(string); !strings.Contains(html, "settled go") {
+		t.Fatalf("completion = %v", settled)
+	}
+	if id, _ := settled["id"].(string); id == "" {
+		t.Fatal("a completion must name the placeholder it replaces")
 	}
 }

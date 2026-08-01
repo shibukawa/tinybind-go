@@ -490,6 +490,53 @@ async function main() {
     "a truncated stream must not leave validators behind",
   );
 
+  // A live stream that ends on purpose stops; one that drops reconnects and
+  // eventually gives up rather than retrying forever.
+  let opens = 0;
+  globalThis.setTimeout = (fn) => fn();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    if (opens === 1) {
+      // A stream with no terminator: dropped.
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => "navigation;v=1" },
+        body: ndjson([JSON.stringify({ r: "head", v: 1, head: [] })]),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => "navigation;v=1" },
+      body: ndjson([JSON.stringify({ r: "head", v: 1, head: [] }), JSON.stringify({ r: "end" })]),
+    });
+  };
+  const seenLive = [];
+  const unLive = runtime.subscribe((event) => seenLive.push(event.kind));
+  let session = runtime.live("/feed");
+  let outcome = await session.done;
+  check(outcome.ended, "a terminated live stream should stop, got " + JSON.stringify(outcome));
+  check(opens === 2, "a dropped stream should reconnect once, got " + opens);
+  check(seenLive.includes("liveReconnecting"), "reconnecting should be observable: " + seenLive);
+  unLive();
+
+  // Repeated failure gives up rather than retrying forever.
+  reloaded = false;
+  opens = 0;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    return Promise.reject(new Error("network down"));
+  };
+  outcome = await runtime.live("/feed", { maxAttempts: 3 }).done;
+  check(outcome.fellBack, "a stream that never opens should give up");
+  check(opens === 3, "attempts should be bounded, got " + opens);
+  check(reloaded, "giving up should reload the page");
+  globalThis.fetch = originalFetch;
+
   // A preserved region is moved into the replacement rather than recreated, so
   // whatever the browser attached to it survives.
   const liveWidget = island("player", "original");

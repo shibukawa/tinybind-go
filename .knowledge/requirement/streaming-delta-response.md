@@ -11,8 +11,7 @@ source:
   - user async-sequence discussion 2026-07-26
 review_gate: proposed protocol surface requires user approval
 status:
-  delivered: the record framing, per-record manifest entries, the terminator, incremental application, and truncation handling
-  pending: the asynchronous producer, because requirement:suspense-html-streaming is not in this branch
+  delivered: the record framing, per-record manifest entries, the terminator, incremental application, truncation handling, and the asynchronous producer
   independence: the transport does not depend on the producer; a synchronous delta drives it today and an async sequence replaces the source later
   seam: an open stream exposes writing one settled boundary, restating an unchanged one, reporting a late failure in band, and terminating; an async producer ranges its sequence and calls the first of those per completion
   framing: one JSON record per line, matching the module's existing streamed-value format

@@ -577,6 +577,20 @@
         complete = true;
         return;
       }
+      if (item.r === "await") {
+        // An await completion addresses a placeholder inside a region already
+        // installed, so it replaces that element rather than a boundary.
+        chain = chain.then(function () {
+          if (failed) return;
+          var placeholder = document.getElementById(item.id);
+          if (!placeholder) return;
+          var template = document.createElement("template");
+          template.innerHTML = item.html;
+          var settled = template.content.firstElementChild;
+          if (settled) placeholder.replaceWith(settled);
+        });
+        return;
+      }
       if (item.r !== "op") return;
       next.set(item.id, item.frame);
       // An entry with no markup is an unchanged boundary restating its
@@ -613,6 +627,62 @@
       });
       return true;
     });
+  }
+
+  // live keeps a delivery stream open and reopens it when it drops.
+  //
+  // Reconnecting is the same request again: a live delivery carries the whole
+  // state of its region rather than an increment, so nothing has to be resumed
+  // and a missed value costs nothing. What the runtime must not do is retry
+  // forever, or a server restart attracts a reconnect storm.
+  function live(url, options) {
+    var target = new URL(url || window.location.href, document.baseURI);
+    var settings = options || {};
+    var maxAttempts = settings.maxAttempts || 6;
+    var backoff = settings.backoffMs || 500;
+    var stopped = false;
+    var attempts = 0;
+
+    function open() {
+      if (stopped) return Promise.resolve({ stopped: true });
+      var headers = {};
+      headers[RENDER_HEADER] = "navigation;v=" + VERSION;
+      headers[BUILD_HEADER] = BUILD;
+      var hints = manifestHeader();
+      if (hints) headers[MANIFEST_HEADER] = hints;
+      return fetch(target.href, { headers: headers, credentials: "same-origin" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("live failed: " + response.status);
+          if (!response.body || !response.body.getReader) throw new Error("not a stream");
+          return consumeStream(response);
+        })
+        .then(function () {
+          // The server finished on purpose, so there is nothing to reconnect to.
+          stopped = true;
+          emit("liveEnded", { url: target.href });
+          return { ended: true };
+        })
+        .catch(function () {
+          attempts++;
+          if (stopped || attempts >= maxAttempts) {
+            emit("fellBack", { url: target.href, reason: "live stream lost" });
+            window.location.reload();
+            return { fellBack: true };
+          }
+          emit("liveReconnecting", { url: target.href, attempt: attempts });
+          return new Promise(function (resolve) {
+            setTimeout(resolve, backoff * attempts);
+          }).then(open);
+        });
+    }
+
+    var running = open();
+    return {
+      close: function () {
+        stopped = true;
+      },
+      done: running,
+    };
   }
 
   // updateHeaders is what an application spreads into its own fetch, so the
@@ -652,6 +722,7 @@
   window.tinybind.navigate = navigate;
   window.tinybind.redraw = redraw;
   window.tinybind.subscribe = subscribe;
+  window.tinybind.live = live;
   window.tinybind.apply = applyResponse;
   window.tinybind.updateHeaders = updateHeaders;
   window.tinybind.protocolVersion = VERSION;

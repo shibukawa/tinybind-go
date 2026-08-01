@@ -15,6 +15,12 @@ existing_feature:
   transport: one chunked response written by the live render entry points
   identity: boundary ids are allocated by position, so rendering the same chain again reproduces the ids already on the client's screen
 problem: a chunked stream ends on any network fault, proxy timeout, or sleep and resume, leaving live regions frozen with no signal
+status: delivered
+client_policy_shipped:
+  detection: a stream that ends without its terminator
+  backoff: linear, bounded by a configured attempt count
+  give_up: reload the page, so a server that never comes back does not leave a frozen screen
+  normal_end: a terminated stream stops without reconnecting, because the server finished on purpose
 shared_mechanism:
   with: requirement:streaming-delta-response, whose truncation rule is delivered
   detail: a stream ending without its terminator is already treated as unknown state, which is exactly the signal a reconnect needs

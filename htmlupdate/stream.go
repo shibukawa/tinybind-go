@@ -1,6 +1,7 @@
 package htmlupdate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -33,9 +34,10 @@ type record struct {
 }
 
 const (
-	recordHead = "head"
-	recordOp   = "op"
-	recordEnd  = "end"
+	recordHead  = "head"
+	recordOp    = "op"
+	recordAwait = "await"
+	recordEnd   = "end"
 )
 
 // DeltaStream is an open record stream a producer writes boundary completions
@@ -75,6 +77,15 @@ func (s *DeltaStream) Unchanged(instanceID, frame string) {
 	s.writer.write(record{Record: recordOp, ID: instanceID, Frame: frame})
 }
 
+// Settled writes an await boundary that finished after the initial pass.
+//
+// It addresses a placeholder inside a region the client already installed,
+// which is a different namespace from an instance id, so it is its own record
+// kind rather than an operation with a surprising target.
+func (s *DeltaStream) Settled(boundaryID string, html []byte) {
+	s.writer.write(record{Record: recordAwait, ID: boundaryID, HTML: string(html)})
+}
+
 // Sent reports whether an instance already appeared, so a producer emitting
 // completions out of order does not restate one it already wrote.
 func (s *DeltaStream) Sent(instanceID string) bool {
@@ -97,6 +108,58 @@ func (s *DeltaStream) Close() error {
 		s.closed = true
 	}
 	return s.writer.err
+}
+
+// RenderStreamAsync answers a navigation with a record stream that also carries
+// await boundaries as they settle.
+//
+// Each region reaches the browser with its fallback in place and is replaced
+// when its dependency finishes, so a slow one delays only itself. A chain with
+// no await boundary produces exactly what RenderStream does.
+func (o Options) RenderStreamAsync(ctx context.Context, w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
+	w.Header().Add("Vary", o.renderHeader())
+	w.Header().Add("Vary", o.buildHeader())
+	negotiated := o.Negotiate(r)
+	if negotiated.Mode != ModeNavigation {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, options...)
+		return err
+	}
+	// The head is known before the first record, so a stylesheet a newly
+	// reachable component brought is installed before its markup arrives.
+	head, err := htmlbind.DeltaStreamHead(wrappers, leaf, options...)
+	if err != nil {
+		return err
+	}
+	stream := o.OpenStream(w, head)
+	for item, err := range htmlbind.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, options...) {
+		if err != nil {
+			// The response committed with the head record, so the status cannot
+			// change and the failure has to travel in band.
+			stream.Fail(err.Error())
+			return stream.Close()
+		}
+		switch {
+		case item.Completion != nil:
+			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
+		case item.Operation != nil && item.Operation.HTML != "":
+			stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame)
+		case item.Operation != nil:
+			stream.Unchanged(item.Operation.InstanceID, item.Frame)
+		}
+	}
+	return stream.Close()
+}
+
+// RenderLiveStream is RenderStreamAsync for a chain holding live sources: it
+// keeps every subscription open and writes each delivery as it arrives.
+//
+// Reconnecting after a dropped stream is the same request again. Nothing has to
+// be resumed, because a live delivery carries the whole state of its region
+// rather than an increment, so a missed one costs nothing and boundary ids are
+// reproduced by position.
+func (o Options) RenderLiveStream(ctx context.Context, w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
+	return o.RenderStreamAsync(ctx, w, r, wrappers, leaf, append(options, htmlbind.WithLiveSubscriptions())...)
 }
 
 // RenderStream answers a navigation with a record stream instead of one
