@@ -15,6 +15,9 @@ func Parse(filename string, source []byte) (*Module, error) {
 	return syntax.ParseModule(filename, string(source), []syntax.RootDeclaration{{
 		Keyword: "statement", NodeType: "sql:statement", OutputPrefix: "sql",
 		Context: "sql:value", Parser: formatParser{},
+		// The name policy depends on the output type, which the parser has but
+		// the compiler is where the cardinality is already resolved, so the
+		// check lives there. See checkStatementName.
 	}})
 }
 

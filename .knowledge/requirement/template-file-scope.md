@@ -14,6 +14,7 @@ visibility:
   private: a declaration without export is reachable only inside its file
   exported: the export modifier from decision:template-declaration-kinds publishes the declaration to other files and to generated Go
   single_axis: file visibility and generated Go symbol visibility are the same decision, not two modifiers
+  amended: requirement:private-statement-go-api keeps the single axis but fixes what it selects; a private declaration is an unexported Go symbol rather than no Go symbol at all
 import:
   keyword: external, reusing the requirement:template-language-core external function form
   kinds: components and functions

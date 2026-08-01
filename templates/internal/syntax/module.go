@@ -16,6 +16,51 @@ type RootDeclaration struct {
 	OutputPrefix string
 	Context      string
 	Parser       FormatParser
+	// Names states what this format needs from a declaration name. The zero
+	// value asks for nothing, which is what a format wants when every generated
+	// identifier is composed rather than copied.
+	Names NameRule
+}
+
+// NameRule is the per-format declaration name policy of
+// decision:declaration-name-policy. Each field states a fact about what the
+// format's emitter does with the name, so the constraint is derived from the
+// generated code rather than asserted as a convention.
+type NameRule struct {
+	// PascalCase requires an uppercase initial, exported or not. HTML sets it
+	// because in markup an element whose tag name starts uppercase is the
+	// component-call syntax: a lowercase component could never be called, and
+	// would collide with a standard element.
+	PascalCase bool
+	// ExportedNameIsGo says the public generated identifier is the declaration
+	// name itself, so an exported declaration needs an exported name. A format
+	// that composes its public name instead leaves this off.
+	ExportedNameIsGo bool
+	// PrivateNameIsGo says the private generated identifier is also the name
+	// itself, so an unexported declaration needs an unexported name. A format
+	// that prefixes its private name leaves this off, and may then keep an
+	// uppercase name on a private declaration.
+	PrivateNameIsGo bool
+}
+
+// check validates one declaration name against the policy.
+func (r NameRule) check(keyword, name string, exported bool) error {
+	if r.PascalCase {
+		if err := requirePascalCase(name); err != nil {
+			return err
+		}
+	}
+	// An export keyword that emitted an unexported function would be the silent
+	// no-op this generator rejects everywhere else.
+	if exported && r.ExportedNameIsGo && !startsUpper(name) {
+		return fmt.Errorf("%s %s is declared export but its name is unexported; capitalize it or drop export", keyword, name)
+	}
+	// The mirror case: without the keyword the name would still emit a public
+	// function, so the missing keyword would be the thing doing nothing.
+	if !exported && r.PrivateNameIsGo && startsUpper(name) {
+		return fmt.Errorf("%s %s has an exported name; write %q or lowercase it", keyword, name, "export "+keyword+" "+name)
+	}
+	return nil
 }
 
 // ParseModule parses standard declarations plus the registered format roots.
@@ -39,6 +84,7 @@ type moduleParser struct {
 	source   string
 	pos      int
 	roots    map[string]RootDeclaration
+	comments commentSet
 }
 
 func (p *moduleParser) parse() (*Module, error) {
@@ -53,6 +99,7 @@ func (p *moduleParser) parse() (*Module, error) {
 			if len(pending) > 0 {
 				return nil, p.errAt(p.pos, "annotation is not attached to a declaration")
 			}
+			module.Comments = p.comments.sorted()
 			return module, nil
 		}
 		if p.source[p.pos] == '@' {
@@ -326,7 +373,9 @@ func (p *moduleParser) parseTemplateDecl(root RootDeclaration, exported bool, st
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePascalCase(name); err != nil {
+	// What a name has to look like is the format's own question, per
+	// decision:declaration-name-policy.
+	if err := root.Names.check(root.Keyword, name, exported); err != nil {
 		return nil, p.errAt(p.pos-len(name), err.Error())
 	}
 	params, err := p.parseParameters()
@@ -470,18 +519,25 @@ func (p *moduleParser) parseTypeRef() (TypeRef, error) {
 
 func (p *moduleParser) skipSpaceAndComments() error {
 	for {
+		newlines := 0
 		for !p.eof() {
 			r, size := utf8.DecodeRuneInString(p.source[p.pos:])
 			if !unicode.IsSpace(r) {
 				break
 			}
+			if r == '\n' {
+				newlines++
+			}
 			p.pos += size
 		}
+		start := p.pos
 		if strings.HasPrefix(p.source[p.pos:], "//") {
 			if end := strings.IndexByte(p.source[p.pos:], '\n'); end >= 0 {
+				p.recordComment(start, p.pos+end, false, newlines)
 				p.pos += end + 1
 				continue
 			}
+			p.recordComment(start, len(p.source), false, newlines)
 			p.pos = len(p.source)
 			return nil
 		}
@@ -491,10 +547,42 @@ func (p *moduleParser) skipSpaceAndComments() error {
 				return p.errAt(p.pos, "unterminated block comment")
 			}
 			p.pos += end + 4
+			p.recordComment(start, p.pos, true, newlines)
 			continue
 		}
 		return nil
 	}
+}
+
+// recordComment keeps one comment for requirement:template-comment-retention.
+// newlines counts the line breaks skipped since the previous content, which is
+// what separates a trailing comment from an attached one and an attached one
+// from a deliberately detached one.
+func (p *moduleParser) recordComment(start, end int, block bool, newlines int) {
+	p.comments.add(Comment{
+		Pos:         positionAt(p.source, start),
+		Text:        p.source[start:end],
+		Block:       block,
+		Trailing:    hasContentBefore(p.source, start),
+		BlankBefore: newlines > 1,
+		offset:      start,
+	})
+}
+
+// hasContentBefore reports that the line holding offset already had something
+// on it, which is the whole difference between a comment above a declaration
+// and one at the end of its line.
+func hasContentBefore(source string, offset int) bool {
+	for i := offset - 1; i >= 0; i-- {
+		switch source[i] {
+		case '\n':
+			return false
+		case ' ', '\t', '\r':
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func (p *moduleParser) identifier() (string, error) {
@@ -604,11 +692,16 @@ func (p *moduleParser) errAt(offset int, message string) error {
 }
 
 func requirePascalCase(name string) error {
-	r, _ := utf8.DecodeRuneInString(name)
-	if !unicode.IsUpper(r) {
+	if !startsUpper(name) {
 		return fmt.Errorf("%q must be PascalCase", name)
 	}
 	return nil
+}
+
+// startsUpper reports Go's own visibility rule for an identifier.
+func startsUpper(name string) bool {
+	r, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(r)
 }
 
 func requireLowerCamel(name string) error {

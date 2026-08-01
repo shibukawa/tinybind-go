@@ -249,6 +249,33 @@ type User struct {
 organizations, err := sqlbind.ScanRows[Organization](rows)
 ```
 
+## テンプレートの整形
+
+`.tb.html` / `.tb.sql` / `.tb.dynamo` は本モジュールが定義した独自形式なので、既存のエディタは整形方法を知りません。ジェネレータがフォーマッタを同梱します。
+
+```bash
+go run ./cmd/tinybind-gen fmt -w -dir ./store
+```
+
+`-l` は変更が必要なファイルを列挙して非ゼロで終了します（CI 用）。`-as sql`（`html` / `dynamo`）は標準入力の 1 ソースを標準出力へ流すフィルタで、エディタの保存時整形はこれを使います。
+
+形式ごとの動作:
+
+- **SQL** — 1 clause 1 行。CTE 本体とサブクエリは自分の `SELECT` の下に字下げし、`JOIN` と `ON` を分け、条件が長いときは `AND` / `OR` を行頭に揃えます。キーワードの大文字小文字・リテラル・コメントは書かれたままです。
+- **HTML** — `head` や `table` など、HTML パーサ自身が空白のみの run を捨てる位置では 1 タグ 1 行にします。それ以外では既にある空白を改行に置き換えるだけなので、`<b>a</b><i>b</i>` は貼り付いたまま、描画結果は変わりません。`pre` / `textarea` / `script` / `style` と `preserve-whitespace` 配下はバイト単位でそのままです。
+- **DynamoDB** — `table` の次に `key`、1 clause 1 行。
+
+構文エラーのあるソースは報告のみで書き換えません。コマンドの機能はすべてライブラリとしても使えます。
+
+```go
+import "github.com/shibukawa/tinybind-go/templates/templatefmt"
+
+formatted, err := templatefmt.Source("users.tb.sql", source, templatefmt.Options{})
+results, err := templatefmt.Dir("./store", templatefmt.Options{Width: 120})
+```
+
+`templatefmt.Dir` は読むだけで書き込みません。各 `Result` が変更の有無を持ち、適用したいときだけ `Write()` を呼びます。
+
 ## デモ
 
 ```bash

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type valueKind string
@@ -158,6 +159,9 @@ func (c *compiler) analyze() error {
 			}
 			if d.Exported && (cardinality == "predicate" || cardinality == "relation") {
 				return c.error(d.Pos, "sql."+cardinality+" statements must be private")
+			}
+			if err := c.checkStatementName(d, cardinality); err != nil {
+				return err
 			}
 			info := &statementInfo{decl: d, params: map[string]valueType{}, result: result, cardinality: cardinality}
 			for _, p := range d.Parameters {
@@ -732,6 +736,31 @@ func (c *compiler) resolveType(ref TypeRef) (valueType, error) {
 	}
 	result.optional = ref.Optional
 	return result, nil
+}
+
+// checkStatementName applies decision:declaration-name-policy. The constraint
+// follows from what is emitted: an executable statement's function is named
+// exactly as the declaration is, so the name's case decides Go visibility and
+// has to agree with the export modifier. A predicate or relation emits only the
+// prefixed fragment builder, so its own case reaches no Go identifier and is
+// left alone.
+func (c *compiler) checkStatementName(d *TemplateDecl, cardinality string) error {
+	if cardinality == "predicate" || cardinality == "relation" {
+		return nil
+	}
+	exportedName := startsUpper(d.Name)
+	if d.Exported && !exportedName {
+		return c.error(d.Pos, "statement "+d.Name+" is declared export but its name is unexported; capitalize it or drop export")
+	}
+	if !d.Exported && exportedName {
+		return c.error(d.Pos, "statement "+d.Name+" has an exported name; write \"export statement "+d.Name+"\" or lowercase it")
+	}
+	return nil
+}
+
+func startsUpper(name string) bool {
+	r, _ := utf8.DecodeRuneInString(name)
+	return unicode.IsUpper(r)
 }
 
 func (c *compiler) nameExists(name string) bool {

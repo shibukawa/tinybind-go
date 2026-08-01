@@ -18,8 +18,13 @@ classes:
     examples: [export, component, statement, if, else, for, where, subquery, predicates]
   user_symbols:
     form: PascalCase
-    includes: [types, enums, enum members, components, statements, external functions]
-    examples: [UserRow, UserStatus, Active, UserCard, FindUser, NormalizeName]
+    includes: [types, enums, enum members, external functions]
+    examples: [UserRow, UserStatus, Active, NormalizeName]
+  root_declaration_names:
+    form: per format, under decision:declaration-name-policy
+    html_components: PascalCase always, because an uppercase tag name is the component-call syntax in markup
+    sql_statements: an executable statement's case must agree with export, since the generated function is named exactly as declared; a sql.predicate or sql.relation is unconstrained, reaching no Go identifier of its own
+    dynamo_statements: any case, but it must agree with the export modifier, since the generated function takes the name verbatim
   dsl_values:
     form: lowerCamelCase
     includes: [parameters, fields, local and loop variables]
@@ -49,6 +54,9 @@ diagnostics:
   - do not reinterpret wrong-case SQL keywords as identifiers
   - do not silently normalize user-defined symbols or format identifiers
   - user symbol resolution is case-sensitive and requires exact spelling
+related:
+  - decision:declaration-name-policy
+  - decision:template-declaration-kinds
 postgresql_v1:
   identifiers: lowercase unquoted only
   quoted_mixed_case_identifiers: deferred

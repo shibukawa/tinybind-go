@@ -1,8 +1,4 @@
 export component Page(topic: string, page: int?): html {
-<h1>about {topic}</h1>
-{if page == null}
-<p>every page</p>
-{else}
-<p>page {page}</p>
-{/if}
+  <h1>about {topic}</h1>
+  {if page == null} <p>every page</p> {else} <p>page {page}</p> {/if}
 }

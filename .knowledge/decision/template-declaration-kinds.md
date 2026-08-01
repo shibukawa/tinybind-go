@@ -19,13 +19,14 @@ declarations:
     required_output_prefix: sql
 common:
   - optional export modifier controls both requirement:template-file-scope visibility and generated public API visibility
-  - PascalCase declaration name
+  - declaration name form is per format, under decision:declaration-name-policy
   - typed parameters and explicit output type
   - private declaration when export is absent
 semantics:
   - declaration keyword selects a registered format parser through decision:template-parser-delegation
   - output type selects result behavior, insertion contexts, and SQL cardinality
   - keyword and output type mismatch is a compile-time error
+  - the declaration name is checked against the name policy the same registration carries
 compiler_model:
   common: TemplateDecl
   format_nodes: HTMLComponentDecl and SQLStatementDecl
