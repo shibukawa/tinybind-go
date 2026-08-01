@@ -64,9 +64,10 @@ func TestRedrawRendersOneComponent(t *testing.T) {
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
 		t.Fatalf("content type = %q", got)
 	}
-	// The URL alone identifies the response and the content is usually
-	// per-user, so a shared cache must never hold it.
-	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+	// The content is usually per-user, so no shared cache may hold it. It is
+	// still revalidatable, because no-store would forbid the conditional
+	// request the ETag exists for.
+	if got := response.Header.Get("Cache-Control"); got != htmlupdate.DefaultRedrawCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	body := read(t, response)
@@ -122,10 +123,104 @@ func TestRedrawParametersAreValidatedAndAuthorized(t *testing.T) {
 // A GET carries every argument in the URL, so the length has a bound.
 func TestOversizedRedrawQueryIsRejected(t *testing.T) {
 	path := options.RedrawPath(cardKind, "card-1", url.Values{"page": {"1"}}) +
-		"&pad=" + strings.Repeat("x", htmlupdate.MaxQueryBytes)
+		"&pad=" + strings.Repeat("x", htmlupdate.DefaultMaxQueryBytes)
 	recorder := httptest.NewRecorder()
 	redrawServer(t).ServeHTTP(recorder, buildRequest(path))
 	if recorder.Code != http.StatusRequestURITooLong {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}
+
+// An unchanged redraw costs a 304 rather than its whole markup, which is what
+// the endpoint was designed for and what a fixed no-store had made impossible.
+func TestUnchangedRedrawAnswers304(t *testing.T) {
+	path := options.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})
+	server := redrawServer(t)
+
+	first := httptest.NewRecorder()
+	server.ServeHTTP(first, buildRequest(path))
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag, so nothing can be revalidated")
+	}
+	// The response depends on the build that rendered the page, so a cache
+	// holding it has to key on that too.
+	if !strings.Contains(first.Header().Get("Vary"), "Build") {
+		t.Fatalf("Vary = %q, want the build header", first.Header().Get("Vary"))
+	}
+
+	conditional := buildRequest(path)
+	conditional.Header.Set("If-None-Match", etag)
+	second := httptest.NewRecorder()
+	server.ServeHTTP(second, conditional)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Fatalf("304 carried a body: %q", second.Body.String())
+	}
+
+	// A different render is a different tag, so the browser gets the new bytes.
+	changed := buildRequest(options.RedrawPath(cardKind, "card-1", url.Values{"page": {"3"}}))
+	changed.Header.Set("If-None-Match", etag)
+	third := httptest.NewRecorder()
+	server.ServeHTTP(third, changed)
+	if third.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the changed render", third.Code)
+	}
+}
+
+// A 304 confirms a guess, and a redraw usually renders low-entropy per-user
+// content, so the tag is keyed for the same reason a frame validator is.
+func TestRedrawETagIsKeyed(t *testing.T) {
+	tag := func(key string) string {
+		opts := htmlupdate.Options{Key: []byte(key)}
+		mux := http.NewServeMux()
+		opts.Mount(mux, cardRegistry(t))
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, buildRequest(opts.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})))
+		return recorder.Header().Get("ETag")
+	}
+	if tag("one key") == tag("another key") {
+		t.Fatal("the same render digests identically under two keys, so a guess confirms across deployments")
+	}
+}
+
+// A deployment whose redraws are public, or whose proxy needs different terms,
+// supplies its own policy.
+func TestRedrawCachePolicyIsConfigurable(t *testing.T) {
+	custom := options
+	custom.RedrawCacheControl = "public, max-age=60"
+	mux := http.NewServeMux()
+	custom.Mount(mux, cardRegistry(t))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, buildRequest(custom.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})))
+	if got := recorder.Header().Get("Cache-Control"); got != "public, max-age=60" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+// countingRouter is a router that is not *http.ServeMux, which is the whole
+// point: a framework with its own mux could not call Mount at all.
+type countingRouter struct {
+	patterns []string
+	mux      *http.ServeMux
+}
+
+func (c *countingRouter) Handle(pattern string, handler http.Handler) {
+	c.patterns = append(c.patterns, pattern)
+	c.mux.Handle(pattern, handler)
+}
+
+func TestMountAcceptsAnyRouter(t *testing.T) {
+	router := &countingRouter{mux: http.NewServeMux()}
+	options.Mount(router, cardRegistry(t))
+	if len(router.patterns) != 2 {
+		t.Fatalf("registered %v, want the runtime asset and the redraw endpoint", router.patterns)
+	}
+	recorder := httptest.NewRecorder()
+	router.mux.ServeHTTP(recorder, buildRequest(options.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})))
+	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 }
@@ -149,25 +244,46 @@ func TestMalformedRedrawPathIsNotFound(t *testing.T) {
 // its package, so two identical templates in different packages collide.
 // Keeping the last registration would serve a component that looks the same but
 // calls its own package's external functions, so registration refuses instead.
+// Failing at startup and panicking are not the same requirement: a caller
+// running its own validation pass collects every problem and reports them
+// together, which a panic on the first one makes impossible.
 func TestDuplicateKindIsRefused(t *testing.T) {
+	registry := cardRegistry(t)
+	err := registry.Register(htmlupdate.Reloadable{KindID: cardKind, Render: nil})
+	if err == nil {
+		t.Fatal("a repeated kind must not overwrite silently")
+	}
+	if !strings.Contains(err.Error(), cardKind) {
+		t.Fatalf("want an error naming the kind, got %v", err)
+	}
+	// The registration that was already there stands, so a refused duplicate
+	// leaves a working endpoint rather than a half-replaced one.
+	recorder := httptest.NewRecorder()
+	path := options.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})
+	mux := http.NewServeMux()
+	options.Mount(mux, registry)
+	mux.ServeHTTP(recorder, buildRequest(path))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the first registration to stand", recorder.Code)
+	}
+}
+
+func TestRegisteringWithoutAKindIsRefused(t *testing.T) {
+	if err := (&htmlupdate.Registry{}).Register(htmlupdate.Reloadable{}); err == nil {
+		t.Fatal("a component with no kind must be refused")
+	}
+}
+
+// A caller with nowhere to return an error still has the abort one line away.
+func TestMustRegisterPanicsOnADuplicate(t *testing.T) {
 	defer func() {
 		message, ok := recover().(string)
 		if !ok || !strings.Contains(message, cardKind) {
 			t.Fatalf("want a panic naming the kind, got %v", message)
 		}
 	}()
-	registry := cardRegistry(t)
-	registry.Register(htmlupdate.Reloadable{KindID: cardKind, Render: nil})
-	t.Fatal("a repeated kind must not overwrite silently")
-}
-
-func TestRegisteringWithoutAKindIsRefused(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("a component with no kind must be refused")
-		}
-	}()
-	(&htmlupdate.Registry{}).Register(htmlupdate.Reloadable{})
+	cardRegistry(t).MustRegister(htmlupdate.Reloadable{KindID: cardKind})
+	t.Fatal("MustRegister must not accept a duplicate")
 }
 
 // A kind is stable across builds on purpose, so it cannot say whether the page

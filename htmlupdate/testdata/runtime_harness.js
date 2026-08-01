@@ -105,9 +105,19 @@ globalThis.document = {
   addEventListener(name, handler) {
     this.listeners[name] = handler;
   },
-  // The server passes the endpoint namespace on the script tag, so one shared
-  // runtime asset works for any configured prefix.
-  currentScript: { dataset: { tinybindPrefix: "/internal/tb", tinybindBuild: "rev-abc" } },
+  // The server passes every name on the script tag, so one shared runtime
+  // asset works for any configured namespace, prefix, or installed name.
+  currentScript: {
+    dataset: {
+      config: JSON.stringify({
+        prefix: "/internal/tb",
+        build: "rev-abc",
+        attr: "tb",
+        header: "X-Tinybind",
+        global: "tinybind",
+      }),
+    },
+  },
   querySelector(selector) {
     const match = /\[data-tb-id="([^"]+)"\]/.exec(selector);
     const found = match && boundaries.get(match[1]);
@@ -274,6 +284,25 @@ const delta = (ops, manifest) => ({
 
 async function main() {
   check(runtime.endpointPrefix === "/internal/tb", "prefix should come from the script tag");
+
+  // Every name is the caller's. A framework on top of this module owns the
+  // attributes its users write by hand and the name its users call, so none of
+  // them may be compiled into the asset.
+  const named = globalThis.window.createPartialUpdateRuntime({
+    prefix: "/pw",
+    attr: "pw",
+    header: "X-Popcorn",
+    global: "",
+  });
+  check(named.idAttribute === "data-pw-id", "id attribute should follow the prefix");
+  check(named.preserveAttribute === "data-pw-preserve", "preserve marker should follow the prefix");
+  check(named.ignoreAttribute === "data-pw-ignore", "ignore marker should follow the prefix");
+  check(named.endpointPrefix === "/pw", "endpoint prefix should follow the configuration");
+  // An empty global installs nothing, which is what a caller merging this
+  // runtime into its own asset asks for.
+  check(globalThis.window[""] === undefined, "an empty global must install nothing");
+  // Two instances on one page keep their own state rather than sharing it.
+  check(named !== runtime, "the factory must build a fresh instance");
 
   // A first update carries no validators, and stores what comes back.
   response = delta(

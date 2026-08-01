@@ -339,7 +339,7 @@ func TestRuntimeIsServedImmutably(t *testing.T) {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	body := read(t, response)
-	if !strings.Contains(body, "window.tinybind") {
+	if !strings.Contains(body, "createPartialUpdateRuntime") {
 		t.Fatalf("runtime body looks wrong: %q", body)
 	}
 	// The runtime hardcodes the protocol version, so a bump that forgets the
@@ -370,10 +370,10 @@ func TestEndpointNamespaceIsConfigurable(t *testing.T) {
 	if !strings.HasPrefix(path, "/internal/tb/") {
 		t.Fatalf("runtime path = %q, want the configured namespace", path)
 	}
-	// The runtime learns the prefix from its own script tag, so one shared
+	// The runtime learns every name from its own script tag, so one shared
 	// asset serves any namespace without being rebuilt.
 	tag := custom.ScriptTag()
-	if !strings.Contains(tag, `data-tinybind-prefix="/internal/tb"`) {
+	if !strings.Contains(tag, `&#34;prefix&#34;:&#34;/internal/tb&#34;`) {
 		t.Fatalf("script tag %q does not carry the namespace", tag)
 	}
 	mux := http.NewServeMux()

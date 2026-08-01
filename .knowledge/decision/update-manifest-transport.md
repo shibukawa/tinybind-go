@@ -65,6 +65,8 @@ naming:
   runtime_binding: the browser runtime hardcodes the prefix; it is framework-owned implementation, not discovered at runtime, so no bootstrap field carries it
   consistency: the generator substitutes the configured prefix when it emits the runtime asset, so an overridden prefix and its runtime always agree
   hand_written_runtime: a framework shipping its own runtime build must build it for the prefix that project configures; a mismatch is a project configuration error, not a protocol negotiation
+  challenged_2026_08_01: both lines above assume the module ships no runtime; v0.3.0 ships the only one, so no deployment can build for its own prefix and the option configures the server half alone, per requirement:update-protocol-naming-ownership
+  incomplete_reach: the substitution covers 'data-<prefix>-id' but not the '<tb-boundary>' placeholder element or the 'tb-' boundary id allocation, so an overridden prefix yields two naming systems in one document
   stability: field names after the prefix are protocol surface and change with the protocol version
   scope: the prefix names update-protocol attributes only; requirement:suspense-html-streaming markers and other generated markup follow the same prefix for consistency
 safety:

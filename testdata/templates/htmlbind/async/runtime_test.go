@@ -98,6 +98,35 @@ func TestSyncRenderSettlesBoundaryInPlace(t *testing.T) {
 	}
 }
 
+// A framework owns the names its markup carries. Before this the placeholder
+// element and the identifier allocation were literals while the instance
+// attribute was configurable, so a project setting the prefix got two naming
+// systems in one document and could only choose one of them.
+func TestBoundaryPrefixNamesTheElementAndTheIdentifiers(t *testing.T) {
+	reset()
+	var output bytes.Buffer
+	sequence := htmlbind.RenderAsync(context.Background(), &output,
+		Profile(ProfileParams{Id: "7"}), htmlbind.WithBoundaryPrefix("pw"))
+	if err := stream(&output, sequence); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, `<pw-boundary id="pw-1"`) {
+		t.Fatalf("placeholder does not carry the configured prefix:\n%s", got)
+	}
+	if !strings.Contains(got, `</pw-boundary>`) {
+		t.Fatalf("placeholder is not closed with the configured name:\n%s", got)
+	}
+	// The completion addresses the identifier the placeholder was written
+	// under, so a mismatch here would leave the fallback on screen forever.
+	if !strings.Contains(got, `<template data-tb-boundary="pw-1">`) {
+		t.Fatalf("completion does not address the prefixed identifier:\n%s", got)
+	}
+	if strings.Contains(got, "tb-boundary id=") {
+		t.Fatalf("the default element name survived the override:\n%s", got)
+	}
+}
+
 func TestRenderAsyncWritesFallbackThenCompletion(t *testing.T) {
 	reset()
 	var output bytes.Buffer

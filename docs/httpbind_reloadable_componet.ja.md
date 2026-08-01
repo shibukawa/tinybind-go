@@ -120,13 +120,15 @@ frame から子を除くことが、layout の再利用を成立させます。p
 ## クライアント API
 
 ```js
-await window.tinybind.update("/search?q=rust");   // 現在のルートを再描画
-await window.tinybind.navigate("/guides/intro");  // 別ルートへ移動
-await window.tinybind.redraw("card-1", { page: 2 }); // component 1つを再描画
-await window.tinybind.apply(response);            // 操作の応答を適用
+await tinybind.update("/search?q=rust");   // 現在のルートを再描画
+await tinybind.navigate("/guides/intro");  // 別ルートへ移動
+await tinybind.redraw("card-1", { page: 2 }); // component 1つを再描画
+await tinybind.apply(response);            // 操作の応答を適用
 ```
 
-同一オリジンについては、リンクと GET フォームを傍受します。要素かその祖先に `data-tinybind-ignore` を付けるとブラウザに戻せます。修飾キー付きクリック、`target`、`download`、クロスオリジン URL もブラウザに任せます。フォームのフィールドはそのままクエリになるので、検索フォームは同じページを絞り込む形になり、送信のたびに履歴を積まず URL を置換します。非 GET の送信は傍受しないので、post-redirect-get はそのまま動きます。
+`tinybind` は既定の名前であって固定の名前ではありません。`GlobalName` で変更できるので、このモジュールの上に立つフレームワークは、依存先の名前ではなく自分の名前を利用者に見せられます。ランタイムを自分のアセットに統合する場合は、スクリプトをもう1本読むのではなく `createPartialUpdateRuntime(config)` を呼びます。
+
+同一オリジンについては、リンクと GET フォームを傍受します。要素かその祖先に `data-tb-ignore` を付けるとブラウザに戻せます。この属性も他と同じく設定した接頭辞に従うので、`pw` を使うプロジェクトでは `data-pw-ignore` になります。修飾キー付きクリック、`target`、`download`、クロスオリジン URL もブラウザに任せます。フォームのフィールドはそのままクエリになるので、検索フォームは同じページを絞り込む形になり、送信のたびに履歴を積まず URL を置換します。非 GET の送信は傍受しないので、post-redirect-get はそのまま動きます。
 
 `subscribe` は `start`・`applied`・`superseded`・`fellBack`・`redrawn` を配信します。運ぶのは結果であって component の引数ではありません。進捗表示、計測、領域が置換された後に再初期化が要るサードパーティ製ウィジェットには十分です。購読側が例外を投げても、監視対象の更新は壊れません。
 
@@ -156,14 +158,20 @@ export reloadable component UserCard(id: string, userId: int): html {
 
 ```go
 registry := &htmlupdate.Registry{}
-registry.Register(pages.UserCardReloadable)
+if err := registry.Register(pages.UserCardReloadable); err != nil {
+    return err // kind の重複。本番で見つけてよいものではありません
+}
 options.Mount(mux, registry)
 ```
+
+kind が重複した登録は失敗します。kind が覆うのは component の名前・引数・マークアップであってパッケージではないので、黙って後勝ちにすると、見た目は同じでも別パッケージの external を呼ぶ component が応答してしまうからです。ここで panic せず error を返すのは、起動時の検証をまとめて行う呼び出し側が、最初の1件で止まらず全部を報告できるようにするためです。返す先がない呼び出し側のために `MustRegister` もあります。
+
+`Mount` は `Handle(string, http.Handler)` を持つ任意のルータを受け取るので、フレームワークは自前の mux にまとめて登録できます。
 
 `id` パラメータは必須で、クエリではなくパスから埋まります。フレームワークはこの id と component の kind を**毎回のレンダリングで**ルート要素に書き出すので、再描画で置換された後も領域は名指しでき、再描画し続けられます。reloadable な component は export 済みかつ単一ルートである必要があり、それ以外のパラメータはクエリ文字列が決定的に運べる型に限られます（record、配列、`html` は生成時に拒否）。自動境界と違いこれらはエラーです。作者がエンドポイントを求めたのだから。
 
 ```js
-await window.tinybind.redraw("card-1", { userId: 42 });
+await tinybind.redraw("card-1", { userId: 42 });
 ```
 
 これがそのまま GET になります。
@@ -221,10 +229,10 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
 ```js
 const response = await fetch("/cart/add", {
   method: "POST",
-  headers: { ...window.tinybind.updateHeaders(), "X-CSRF-Token": token },
+  headers: { ...tinybind.updateHeaders(), "X-CSRF-Token": token },
   body,
 });
-await window.tinybind.apply(response);
+await tinybind.apply(response);
 ```
 
 render ヘッダが無ければ、エンドポイントは従来どおりの応答を返します（API なら JSON、フォームハンドラならリダイレクト）。ブラウザ以外のクライアントも、ランタイムを持たないページも影響を受けません。分岐点は `WantsUpdate` の1箇所だけで、これが2つの経路の乖離を防ぎます。
@@ -322,8 +330,10 @@ file input はこれら全ての例外で、選択を値から復元する手段
 サーバがそもそもパッチできない領域があります。サードパーティ製ウィジェット、canvas、サーバが所有していないメディア要素など。印を付けるとランタイムはサーバ版を採用せず、生きているノードを置換後のマークアップへ移すので、ノードとブラウザがそこに付けたものが丸ごと残ります。
 
 ```html
-<div data-tinybind-preserve="player">…</div>
+<div data-tb-preserve="player">…</div>
 ```
+
+この目印も設定した接頭辞に従うので、`pw` を使うプロジェクトでは `data-pw-preserve` になります。
 
 キーが描画をまたいで領域を対応付けます。置換側に対応するキーが無ければ、それは新しい領域なので、無関係なノードを差し込まずサーバ版をそのまま使います。
 
@@ -335,19 +345,26 @@ file input はこれら全ての例外で、選択を値から復元する手段
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。変更するのは自分のマークアップが既にその prefix を使っている場合だけにしてください。ブラウザランタイムは名前を焼き込んでいるので、変更するならそれに合わせてビルドしたランタイムが必要です。
+`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。同じ接頭辞がプレースホルダ要素と境界 ID も名付けるので、`pw` を設定したプロジェクトでは境界が `data-pw-id`、プレースホルダが `<pw-boundary id="pw-1">` になります。命名体系は2つではなく1つです。属性を書くのは生成器、読むのはランタイムなので、`Options.DataAttributePrefix` にも同じ値を設定してください。
 
-配信。設定可能な名前空間は2つで、フレームワークが所有するものはすべてその内側にあります。
+配信。プロトコルがドキュメントに書き込む名前はすべて設定可能で、フレームワークが所有するものは2つの名前空間の内側にあります。
 
 ```go
 options := htmlupdate.Options{
-    Key:              validatorKey, // 公開ページ以外では必須
-    PathPrefix:       "/_tb",       // フレームワークの全エンドポイント
-    HeaderPrefix:     "X-Tinybind", // フレームワークの全ヘッダ
-    MaxManifestBytes: 8 << 10,      // 超過したヒントは拒否ではなく破棄
+    Key:                 validatorKey, // 公開ページ以外では必須
+    PathPrefix:          "/_tb",       // フレームワークの全エンドポイント
+    HeaderPrefix:        "X-Tinybind", // フレームワークの全ヘッダ
+    DataAttributePrefix: "tb",         // 属性・要素・識別子のすべて
+    GlobalName:          "tinybind",   // ランタイムが自分を置く名前
+    MaxManifestBytes:    8 << 10,      // 超過したヒントは拒否ではなく破棄
+    MaxQueryBytes:       4 << 10,      // 超過した再描画クエリは拒否
 }
 
-options.Mount(mux) // ランタイムアセット、のちに再描画エンドポイントを登録
+if err := options.Validate(); err != nil {
+    return err // 要素名にできない接頭辞などを起動時に検出
+}
+
+options.Mount(mux, registry) // ランタイムアセットと再描画エンドポイント
 
 mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
     wrappers := []htmlbind.Wrapper{BindDocument(...), BindLayout(...)}
@@ -362,7 +379,38 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 
 `options.Render` はモードを判定し、`Vary` を設定し、ドキュメントか差分のどちらかを書きます。それ以外のレスポンスに関する判断は、このモジュールの他の部分と同じく利用者の責務のままです。
 
-ランタイムは同じ接頭辞の下、内容ハッシュ付きのパスで配信されるので、恒久的にキャッシュ可能でありながらデプロイで無効化されます。読み込む要素は `options.ScriptTag()` が返し、その要素が接頭辞を運ぶので、共有された1つのランタイムアセットがどの名前空間でも再ビルドなしに動きます。ヘッダ名は事情が異なり、ランタイムが焼き込んでいるので `HeaderPrefix` を変える場合はそれに合わせてビルドしたランタイムが必要です。
+ランタイムは同じ接頭辞の下、内容ハッシュ付きのパスで配信されるので、恒久的にキャッシュ可能でありながらデプロイで無効化されます。読み込む要素は `options.ScriptTag()` が返し、その要素が設定一式を運ぶので、共有された1つのランタイムアセットがどんな名前の組み合わせでも再ビルドなしに動きます。バイト列に焼き込まれているのはプロトコルバージョンだけです。
+
+### ランタイムを自分で持つ
+
+すでにブラウザランタイムを配っているフレームワークは、2本目を足してはいけません。1つのドキュメントにランタイムが2つあるということは、境界 ID の空間が2つ、ビルド識別子が2つ、そしてどちらがどの領域を持つのかを決めるものが無いまま script タグが2つある、ということだからです。バイト列を受け取って統合してください。
+
+```go
+options := htmlupdate.Options{Key: validatorKey, CallerOwnsRuntime: true}
+
+source := htmlupdate.RuntimeSource()      // 名前に依存しないバイト列
+asset := options.RuntimeAsset()           // バイト列・ダイジェスト・MIME型・ファイル名
+config := options.RuntimeConfig()         // 統合したランタイムに渡すべき設定
+```
+
+`CallerOwnsRuntime` を立てると `Mount` はアセットの経路を登録せず、`ScriptTag` は空文字を返します。このビルドが配信していないアセットを指す script タグは、タグが無いことより悪いからです。統合したアセット側では同じ名前を持つ config で `createPartialUpdateRuntime(config)` を呼び、結果を好きな名前に置いてください。
+
+避けるべきなのは `runtime.js` の複製を持つ形です。複製はバージョン固定された依存ではないので、アップグレードで上流が変わってもビルドは何も失敗せずに乖離していき、乖離したブラウザランタイムはコンパイルエラーではなく「静かに死んだページ」として現れます。
+
+### 失敗を報告する
+
+再描画エンドポイントは URL を所有しているので、レスポンスを書く責任があります。ただし「失敗がどう見えるか」を決める責任はありません。
+
+```go
+options.OnFailure = func(w http.ResponseWriter, r *http.Request, f htmlupdate.Failure) {
+    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+    problem.Write(w, r, f.Status, f.Kind.String()) // または htmlupdate.WriteFailure(w, f)
+}
+```
+
+拒否された再描画はすべてここに来ます。壊れたパス、公開していない kind、別ビルドのページ、大きすぎるクエリ、復号できない引数、失敗した描画のいずれについても、パッケージが書いたはずのステータスと本文、そして原因がある場合はその原因が渡ります。フックを設定しなければ、これまでどおりパッケージ自身が既定の応答を書きます。
+
+再描画のレスポンスは描画結果に対する `ETag` と `private, no-cache` を持つので、変化していない領域はマークアップ全体ではなく `304` で済みます。公開してよい再描画や、別の条件を要求するプロキシがある配信では `RedrawCacheControl` でこの方針ごと差し替えられます。
 
 HTTP 層が `htmlbind` ではなく `htmlupdate` にあるのは、生成されたテンプレートコードが TinyGo や WebAssembly で動き続けられるよう、描画ランタイムを `net/http` から切り離しておくためです。
 

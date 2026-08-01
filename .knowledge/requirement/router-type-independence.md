@@ -37,6 +37,10 @@ acceptance:
   - setting the four symbols installs routes on a framework router with the built-in registry template
   - the decoder still names net/http for Request while the registry names another package for the router
   - defaults produce the same registry source as before the split
+runtime_half:
+  found: 2026-08-01, the same conflation in htmlupdate rather than in generated code; Options.Mount takes '*http.ServeMux' and is therefore uncallable from a framework router
+  difference: runtime Go has no MuxType symbol, so the deferral above has no escape hatch here
+  covered_by: requirement:update-endpoint-mounting
 related:
   - requirement:generated-route-registration
   - decision:stdlib-servemux

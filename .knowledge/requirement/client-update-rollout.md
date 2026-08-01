@@ -61,6 +61,10 @@ milestones:
       runtime_delivery:
         behavior: the framework embeds and serves the runtime at a content-hashed URL, and the caller places the script tag
         reason: requirement:static-asset-extraction and requirement:html-runtime-bootstrap injection do not exist yet
+        no_exit_scheduled: the deviation reached v0.3.0 unretired and was read downstream as policy reversing decision:client-runtime-ownership, per decision:update-runtime-ownership-seams
+        exit: requirement:browser-runtime-asset-ownership, shipped 2026-08-01; the module still serves an asset by default but the bytes are exported and the serving is switchable, so a framework merges rather than copies
+        fully_retired_when: requirement:html-runtime-bootstrap selects and injects the runtime, at which point a direct user has a replacement and the default can ship none
+        lesson: a deviation names the milestone that retires it when it is taken, or the next release turns it into a decision
       transport_package:
         rule: HTTP negotiation lives beside htmlbind rather than inside it, because decision:runtime-package-boundaries keeps the render runtime free of net/http
       client_coverage:
@@ -124,7 +128,7 @@ blocking_decisions:
   resolved:
     - the manifest stays out of an inert payload; head travels in the delta body instead
     - a reloadable component is declared with a reloadable modifier after export
-    - link interception takes plain same-origin GET only, with a data-tinybind-ignore opt-out
+    - link interception takes plain same-origin GET only, with an opt-out attribute; its name became prefix-derived on 2026-08-01, so it is data-tb-ignore by default rather than data-tinybind-ignore, per requirement:update-protocol-naming-ownership
     - single-root element as a boundary eligibility rule, revisited at m3
     - data-attribute prefix defaults to 'tb' and is overridable through data:generator-options DataAttributePrefix
     - header prefix defaults to 'X-Tinybind' and is one configurable knob for both update headers

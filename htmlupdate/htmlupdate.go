@@ -30,6 +30,14 @@ const DefaultHeaderPrefix = "X-Tinybind"
 // or protect the whole surface with one rule.
 const DefaultPathPrefix = "/_tb"
 
+// DefaultDataAttributePrefix names the attributes the protocol puts in a
+// document. It matches the generator's own default, because the two have to
+// agree: one writes the attributes and the other reads them.
+const DefaultDataAttributePrefix = "tb"
+
+// DefaultGlobalName is what the browser runtime is installed under.
+const DefaultGlobalName = "tinybind"
+
 // Mode is the rendering a request asked for.
 type Mode int
 
@@ -53,9 +61,36 @@ type Options struct {
 	// comparing digests, so a deployment serving non-public pages must set it.
 	Key []byte
 	// HeaderPrefix overrides the header namespace. Empty uses
-	// DefaultHeaderPrefix. A deployment overriding it needs a browser runtime
-	// built for the same prefix, because the runtime hardcodes the names.
+	// DefaultHeaderPrefix. The runtime reads it from its configuration, so
+	// overriding it needs no rebuilt runtime.
 	HeaderPrefix string
+	// DataAttributePrefix overrides the attribute namespace. Empty uses
+	// DefaultDataAttributePrefix.
+	//
+	// It must match the generator's own DataAttributePrefix, because that is
+	// what wrote the instance attributes into the markup this runtime reads.
+	// It also names the preserve and ignore markers an application author
+	// writes by hand, which is why a framework needs to own it: those are the
+	// author's surface, not a wire detail.
+	DataAttributePrefix string
+	// GlobalName overrides the name the browser runtime is installed under.
+	// Empty uses DefaultGlobalName.
+	//
+	// A framework sets it so its users call the framework's own name rather
+	// than a dependency's.
+	GlobalName string
+	// RuntimeFileName overrides the base name of the served runtime asset.
+	// Empty uses DefaultRuntimeFileName. The content digest and the .js suffix
+	// are appended either way, so the URL stays immutably cacheable.
+	RuntimeFileName string
+	// CallerOwnsRuntime stops this package serving or referencing a browser
+	// runtime. Mount registers no asset route and ScriptTag returns nothing.
+	//
+	// Set it when the caller ships its own runtime — usually ours, merged into
+	// a larger asset from RuntimeSource. Two runtimes on one document would
+	// mean two boundary id spaces and two build identities, so a framework that
+	// already has one takes this rather than adding a second.
+	CallerOwnsRuntime bool
 	// PathPrefix overrides the URL namespace of every framework endpoint.
 	// Empty uses DefaultPathPrefix. Unlike the header names, the runtime learns
 	// this one at load time, so overriding it needs no rebuilt runtime.
@@ -71,6 +106,36 @@ type Options struct {
 	// DefaultMaxManifestBytes. An oversized manifest is ignored rather than
 	// rejected, so the response is a larger delta instead of an error.
 	MaxManifestBytes int
+	// MaxQueryBytes caps the arguments a redraw may carry. Zero uses
+	// DefaultMaxQueryBytes. Unlike an oversized manifest an oversized query is
+	// rejected, because the arguments are the request rather than a hint.
+	MaxQueryBytes int
+	// RedrawCacheControl overrides the cache policy of a redraw response. Empty
+	// uses DefaultRedrawCacheControl.
+	//
+	// A caller relaxing it takes responsibility for what a redraw renders: the
+	// arguments come from the browser, so the component authorizes its own
+	// inputs, and a cache keyed on the URL alone would serve one user's render
+	// to another.
+	RedrawCacheControl string
+	// StreamContentType overrides the media type of a streamed delta. Empty
+	// uses DefaultStreamContentType.
+	//
+	// This one names the wire format rather than a limit, so overriding it is a
+	// framing choice a client has to agree with, not a tuning knob.
+	StreamContentType string
+	// OnFailure receives every request an endpoint of this package could not
+	// answer, and writes the response for it. Nil writes the plain-text
+	// response WriteFailure writes.
+	//
+	// This package owns the endpoint, so it has to write something; it does
+	// not have to decide what a failure looks like. A caller with problem
+	// responses, its own error pages, a request-scoped logger, or a tracer
+	// takes the whole Failure and answers however it answers everything else.
+	//
+	// A hook must write a response, exactly as a handler must. Delegating to
+	// WriteFailure after logging is the cheapest way to keep the default body.
+	OnFailure func(w http.ResponseWriter, r *http.Request, failure Failure)
 }
 
 // DefaultMaxManifestBytes bounds the validators a request may carry. Beyond it
@@ -104,6 +169,43 @@ func (o Options) maxManifestBytes() int {
 		return DefaultMaxManifestBytes
 	}
 	return o.MaxManifestBytes
+}
+
+// renderOptions carries the naming these options configure into every htmlbind
+// entry this package drives, so the placeholder element, the boundary
+// identifiers, and the instance attributes are one naming system rather than
+// two. Caller options follow, so a caller can still override.
+func (o Options) renderOptions(caller []htmlbind.Option) []htmlbind.Option {
+	owned := []htmlbind.Option{htmlbind.WithBoundaryPrefix(o.dataAttributePrefix())}
+	return append(owned, caller...)
+}
+
+func (o Options) dataAttributePrefix() string {
+	if o.DataAttributePrefix == "" {
+		return DefaultDataAttributePrefix
+	}
+	return o.DataAttributePrefix
+}
+
+func (o Options) globalName() string {
+	if o.GlobalName == "" {
+		return DefaultGlobalName
+	}
+	return o.GlobalName
+}
+
+func (o Options) maxQueryBytes() int {
+	if o.MaxQueryBytes == 0 {
+		return DefaultMaxQueryBytes
+	}
+	return o.MaxQueryBytes
+}
+
+func (o Options) streamContentType() string {
+	if o.StreamContentType == "" {
+		return DefaultStreamContentType
+	}
+	return o.StreamContentType
 }
 
 // Negotiated is what a request asked for, after validation.
@@ -243,12 +345,12 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	// The document render collects so every boundary carries its instance
 	// attribute; without them a later delta could not find its targets.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf)
+	_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
 	return err
 }
 
 func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
-	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf)
+	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
 	if err != nil {
 		// Nothing has been written yet, so the caller can still choose a status
 		// and serve an ordinary error page.
