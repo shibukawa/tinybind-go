@@ -9,11 +9,13 @@
 package templatefmt
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/shibukawa/tinybind-go/templates/dynamobind"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
@@ -127,6 +129,10 @@ func Source(filename string, source []byte, options Options) ([]byte, error) {
 // SourceAs formats one source in a named language. It is what a caller with no
 // file name uses, such as an editor filtering a buffer through standard input.
 func SourceAs(format Format, filename string, source []byte, options Options) ([]byte, error) {
+	source, err := normalizeEncoding(filename, source)
+	if err != nil {
+		return nil, err
+	}
 	switch format {
 	case HTML:
 		module, err := htmlbind.Parse(filename, source)
@@ -226,4 +232,27 @@ func (r Result) Write() error {
 		mode = info.Mode().Perm()
 	}
 	return os.WriteFile(r.Path, r.Formatted, mode)
+}
+
+// utf8BOM is the byte order mark some editors put at the head of a UTF-8 file.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// normalizeEncoding settles the two questions a formatter can answer once for
+// the whole file: a template source is UTF-8 without a byte order mark, and its
+// lines end with LF.
+//
+// The normalization happens before parsing rather than after printing, so a
+// region copied byte for byte - a script or style body, a SQL literal - comes
+// out with LF too. Printing alone could not reach inside those.
+func normalizeEncoding(filename string, source []byte) ([]byte, error) {
+	if !utf8.Valid(source) {
+		return nil, fmt.Errorf("templatefmt: %s is not valid UTF-8", filename)
+	}
+	source = bytes.TrimPrefix(source, utf8BOM)
+	if !bytes.Contains(source, []byte("\r")) {
+		return source, nil
+	}
+	// A lone carriage return is not a line ending anyone writes today, so it is
+	// left where it is rather than guessed at; only the CRLF pair is a line.
+	return bytes.ReplaceAll(source, []byte("\r\n"), []byte("\n")), nil
 }

@@ -22,6 +22,12 @@ scope:
     - sorting or deduplicating declarations, imports, attributes, or fields
     - rewriting one construct into another: SQL keyword case, placeholder spelling, and HTML self-closing syntax are left as authored
     - formatting generated Go output, which go/format already owns
+file_conventions:
+  encoding: UTF-8; a byte order mark is stripped and a source that is not valid UTF-8 is reported rather than reformatted
+  line_endings: LF; a CRLF source is normalized before parsing rather than after printing, because a region copied byte for byte is out of a printer's reach
+  indentation: two spaces per level, and a declaration body opens exactly one level
+  trailing: exactly one newline at end of file, and no trailing whitespace on any line
+  raw_text_exception: a script or style body keeps its own indentation, per rule:whitespace-preserving-contexts; re-indenting it would change served bytes, and inside a JavaScript template literal the leading whitespace is data
 shared_header:
   applies_to: all three formats, because decision:template-parser-delegation gives them one declaration grammar
   form:
@@ -47,6 +53,7 @@ acceptance:
   - a statement whose body is one long line of WITH, joins, and a correlated subquery comes back with one clause per line and the subquery indented under its own SELECT
   - every child of a head element ends up on its own line
   - a glued inline run such as `<b>a</b><i>b</i>` stays on one line, and its rendered output is unchanged
+  - a CRLF source, including the line endings inside its script and style bodies, comes back with LF only
   - a source that fails to parse is left untouched and reported with file, line, and column, per requirement:analysis-diagnostics
   - formatting is never a precondition for generation; an unformatted source still generates
 related:
