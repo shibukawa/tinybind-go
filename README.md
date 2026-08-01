@@ -328,6 +328,44 @@ organizations, err := sqlbind.ScanRows[Organization](rows)
 Every grouped struct level has one `groupkey` field. Repeated keys merge into
 the same object; a NULL child key represents an absent outer-join child.
 
+## Formatting templates
+
+`.tb.html`, `.tb.sql`, and `.tb.dynamo` are file formats this module invented, so
+no editor knows how to format them. The generator ships the formatter:
+
+```bash
+go run ./cmd/tinybind-gen fmt -w -dir ./store
+```
+
+`-l` lists the files that would change and exits non-zero, which is the CI form.
+`-as sql` (or `html`, `dynamo`) filters one source from stdin to stdout, which is
+what an editor "format on save" hook needs.
+
+What it does per format:
+
+- **SQL** — one clause per line, CTE bodies and subqueries indented under their
+  own `SELECT`, `JOIN` and its `ON` split, `AND`/`OR` aligned when a condition
+  list is long. Keyword case, literals, and comments are left exactly as written.
+- **HTML** — one tag per line inside `head`, `table`, and the other positions
+  where the HTML parser discards whitespace anyway. Elsewhere a line break only
+  replaces whitespace that was already there, so `<b>a</b><i>b</i>` stays glued
+  and rendering never changes. `pre`, `textarea`, `script`, `style`, and any
+  `preserve-whitespace` subtree are copied byte for byte.
+- **DynamoDB** — `table` then `key`, one clause per line.
+
+A source that does not parse is reported and left untouched. Everything the
+command does is available as a library:
+
+```go
+import "github.com/shibukawa/tinybind-go/templates/templatefmt"
+
+formatted, err := templatefmt.Source("users.tb.sql", source, templatefmt.Options{})
+results, err := templatefmt.Dir("./store", templatefmt.Options{Width: 120})
+```
+
+`templatefmt.Dir` reads but never writes; each `Result` reports whether the file
+would change and carries `Write()` for when you want it applied.
+
 ## Demo
 
 ```bash

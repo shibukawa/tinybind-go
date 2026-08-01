@@ -38,6 +38,7 @@ options:
   FileTypes: TypePattern set
   HTMLTemplatePattern: base-name glob; empty uses '*.tb.html'
   SQLTemplatePattern: base-name glob; empty uses '*.tb.sql'
+  DynamoTemplatePattern: base-name glob for requirement:dynamo-typed-queries declarations; empty uses '*.tb.dynamo'
   SQLDialect: data:sql-dialect value; required by requirement:sql-dialect-selection when the run discovers a SQL template, and hashed by rule:generation-input-hash so a dialect change forces regeneration
   SQLContextAPI: bool; opt in to decision:sql-context-executor-api wrappers
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface

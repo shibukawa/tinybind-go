@@ -281,15 +281,15 @@ export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id 
 
 func TestGenerateDiagnostics(t *testing.T) {
 	tests := []struct{ source, want string }{
-		{`statement Bad(id: int): sql.exec { DELETE FROM users }`, "require a WHERE"},
-		{`statement Bad(id: int): sql.exec { SELECT $1 }`, "manual SQL placeholders"},
-		{`statement Bad(value: Missing): sql.exec { SELECT {value} }`, "unknown type Missing"},
-		{`statement Bad(values: string[]): sql.exec { SELECT {for value in values}{value}{/for} }`, "general SQL loops"},
+		{`statement bad(id: int): sql.exec { DELETE FROM users }`, "require a WHERE"},
+		{`statement bad(id: int): sql.exec { SELECT $1 }`, "manual SQL placeholders"},
+		{`statement bad(value: Missing): sql.exec { SELECT {value} }`, "unknown type Missing"},
+		{`statement bad(values: string[]): sql.exec { SELECT {for value in values}{value}{/for} }`, "general SQL loops"},
 		{`type Row { id: int } statement Loop(): sql.relation<Row> {SELECT id FROM subquery Loop() AS loop_rows}`, "recursive SQL composition"},
 		{`type Row { id: int } export statement Bad(ok: bool): sql.many<Row> {SELECT id {if ok}, 2{/if} FROM rows}`, "runtime-conditional select columns"},
 		{`type Row { id: int, name: string } export statement Bad(): sql.many<Row> {SELECT id FROM rows}`, "has 1 columns"},
 		{`type Row { id: int } export statement Bad(): sql.many<Row> {SELECT other FROM rows}`, `column "other" does not match field "id"`},
-		{`type Row { id: int } export statement Get(): sql.one<Row> {SELECT id FROM rows} statement GetContext(): sql.exec {SELECT 1}`, "generated Context API conflicts"},
+		{`type Row { id: int } export statement Get(): sql.one<Row> {SELECT id FROM rows} export statement GetContext(): sql.exec {SELECT 1}`, "generated Context API conflicts"},
 	}
 	for _, test := range tests {
 		options := sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}
@@ -304,7 +304,7 @@ func TestGenerateDiagnostics(t *testing.T) {
 }
 
 func TestSQLLiteralsAndCommentsAreLossless(t *testing.T) {
-	source := []byte("statement Safe(): sql.exec { SELECT '{not_template}', $$ {also_not} $$/** {still_not} */ -- $1 {comment}\n }")
+	source := []byte("statement safe(): sql.exec { SELECT '{not_template}', $$ {also_not} $$/** {still_not} */ -- $1 {comment}\n }")
 	if _, err := sqlbind.Generate("safe.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestGenerateContextOnlyKeepsDeclaredNameFree(t *testing.T) {
 	source := []byte(`package queries
 type Row { id: int }
 export statement Get(): sql.one<Row> {SELECT id FROM rows}
-statement GetContext(): sql.exec {SELECT 1}`)
+export statement GetContext(): sql.exec {SELECT 1}`)
 	if _, err := sqlbind.Generate("free.pw.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ContextOnly: true}); err != nil {
 		t.Fatalf("context-only generation must not reserve GetContext: %v", err)
 	}

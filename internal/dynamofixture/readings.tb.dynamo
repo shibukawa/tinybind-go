@@ -13,5 +13,6 @@ export statement ReadingsBetween(sensor: Sensor, low: int64, high: int64): dynam
 }
 
 export statement ReadingsForSensor(sensor: Sensor): dynamo.many<Reading> {
-  table readings; key sensor = {sensor}
+  table readings
+  key sensor = {sensor}
 }

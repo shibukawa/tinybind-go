@@ -391,9 +391,34 @@ DELETE FROM users USING (SELECT id FROM staged WHERE staged.flag) s
 
 `sql.predicate` が条件を満たすのは、その predicate 自身がすべての経路で空にならない場合だけです。
 
+## export とパッケージ内限定の statement
+
+`export` が決めるのは「パッケージの公開 Go API に載るかどうか」であって、「使えるかどうか」ではありません。`export` の無い statement にも同じ関数が非公開名で生成されます。
+
+```
+statement findUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+```
+
+```go
+// 生成される：同じパッケージ内からは呼べる、外からは見えない
+func findUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
+func buildFindUser(id int) (sqlbind.Statement, error)
+```
+
+生成される関数名は**宣言した名前そのまま**です。したがって名前の大文字小文字が Go の可視性を決め、`export` と一致している必要があります。
+
+| 宣言 | 生成 | |
+|---|---|---|
+| `export statement FindUser(...)` | `func FindUser(...)` | 公開 API |
+| `statement findUser(...)` | `func findUser(...)` | パッケージ内限定 |
+| `export statement findUser(...)` | — | エラー：非公開の名前は公開できない |
+| `statement FindUser(...)` | — | エラー：`export` 無しでも公開されてしまう |
+
+例外は `sql.predicate` と `sql.relation` です。これらは実行されず他の statement の builder に埋め込まれるだけなので、自分の名前の関数を持たず、大文字小文字の制約もありません。
+
 ## 低レベル builder を使う
 
-すべての exported statement には `Build<Name>` が作られます。
+exported statement には `Build<Name>`、private statement には `build<Name>` が作られます。
 
 ```go
 statement, err := BuildGetUser(42)

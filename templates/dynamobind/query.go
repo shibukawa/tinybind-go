@@ -1,4 +1,11 @@
-package generator
+// Package dynamobind parses and prints typed DynamoDB access-pattern sources.
+//
+// The grammar is its own: a declaration takes its Go visibility from the case
+// of its name, where an HTML or SQL template takes it from an export keyword.
+// The two are therefore not one grammar wearing two hats, and this package
+// stays separate from the shared template parser until that difference is
+// settled on purpose rather than by a move.
+package dynamobind
 
 import (
 	"fmt"
@@ -6,37 +13,37 @@ import (
 	"unicode"
 )
 
-// DefaultDynamoTemplatePattern is the base-name glob for query declarations,
+// DefaultTemplatePattern is the base-name glob for query declarations,
 // beside the HTML and SQL template patterns.
-const DefaultDynamoTemplatePattern = "*.tb.dynamo"
+const DefaultTemplatePattern = "*.tb.dynamo"
 
-// DynamoResultShape is what a declaration asks the generated function to
+// ResultShape is what a declaration asks the generated function to
 // return. It selects the request shape rather than a row count: a Query always
 // returns many, and the choice is whether the caller sees the page boundaries.
-type DynamoResultShape string
+type ResultShape string
 
 const (
-	// DynamoPage issues one request and returns a page.
-	DynamoPage DynamoResultShape = "page"
-	// DynamoMany iterates every page.
-	DynamoMany DynamoResultShape = "many"
+	// Page issues one request and returns a page.
+	Page ResultShape = "page"
+	// Many iterates every page.
+	Many ResultShape = "many"
 )
 
-// DynamoOp is a key condition operator.
-type DynamoOp string
+// Op is a key condition operator.
+type Op string
 
 const (
-	DynamoEqual          DynamoOp = "="
-	DynamoLess           DynamoOp = "<"
-	DynamoLessOrEqual    DynamoOp = "<="
-	DynamoGreater        DynamoOp = ">"
-	DynamoGreaterOrEqual DynamoOp = ">="
-	DynamoBetween        DynamoOp = "between"
-	DynamoBeginsWith     DynamoOp = "begins_with"
+	OpEqual          Op = "="
+	OpLess           Op = "<"
+	OpLessOrEqual    Op = "<="
+	OpGreater        Op = ">"
+	OpGreaterOrEqual Op = ">="
+	OpBetween        Op = "between"
+	OpBeginsWith     Op = "begins_with"
 )
 
-// DynamoQueryParam is one declared parameter of a query function.
-type DynamoQueryParam struct {
+// QueryParam is one declared parameter of a query function.
+type QueryParam struct {
 	Name string
 	// Type is the Go type as the declaration spells it, checked later against
 	// the attribute's own Go type.
@@ -44,34 +51,34 @@ type DynamoQueryParam struct {
 	Line int
 }
 
-// DynamoPredicate is one comparison in a key clause. Params holds one name, or
+// Predicate is one comparison in a key clause. Params holds one name, or
 // two for BETWEEN.
-type DynamoPredicate struct {
+type Predicate struct {
 	Attribute string
-	Op        DynamoOp
+	Op        Op
 	Params    []string
 	Line      int
 }
 
-// DynamoQueryDecl is one declared access pattern.
-type DynamoQueryDecl struct {
+// QueryDecl is one declared access pattern.
+type QueryDecl struct {
 	Name     string
 	Exported bool
-	Params   []DynamoQueryParam
-	Shape    DynamoResultShape
+	Params   []QueryParam
+	Shape    ResultShape
 	ItemType string
 	// Table is the declared table name. It is required: an access pattern names
 	// exactly one table, so the fact is complete where it is written and the
 	// generated function needs no table parameter.
 	Table      string
 	TableLine  int
-	Key        []DynamoPredicate
+	Key        []Predicate
 	SourcePath string
 	Line       int
 }
 
-// parseDynamoQueries reads every declaration in one .tb.dynamo source.
-func parseDynamoQueries(path string, source []byte) ([]DynamoQueryDecl, error) {
+// ParseQueries reads every declaration in one .tb.dynamo source.
+func ParseQueries(path string, source []byte) ([]QueryDecl, error) {
 	p := &dynamoParser{file: path, tokens: lexDynamo(string(source))}
 	return p.parseAll()
 }
@@ -193,8 +200,8 @@ func describeDynamoToken(t dynamoToken) string {
 }
 
 // parseAll reads every declaration in one source.
-func (p *dynamoParser) parseAll() ([]DynamoQueryDecl, error) {
-	var out []DynamoQueryDecl
+func (p *dynamoParser) parseAll() ([]QueryDecl, error) {
+	var out []QueryDecl
 	for !p.done() {
 		decl, err := p.statement()
 		if err != nil {
@@ -205,8 +212,8 @@ func (p *dynamoParser) parseAll() ([]DynamoQueryDecl, error) {
 	return out, nil
 }
 
-func (p *dynamoParser) statement() (DynamoQueryDecl, error) {
-	var decl DynamoQueryDecl
+func (p *dynamoParser) statement() (QueryDecl, error) {
+	var decl QueryDecl
 	t := p.next()
 	if t.is("export") {
 		decl.Exported = true
@@ -311,11 +318,11 @@ func (p *dynamoParser) tableClause() (string, error) {
 	return t.text, nil
 }
 
-func (p *dynamoParser) params() ([]DynamoQueryParam, error) {
+func (p *dynamoParser) params() ([]QueryParam, error) {
 	if _, err := p.expect("("); err != nil {
 		return nil, err
 	}
-	var out []DynamoQueryParam
+	var out []QueryParam
 	if p.peek().is(")") {
 		p.next()
 		return out, nil
@@ -332,7 +339,7 @@ func (p *dynamoParser) params() ([]DynamoQueryParam, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, DynamoQueryParam{Name: name.text, Type: typeName, Line: name.line})
+		out = append(out, QueryParam{Name: name.text, Type: typeName, Line: name.line})
 
 		t := p.next()
 		if t.is(")") {
@@ -364,14 +371,14 @@ func (p *dynamoParser) goType() (string, error) {
 	return t.text, nil
 }
 
-func (p *dynamoParser) resultType() (DynamoResultShape, string, error) {
+func (p *dynamoParser) resultType() (ResultShape, string, error) {
 	t := p.next()
-	shape := DynamoResultShape("")
+	shape := ResultShape("")
 	switch t.text {
 	case "dynamo.many":
-		shape = DynamoMany
+		shape = Many
 	case "dynamo.page":
-		shape = DynamoPage
+		shape = Page
 	default:
 		return "", "", p.errorf(t.line, "expected \"dynamo.many<T>\" or \"dynamo.page<T>\", found %s", describeDynamoToken(t))
 	}
@@ -390,8 +397,8 @@ func (p *dynamoParser) resultType() (DynamoResultShape, string, error) {
 
 // keyClause parses the key condition: one predicate, optionally joined to a
 // second by "and".
-func (p *dynamoParser) keyClause() ([]DynamoPredicate, error) {
-	var out []DynamoPredicate
+func (p *dynamoParser) keyClause() ([]Predicate, error) {
+	var out []Predicate
 	for {
 		predicate, err := p.predicate()
 		if err != nil {
@@ -405,8 +412,8 @@ func (p *dynamoParser) keyClause() ([]DynamoPredicate, error) {
 	}
 }
 
-func (p *dynamoParser) predicate() (DynamoPredicate, error) {
-	var out DynamoPredicate
+func (p *dynamoParser) predicate() (Predicate, error) {
+	var out Predicate
 	t := p.next()
 	out.Line = t.line
 
@@ -428,7 +435,7 @@ func (p *dynamoParser) predicate() (DynamoPredicate, error) {
 		if _, err := p.expect(")"); err != nil {
 			return out, err
 		}
-		out.Attribute, out.Op, out.Params = attribute.text, DynamoBeginsWith, []string{param}
+		out.Attribute, out.Op, out.Params = attribute.text, OpBeginsWith, []string{param}
 		return out, nil
 	}
 
@@ -440,14 +447,14 @@ func (p *dynamoParser) predicate() (DynamoPredicate, error) {
 	op := p.next()
 	switch op.text {
 	case "=", "<", "<=", ">", ">=":
-		out.Op = DynamoOp(op.text)
+		out.Op = Op(op.text)
 		param, err := p.placeholder()
 		if err != nil {
 			return out, err
 		}
 		out.Params = []string{param}
 	case "between":
-		out.Op = DynamoBetween
+		out.Op = OpBetween
 		low, err := p.placeholder()
 		if err != nil {
 			return out, err

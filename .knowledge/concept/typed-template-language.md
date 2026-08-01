@@ -38,5 +38,6 @@ safety: rule:template-context-safety
 naming: rule:template-name-casing
 declarations: decision:template-declaration-kinds
 parser: decision:template-parser-delegation
+formatter: requirement:template-source-formatting, since a module that invents a file format owns the tool that formats it
 sql_dialect: decision:sql-dialect-generation-time
 ```

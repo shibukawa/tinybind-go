@@ -6,6 +6,11 @@ type Module struct {
 	Package      *PackageDecl  `json:"package,omitempty"`
 	Imports      []ImportDecl  `json:"imports,omitempty"`
 	Declarations []Declaration `json:"declarations"`
+	// Comments holds every comment in the declaration part of the file, in
+	// source order. They are attached by position rather than to nodes, because
+	// a printer walks declarations in order anyway and node-by-node plumbing
+	// would touch every declaration type for no extra information.
+	Comments []Comment `json:"comments,omitempty"`
 }
 
 type PackageDecl struct {

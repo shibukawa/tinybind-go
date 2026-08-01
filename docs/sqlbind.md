@@ -391,9 +391,34 @@ The check applies to every cardinality, not only `sql.exec`. A `DELETE ... RETUR
 
 A `sql.predicate` satisfies the requirement only when that predicate is itself non-empty on every path.
 
+## export and package-private statements
+
+`export` decides whether a statement joins the package's public Go API, not whether it is usable at all. A statement without `export` gets the same functions under unexported names:
+
+```
+statement findUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+```
+
+```go
+// generated: usable from anywhere in this package, invisible outside it
+func findUser(ctx context.Context, db sqlbind.Querier, id int) (User, error)
+func buildFindUser(id int) (sqlbind.Statement, error)
+```
+
+The generated function is named exactly as the statement is declared, so the name's own case is what decides Go visibility, and it has to agree with `export`:
+
+| Declaration | Generated | |
+|---|---|---|
+| `export statement FindUser(...)` | `func FindUser(...)` | public API |
+| `statement findUser(...)` | `func findUser(...)` | package-private |
+| `export statement findUser(...)` | — | error: `export` cannot publish an unexported name |
+| `statement FindUser(...)` | — | error: the name would be public without `export` |
+
+`sql.predicate` and `sql.relation` are the exception. They are embedded into another statement's builder rather than executed, so they generate no function of their own name and their case is unconstrained.
+
 ## Using the low-level builder
 
-Every exported statement receives a `Build<Name>` function:
+Every exported statement receives a `Build<Name>` function (a private one receives `build<Name>`):
 
 ```go
 statement, err := BuildGetUser(42)

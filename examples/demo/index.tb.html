@@ -1,12 +1,12 @@
 package main
 
 export component IndexPage(javascript: string): html {
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>httpbind demo</title>
-  <style>
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8"/>
+      <title>httpbind demo</title>
+      <style>
     body {{ font-family: system-ui, sans-serif; max-width: 54rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }}
     code, pre {{ background: #f4f4f5; border-radius: 4px; }}
     pre {{ padding: 0.75rem 1rem; overflow-x: auto; }}
@@ -15,27 +15,29 @@ export component IndexPage(javascript: string): html {
     a {{ color: #0b57d0; }}
     #stream-out {{ white-space: pre-wrap; min-height: 4rem; border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; }}
   </style>
-</head>
-<body>
-  <h1>httpbind demo</h1>
-  <p class="muted">Bind / Write / WriteError / OpenAPI / <code>NewStream[T]</code> (SSE / NDJSON-JSONL / JSON array).</p>
-  <ul>
-    <li><a href="/docs/">GET /docs/</a> — Swagger UI</li>
-    <li><a href="/health">GET /health</a></li>
-    <li><a href="/openapi.json">GET /openapi.json</a></li>
-  </ul>
+    </head>
+    <body>
+      <h1>httpbind demo</h1>
+      <p class="muted">Bind / Write / WriteError / OpenAPI /
+        <code>NewStream[T]</code>
+        (SSE / NDJSON-JSONL / JSON array).</p>
+      <ul>
+        <li><a href="/docs/">GET /docs/</a> — Swagger UI</li>
+        <li><a href="/health">GET /health</a></li>
+        <li><a href="/openapi.json">GET /openapi.json</a></li>
+      </ul>
 
-  <h2>Browser stream (fetch → format via Accept)</h2>
-  <p>
-    <input id="msg" value="hello" />
-    <button type="button" id="btn-sse">Stream as SSE</button>
-    <button type="button" id="btn-nd">Stream as NDJSON/JSONL</button>
-    <button type="button" id="btn-ja">Stream as JSON array</button>
-  </p>
-  <div id="stream-out" class="muted">output…</div>
+      <h2>Browser stream (fetch → format via Accept)</h2>
+      <p>
+        <input id="msg" value="hello"/>
+        <button type="button" id="btn-sse">Stream as SSE</button>
+        <button type="button" id="btn-nd">Stream as NDJSON/JSONL</button>
+        <button type="button" id="btn-ja">Stream as JSON array</button>
+      </p>
+      <div id="stream-out" class="muted">output…</div>
 
-  <h2>curl recipes</h2>
-  <pre># create user (JSON + path + header)
+      <h2>curl recipes</h2>
+      <pre># create user (JSON + path + header)
 curl -sS -X POST 'http://localhost:8080/orgs/acme/users' \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer secret' \
@@ -90,7 +92,7 @@ curl -sSN -X POST 'http://localhost:8080/chat' \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
   -d '{{"message":"hello"}}'
   </pre>
-  <script>{RawJavaScript(javascript)}</script>
-</body>
-</html>
+      <script>{RawJavaScript(javascript)}</script>
+    </body>
+  </html>
 }

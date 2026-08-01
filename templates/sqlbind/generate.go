@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Dialect names a supported target database. It is the single generation-time
@@ -119,7 +120,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e := &goEmitter{c: c, dialect: options.Dialect, contextAPI: options.ContextAPI, contextOnly: options.ContextOnly, resolver: options.ExecutorResolver}
 	if e.contextAPI && !e.contextOnly {
 		for _, statement := range c.statements {
-			if statement.decl.Exported && statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
+			if statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
 				return nil, c.error(statement.decl.Pos, "generated Context API conflicts with declaration "+statement.decl.Name+"Context")
 			}
 		}
@@ -158,7 +159,7 @@ func (e *goEmitter) emitImports() {
 	// sql.Result for exec and sql.ErrNoRows for one.
 	databaseSQL := false
 	for _, s := range e.c.statements {
-		if !s.decl.Exported || s.cardinality == "predicate" || s.cardinality == "relation" {
+		if s.cardinality == "predicate" || s.cardinality == "relation" {
 			continue
 		}
 		executable = true
@@ -234,6 +235,25 @@ func (e *goEmitter) hasContextAPI() bool {
 	return false
 }
 
+// builderAPIName names the wrapper that returns a ready Statement. It is the
+// one generated name that cannot be the declaration's own, because the
+// execution API already has it, so it is composed and follows the declaration's
+// visibility.
+func (e *goEmitter) builderAPIName(statement *TemplateDecl) string {
+	if statement.Exported {
+		return "Build" + statement.Name
+	}
+	return "build" + upperFirst(statement.Name)
+}
+
+func upperFirst(name string) string {
+	if name == "" {
+		return name
+	}
+	r, size := utf8.DecodeRuneInString(name)
+	return string(unicode.ToUpper(r)) + name[size:]
+}
+
 // executorAPIName names the function that takes an explicit executor.
 // Context-only mode makes it unexported so the declared component name can
 // carry the Context-resolved public API instead.
@@ -301,10 +321,12 @@ func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	}
 	e.line("return nil")
 	e.b.WriteString("}\n\n")
-	if !statement.Exported {
+	if info.cardinality == "predicate" || info.cardinality == "relation" {
+		// A fragment is embedded into a caller's builder and never run on its
+		// own, so the builder above is its whole API.
 		return nil
 	}
-	fmt.Fprintf(&e.b, "func Build%s(", statement.Name)
+	fmt.Fprintf(&e.b, "func %s(", e.builderAPIName(statement))
 	e.emitParams(statement.Parameters)
 	fmt.Fprintf(&e.b, ") (%s, error) {\n\tb := %s(%s)\n\tif err := %s(&b", runtime("Statement"), runtime("NewBuilder"), e.builderStyle(), internal)
 	for _, p := range statement.Parameters {
@@ -351,7 +373,7 @@ func (e *goEmitter) emitExecAPI(statement *TemplateDecl) {
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
 	}
 	e.b.WriteString(") (sql.Result, error) {\n")
-	fmt.Fprintf(&e.b, "\tstatement, err := Build%s(%s)\n", statement.Name, strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
 	e.b.WriteString("\tif err != nil { return nil, err }\n\treturn db.ExecContext(ctx, statement.SQL, statement.Args...)\n}\n\n")
 }
 
@@ -371,7 +393,7 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
 	}
 	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
-	fmt.Fprintf(&e.b, "\tstatement, err := Build%s(%s)\n", statement.Name, strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
 	zero := result + "{}"
 	if info.cardinality == "optional" {
 		zero = "nil"
@@ -405,7 +427,7 @@ func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, re
 	}
 	fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
 	fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
-	fmt.Fprintf(&e.b, "\t\tstatement, err := Build%s(%s)\n", statement.Name, strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\t\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
 	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
 	e.b.WriteString("\t\trows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)\n")
 	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n\t\tdefer rows.Close()\n", result)

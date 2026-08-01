@@ -11,6 +11,9 @@ func Parse(filename string, source []byte) (*Module, error) {
 		OutputPrefix: "html",
 		Context:      "html:child",
 		Parser:       formatParser{},
+		// A component is called as a tag whose name starts uppercase, so the
+		// name form is the call syntax rather than a convention.
+		Names: syntax.NameRule{PascalCase: true, ExportedNameIsGo: true},
 	}})
 }
 
