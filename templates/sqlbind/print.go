@@ -253,6 +253,7 @@ func (b *docBuilder) parseClause(els []element, i, depth int) (*clauseDoc, int) 
 		}
 		clause.commaSeparated = kind.comma
 		clause.indented = kind.indented
+		clause.absorbing = kind.absorbing
 		boolean = kind.boolean
 		i += head
 	}
@@ -270,7 +271,11 @@ func (b *docBuilder) parseClause(els []element, i, depth int) (*clauseDoc, int) 
 		}
 		if e.isAtom() && e.atom.depth == depth {
 			if _, _, ok := matchClauseHead(els, i, depth); ok && len(clause.head) > 0 {
-				break
+				// An absorbing clause ends only where the statement itself moves
+				// on, not at every keyword inside its own action.
+				if !clause.absorbing || endsAbsorbingClause(e.word()) {
+					break
+				}
 			}
 			if clause.commaSeparated && e.is(",") {
 				// A comma trails the item it ends, so it is carried into the

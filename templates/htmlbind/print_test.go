@@ -69,11 +69,14 @@ func TestFormatIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestFormatPreservesStyleBodyBytes(t *testing.T) {
+func TestFormatWritesStyleBodyAsAuthoredCSS(t *testing.T) {
+	// A brace in a style body is CSS, so the canonical spelling is the bare one.
+	// The escaped form parses to the same text, and the AST cannot tell the two
+	// apart, so one of them has to win; the one that is real CSS does.
 	source := "export component Page(): html {<style>\n  body {{ margin: 0; }}\n</style>}"
 	got := formatSource(t, source)
-	if !strings.Contains(got, "body {{ margin: 0; }}") {
-		t.Fatalf("style body was rewritten:\n%s", got)
+	if !strings.Contains(got, "body { margin: 0; }") {
+		t.Fatalf("style body not written as CSS:\n%s", got)
 	}
 	if formatSource(t, got) != got {
 		t.Fatalf("not idempotent:\n%s", got)

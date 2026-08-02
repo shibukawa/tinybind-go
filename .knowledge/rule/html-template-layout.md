@@ -36,7 +36,11 @@ attributes:
   quotes: normalized to double quotes, escaping any the value contains
   boolean: kept bare, since adding ="" would change the token the parser sees
 comments: an html:comment node is placed like an element and is never reflowed internally
-raw_text: a script or style body is copied byte for byte, so its own indentation is the author's; only the enclosing tags are placed
+raw_text:
+  which: script and style only
+  copied: byte for byte, so its own indentation is the author's; only the enclosing tags are placed
+  braces: written back as authored CSS or JavaScript, per rule:template-format-fidelity; only a brace the parser reads as an insertion keeps its escape
+  distinct_from: pre, textarea, and a preserve-whitespace subtree, which preserve whitespace but hold template text, so their braces are escaped
 preserve_option: with PreserveTemplateWhitespace on, only the free positions are laid out, because reshaping is neutral only while collapse follows it
 related:
   - requirement:template-source-formatting

@@ -114,9 +114,15 @@ func quoteFor(value string) (string, error) {
 }
 
 // escapeText re-encodes body text. The parser decodes {{x}} to {x}, so a
-// literal brace has to be wrapped again on the way out. raw marks a script or
-// style body, where an unpaired brace is ordinary syntax of the authored
-// language and is written as it stands.
+// literal brace that would otherwise be read as template syntax has to be
+// wrapped again on the way out.
+//
+// raw marks a script or style body. There a brace is ordinary CSS or JavaScript
+// and the parser already keeps it as text, so it is written back as it stands:
+// escaping it would rewrite the authored language, and rule:template-format-
+// fidelity forbids that whether or not the rewrite happens to round-trip. Only a
+// brace the parser would read as an insertion is escaped, because that one is
+// the only brace whose literal spelling the source cannot hold.
 func escapeText(text string, raw bool) (string, error) {
 	if !strings.ContainsAny(text, "{}") {
 		return text, nil
@@ -125,6 +131,11 @@ func escapeText(text string, raw bool) (string, error) {
 	for i := 0; i < len(text); {
 		switch text[i] {
 		case '{':
+			if raw && !rawInsertionAt(text, i) {
+				b.WriteByte('{')
+				i++
+				continue
+			}
 			end := strings.IndexByte(text[i:], '}')
 			if end < 0 {
 				if raw {

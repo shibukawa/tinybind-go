@@ -6,6 +6,11 @@ package sqlbind
 // indents under its own SELECT instead of aligning with the outer one.
 
 type clauseKind struct {
+	// absorbing marks a clause that swallows the keywords following it rather
+	// than letting them open lines of their own. ON CONFLICT is the case: its
+	// DO UPDATE SET is one conflict action, not an UPDATE statement and a SET
+	// clause, and breaking it apart reads as a second statement.
+	absorbing bool
 	// comma marks a clause whose items are separated by commas.
 	comma bool
 	// boolean marks a clause whose items are separated by AND and OR.
@@ -78,7 +83,7 @@ func matchClauseHead(els []element, i, depth int) (int, clauseKind, bool) {
 		// ON CONFLICT opens its own clause; a bare ON is the condition of the
 		// join above it, so it indents rather than aligning.
 		if word(1) == "CONFLICT" {
-			return 2, clauseKind{}, true
+			return 2, clauseKind{absorbing: true}, true
 		}
 		return 1, clauseKind{boolean: true, indented: true}, true
 	case "FOR":
@@ -109,4 +114,14 @@ func matchClauseHead(els []element, i, depth int) (int, clauseKind, bool) {
 		}
 		return 0, clauseKind{}, false
 	}
+}
+
+// endsAbsorbingClause reports the keywords that close an ON CONFLICT clause.
+// Everything else it meets belongs to the conflict action.
+func endsAbsorbingClause(word string) bool {
+	switch word {
+	case "RETURNING", "UNION", "INTERSECT", "EXCEPT":
+		return true
+	}
+	return false
 }
