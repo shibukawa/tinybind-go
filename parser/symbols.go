@@ -233,7 +233,11 @@ func orderedSyntaxFiles(pkg *packages.Package, generatedHeaders []string) []*ast
 		}
 		name := ""
 		if fset != nil {
-			name = fset.File(f.Pos()).Name()
+			// A file the parser could not read has no FileSet handle, so the
+			// lookup returns nil rather than a file to name.
+			if handle := fset.File(f.Pos()); handle != nil {
+				name = handle.Name()
+			}
 		}
 		base := filepath.Base(name)
 		if strings.HasSuffix(base, "_test.go") {

@@ -201,8 +201,14 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 		}
 		base, sourcePath := "", ""
 		if fset != nil {
-			sourcePath = fset.File(f.Pos()).Name()
-			base = filepath.Base(sourcePath)
+			// A file the parser could not read still arrives as a syntax
+			// entry, but it reports token.NoPos and the FileSet has no handle
+			// for it. Leaving the path empty is what the fset == nil arm above
+			// already does, and everything downstream tolerates it.
+			if handle := fset.File(f.Pos()); handle != nil {
+				sourcePath = handle.Name()
+				base = filepath.Base(sourcePath)
+			}
 		}
 		if strings.HasSuffix(base, "_test.go") ||
 			strings.HasSuffix(base, "_httpbind_gen.go") ||

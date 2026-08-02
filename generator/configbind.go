@@ -105,8 +105,12 @@ func configBindSources(load *packageLoad, options Options) (pkgName string, spec
 		}
 		base, sourcePath := "", ""
 		if fset != nil {
-			sourcePath = fset.File(f.Pos()).Name()
-			base = filepath.Base(sourcePath)
+			// An unparsable file has no FileSet handle; see the same guard in
+			// analyzeLoadedPackage.
+			if handle := fset.File(f.Pos()); handle != nil {
+				sourcePath = handle.Name()
+				base = filepath.Base(sourcePath)
+			}
 		}
 		if skipConfigSourceFile(base) {
 			continue

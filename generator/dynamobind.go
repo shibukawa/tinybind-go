@@ -287,7 +287,13 @@ func dynamoFileName(pkg *packages.Package, f *ast.File) string {
 	if pkg == nil || pkg.Fset == nil || f == nil {
 		return ""
 	}
-	return pkg.Fset.File(f.Pos()).Name()
+	// An unparsable file reports token.NoPos, which the FileSet has no handle
+	// for; an empty path is what the callers already expect here.
+	handle := pkg.Fset.File(f.Pos())
+	if handle == nil {
+		return ""
+	}
+	return handle.Name()
 }
 
 func declaredStructNames(f *ast.File) map[string]bool {
