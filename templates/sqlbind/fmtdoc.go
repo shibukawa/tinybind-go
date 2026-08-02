@@ -100,6 +100,8 @@ type clauseDoc struct {
 	// indented marks a clause that sits one level below the clause it continues,
 	// which is what an ON does under its JOIN.
 	indented bool
+	// absorbing marks a clause whose own keywords do not open lines.
+	absorbing bool
 }
 
 func (d *clauseDoc) headText() string {

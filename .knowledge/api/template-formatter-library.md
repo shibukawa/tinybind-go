@@ -24,6 +24,11 @@ design:
   no_writes_by_default: Dir returns results and writes nothing, so a caller decides between reporting, diffing, and rewriting
   identification: Identify applies the requirement:configurable-template-file-patterns globs, and reports a name matching two patterns rather than picking one
   per_format_entry: SourceAs takes the language explicitly, which is what a caller with a buffer and no file name needs
+idempotence_guard:
+  behavior: Source and SourceAs format twice and return an error rather than a result that differs between the two passes
+  reason: a formatter that does not settle corrupts a file a little more on every save, and an editor cannot tell that from a normal edit
+  cost: one more pass over a file that is small by construction
+  consequence: a caller applying the result never has to verify it separately, and a formatter bug surfaces as a refusal naming the file
 failure_isolation:
   - a parse failure is carried on Result.Err with Formatted left nil, so a broken file is left exactly as it is
   - one failing file does not end a Dir run

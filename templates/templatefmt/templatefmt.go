@@ -129,6 +129,26 @@ func Source(filename string, source []byte, options Options) ([]byte, error) {
 // SourceAs formats one source in a named language. It is what a caller with no
 // file name uses, such as an editor filtering a buffer through standard input.
 func SourceAs(format Format, filename string, source []byte, options Options) ([]byte, error) {
+	once, err := formatOnce(format, filename, source, options)
+	if err != nil {
+		return nil, err
+	}
+	// Idempotence is an invariant of rule:template-format-fidelity, and a
+	// formatter that breaks it corrupts a file a little more on every save. It
+	// is checked here rather than trusted, because the check costs one more
+	// pass over a small file and the failure it catches is unbounded.
+	twice, err := formatOnce(format, filename, once, options)
+	if err != nil {
+		return nil, fmt.Errorf("templatefmt: %s: formatted output does not parse: %w", filename, err)
+	}
+	if !bytes.Equal(once, twice) {
+		return nil, fmt.Errorf("templatefmt: %s: formatting does not settle, so nothing was changed; "+
+			"this is a formatter bug, please report the file", filename)
+	}
+	return once, nil
+}
+
+func formatOnce(format Format, filename string, source []byte, options Options) ([]byte, error) {
 	source, err := normalizeEncoding(filename, source)
 	if err != nil {
 		return nil, err

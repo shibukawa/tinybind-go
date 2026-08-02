@@ -64,7 +64,12 @@ const (
 	// become a break, and glued nodes stay glued.
 	containerFlow
 	// containerVerbatim is a whitespace-preserving subtree, copied byte for byte.
+	// Its text is still template text, so a literal brace in it is escaped.
 	containerVerbatim
+	// containerRawText is a script or style body. Its whitespace is preserved
+	// like containerVerbatim, and a brace in it is authored CSS or JavaScript
+	// rather than template syntax, so it is written back as it stands.
+	containerRawText
 )
 
 type htmlWriter struct {
@@ -76,6 +81,11 @@ type htmlWriter struct {
 // rule:whitespace-preserving-contexts.
 func (w *htmlWriter) containerFor(name string, attrs []Attribute) container {
 	lower := strings.ToLower(name)
+	// pre and textarea preserve whitespace but are ordinary template text; only
+	// script and style hold another language, where a brace is its syntax.
+	if lower == "script" || lower == "style" {
+		return containerRawText
+	}
 	if whitespaceSignificantElements[lower] || hasPreserveWhitespace(attrs) {
 		return containerVerbatim
 	}
@@ -143,8 +153,8 @@ func split(nodes []syntax.Node) []piece {
 // edges belong here rather than to the element around it, because whether a
 // break is available there is the same question as anywhere else in the list.
 func (w *htmlWriter) children(nodes []syntax.Node, kind container, mode layoutMode) error {
-	if kind == containerVerbatim {
-		return w.verbatim(nodes)
+	if kind == containerVerbatim || kind == containerRawText {
+		return w.verbatim(nodes, kind == containerRawText)
 	}
 	for _, item := range split(nodes) {
 		w.gap(item.gap, kind, mode)
@@ -315,7 +325,7 @@ func (w *htmlWriter) writeTag(flat string, attrs []Attribute, name string, selfC
 // flat renders a subtree on one line, reporting false when something in it
 // forbids the flat form.
 func (w *htmlWriter) flat(nodes []syntax.Node, kind container) (string, bool) {
-	if kind == containerVerbatim || kind == containerFree {
+	if kind == containerVerbatim || kind == containerRawText || kind == containerFree {
 		return "", false
 	}
 	sub := &htmlWriter{p: syntax.NewPrinter(syntax.PrintOptions{Width: 1 << 30, Indent: ""}), preserve: w.preserve}
@@ -329,18 +339,23 @@ func (w *htmlWriter) flat(nodes []syntax.Node, kind container) (string, bool) {
 	return out, true
 }
 
-// verbatim copies a whitespace-significant subtree byte for byte.
-func (w *htmlWriter) verbatim(nodes []syntax.Node) error {
+// verbatim copies a whitespace-significant subtree byte for byte. rawText marks
+// a script or style body, where a brace belongs to the authored language.
+func (w *htmlWriter) verbatim(nodes []syntax.Node, rawText bool) error {
+	kind := containerVerbatim
+	if rawText {
+		kind = containerRawText
+	}
 	for _, node := range nodes {
 		if text, ok := node.(*TextNode); ok {
-			escaped, err := escapeText(text.Text, true)
+			escaped, err := escapeText(text.Text, rawText)
 			if err != nil {
 				return err
 			}
 			w.p.WriteRaw(escaped)
 			continue
 		}
-		if err := w.node(node, containerVerbatim); err != nil {
+		if err := w.node(node, kind); err != nil {
 			return err
 		}
 	}

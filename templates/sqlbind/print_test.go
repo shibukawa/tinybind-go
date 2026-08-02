@@ -62,3 +62,22 @@ func TestFormatKeepsComments(t *testing.T) {
 		t.Fatalf("comments lost:\n%s", got)
 	}
 }
+
+func TestFormatKeepsConflictActionOnOneClause(t *testing.T) {
+	got := formatSource(t, "export statement Upsert(id: int, name: string): sql.exec {INSERT INTO users (id, name) VALUES ({id}, {name}) ON CONFLICT(id) DO UPDATE SET name = {name}}")
+	// DO UPDATE SET is one conflict action, not an UPDATE statement followed by
+	// a SET clause, so it stays on the line its ON CONFLICT opened.
+	if !strings.Contains(got, "ON CONFLICT(id) DO UPDATE SET name = {name}") {
+		t.Fatalf("conflict action was split:\n%s", got)
+	}
+	if formatSource(t, got) != got {
+		t.Fatalf("not idempotent:\n%s", got)
+	}
+}
+
+func TestFormatEndsConflictClauseAtReturning(t *testing.T) {
+	got := formatSource(t, "export statement Upsert(id: int, name: string): sql.one<UserRow> {INSERT INTO users (id, name) VALUES ({id}, {name}) ON CONFLICT(id) DO UPDATE SET name = {name} RETURNING id, name}")
+	if !strings.Contains(got, "\n  RETURNING id, name\n") {
+		t.Fatalf("RETURNING did not open its own line:\n%s", got)
+	}
+}

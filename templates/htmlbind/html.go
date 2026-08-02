@@ -303,22 +303,30 @@ var insertionKeywords = map[string]bool{
 // insertion cannot express this way is written parenthesized.
 // See rule:raw-text-insertion-gate.
 func (p *htmlParser) rawInsertionAhead() bool {
+	return rawInsertionAt(p.source, p.pos)
+}
+
+// rawInsertionAt is the parser's own test, as a function of the text alone, so
+// the printer can ask the same question. A brace the parser reads as literal
+// text has to be printed as literal text, and one it reads as an insertion has
+// to be printed escaped; anything else is a rewrite.
+func rawInsertionAt(source string, pos int) bool {
 	// A brace after a dollar sign is a JavaScript template literal placeholder,
 	// which the browser evaluates. Reading it as an insertion would silently
 	// substitute a server value into what the author wrote as client code.
-	if p.pos > 0 && p.source[p.pos-1] == '$' {
+	if pos > 0 && source[pos-1] == '$' {
 		return false
 	}
-	i := p.pos + 1
-	if i >= len(p.source) {
+	i := pos + 1
+	if i >= len(source) {
 		return false
 	}
 	// A closing directive and a parenthesized expression cannot begin a block in
 	// either authored language, so they need no further evidence.
-	if p.source[i] == '/' || p.source[i] == '(' {
+	if source[i] == '/' || source[i] == '(' {
 		return true
 	}
-	name, after := readInsertionName(p.source, i)
+	name, after := readInsertionName(source, i)
 	if name == "" {
 		return false
 	}
@@ -326,14 +334,14 @@ func (p *htmlParser) rawInsertionAhead() bool {
 	if insertionKeywords[name] {
 		return true
 	}
-	after = skipBlanks(p.source, after)
-	if after >= len(p.source) {
+	after = skipBlanks(source, after)
+	if after >= len(source) {
 		return false
 	}
 	// A bare value, a member access, and a call are the remaining insertion
 	// shapes. A minified declaration such as `{color:red}` or a shorthand such
 	// as `{a, b}` stops here, because neither a colon nor a comma can follow.
-	switch p.source[after] {
+	switch source[after] {
 	case '}', '.', '(':
 		return true
 	}

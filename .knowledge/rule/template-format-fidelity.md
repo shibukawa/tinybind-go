@@ -16,6 +16,8 @@ invariants:
   idempotence:
     rule: formatting formatted output changes nothing
     reason: without it the tool cannot be run in CI, because a diff never settles
+    enforced_at_runtime: api:template-formatter-library formats twice and refuses to return a result that differs, so a formatter bug reaches a caller as an error rather than as a file corrupted a little more on every save
+    reason_for_the_guard: the failure it catches is unbounded, and the check costs one more pass over a small file
   parse_stability: reparsing formatted output yields the same AST as the original, comments included
   no_semantic_edits: the formatter never adds, removes, or reorders a declaration, attribute, field, parameter, or clause
   sql_token_identity:
@@ -26,8 +28,16 @@ escape_round_trip:
   problem: the parsers decode as they go, so the AST is not the source
   html_braces:
     parse: '{{x}} in a component body becomes the text {x}'
-    print: a literal brace run in text must be re-emitted in its escaped form, and a text node that already contains }} cannot be wrapped naively
-    scope: this hits every script and style body, where CSS and JavaScript braces are ordinary syntax
+    print: a literal brace run in ordinary template text must be re-emitted escaped, and a text node that already contains }} cannot be wrapped naively
+    raw_text:
+      rule: in a script or style body a brace is written back as it stands, because the parser already keeps it as text
+      why: escaping it rewrites the authored CSS or JavaScript, and an escape the next read has to undo is where a formatter stops settling
+      exception: a brace the parser would read as an insertion, per rule:raw-text-insertion-gate, is the one brace whose bare spelling the source cannot hold, so it keeps the escape
+      test: the printer asks the parser's own insertion test rather than a second guess at it
+    not_raw_text:
+      which: pre, textarea, and a preserve-whitespace subtree
+      rule: whitespace is preserved there, but the text is still template text, so its braces are escaped like any other
+      why_it_matters: treating them as raw text emits a bare brace the parser then reads as syntax, which is a source that no longer parses
   attributes: a value is a part list of text and expressions; printing normalizes the surrounding quote to double quotes and must escape any quote the value itself contains
   sql: the SQL body keeps literals, quoted identifiers, comments, and dollar-quoted strings as raw text, so no decoding happened and none is undone
 whitespace_boundaries:

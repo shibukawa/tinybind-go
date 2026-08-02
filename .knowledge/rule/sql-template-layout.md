@@ -28,7 +28,11 @@ indentation:
     laid_out: a parenthesized SELECT becomes its own indented statement
     left_alone: a parenthesized value list, function argument list, or IN list is data, not a statement, and stays inline until the width forces a break
   join: each JOIN form starts a line at the clause level, and its ON continues on the next line one level in
-  boolean: a top-level AND or OR inside WHERE, HAVING, or ON starts a line at the clause body level, with the operator leading so the conditions align under each other
+  boolean: a top-level AND or OR inside WHERE, HAVING, or ON starts a line at the clause body level, with the operator leading so the conditions align
+  on_conflict:
+    rule: ON CONFLICT absorbs the keywords of its action, so DO UPDATE SET stays on the line the clause opened
+    reason: the action is one conflict resolution, not an UPDATE statement and a SET clause; splitting it reads as a second statement
+    ends_at: RETURNING, UNION, INTERSECT, or EXCEPT, which are where the statement itself moves on under each other
   select_list: one item per line when the list exceeds the width, one line otherwise
 comments:
   line_comment: ends its line; whatever followed it in the source moves to the next line, because joining would comment that content out
