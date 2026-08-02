@@ -6,7 +6,8 @@ title: Component Asset Requirements
 Let a component declare the static assets it requires, report the required set of a chain before rendering, and let the caller decide where each asset is served.
 
 ```yaml
-priority: should
+priority: must as of 2026-08-02, raised from should
+priority_history: named in three consecutive downstream rounds, and requirement:fragment-response-head makes its static required set the answer to a defect rather than a capability
 source:
   - downstream framework component seam report 2026-07-31
   - requirement:static-asset-extraction

@@ -11,7 +11,10 @@ source:
   - decision:live-transport-boundary
   - user termination discussion 2026-07-30
 review_gate: proposed
-status: not implemented; blocked on requirement:component-delta-rendering, which supplies the response form and the validators every part of this depends on
+status: partly implemented; the requirement:component-delta-rendering blocker cleared when that shipped
+what_shipped: the delta stream's terminal record, and the client rule that a stream ending without it is truncated
+what_did_not: the marker on a document response naming whether a live connection is expected at all, so a page with no live boundary cannot be told not to open one
+consequence: requirement:live-mode-token-contract carries the missing half
 principle: completion is never inferred from transport; it is always an explicit record in the byte stream
 why_transport_cannot_say:
   document:

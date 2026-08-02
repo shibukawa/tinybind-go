@@ -54,12 +54,26 @@ func (o Options) WriteUpdate(w http.ResponseWriter, updates ...Update) error {
 // rendering the failure is the point.
 func (o Options) WriteUpdateStatus(w http.ResponseWriter, status int, updates ...Update) error {
 	body := deltaResponse{Version: Version}
+	// An action can reveal a component the document never carried: a validation
+	// summary, a panel that was not there before. Its stylesheet is not in the
+	// live head, and markup landing before the sheet does is the flash of
+	// unstyled content the navigation delta added this field to prevent.
+	seen := map[string]bool{}
 	for _, update := range updates {
 		var out strings.Builder
 		if err := htmlbind.Render(&out, update.Fragment); err != nil {
 			// Nothing is written yet, so the caller can still choose an error
 			// response.
 			return err
+		}
+		for _, tag := range update.Fragment.Head() {
+			// Two regions declaring one stylesheet emit one tag, which is the
+			// htmlbind.MergeHead rule applied across the written set.
+			if tag == "" || seen[tag] {
+				continue
+			}
+			seen[tag] = true
+			body.Head = append(body.Head, tag)
 		}
 		body.Operations = append(body.Operations, deltaOperation{
 			Kind: htmlbind.OpReplace, ID: update.TargetID, HTML: out.String(),

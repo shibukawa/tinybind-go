@@ -15,7 +15,13 @@ existing_feature:
   transport: one chunked response written by the live render entry points
   identity: boundary ids are allocated by position, so rendering the same chain again reproduces the ids already on the client's screen
 problem: a chunked stream ends on any network fault, proxy timeout, or sleep and resume, leaving live regions frozen with no signal
-status: delivered
+status: partly delivered; the reconnect behavior ships and the mode it was designed to travel in does not
+what_shipped_2026_08_01:
+  client: detection, backoff, give-up, and the normal-end distinction, all as client_policy_shipped below
+  server: a delivery stream that stays open, reached by delegating the live entry to the streaming navigation entry
+  token: none; the client sends the navigation token for both the first connection and every reconnect
+  effect: the feature works and the mode does not exist, which decision:update-composition-seams found when a downstream built against the published table
+  settled_by: requirement:live-mode-token-contract
 client_policy_shipped:
   detection: a stream that ends without its terminator
   backoff: linear, bounded by a configured attempt count

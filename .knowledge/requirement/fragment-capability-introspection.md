@@ -65,6 +65,7 @@ implementation:
     wrapper: Head was added to Wrapper at the same time, since it had no head accessor while Fragment did
 slot_parameter_propagation:
   finding: Bind copies only plan.Head, so a Fragment passed as a slot argument inside a params struct is not walked by the binder
+  promoted: requirement:slot-fragment-head-merge, 2026-08-02, after a second reporter reached it from the incompleteness of the requirement:head-contribution-provenance rejection check rather than from the merge itself
   not_required_here:
     reason: the caller holds every Fragment it built, so it unions the flag across the values in its own hand
     covered_statically: a component the template calls is already folded into the plan flag transitively, so only caller-supplied fragments are outside the plan, and those are exactly the ones the caller holds

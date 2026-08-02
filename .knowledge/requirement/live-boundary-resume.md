@@ -11,7 +11,7 @@ source:
   - concept:live-boundary-updates
   - user reconnect discussion 2026-07-30
 review_gate: proposed
-status: not implemented; blocked on requirement:component-delta-rendering, which supplies the response form and the validators every part of this depends on
+status: not implemented; the requirement:component-delta-rendering blocker cleared when that shipped, and nothing re-read this line, per decision:update-composition-seams headline_finding
 transport: decision:live-transport-boundary
 mode: decision:response-mode-header
 request: data:live-boundary-subscription

@@ -30,6 +30,57 @@ var badgePlan = &htmlbind.Plan[badgeParams]{
 	},
 }
 
+// styledPlan is a component that brings a stylesheet, standing in for one an
+// action reveals for the first time: a validation summary, a panel that was not
+// on the page before.
+var styledPlan = &htmlbind.Plan[badgeParams]{
+	Head:        []string{`<link rel="stylesheet" href="/badge.css">`},
+	HeadSources: []string{"Badge"},
+	Ops:         badgePlan.Ops,
+}
+
+// An action may render a region the document never carried, so its stylesheet
+// is not in the live head and its markup landing first flashes unstyled. That
+// is the failure the navigation delta added a head field to prevent, and the
+// action response had never carried one.
+func TestActionResponseCarriesHead(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	err := options.WriteUpdate(recorder,
+		htmlupdate.Replace("cart", htmlbind.Bind(styledPlan, badgeParams{ID: "cart", Count: 1})),
+		// A second region declaring the same sheet emits one tag, which is the
+		// htmlbind.MergeHead rule applied across the written set.
+		htmlupdate.Replace("mini", htmlbind.Bind(styledPlan, badgeParams{ID: "mini", Count: 1})),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Head []string `json:"head"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Head) != 1 {
+		t.Fatalf("head = %v, want one deduplicated tag", body.Head)
+	}
+	if !strings.Contains(body.Head[0], "/badge.css") {
+		t.Fatalf("head = %v", body.Head)
+	}
+}
+
+// A component that brings nothing leaves the field out, so a project using no
+// component styles gets the response it got before.
+func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	if err := options.WriteUpdate(recorder,
+		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(recorder.Body.String(), `"head"`) {
+		t.Fatalf("body carries an empty head field: %s", recorder.Body.String())
+	}
+}
+
 // api is an ordinary JSON endpoint that additionally knows how to answer with
 // the regions its action changed. One branch point decides which.
 func api(count int, status int) http.Handler {

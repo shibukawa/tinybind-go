@@ -87,9 +87,11 @@ Digests are keyed with a secret you supply. An unkeyed hash of low-entropy conte
 | Document | No render header | Complete HTML |
 | Navigation | `X-Tinybind-Render: navigation;v=N` | Changed boundaries of the target route |
 | Redraw | `GET <prefix>/redraw/<kind>/<id>?args` | That one component's subtree |
-| Live reconnect | `X-Tinybind-Render: live;v=N` after a dropped stream | Resumed deliveries for the page's live regions |
+| Live delivery | `X-Tinybind-Render: navigation;v=N` on a second connection | A record stream of deliveries, held open |
 
-The last row belongs to a different feature and is listed here because it shares this negotiation. A [live source](htmlbind.md#live-sources) delivers over one chunked response; when that connection drops — a proxy timeout, a sleeping laptop — the regions freeze with no signal. Reconnecting re-requests the same page in a live mode and resumes.
+The last row belongs to a different feature and is listed here because it shares this negotiation. A [live source](htmlbind.md#live-sources) settles in place during the document render, so the document response finishes; the runtime then opens a second connection that carries deliveries for as long as the sources produce. When that connection drops — a proxy timeout, a sleeping laptop — the regions would freeze with no signal, so the runtime reopens it. Reconnecting is the same request again.
+
+That connection travels on the navigation token today. A dedicated `live;v=N` token is designed and not implemented: nothing on either side sends or parses one, so do not build against it yet.
 
 That resumption is unusually cheap, and for a structural reason: **every live delivery carries the whole state of its region rather than an increment.** A missed value costs nothing, so there is no cursor, no event log, no replay, and no equivalent of `Last-Event-ID`. Boundary ids are allocated by position, so a re-render reproduces the ids already on screen. The reconnected region paints current state immediately instead of showing a placeholder.
 
@@ -433,7 +435,8 @@ The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render 
 | Lifecycle events and GET form interception | Available |
 | Streamed delta records | Available |
 | Await completions on the same stream | Available |
-| Live delivery and reconnection | Available |
+| Live delivery and reconnection | Available, on the navigation token |
+| A dedicated live mode token | Planned |
 | Acting and refreshing in one round trip | Available |
 
 | Morphing or static-dynamic application | Planned |

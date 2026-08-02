@@ -43,6 +43,6 @@ cache:
 open_questions:
   - framework token-provider interface versus application middleware integration
   - per-session versus per-request rotation and multi-tab behavior
-  - delta-response token refresh header
+  - delta-response token refresh header; the one downstream that wanted it withdrew the ask on 2026-08-02, having moved to a cookie read at request time and refreshed by set-cookie, which is what Django, Laravel, and Spring's SPA configuration all do and needs no module change, per decision:update-composition-seams
   - policy for unauthenticated but computationally expensive render updates
 ```
