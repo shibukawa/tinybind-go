@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/shibukawa/tinybind-go/templates/dynamobind"
+	"github.com/shibukawa/tinybind-go/templates/firestorebind"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 	"github.com/shibukawa/tinybind-go/templates/internal/syntax"
 	"github.com/shibukawa/tinybind-go/templates/sqlbind"
@@ -33,13 +34,16 @@ const (
 	SQL Format = "sql"
 	// Dynamo is the .tb.dynamo access-pattern language.
 	Dynamo Format = "dynamo"
+	// Firestore is the .tb.firestore access-pattern language.
+	Firestore Format = "firestore"
 )
 
 // Default file patterns, matching the generator's own discovery defaults.
 const (
-	DefaultHTMLPattern   = "*.tb.html"
-	DefaultSQLPattern    = "*.tb.sql"
-	DefaultDynamoPattern = dynamobind.DefaultTemplatePattern
+	DefaultHTMLPattern      = "*.tb.html"
+	DefaultSQLPattern       = "*.tb.sql"
+	DefaultDynamoPattern    = dynamobind.DefaultTemplatePattern
+	DefaultFirestorePattern = firestorebind.DefaultTemplatePattern
 )
 
 // DefaultWidth is the soft line width used when Options.Width is zero.
@@ -58,11 +62,13 @@ type Options struct {
 	// set, generation no longer collapses static whitespace, so HTML layout is
 	// restricted to the positions the HTML parser discards runs from.
 	PreserveWhitespace bool
-	// HTMLPattern, SQLPattern, and DynamoPattern are base-name globs used by Dir
-	// and by Source when it identifies a file. Empty values use the defaults.
-	HTMLPattern   string
-	SQLPattern    string
-	DynamoPattern string
+	// HTMLPattern, SQLPattern, DynamoPattern and FirestorePattern are base-name
+	// globs used by Dir and by Source when it identifies a file. Empty values
+	// use the defaults.
+	HTMLPattern      string
+	SQLPattern       string
+	DynamoPattern    string
+	FirestorePattern string
 }
 
 func (o Options) print() syntax.PrintOptions {
@@ -81,6 +87,11 @@ func (o Options) pattern(format Format) string {
 			return o.SQLPattern
 		}
 		return DefaultSQLPattern
+	case Firestore:
+		if o.FirestorePattern != "" {
+			return o.FirestorePattern
+		}
+		return DefaultFirestorePattern
 	default:
 		if o.DynamoPattern != "" {
 			return o.DynamoPattern
@@ -98,7 +109,7 @@ var ErrUnknownFormat = errors.New("templatefmt: file name matches no template pa
 func Identify(name string, options Options) (Format, error) {
 	base := filepath.Base(name)
 	var found Format
-	for _, format := range []Format{HTML, SQL, Dynamo} {
+	for _, format := range []Format{HTML, SQL, Dynamo, Firestore} {
 		ok, err := filepath.Match(options.pattern(format), base)
 		if err != nil {
 			return "", fmt.Errorf("templatefmt: invalid %s pattern: %w", format, err)
@@ -168,6 +179,8 @@ func formatOnce(format Format, filename string, source []byte, options Options) 
 		return printModule(module, sqlbind.RootPrinter(), options)
 	case Dynamo:
 		return dynamobind.Format(filename, source, options.print())
+	case Firestore:
+		return firestorebind.Format(filename, source, options.print())
 	default:
 		return nil, fmt.Errorf("templatefmt: unknown format %q", format)
 	}

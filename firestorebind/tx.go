@@ -155,6 +155,17 @@ func QueryPageTx[T any, PT interface {
 	return decodeBatch[T, PT](batch)
 }
 
+// QueryKeysPageTx runs one keys-only query inside a transaction.
+//
+// As outside a transaction, the query must already be keys-only.
+func QueryKeysPageTx(ctx context.Context, tx *Tx, q *datastore.Query) (KeyPage, error) {
+	batch, err := tx.tx.Run(ctx, q)
+	if err != nil {
+		return KeyPage{}, err
+	}
+	return keysFromBatch(batch)
+}
+
 // CountTx counts matching entities inside a transaction.
 func CountTx(ctx context.Context, tx *Tx, q *datastore.Query) (int64, error) {
 	return tx.tx.Count(ctx, q)

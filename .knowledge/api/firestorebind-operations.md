@@ -45,6 +45,7 @@ iterated:
   no_scan: a kind-only Query is what Scan would have been, so there is no second entry point
 keys_only:
   QueryKeysPage: "func QueryKeysPage(ctx, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error)"
+  QueryKeysPageTx: "func QueryKeysPageTx(ctx, tx *Tx, q *datastore.Query) (KeyPage, error)"
   KeyPage: "type KeyPage struct { Keys []datastore.Key; EndCursor datastore.Cursor; More datastore.MoreResults; SkippedResults int32 }"
   ungenericized: nothing is decoded, so there is no type to infer
   does_not_set_keys_only: the query must already carry KeysOnly; a wrapper that set it would return keys where the caller's query said entities

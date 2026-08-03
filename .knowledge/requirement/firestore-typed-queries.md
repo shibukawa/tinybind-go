@@ -12,6 +12,7 @@ implemented: 2026-08-04
 stage: 2 of requirement:firestorebind-product-goals
 built:
   grammar: templates/firestorebind/query.go, beside the HTML, SQL and DynamoDB template packages
+  formatter: templates/firestorebind/print.go, reached through templatefmt as the other three are
   checks: generator/firestorequery_plan.go
   emitter: generator/firestorequery_emit.go
   wiring: generator/firestorequery_generate.go, writing firestorequery_gen.go
@@ -68,7 +69,7 @@ generated:
   query_value: built per call, since datastore.Query is a builder whose methods clone; only the kind is a package-level constant
   kind_constant: one per statement, taken from the type's own Kind rather than from the declaration, so the two cannot disagree
   no_builder: the function embeds its query directly; no per-type query builder is generated
-  transaction_form: open, per decision:firestore-transaction-scope
+  transaction_form: <Name>Tx beside <Name>, for the batch, count and keys shapes; the iterator gets none, per decision:firestore-transaction-scope
 counts_as_usage:
   what: a declaration is a use of its result type, feeding the decoder into the codec pass
   why: the generated function instantiates firestorebind.Query with that type, which does not compile without it

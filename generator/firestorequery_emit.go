@@ -122,10 +122,77 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 	fmt.Fprintf(b, "func %s(ctx context.Context%s, opts ...datastore.ReadOption) %s {\n",
 		name, firestoreQueryParams(decl), result)
 
+	if err := e.queryValue(b, plan); err != nil {
+		return err
+	}
+
+	switch decl.Shape {
+	case FirestoreMany:
+		fmt.Fprintf(b, "\treturn firestorebind.Query[%s](ctx, q, opts...)\n", plan.Entity.Name)
+	case FirestoreBatch:
+		fmt.Fprintf(b, "\treturn firestorebind.QueryPage[%s](ctx, q, opts...)\n", plan.Entity.Name)
+	case FirestoreCount:
+		b.WriteString("\treturn firestorebind.Count(ctx, q, opts...)\n")
+	case FirestoreKeys:
+		b.WriteString("\treturn firestorebind.QueryKeysPage(ctx, q, opts...)\n")
+	}
+	b.WriteString("}\n\n")
+	return e.transactionForm(b, plan)
+}
+
+// transactionForm emits the twin that runs inside a transaction.
+//
+// It is emitted from the declaration rather than from a discovered call, for the
+// reason the key builder is: before it exists there is nothing to discover, so a
+// rule that waited for a use would mean it never existed to be used. It is a
+// leaf function and the linker drops it when nothing calls it.
+//
+// The iterator shape gets none. A range inside a transaction issues an unbounded
+// number of round trips inside something that has to commit, and a wrapper that
+// made that easy would be hiding the cost rather than binding it; a caller who
+// wants every entity inside a transaction pages explicitly with the batch form.
+func (e *firestoreQueryEmitter) transactionForm(b *bytes.Buffer, plan FirestoreQueryPlan) error {
+	decl := plan.Decl
+	if decl.Shape == FirestoreMany {
+		return nil
+	}
+	name := decl.Name + "Tx"
+	if !decl.Exported {
+		name = lowerFirst(decl.Name) + "Tx"
+	}
+	result, err := firestoreQueryResult(plan)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(b, "// %s is %s inside a transaction, so its read joins the snapshot the\n", name, decl.Name)
+	b.WriteString("// transaction is built on rather than seeing what has been committed since.\n")
+	fmt.Fprintf(b, "func %s(ctx context.Context, tx *firestorebind.Tx%s) %s {\n",
+		name, firestoreQueryParams(decl), result)
+	if err := e.queryValue(b, plan); err != nil {
+		return err
+	}
+	switch decl.Shape {
+	case FirestoreBatch:
+		fmt.Fprintf(b, "\treturn firestorebind.QueryPageTx[%s](ctx, tx, q)\n", plan.Entity.Name)
+	case FirestoreCount:
+		b.WriteString("\treturn firestorebind.CountTx(ctx, tx, q)\n")
+	case FirestoreKeys:
+		b.WriteString("\treturn firestorebind.QueryKeysPageTx(ctx, tx, q)\n")
+	}
+	b.WriteString("}\n\n")
+	return nil
+}
+
+// queryValue writes the statements that build the query. Both the plain form and
+// the transaction twin call it, so the two cannot drift apart.
+func (e *firestoreQueryEmitter) queryValue(b *bytes.Buffer, plan FirestoreQueryPlan) error {
+	decl := plan.Decl
+	base := lowerFirst(decl.Name)
 	fmt.Fprintf(b, "\tq := datastore.NewQuery(%sKind)\n", base)
 	for _, filter := range plan.Filters {
 		if err := e.filter(b, filter); err != nil {
-			return fmt.Errorf("firestorebind: statement %s: %w", name, err)
+			return fmt.Errorf("firestorebind: statement %s: %w", decl.Name, err)
 		}
 	}
 	if plan.Ancestor != "" {
@@ -147,18 +214,6 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 	if decl.Shape == FirestoreKeys {
 		b.WriteString("\tq = q.KeysOnly()\n")
 	}
-
-	switch decl.Shape {
-	case FirestoreMany:
-		fmt.Fprintf(b, "\treturn firestorebind.Query[%s](ctx, q, opts...)\n", plan.Entity.Name)
-	case FirestoreBatch:
-		fmt.Fprintf(b, "\treturn firestorebind.QueryPage[%s](ctx, q, opts...)\n", plan.Entity.Name)
-	case FirestoreCount:
-		b.WriteString("\treturn firestorebind.Count(ctx, q, opts...)\n")
-	case FirestoreKeys:
-		b.WriteString("\treturn firestorebind.QueryKeysPage(ctx, q, opts...)\n")
-	}
-	b.WriteString("}\n\n")
 	return nil
 }
 

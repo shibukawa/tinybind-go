@@ -123,6 +123,10 @@ func QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...datastore.Re
 	if err != nil {
 		return KeyPage{}, err
 	}
+	return keysFromBatch(batch)
+}
+
+func keysFromBatch(batch *datastore.Batch) (KeyPage, error) {
 	if batch == nil {
 		return KeyPage{}, nil
 	}

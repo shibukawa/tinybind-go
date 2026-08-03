@@ -491,3 +491,34 @@ func TestDeclaredIndexMarshals(t *testing.T) {
 		}
 	}
 }
+
+// A declared query's transaction twin reads through the transaction handle, so
+// it joins the snapshot rather than seeing what has been committed since.
+func TestDeclaredQueryTransactionTwin(t *testing.T) {
+	ctx, fake := withFake(t)
+	if _, err := firestorefixture.InsertTask(ctx, firestorefixture.Task{Number: 2, Title: "inside"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var got firestorebind.KeyPage
+	err := firestorebind.RunReadOnly(ctx, func(tx *firestorebind.Tx) error {
+		page, err := firestorefixture.TaskKeysTx(ctx, tx, "inside")
+		if err != nil {
+			return err
+		}
+		got = page
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunReadOnly: %v", err)
+	}
+	if len(got.Keys) != 1 || got.Keys[0].Path[0].ID != 2 {
+		t.Errorf("keys: got %v", got.Keys)
+	}
+	if fake.countOf("beginTransaction") != 1 {
+		t.Errorf("the twin did not run inside a transaction")
+	}
+	if !fake.lastKeysOnly() {
+		t.Error("the twin did not ask for keys only")
+	}
+}

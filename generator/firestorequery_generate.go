@@ -148,3 +148,92 @@ func (g *Generator) EmitFirestoreQueriesFor(dir string) ([]byte, error) {
 	}
 	return EmitFirestoreQueries(pkg, plans)
 }
+
+// firestoreQueryArtifacts emits one artifact per declaration source, so a
+// package with two query files generates two, as every other per-source mode
+// does.
+func (g *Generator) firestoreQueryArtifacts(load *packageLoad) ([]Artifact, error) {
+	pkg, plans, err := g.firestoreQueryPlans(load)
+	if err != nil || len(plans) == 0 {
+		return nil, err
+	}
+	grouped := map[string][]FirestoreQueryPlan{}
+	var order []string
+	for _, plan := range plans {
+		source := plan.Decl.SourcePath
+		if _, seen := grouped[source]; !seen {
+			order = append(order, source)
+		}
+		grouped[source] = append(grouped[source], plan)
+	}
+	sort.Strings(order)
+	artifacts := make([]Artifact, 0, len(order))
+	for _, source := range order {
+		code, err := EmitFirestoreQueries(pkg, grouped[source])
+		if err != nil {
+			return nil, err
+		}
+		if len(code) == 0 {
+			continue
+		}
+		artifacts = append(artifacts, Artifact{
+			SourcePath:  source,
+			Kind:        ArtifactFirestoreQuery,
+			Destination: DestinationGoPackage,
+			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
+			PackageName: pkg,
+			Content:     code,
+		})
+	}
+	return artifacts, nil
+}
+
+// firestoreEntityArtifacts emits one artifact per Go source that declares a
+// bound type, so a package with two Firestore sources generates two files and
+// neither owns the other's declarations.
+func (g *Generator) firestoreEntityArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.featureDisabled(FeatureEntityCodec) {
+		return nil, nil
+	}
+	plan, err := analyzeFirestoreEntities(load, g.Options)
+	if err != nil {
+		return nil, err
+	}
+	grouped := map[string][]string{}
+	var order []string
+	for _, entity := range plan.Entities {
+		if entity.Usage == 0 {
+			continue
+		}
+		if _, seen := grouped[entity.SourcePath]; !seen {
+			order = append(order, entity.SourcePath)
+		}
+		grouped[entity.SourcePath] = append(grouped[entity.SourcePath], entity.Name)
+	}
+	sort.Strings(order)
+	artifacts := make([]Artifact, 0, len(order))
+	for _, source := range order {
+		selected := make(map[string]bool, len(grouped[source]))
+		for _, name := range grouped[source] {
+			selected[name] = true
+		}
+		code, err := emitFirestoreSelected(plan, selected)
+		if err != nil {
+			return nil, err
+		}
+		if len(code) == 0 {
+			continue
+		}
+		artifacts = append(artifacts, Artifact{
+			SourcePath:  source,
+			Kind:        ArtifactFirestoreEntity,
+			Destination: DestinationGoPackage,
+			OutputBase:  artifactBase(source),
+			Extension:   ExtensionGo,
+			PackageName: plan.Package,
+			Content:     code,
+		})
+	}
+	return artifacts, nil
+}

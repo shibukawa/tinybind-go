@@ -369,3 +369,80 @@ export statement BySensor(sensor: Sensor): firestore.many<Reading> {
 		}
 	}
 }
+
+// Every shape a transaction can serve gets a twin, emitted from the declaration
+// rather than from a discovered call, for the reason the key builder is.
+func TestFirestoreQueryTransactionTwin(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Page(sensor: Sensor): firestore.batch<Reading> {
+  where sensor == {sensor}
+}
+
+export statement Total(sensor: Sensor): firestore.count<Reading> {
+  where sensor == {sensor}
+}
+
+export statement Ids(sensor: Sensor): firestore.keys<Reading> {
+  where sensor == {sensor}
+}
+`)
+	for _, want := range []string{
+		"func PageTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (firestorebind.Page[Reading], error) {",
+		"firestorebind.QueryPageTx[Reading](ctx, tx, q)",
+		"func TotalTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (int64, error) {",
+		"firestorebind.CountTx(ctx, tx, q)",
+		"func IdsTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (firestorebind.KeyPage, error) {",
+		"firestorebind.QueryKeysPageTx(ctx, tx, q)",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated code is missing %q\n%s", want, code)
+		}
+	}
+}
+
+// The iterator gets no twin: a range inside a transaction issues an unbounded
+// number of round trips inside something that has to commit.
+func TestFirestoreQueryIteratorHasNoTransactionTwin(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Every(sensor: Sensor): firestore.many<Reading> {
+  where sensor == {sensor}
+}
+`)
+	if strings.Contains(code, "func EveryTx(") {
+		t.Errorf("the iterator shape got a transaction twin\n%s", code)
+	}
+}
+
+// A twin takes the declaration's own visibility, since an unexported statement
+// has no caller outside the package to reach either form.
+func TestFirestoreQueryTwinFollowsVisibility(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+statement page(sensor: Sensor): firestore.batch<Reading> {
+  where sensor == {sensor}
+}
+`)
+	if !strings.Contains(code, "func pageTx(ctx context.Context,") {
+		t.Errorf("an unexported statement got an exported twin\n%s", code)
+	}
+}
+
+// Both forms build the query through one emitter, so they cannot drift apart.
+func TestFirestoreQueryFormsAgree(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Page(sensor: Sensor, n: int): firestore.batch<Reading> {
+  where sensor == {sensor}
+  order at desc
+  limit {n}
+}
+`)
+	// The filter, the ordering and the bound each appear once per form.
+	for _, line := range []string{
+		`q = q.Filter("sensor", datastore.Equal, datastore.String(string(sensor)))`,
+		`q = q.OrderDesc("at")`,
+		"q = q.Limit(int32(n))",
+	} {
+		if got := strings.Count(code, line); got != 2 {
+			t.Errorf("%q appears %d times, want 2 (one per form)\n%s", line, got, code)
+		}
+	}
+}
