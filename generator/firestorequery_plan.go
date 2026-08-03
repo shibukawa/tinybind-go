@@ -21,6 +21,17 @@ type FirestoreQueryPlan struct {
 	Orders []FirestoreQueryOrder
 	// Ancestor is the parameter holding the ancestor key, or "".
 	Ancestor string
+	// Select and Distinct are the checked property names, resolved to what the
+	// tags call them.
+	Select   []string
+	Distinct []string
+	// ProjectsAnArray reports whether any projected property is a slice, which
+	// makes the service return one result per element rather than one per
+	// entity. The godoc says so; nothing here can prevent it.
+	ProjectsAnArray bool
+	// Start and End are the parameters holding the cursors.
+	Start string
+	End   string
 }
 
 // FirestoreQueryFilter is one checked predicate.
@@ -133,6 +144,61 @@ func planFirestoreQuery(decl FirestoreQueryDecl, entities map[string]FirestoreEn
 		used[param.Name] = true
 	}
 
+	for _, projection := range decl.Select {
+		field, err := firestoreQueryField(entity, projection.Name)
+		if err != nil {
+			return fail(projection.Line, "%s", err)
+		}
+		if field.Type.Kind == FirestoreArray {
+			plan.ProjectsAnArray = true
+		}
+		plan.Select = append(plan.Select, field.Property)
+	}
+	for _, projection := range decl.Distinct {
+		field, err := firestoreQueryField(entity, projection.Name)
+		if err != nil {
+			return fail(projection.Line, "%s", err)
+		}
+		plan.Distinct = append(plan.Distinct, field.Property)
+	}
+	// Datastore requires the distinct-on properties to lead the ordering. Both
+	// clauses are right here, so this is a structural check rather than a guess
+	// about the service.
+	if len(plan.Distinct) > 0 && len(plan.Orders) > 0 {
+		if len(plan.Orders) < len(plan.Distinct) {
+			return fail(decl.DistinctLine,
+				"a distinct clause names %d properties but the order clause has only %d; the distinct properties have to lead the ordering",
+				len(plan.Distinct), len(plan.Orders))
+		}
+		for i, property := range plan.Distinct {
+			if plan.Orders[i].Field.Property != property {
+				return fail(decl.DistinctLine,
+					"distinct property %s is %s in the ordering, and the distinct properties have to lead it in the same order",
+					property, ordinalPosition(i, plan.Orders))
+			}
+		}
+	}
+
+	for _, cursor := range []struct {
+		name  string
+		param string
+		line  int
+	}{{"start", decl.Start, decl.StartLine}, {"end", decl.End, decl.EndLine}} {
+		if cursor.param == "" {
+			continue
+		}
+		param, ok := params[cursor.param]
+		if !ok {
+			return fail(cursor.line, "no parameter named %s is declared", cursor.param)
+		}
+		if param.Type != "datastore.Cursor" {
+			return fail(param.Line, "a %s is an opaque position, so parameter %s must be datastore.Cursor, not %s",
+				cursor.name, param.Name, param.Type)
+		}
+		used[param.Name] = true
+	}
+	plan.Start, plan.End = decl.Start, decl.End
+
 	// An index clause names properties, so the same rename check applies to it.
 	for _, property := range decl.Index {
 		if _, err := firestoreQueryField(entity, property.Name); err != nil {
@@ -210,6 +276,17 @@ func checkFirestoreParamType(param FirestoreQueryParam, field FirestoreFieldPlan
 			param.Name, param.Type, field.Property, want)
 	}
 	return nil
+}
+
+// ordinalPosition names where a property actually sits in the ordering, so the
+// message points at the fix rather than only at the rule.
+func ordinalPosition(want int, orders []FirestoreQueryOrder) string {
+	for i, order := range orders {
+		if i == want {
+			return fmt.Sprintf("behind %s", order.Field.Property)
+		}
+	}
+	return "absent from"
 }
 
 func isFirestoreIntegerTypeName(name string) bool {

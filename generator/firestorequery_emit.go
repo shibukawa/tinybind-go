@@ -114,6 +114,19 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 	if decl.Shape == FirestoreMany {
 		b.WriteString("//\n// One range can issue many requests; nothing here reports the boundary.\n")
 	}
+	if len(plan.Select) > 0 {
+		b.WriteString("//\n// This is a projection: only the selected properties are read, and every\n")
+		b.WriteString("// other field of the returned value is its zero value. Do not write one back\n")
+		b.WriteString("// with Store or Update, which replace the whole entity and would therefore\n")
+		b.WriteString("// erase everything this query did not ask for.\n")
+		b.WriteString("//\n// A projection reads from an index, so every selected property must be\n")
+		b.WriteString("// indexed, and the service rejects projecting a property an equality filter\n")
+		b.WriteString("// already fixes.\n")
+		if plan.ProjectsAnArray {
+			b.WriteString("//\n// One selected property is an array, so the service returns one result per\n")
+			b.WriteString("// element rather than one per entity.\n")
+		}
+	}
 	if !decl.HasIndex && firestoreNeedsIndexHint(plan) {
 		b.WriteString("//\n// This query combines filters and ordering in a shape that may require a\n")
 		b.WriteString("// composite index. Nothing in the toolchain verifies that one exists, so a\n")
@@ -211,10 +224,30 @@ func (e *firestoreQueryEmitter) queryValue(b *bytes.Buffer, plan FirestoreQueryP
 	if bound, ok := firestoreBoundExpr(decl.Offset); ok {
 		fmt.Fprintf(b, "\tq = q.Offset(%s)\n", bound)
 	}
+	if len(plan.Select) > 0 {
+		fmt.Fprintf(b, "\tq = q.Project(%s)\n", quotedList(plan.Select))
+	}
+	if len(plan.Distinct) > 0 {
+		fmt.Fprintf(b, "\tq = q.DistinctOn(%s)\n", quotedList(plan.Distinct))
+	}
+	if plan.Start != "" {
+		fmt.Fprintf(b, "\tq = q.Start(%s)\n", plan.Start)
+	}
+	if plan.End != "" {
+		fmt.Fprintf(b, "\tq = q.End(%s)\n", plan.End)
+	}
 	if decl.Shape == FirestoreKeys {
 		b.WriteString("\tq = q.KeysOnly()\n")
 	}
 	return nil
+}
+
+func quotedList(names []string) string {
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = strconv.Quote(name)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // index emits the composite index the author declared, as a value a deploy step
@@ -357,6 +390,10 @@ func firestoreNeedsIndexHint(plan FirestoreQueryPlan) bool {
 		properties[order.Field.Property] = true
 	}
 	switch {
+	case len(plan.Select) > 0 || len(plan.Distinct) > 0:
+		// A projection always reads from an index, and one over more than the
+		// automatic single-property indexes needs a composite.
+		return true
 	case len(plan.Orders) > 1:
 		return true
 	case plan.Ancestor != "" && (len(plan.Orders) > 0 || len(plan.Filters) > 0):

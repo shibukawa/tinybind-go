@@ -56,6 +56,9 @@ type FirestorePredicate = firestorebind.Predicate
 // FirestoreOrder is one sort key of an order clause.
 type FirestoreOrder = firestorebind.Order
 
+// FirestoreProjection is one property a select or distinct clause names.
+type FirestoreProjection = firestorebind.Projection
+
 // FirestoreIndexProperty is one property of a declared composite index.
 type FirestoreIndexProperty = firestorebind.IndexProperty
 

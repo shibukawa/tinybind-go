@@ -42,3 +42,19 @@ export statement WarmReadingsBySensor(sensor: SensorID, from: time.Time): firest
   order at desc
   index sensor, at desc
 }
+
+// A projection reads less: only the named properties come back, and everything
+// else on the value is its zero value. It is bandwidth, not a different type.
+export statement ReadingTimes(sensor: SensorID): firestore.batch<Reading> {
+  where sensor == {sensor}
+  select at
+  index sensor, at
+}
+
+// A cursor is how a caller resumes, which an offset cannot do without paying
+// for every entity it steps over.
+export statement ReadingsFrom(cursor: datastore.Cursor, size: int): firestore.batch<Reading> {
+  order at
+  start {cursor}
+  limit {size}
+}

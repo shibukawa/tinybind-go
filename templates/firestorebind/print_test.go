@@ -130,3 +130,31 @@ func TestDefaultPatternMatchesTheGenerator(t *testing.T) {
 			firestorebind.DefaultTemplatePattern, templatefmt.DefaultFirestorePattern)
 	}
 }
+
+// The new clauses take their place in the fixed order too, so a source that
+// writes them in any order comes out the same way.
+func TestFormatOrdersProjectionAndCursorClauses(t *testing.T) {
+	got := format(t, `export statement A(c: datastore.Cursor, s: Sensor): firestore.batch<Reading> {
+  limit 10
+  end {c}
+  distinct sensor
+  order sensor, at
+  start {c}
+  select sensor, at
+  where celsius > {s}
+}
+`)
+	want := `export statement A(c: datastore.Cursor, s: Sensor): firestore.batch<Reading> {
+  where celsius > {s}
+  select sensor, at
+  distinct sensor
+  order sensor, at
+  start {c}
+  end {c}
+  limit 10
+}
+`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

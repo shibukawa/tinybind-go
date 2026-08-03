@@ -82,7 +82,8 @@ errors:
   type: "firestorebind.Error{Property, Expected, Got, Message}", built by TypeError for a wrong kind and ValueError for a value the field cannot hold
   finding_it: firestorebind.AsError walks the chain by type assertion, as jsonbind.AsError does, because errors.As needs reflection
 untyped_query_escape_hatch:
-  status: the escape hatch, now that requirement:firestore-typed-queries generates the declared form
+  status: the escape hatch, now that requirement:firestore-typed-queries generates the declared form and covers every datastore.Query method
+  what_it_is_still_for: a query whose shape is decided at run time, rather than one the declaration grammar cannot express
   unchecked: a query built with the driver's own builder names properties as strings, so a renamed tag still compiles and returns an empty batch
 deferred:
   - a batch-level iterator yielding Page[T]

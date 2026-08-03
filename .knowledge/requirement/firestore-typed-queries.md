@@ -52,11 +52,42 @@ body_clauses:
   order: one or more properties, each ascending or descending
   limit and offset: constants or parameters; an offset reads and bills the entities it steps over, which the generated godoc says
   index: optional; names the composite index this access pattern needs, emitted as a datastore.Index value rather than derived, per decision:firestore-no-schema-artifact
-  project and distinct: deferred until the primary path is proven, since a projection returns a partial entity the codec cannot fill
+  select: the projection; the result type is unchanged and what is not selected arrives as its zero value
+  distinct: collapses results sharing the named properties
+  start and end: cursor parameters, typed datastore.Cursor
 scope:
-  in: kind, property filters, ancestor, order, limit, offset, cursor paging, read consistency
-  out: OR, projections, distinctOn, GQL, aggregations beyond count
-  reason: what is left out is either absent from the wire or returns something other than a whole entity of the declared type
+  in: kind, property filters, ancestor, order, projection, distinctOn, limit, offset, cursor paging, read consistency
+  out: OR, GQL, aggregations beyond count
+  reason: what is left out is absent from the wire, not merely unbuilt
+  covers_the_driver_builder: every datastore.Query method has a clause, so a declaration can express what the escape hatch can; the escape hatch remains for a query built at run time rather than for one this grammar cannot say
+projection:
+  added: 2026-08-04
+  result_type_is_unchanged: the bound type comes back with its unselected fields at their zero values, which is already what DecodeEntity does with an absent property; a projection is bandwidth, not a different shape
+  superseded_reason: an earlier draft deferred this saying the codec cannot fill a partial entity. That was wrong: leaving an absent property at its zero value is the decoder's defined behaviour, and nothing had to change to support it
+  the_real_hazard:
+    what: a projected value must not be written back
+    why: Store and Update replace the whole entity, since Datastore has no partial update, so writing back a value whose unselected fields are zero erases them
+    handled: the generated godoc says so on every projecting function, in the same place the iterator's request count is disclosed
+    not_prevented: the value is still the bound type and still satisfies EntityEncoder, so nothing stops a caller; a distinct generated row type would, at the cost of a second type and a second decode path per declaration
+  checks_the_generator_can_make:
+    - a selected property must exist under that tag
+    - a selected property must not be noindex, since a projection reads from an index and an excluded property is in none
+    - select on a count has nothing to return, and on a keys query says a second, different projection
+    - an array-typed selected property makes the service return one result per element, which is stated in the godoc from the field's own Go type
+  service_rules_not_checked:
+    what: the service rejects projecting a property an equality filter already fixes
+    why_not_checked: it is a published rule this repository has not measured, and a check that is wrong here would refuse a query that works; the godoc names it instead
+distinct_on:
+  added: 2026-08-04
+  result_type_is_unchanged: it collapses results rather than reshaping them
+  leading_order_check: Datastore requires the distinct properties to lead the ordering, and both clauses are in the same declaration, so this is checked structurally rather than guessed
+  source_of_the_rule: the published documentation, not a measurement here; a wrong check fails loudly at generation time rather than silently at run time, which is why it was worth making
+cursors:
+  added: 2026-08-04
+  gap_it_closed: a batch declaration returned EndCursor and no declaration could feed one back, so a paged read could not be resumed; the concept had claimed cursor paging was in scope before it was
+  parameters: typed datastore.Cursor, so a string cannot be passed by mistake
+  on_the_iterator: a start cursor is the starting point and the iterator advances from it, matching what api:firestorebind-operations says of a caller-supplied Start
+  not_on_a_count: an aggregation returns no batch to resume
 type_checking:
   property_names: checked against the declared type's rule:firestore-tag-options tags, so a rename is a generation error
   parameter_types: checked against the field's own Go type, and encoded through the same value constructors data:firestore-property-mapping uses for the codec

@@ -33,6 +33,7 @@ const queryReading = "type Sensor string\n\n" +
 	"\tSensor Sensor `firestore:\"sensor\"`\n" +
 	"\tAt time.Time `firestore:\"at\"`\n" +
 	"\tCelsius float64 `firestore:\"celsius\"`\n" +
+	"\tTags []string `firestore:\"tags\"`\n" +
 	"\tBody string `firestore:\"body,noindex\"`\n" +
 	"}"
 
@@ -290,11 +291,6 @@ func TestFirestoreQueryErrors(t *testing.T) {
 			want:  "must be an integer",
 		},
 		{
-			name:  "projection is deferred",
-			decls: "export statement A(s: Sensor): firestore.many<Reading> {\n where sensor == {s}\n select sensor\n}",
-			want:  "not supported yet",
-		},
-		{
 			name: "duplicate statement",
 			decls: "export statement A(s: Sensor): firestore.many<Reading> {\n where sensor == {s}\n}\n" +
 				"export statement A(s: Sensor): firestore.many<Reading> {\n where sensor == {s}\n}",
@@ -444,5 +440,151 @@ export statement Page(sensor: Sensor, n: int): firestore.batch<Reading> {
 		if got := strings.Count(code, line); got != 2 {
 			t.Errorf("%q appears %d times, want 2 (one per form)\n%s", line, got, code)
 		}
+	}
+}
+
+// A projection is bandwidth, not a different type: the result stays the bound
+// type and what was not selected arrives as its zero value.
+func TestFirestoreQueryProjection(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Times(sensor: Sensor): firestore.batch<Reading> {
+  where sensor == {sensor}
+  select at, celsius
+}
+`)
+	if !strings.Contains(code, `q = q.Project("at", "celsius")`) {
+		t.Errorf("the projection is missing\n%s", code)
+	}
+	if !strings.Contains(code, "(firestorebind.Page[Reading], error)") {
+		t.Errorf("a projection changed the result type\n%s", code)
+	}
+	// The hazard is writing one back: Store and Update replace the whole
+	// entity, so the unselected zero values would erase real data.
+	if !strings.Contains(code, "Do not write one back") {
+		t.Errorf("the write-back hazard is not documented\n%s", code)
+	}
+}
+
+// A projection on an array property returns one result per element rather than
+// one per entity, which the generator can see from the field's own type.
+func TestFirestoreQueryProjectionOnArrayIsCalledOut(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Tagged(s: Sensor): firestore.batch<Reading> {
+  where sensor == {s}
+  select tags
+}
+`)
+	if !strings.Contains(code, "one result per") {
+		t.Errorf("the array multiplication is not called out\n%s", code)
+	}
+
+	// A projection on a scalar says nothing about elements, so the note is not
+	// emitted where it would be wrong.
+	scalar := generateFirestoreQuery(t, `
+export statement Times(s: Sensor): firestore.batch<Reading> {
+  where sensor == {s}
+  select at
+}
+`)
+	if strings.Contains(scalar, "one result per") {
+		t.Errorf("a scalar projection got the array note\n%s", scalar)
+	}
+}
+
+// Cursors are how a caller resumes, which an offset cannot do without paying
+// for every entity it steps over.
+func TestFirestoreQueryCursors(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement From(c: datastore.Cursor, e: datastore.Cursor): firestore.batch<Reading> {
+  order at
+  start {c}
+  end {e}
+}
+`)
+	for _, want := range []string{
+		"c datastore.Cursor, e datastore.Cursor",
+		"q = q.Start(c)",
+		"q = q.End(e)",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated code is missing %q\n%s", want, code)
+		}
+	}
+}
+
+func TestFirestoreQueryProjectionErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		decls string
+		want  string
+	}{
+		{
+			name:  "select a renamed property",
+			decls: "export statement A(s: Sensor): firestore.batch<Reading> {\n where sensor == {s}\n select att\n}",
+			want:  `Reading has no property "att"`,
+		},
+		{
+			// A projection reads from an index, and an excluded property is in
+			// none, so it can never come back.
+			name:  "select an unindexed property",
+			decls: "export statement A(s: Sensor): firestore.batch<Reading> {\n where sensor == {s}\n select body\n}",
+			want:  "is tagged noindex",
+		},
+		{
+			name:  "select on a count",
+			decls: "export statement A(s: Sensor): firestore.count<Reading> {\n where sensor == {s}\n select at\n}",
+			want:  "counts, so a select clause has nothing to return",
+		},
+		{
+			name:  "select on a keys query",
+			decls: "export statement A(s: Sensor): firestore.keys<Reading> {\n where sensor == {s}\n select at\n}",
+			want:  "already a projection on the key",
+		},
+		{
+			name:  "distinct does not lead the ordering",
+			decls: "export statement A(s: Sensor): firestore.batch<Reading> {\n where sensor == {s}\n distinct celsius\n order at, celsius\n}",
+			want:  "have to lead it in the same order",
+		},
+		{
+			name:  "distinct names more than the ordering",
+			decls: "export statement A(s: Sensor): firestore.batch<Reading> {\n where sensor == {s}\n distinct celsius, at\n order celsius\n}",
+			want:  "have to lead the ordering",
+		},
+		{
+			name:  "cursor is not a Cursor",
+			decls: "export statement A(c: string): firestore.batch<Reading> {\n order at\n start {c}\n}",
+			want:  "must be datastore.Cursor",
+		},
+		{
+			name:  "cursor on a count",
+			decls: "export statement A(c: datastore.Cursor): firestore.count<Reading> {\n start {c}\n}",
+			want:  "counts, so there is no batch to resume",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := firestoreQueryErr(t, test.decls)
+			if err == nil {
+				t.Fatalf("got no error, want one containing %q", test.want)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("error %q does not contain %q", err, test.want)
+			}
+		})
+	}
+}
+
+// distinct leading the ordering is accepted, which is the rule's other half.
+func TestFirestoreQueryDistinctLeadingTheOrdering(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement A(s: Sensor): firestore.batch<Reading> {
+  where sensor == {s}
+  distinct celsius
+  order celsius, at
+}
+`)
+	if !strings.Contains(code, `q = q.DistinctOn("celsius")`) {
+		t.Errorf("the distinct clause is missing\n%s", code)
 	}
 }

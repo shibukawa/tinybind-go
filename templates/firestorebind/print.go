@@ -13,8 +13,9 @@ import (
 // run long.
 //
 // Clauses come out in a fixed order regardless of how they were written: where,
-// ancestor, order, limit, offset, index. Reading order follows what the query
-// does rather than what the author happened to type first.
+// ancestor, select, distinct, order, start, end, limit, offset, index. Reading
+// order follows what the query does rather than what the author happened to type
+// first.
 //
 // Comment placement is syntax.DeclFormatter, shared with the .tb.dynamo grammar.
 
@@ -70,6 +71,18 @@ func (f *formatter) declaration(decl QueryDecl) {
 		f.decl.FlushTrailing(decl.AncestorLine)
 		f.p.Line()
 	}
+	if len(decl.Select) > 0 {
+		f.decl.FlushBefore(decl.SelectLine)
+		f.p.Write("select " + propertyList(decl.Select))
+		f.decl.FlushTrailing(decl.SelectLine)
+		f.p.Line()
+	}
+	if len(decl.Distinct) > 0 {
+		f.decl.FlushBefore(decl.DistinctLine)
+		f.p.Write("distinct " + propertyList(decl.Distinct))
+		f.decl.FlushTrailing(decl.DistinctLine)
+		f.p.Line()
+	}
 	if len(decl.Order) > 0 {
 		f.decl.FlushBefore(decl.Order[0].Line)
 		parts := make([]string, len(decl.Order))
@@ -80,6 +93,8 @@ func (f *formatter) declaration(decl QueryDecl) {
 		f.decl.FlushTrailing(decl.Order[len(decl.Order)-1].Line)
 		f.p.Line()
 	}
+	f.cursor("start", decl.Start, decl.StartLine)
+	f.cursor("end", decl.End, decl.EndLine)
 	f.bound("limit", decl.Limit)
 	f.bound("offset", decl.Offset)
 	if decl.HasIndex {
@@ -138,6 +153,24 @@ func (f *formatter) bound(keyword string, bound Bound) {
 	}
 	f.decl.FlushTrailing(bound.Line)
 	f.p.Line()
+}
+
+func (f *formatter) cursor(keyword, param string, line int) {
+	if param == "" {
+		return
+	}
+	f.decl.FlushBefore(line)
+	f.p.Write(keyword + " {" + param + "}")
+	f.decl.FlushTrailing(line)
+	f.p.Line()
+}
+
+func propertyList(properties []Projection) string {
+	names := make([]string, len(properties))
+	for i, property := range properties {
+		names[i] = property.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 func predicateText(p Predicate) string {

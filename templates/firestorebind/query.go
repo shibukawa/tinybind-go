@@ -86,6 +86,12 @@ type Order struct {
 	Line      int
 }
 
+// Projection is one property a select clause returns.
+type Projection struct {
+	Name string
+	Line int
+}
+
 // IndexProperty is one property of a declared composite index.
 type IndexProperty struct {
 	Name      string
@@ -121,6 +127,20 @@ type QueryDecl struct {
 	Order        []Order
 	Limit        Bound
 	Offset       Bound
+	// Select is the projection: the properties the query returns instead of
+	// whole entities. The result type is unchanged; what is not projected
+	// arrives as the zero value.
+	Select     []Projection
+	SelectLine int
+	// Distinct collapses results sharing the named properties.
+	Distinct     []Projection
+	DistinctLine int
+	// Start and End name the parameters holding the cursors this query resumes
+	// from and stops at.
+	Start     string
+	StartLine int
+	End       string
+	EndLine   int
 	// Index is the composite index this access pattern needs, when the author
 	// declared one. Nothing derives it: the rule for when one is required is
 	// subtle, and a derivation that is quietly wrong names an index that does
@@ -375,14 +395,59 @@ func (p *parser) statement() (QueryDecl, error) {
 				return decl, err
 			}
 			decl.HasIndex, decl.IndexLine = true, t.line
-		case "select", "distinct":
-			return decl, p.errorf(t.line, "a %s clause is not supported yet; a projection returns a partial entity the codec cannot fill", t.text)
+		case "select":
+			p.next()
+			if decl.Select != nil {
+				return decl, p.errorf(t.line, "statement %s declares more than one select clause", decl.Name)
+			}
+			if decl.Select, err = p.properties("select"); err != nil {
+				return decl, err
+			}
+			decl.SelectLine = t.line
+		case "distinct":
+			p.next()
+			if decl.Distinct != nil {
+				return decl, p.errorf(t.line, "statement %s declares more than one distinct clause", decl.Name)
+			}
+			if decl.Distinct, err = p.properties("distinct"); err != nil {
+				return decl, err
+			}
+			decl.DistinctLine = t.line
+		case "start":
+			p.next()
+			if decl.Start != "" {
+				return decl, p.errorf(t.line, "statement %s declares more than one start clause", decl.Name)
+			}
+			if decl.Start, err = p.placeholder(); err != nil {
+				return decl, err
+			}
+			decl.StartLine = t.line
+		case "end":
+			p.next()
+			if decl.End != "" {
+				return decl, p.errorf(t.line, "statement %s declares more than one end clause", decl.Name)
+			}
+			if decl.End, err = p.placeholder(); err != nil {
+				return decl, err
+			}
+			decl.EndLine = t.line
 		default:
 			return decl, p.errorf(t.line, "expected a clause, found %s", describe(t))
 		}
 	}
-	if decl.Shape == Count && len(decl.Order) > 0 {
-		return decl, p.errorf(decl.Line, "statement %s counts, so an order clause changes nothing and is probably a mistake", decl.Name)
+	if decl.Shape == Count {
+		switch {
+		case len(decl.Order) > 0:
+			return decl, p.errorf(decl.Line, "statement %s counts, so an order clause changes nothing and is probably a mistake", decl.Name)
+		case len(decl.Select) > 0:
+			return decl, p.errorf(decl.Line, "statement %s counts, so a select clause has nothing to return", decl.Name)
+		case decl.Start != "" || decl.End != "":
+			return decl, p.errorf(decl.Line, "statement %s counts, so there is no batch to resume", decl.Name)
+		}
+	}
+	if decl.Shape == Keys && len(decl.Select) > 0 {
+		return decl, p.errorf(decl.SelectLine,
+			"statement %s returns keys, which is already a projection on the key; a select clause on top of it says two different things", decl.Name)
 	}
 	return decl, nil
 }
@@ -570,6 +635,23 @@ func (p *parser) bound(line int) (Bound, error) {
 	}
 	out.Literal = n
 	return out, nil
+}
+
+// properties reads a comma-separated property list, which select and distinct
+// both take.
+func (p *parser) properties(keyword string) ([]Projection, error) {
+	var out []Projection
+	for {
+		t := p.next()
+		if !isPropertyName(t.text) {
+			return nil, p.errorf(t.line, "expected a property name in the %s clause, found %s", keyword, describe(t))
+		}
+		out = append(out, Projection{Name: t.text, Line: t.line})
+		if !p.peek().is(",") {
+			return out, nil
+		}
+		p.next()
+	}
 }
 
 // indexClause reads the composite index this access pattern needs.
