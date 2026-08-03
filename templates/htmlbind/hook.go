@@ -68,6 +68,13 @@ type ReferenceHook struct {
 	// It must be a pure function of what it reads plus its own settings. The
 	// file and position on a request are for a diagnostic; deciding an output
 	// from them breaks that contract, and any cache built on CacheKey with it.
+	//
+	// It is called from one goroutine unless the caller asks for more: the
+	// generator converts ahead of its compile when configured to, and calls
+	// several transforms at once when it does. Being pure is necessary and not
+	// sufficient for that - a transform holding a shared scratch buffer is pure
+	// by the definition above and unsafe by this one - which is why the caller
+	// opts in rather than getting concurrency by default.
 	Transform func(ReferenceRequest) (ReferenceResult, error)
 }
 
@@ -138,6 +145,69 @@ type ReferenceResult struct {
 	// named, such as the modules a TypeScript entry point imports. What is
 	// named by neither is not hashed, and an edit to it will not regenerate.
 	Read []string
+	// Head declares tags the component's head needs because of this conversion.
+	//
+	// A rewrite replaces one attribute on an element that already exists, so a
+	// conversion producing a file nothing names has no way to get it loaded: a
+	// TypeScript entry point importing a CSS module emits a companion
+	// stylesheet, and no rewritten src can introduce its link. That is what
+	// this is for.
+	//
+	// An entry joins the contributions of the component whose template held the
+	// matched attribute, after everything that component's author wrote, so a
+	// component rendered on one page in forty contributes to that page only. A
+	// skip contributes nothing, because a conversion that declined produced no
+	// file to load.
+	Head []HeadEntry
+}
+
+// HeadEntry is one tag a conversion needs in the head of the component that
+// referenced it.
+type HeadEntry struct {
+	// Element is link, script, or style. Nothing else is accepted: a hook
+	// naming a title, a base, or a meta charset would be rewriting the document
+	// rather than loading what it produced.
+	Element string
+	// Attributes are the attribute values, keyed by name. A value is written as
+	// a static attribute and escaped for its own position, so a transform hands
+	// over a plain URL and never a pre-escaped one.
+	Attributes map[string]string
+}
+
+// headElements are the tags a conversion may contribute. The list is short on
+// purpose: each one loads something the conversion produced, and a hook with a
+// use for anything else is doing a second job.
+var headElements = map[string]bool{"link": true, "script": true, "style": true}
+
+// identity is the entry's whole written form, which is what deduplication
+// compares. One stylesheet imported by two entry points is one link.
+func (e HeadEntry) identity() string {
+	names := make([]string, 0, len(e.Attributes))
+	for name := range e.Attributes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out strings.Builder
+	out.WriteString(e.Element)
+	for _, name := range names {
+		out.WriteString("\x00")
+		out.WriteString(name)
+		out.WriteString("\x00")
+		out.WriteString(e.Attributes[name])
+	}
+	return out.String()
+}
+
+// target is the file the entry loads, which is what two conflicting entries
+// would agree on while disagreeing about everything else.
+func (e HeadEntry) target() string {
+	if href, ok := e.Attributes["href"]; ok {
+		return e.Element + "\x00" + href
+	}
+	if src, ok := e.Attributes["src"]; ok {
+		return e.Element + "\x00" + src
+	}
+	return ""
 }
 
 // ProducedFile is one file a conversion produced, ready for the caller to
@@ -293,6 +363,14 @@ type hookRun struct {
 	filename string
 	hooks    []ReferenceHook
 	strict   bool
+	// collect suppresses every side effect, so a caller can learn which values
+	// the hooks will claim without converting any of them. Nothing is reported
+	// in this mode either: an overlap and a dynamic reference are both the
+	// compiling pass's to raise, so which errors a build has never depends on
+	// whether a discovery pass ran.
+	collect bool
+	claims  []ReferenceRequest
+	claimed map[string]bool
 	// converted memoizes one transform call per hook and distinct value.
 	converted map[string]*hookResult
 	// order keeps the report in first-occurrence order, which keeps output
@@ -301,6 +379,21 @@ type hookRun struct {
 	dynamic  []DynamicReference
 	produced map[string]ProducedFile
 	read     map[string]bool
+	// head accumulates the contributions of the component being walked, and is
+	// reset between components: an entry belongs to the component whose
+	// template held the matched attribute, so a component that a page does not
+	// render contributes nothing to it.
+	head       []headContribution
+	headSeen   map[string]bool
+	headTarget map[string]headContribution
+}
+
+// headContribution is one entry with the position and hook that produced it,
+// which a conflict diagnostic needs and the emitted markup does not.
+type headContribution struct {
+	entry HeadEntry
+	hook  string
+	pos   Position
 }
 
 type hookResult struct {
@@ -311,6 +404,10 @@ type hookResult struct {
 	reason string
 	pos    Position
 	count  int
+	// head travels with the result rather than being consumed once, because a
+	// second element naming the same value is a memo hit and still belongs to
+	// whichever component holds it.
+	head []HeadEntry
 }
 
 // applyReferenceHooks rewrites every claimed static attribute in the module and
@@ -321,16 +418,56 @@ type hookResult struct {
 // external script or link is a passthrough, so extraction sees the rewritten
 // URL.
 func applyReferenceHooks(filename string, module *Module, hooks []ReferenceHook, strict bool) (hookOutcome, error) {
+	run, err := runReferenceHooks(filename, module, hooks, strict, false)
+	if err != nil || run == nil {
+		return hookOutcome{}, err
+	}
+	return run.outcome(), nil
+}
+
+// CollectReferences reports every distinct value the registered hooks would
+// claim in one module, without calling a single transform.
+//
+// It exists so a caller can convert ahead of compiling instead of inside it. A
+// conversion is seconds and a compile is microseconds, and the compile is
+// sequential because each rewritten value has to fold into the module being
+// compiled; converting what the compile will ask for before it asks takes that
+// cost off a single goroutine without moving the decision, which still belongs
+// to the transform and still depends on the bytes it produced.
+//
+// The walk is the one the rewrite uses, so a value this misses is a value the
+// rewrite would have missed too. Nothing is validated and nothing is reported:
+// an overlap, a dynamic reference, and a strict-mode failure all belong to the
+// compiling pass, which reports them at the same position in the same order
+// whether or not this ran.
+func CollectReferences(filename string, source []byte, hooks []ReferenceHook) ([]ReferenceRequest, error) {
 	if len(hooks) == 0 {
-		return hookOutcome{}, nil
+		return nil, nil
+	}
+	module, err := Parse(filename, source)
+	if err != nil {
+		return nil, err
+	}
+	run, err := runReferenceHooks(filename, module, hooks, false, true)
+	if err != nil || run == nil {
+		return nil, err
+	}
+	return run.claims, nil
+}
+
+func runReferenceHooks(filename string, module *Module, hooks []ReferenceHook, strict, collect bool) (*hookRun, error) {
+	if len(hooks) == 0 {
+		return nil, nil
 	}
 	if err := ValidateReferenceHooks(hooks); err != nil {
-		return hookOutcome{}, err
+		return nil, err
 	}
 	run := &hookRun{
 		filename:  filename,
 		hooks:     hooks,
 		strict:    strict,
+		collect:   collect,
+		claimed:   map[string]bool{},
 		converted: map[string]*hookResult{},
 		produced:  map[string]ProducedFile{},
 		read:      map[string]bool{},
@@ -344,11 +481,109 @@ func applyReferenceHooks(filename string, module *Module, hooks []ReferenceHook,
 		if !ok {
 			continue
 		}
+		run.head, run.headSeen, run.headTarget = nil, map[string]bool{}, map[string]headContribution{}
 		if err := run.walk(body, false); err != nil {
-			return hookOutcome{}, err
+			return nil, err
+		}
+		if err := run.contributeHead(component, body); err != nil {
+			return nil, err
 		}
 	}
-	return run.outcome(), nil
+	return run, nil
+}
+
+// contributeHead hands the entries this component's conversions declared to the
+// component's own head declaration, so they travel the merge path that already
+// carries what its author wrote and nothing downstream has to tell the two
+// apart.
+//
+// They go last, because a hook entry is a consequence of a rewrite rather than
+// something an author placed.
+func (r *hookRun) contributeHead(component *TemplateDecl, body []syntax.Node) error {
+	if len(r.head) == 0 {
+		return nil
+	}
+	nodes := make([]Node, 0, len(r.head))
+	for _, contribution := range r.head {
+		element := &ElementNode{
+			Kind: "html:element",
+			Pos:  contribution.pos,
+			Name: contribution.entry.Element,
+		}
+		names := make([]string, 0, len(contribution.entry.Attributes))
+		for name := range contribution.entry.Attributes {
+			names = append(names, name)
+		}
+		// Attribute order follows the name rather than map iteration, so one
+		// registration produces one set of bytes every run.
+		sort.Strings(names)
+		for _, name := range names {
+			element.Attributes = append(element.Attributes, Attribute{
+				Kind: "html:attribute",
+				Pos:  contribution.pos,
+				Name: name,
+				Value: []AttributePart{{
+					Kind: "html:text",
+					Pos:  contribution.pos,
+					// A contributed value takes the escaping of the attribute
+					// position it lands in, exactly as a rewritten value does,
+					// so a transform hands over a plain URL.
+					Text: hookValueEscaper.Replace(contribution.entry.Attributes[name]),
+				}},
+			})
+		}
+		nodes = append(nodes, element)
+	}
+	if head := findHeadNode(body); head != nil {
+		head.Children = append(head.Children, nodes...)
+		return nil
+	}
+	// A component with no head declaration gets one. It holds contributions
+	// only, so it is hoisted whole and emits nothing in place.
+	head := &HeadNode{Kind: "html:head", Pos: r.head[0].pos, Children: nodes}
+	component.Body = append([]syntax.Node{head}, body...)
+	return nil
+}
+
+// findHeadNode locates the component's head declaration the way the compiler
+// does, so a contribution lands in the same one the author's entries do.
+func findHeadNode(nodes []Node) *HeadNode {
+	for _, node := range nodes {
+		switch node := node.(type) {
+		case *HeadNode:
+			return node
+		case *ElementNode:
+			if found := findHeadNode(node.Children); found != nil {
+				return found
+			}
+		case *SlotNode:
+			if found := findHeadNode(node.Default); found != nil {
+				return found
+			}
+		case *ComponentNode:
+			if found := findHeadNode(node.Children); found != nil {
+				return found
+			}
+		case *syntax.IfNode:
+			if found := findHeadNode(node.Then); found != nil {
+				return found
+			}
+			if found := findHeadNode(node.Else); found != nil {
+				return found
+			}
+		case *syntax.ForNode:
+			if found := findHeadNode(node.Body); found != nil {
+				return found
+			}
+		case *syntax.AwaitNode:
+			for _, branch := range [][]Node{node.Primary, node.Fallback, node.Recover} {
+				if found := findHeadNode(branch); found != nil {
+					return found
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (r *hookRun) outcome() hookOutcome {
@@ -444,6 +679,9 @@ func (r *hookRun) visitElement(element *ElementNode) error {
 		}
 		value, static := staticAttributeText(*attribute)
 		if !static {
+			if r.collect {
+				continue
+			}
 			// The value does not exist yet, so nothing can be rewritten. Saying
 			// so is the point: a silently half-optimized page is worse than a
 			// noisy one.
@@ -483,6 +721,23 @@ func (r *hookRun) rewrite(element *ElementNode, attribute *Attribute, registered
 			claimed = append(claimed, hook)
 		}
 	}
+	if r.collect {
+		// One claim per hook and distinct value: the compile will call the
+		// transform once for it, so converting it once ahead is exactly the
+		// work that pass will need.
+		for _, hook := range claimed {
+			key := hook.Name + "\x00" + value
+			if r.claimed[key] {
+				continue
+			}
+			r.claimed[key] = true
+			r.claims = append(r.claims, ReferenceRequest{
+				Hook: hook.Name, Element: element.Name, Attribute: attribute.Name,
+				Value: value, File: r.filename, Pos: attribute.Pos,
+			})
+		}
+		return nil
+	}
 	switch len(claimed) {
 	case 0:
 		return nil
@@ -507,6 +762,9 @@ func (r *hookRun) rewrite(element *ElementNode, attribute *Attribute, registered
 	result.count++
 	if result.skip {
 		return nil
+	}
+	if err := r.contribute(result, attribute.Pos); err != nil {
+		return err
 	}
 	// The authored path writes attribute text verbatim, so a transform value
 	// carrying a quote or an angle bracket would escape its own attribute. The
@@ -547,6 +805,12 @@ func (r *hookRun) convert(hook ReferenceHook, element *ElementNode, attribute *A
 				quoteName(value)+"; return a skip to leave the attribute alone")
 		}
 		record.to = result.Value
+		for _, entry := range result.Head {
+			if err := validateHeadEntry(hook.Name, entry); err != nil {
+				return nil, r.error(attribute.Pos, err.Error())
+			}
+		}
+		record.head = result.Head
 	}
 	for _, file := range result.Files {
 		if err := r.produce(hook, attribute.Pos, file); err != nil {
@@ -559,6 +823,63 @@ func (r *hookRun) convert(hook ReferenceHook, element *ElementNode, attribute *A
 	r.converted[key] = record
 	r.order = append(r.order, record)
 	return record, nil
+}
+
+// validateHeadEntry refuses a contribution before it reaches the head, because
+// a hook may load what it produced and may not rewrite the document.
+func validateHeadEntry(hook string, entry HeadEntry) error {
+	switch {
+	case entry.Element == "":
+		return errors.New("reference hook " + quoteName(hook) + " contributed a head entry with no element")
+	case !headElements[entry.Element]:
+		return errors.New("reference hook " + quoteName(hook) + " cannot contribute " + quoteName(entry.Element) +
+			" to the head; a contribution is a link, a script, or a style, which are what load a produced file")
+	case len(entry.Attributes) == 0:
+		return errors.New("reference hook " + quoteName(hook) + " contributed a " + entry.Element +
+			" with no attributes, which would load nothing")
+	}
+	for name := range entry.Attributes {
+		if !validAttributeName(name) {
+			return errors.New("reference hook " + quoteName(hook) + " contributed a head " + entry.Element +
+				" with invalid attribute name " + quoteName(name))
+		}
+	}
+	return nil
+}
+
+// contribute adds this conversion's entries to the component being walked,
+// dropping a repeat and refusing a disagreement.
+//
+// A repeat is ordinary: one stylesheet imported by two entry points is one
+// link, and the same conversion answering twenty elements offers its entry
+// twenty times. A disagreement is not: two conversions naming one file with
+// different attributes cannot both be right, and picking one by arrival order
+// would make the output depend on template order.
+func (r *hookRun) contribute(result *hookResult, pos Position) error {
+	for _, entry := range result.head {
+		identity := entry.identity()
+		if r.headSeen[identity] {
+			continue
+		}
+		if target := entry.target(); target != "" {
+			if existing, clash := r.headTarget[target]; clash {
+				return r.error(pos, "reference hooks "+quoteName(existing.hook)+" and "+quoteName(result.hook.Name)+
+					" both contribute a head "+entry.Element+" for "+quoteName(targetValue(entry))+
+					" with different attributes; at most one contribution may load one file")
+			}
+			r.headTarget[target] = headContribution{entry: entry, hook: result.hook.Name, pos: pos}
+		}
+		r.headSeen[identity] = true
+		r.head = append(r.head, headContribution{entry: entry, hook: result.hook.Name, pos: pos})
+	}
+	return nil
+}
+
+func targetValue(entry HeadEntry) string {
+	if href, ok := entry.Attributes["href"]; ok {
+		return href
+	}
+	return entry.Attributes["src"]
 }
 
 // produce records one produced file, refusing a name that would escape the

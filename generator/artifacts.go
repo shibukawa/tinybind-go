@@ -217,6 +217,7 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	}
 	cache := newConversionCache(g.Options.ConversionCacheDir)
 	hooks := runScopedHooks(g.Options.ReferenceHooks, cache)
+	g.prewarmConversions(files, hooks)
 	var produced []htmlbind.ProducedFile
 	generated := make([][]byte, len(files))
 	assets := make([][]htmlbind.Asset, len(files))

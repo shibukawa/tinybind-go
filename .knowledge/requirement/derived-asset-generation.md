@@ -30,7 +30,7 @@ as_built:
   not_shipped:
     mount_table: no URL-to-directory option exists; a transform resolves its own paths today, which works and leaves the resolution rule unstated
     output_placement: the three placements are still a design question; DerivedAssetDir is one directory and the transform chooses the URL, so a mirror overlay is expressible and unproven
-    parallel_conversion: a cold cache converts serially, because the compile that needs each value is sequential; an incremental build converts nothing, which is what made this affordable to defer
+    parallel_conversion: shipped 2026-08-04 as requirement:parallel-conversion, which converts before the compile rather than after it and so keeps the outcome the rewrite depends on; the switch is off by default because concurrency is a promise about the caller's transform
     transform_identity: an in-process converter is covered by the executable hash, and an external binary's path and version are not hashed
     report: GenerateResult.Rewrites carries the data and nothing formats it
     cleanup: unchanged; a produced file whose source disappeared is still stale
@@ -107,6 +107,13 @@ report:
 cleanup:
   same_question: requirement:static-asset-extraction already carries asset cleanup for files left by removed components, and a produced tree has the same shape
   stated: a produced file whose source disappeared is stale, and no rule removes it yet
+  declined_2026_08_04:
+    decision: this module does not remove stale produced files, and this stops being an open item rather than staying one
+    asked_of: the first downstream project to build against the seam, which answered that it wants the work
+    their_reasoning: they build a per-file manifest of names and digests to serve cache headers from, so the set of files that should exist is something they already hold; a file present in their tree and absent from that manifest is stale by construction and needs nothing from here
+    why_that_is_the_right_owner: this module declares every file it produced on GenerateResult.Paths and knows nothing about the tree those files are copied into, so it can name what a run wrote and never what a previous run left behind
+    what_stays_here: declaring every produced file, which is what makes the caller's set computable at all
+    reopen_when: a caller writes into DerivedAssetDir and consumes it directly rather than assembling a tree of its own, which is the case this reasoning does not cover
 constraints:
   - nothing reads a produced file at runtime, unchanged from requirement:component-asset-requirements
   - no codec and no compiler dependency enters this module, per concept:build-time-asset-transforms
