@@ -33,7 +33,7 @@ func streamServer() http.Handler {
 func streamRecords(t *testing.T, url string, known map[string]string) (*http.Response, []map[string]any) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, url, nil)
-	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(htmlupdate.Version))
+	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(clientVersion))
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
 	if len(known) > 0 {
 		var manifest htmlbind.Manifest
@@ -76,8 +76,13 @@ func TestStreamIsFramedByHeadAndTerminator(t *testing.T) {
 	if records[0]["r"] != "head" {
 		t.Fatalf("first record = %+v", records[0])
 	}
-	if records[0]["v"] != float64(htmlupdate.Version) {
-		t.Fatalf("head must carry the protocol version, got %+v", records[0])
+	// The head record carries the build, which is the compatibility axis this
+	// package still operates, and no version, which is the caller's.
+	if records[0]["build"] != htmlupdate.BuildID() {
+		t.Fatalf("head must carry the build identity, got %+v", records[0])
+	}
+	if _, carried := records[0]["v"]; carried {
+		t.Fatalf("head must carry no version field, got %+v", records[0])
 	}
 	if records[len(records)-1]["r"] != "end" {
 		t.Fatalf("last record = %+v", records[len(records)-1])
@@ -243,7 +248,7 @@ func TestStreamCarriesAwaitCompletions(t *testing.T) {
 		}
 	})
 	request := httptest.NewRequest(http.MethodGet, "/search?q=go", nil)
-	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(htmlupdate.Version))
+	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(clientVersion))
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)

@@ -177,117 +177,136 @@ const DefaultMaxQueryBytes = 4 << 10
 // that takes over the response can still reproduce the default body.
 const notFoundMessage = "404 page not found"
 
-// RedrawHandler serves the registered components.
+// Redraw answers a redraw request at whatever URL the caller serves it from,
+// and reports whether it did.
 //
-// The path is <prefix>/redraw/<kind>/<instance>. The instance id travels so the
-// returned root element arrives already addressable; the render itself depends
-// only on the kind and the query values.
-func (o Options) RedrawHandler(reg *Registry) http.Handler {
-	base := o.pathPrefix() + "/redraw/"
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		kind, instance, ok := splitRedrawPath(strings.TrimPrefix(r.URL.Path, base))
-		if !ok {
-			o.fail(w, r, Failure{
-				Kind:    FailureMalformedPath,
-				Status:  http.StatusNotFound,
-				Message: notFoundMessage,
-			})
-			return
-		}
-		component, known := reg.kinds[kind]
-		if !known {
-			// This deployment does not publish that component at all.
-			o.fail(w, r, Failure{
-				Kind:       FailureUnknownComponent,
-				Status:     http.StatusNotFound,
-				Message:    notFoundMessage,
-				KindID:     kind,
-				InstanceID: instance,
-			})
-			return
-		}
-		// A kind is stable across builds on purpose, so it cannot say whether
-		// the page asking is current. The build identity does, and it covers
-		// every change a kind cannot see: a component this one calls, an
-		// external function, the render runtime itself.
-		if r.Header.Get(o.buildHeader()) != o.buildID() {
-			o.fail(w, r, Failure{
-				Kind:       FailureStalePage,
-				Status:     http.StatusConflict,
-				Message:    "stale page",
-				KindID:     kind,
-				InstanceID: instance,
-			})
-			return
-		}
-		if len(r.URL.RawQuery) > o.maxQueryBytes() {
-			o.fail(w, r, Failure{
-				Kind:       FailureArgumentsTooLarge,
-				Status:     http.StatusRequestURITooLong,
-				Message:    "redraw arguments too large",
-				KindID:     kind,
-				InstanceID: instance,
-			})
-			return
-		}
-		fragment, err := component.Render(r, instance, r.URL.Query())
-		if err != nil {
-			o.fail(w, r, Failure{
-				Kind:       FailureInvalidArguments,
-				Status:     http.StatusBadRequest,
-				Message:    "invalid redraw arguments",
-				Err:        err,
-				KindID:     kind,
-				InstanceID: instance,
-			})
-			return
-		}
-		var out strings.Builder
-		if err := htmlbind.Render(&out, fragment); err != nil {
-			o.fail(w, r, Failure{
-				Kind:       FailureRenderFailed,
-				Status:     http.StatusInternalServerError,
-				Message:    "render failed",
-				Err:        err,
-				KindID:     kind,
-				InstanceID: instance,
-			})
-			return
-		}
-		body := out.String()
-		// The body stays the bare subtree — no envelope, so the endpoint is still
-		// testable with curl and a client parses what it already parsed — and the
-		// contribution travels beside it.
-		//
-		// It is sent so a component whose stylesheet is not on the page installs
-		// it before its markup lands, which is the flash of unstyled content the
-		// navigation delta added its own head field to prevent. A well-configured
-		// deployment has already put every one of these in its shell from
-		// Registry.RequiredHead, and then this changes nothing: the runtime finds
-		// each tag present and installs none.
-		//
-		// A component contributing no head sends no header, so its response is
-		// byte-identical to what it was before this existed.
-		if encoded := encodeHead(component.Head); encoded != "" {
-			w.Header().Set(o.headHeader(), encoded)
-		}
-		// A redraw response is identified by its URL and its bytes, so it can
-		// be revalidated like any other resource. Sending the digest is what
-		// lets an unchanged region cost a 304 instead of its whole markup.
-		etag := `"` + o.redrawETag(body) + `"`
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", o.redrawCacheControl())
-		// The response depends on the build the page was rendered by, so a
-		// cache holding it must key on that too.
-		w.Header().Add("Vary", o.buildHeader())
-		w.Header().Set(o.renderHeader(), modeRedraw+";v="+versionText)
-		if matchesETag(r.Header.Get("If-None-Match"), etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(body))
-	})
+// It is the entry a caller branches on inside its own page handler:
+//
+//	func page(w http.ResponseWriter, r *http.Request) {
+//		if options.Redraw(w, r, registry) {
+//			return
+//		}
+//		// ordinary page render
+//	}
+//
+// Addressing it at the page's own URL is the point. Path protection is
+// configured by path pattern, so a redraw on a reserved path needs its own
+// pattern maintained in parallel with the one protecting the page the component
+// sits on — two rules that must agree and that nothing forces to agree. At the
+// page URL the redraw inherits that protection automatically, and placed after
+// the handler's own checks it inherits those too, not merely the middleware's.
+//
+// A request that is not a redraw returns false with nothing written, including a
+// request from a page another build rendered: at a page URL the right answer to
+// a stale redraw is that page, which the caller is about to render anyway, and
+// that costs a reload rather than a refusal and then a reload.
+func (o Options) Redraw(w http.ResponseWriter, r *http.Request, reg *Registry) bool {
+	// The page response and the redraw response share a URL, so the cache keys
+	// that tell them apart must be declared whichever one this turns out to be.
+	// Without the kind and instance here, two components redrawing on one page
+	// would be one cache entry and either could be answered with the other's
+	// markup.
+	w.Header().Add("Vary", o.renderHeader())
+	w.Header().Add("Vary", o.buildHeader())
+	w.Header().Add("Vary", o.kindHeader())
+	w.Header().Add("Vary", o.instanceHeader())
+	if o.Negotiate(r).Mode != ModeRedraw {
+		return false
+	}
+	kind := r.Header.Get(o.kindHeader())
+	instance := r.Header.Get(o.instanceHeader())
+	if kind == "" || instance == "" {
+		o.fail(w, r, Failure{
+			Kind:       FailureMalformedRequest,
+			Status:     http.StatusBadRequest,
+			Message:    "redraw names no component",
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return true
+	}
+	component, known := reg.kinds[kind]
+	if !known {
+		o.fail(w, r, Failure{
+			Kind:       FailureUnknownComponent,
+			Status:     http.StatusNotFound,
+			Message:    notFoundMessage,
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return true
+	}
+	o.writeRedraw(w, r, component, kind, instance)
+	return true
+}
+
+// writeRedraw renders one instance and writes the response. Both entries reach
+// it with the target resolved and the build already settled their own way.
+func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component Reloadable, kind, instance string) {
+	if len(r.URL.RawQuery) > o.maxQueryBytes() {
+		o.fail(w, r, Failure{
+			Kind:       FailureArgumentsTooLarge,
+			Status:     http.StatusRequestURITooLong,
+			Message:    "redraw arguments too large",
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return
+	}
+	fragment, err := component.Render(r, instance, r.URL.Query())
+	if err != nil {
+		o.fail(w, r, Failure{
+			Kind:       FailureInvalidArguments,
+			Status:     http.StatusBadRequest,
+			Message:    "invalid redraw arguments",
+			Err:        err,
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return
+	}
+	var out strings.Builder
+	if err := htmlbind.Render(&out, fragment); err != nil {
+		o.fail(w, r, Failure{
+			Kind:       FailureRenderFailed,
+			Status:     http.StatusInternalServerError,
+			Message:    "render failed",
+			Err:        err,
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return
+	}
+	body := out.String()
+	// The body stays the bare subtree — no envelope, so the endpoint is still
+	// testable with curl and a client parses what it already parsed — and the
+	// contribution travels beside it.
+	//
+	// It is sent so a component whose stylesheet is not on the page installs
+	// it before its markup lands, which is the flash of unstyled content the
+	// navigation delta added its own head field to prevent. A well-configured
+	// deployment has already put every one of these in its shell from
+	// Registry.RequiredHead, and then this changes nothing: the runtime finds
+	// each tag present and installs none.
+	//
+	// A component contributing no head sends no header, so its response is
+	// byte-identical to what it was before this existed.
+	if encoded := encodeHead(component.Head); encoded != "" {
+		w.Header().Set(o.headHeader(), encoded)
+	}
+	// A redraw response is identified by its URL and its bytes, so it can
+	// be revalidated like any other resource. Sending the digest is what
+	// lets an unchanged region cost a 304 instead of its whole markup.
+	etag := `"` + o.redrawETag(body) + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", o.redrawCacheControl())
+	w.Header().Set(o.renderHeader(), modeRedraw)
+	if matchesETag(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(body))
 }
 
 const modeRedraw = "redraw"
@@ -348,24 +367,4 @@ func matchesETag(header, etag string) bool {
 		}
 	}
 	return false
-}
-
-// splitRedrawPath reads "<kind>/<instance>" and rejects anything else, so a
-// missing or extra segment cannot be read as a valid target.
-func splitRedrawPath(rest string) (kind, instance string, ok bool) {
-	kind, instance, found := strings.Cut(rest, "/")
-	if !found || kind == "" || instance == "" || strings.Contains(instance, "/") {
-		return "", "", false
-	}
-	return kind, instance, true
-}
-
-// RedrawPath is the URL for one instance of a registered component, exposed so
-// a test and a non-browser client can build exactly what the runtime does.
-func (o Options) RedrawPath(kindID, instanceID string, values url.Values) string {
-	path := o.pathPrefix() + "/redraw/" + url.PathEscape(kindID) + "/" + url.PathEscape(instanceID)
-	if len(values) == 0 {
-		return path
-	}
-	return path + "?" + values.Encode()
 }

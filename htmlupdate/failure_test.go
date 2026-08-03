@@ -13,22 +13,12 @@ import (
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
-// redrawServerWith mounts the redraw endpoint under caller-supplied options, so
-// a test can watch what the endpoint reports rather than only what it writes.
-func redrawServerWith(t *testing.T, opts htmlupdate.Options) http.Handler {
-	t.Helper()
-	mux := http.NewServeMux()
-	opts.Mount(mux, cardRegistry(t))
-	return mux
-}
-
 // Every way a redraw can be refused reaches the caller, because a failure that
 // only becomes a status code is invisible to a logger and a tracer.
 func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 	cases := []struct {
 		name    string
-		path    string
-		stale   bool
+		request *http.Request
 		kind    htmlupdate.FailureKind
 		status  int
 		hasErr  bool
@@ -36,41 +26,35 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 		message string
 	}{
 		{
-			name:   "malformed path",
-			path:   htmlupdate.DefaultPathPrefix + "/redraw/" + cardKind,
-			kind:   htmlupdate.FailureMalformedPath,
-			status: http.StatusNotFound,
+			name:    "names no component",
+			request: redrawRequest("", "", nil),
+			kind:    htmlupdate.FailureMalformedRequest,
+			status:  http.StatusBadRequest,
 		},
 		{
-			name:   "unknown component",
-			path:   options.RedrawPath("Gone@0000", "card-1", url.Values{"page": {"1"}}),
-			kind:   htmlupdate.FailureUnknownComponent,
-			status: http.StatusNotFound,
-			named:  true,
-		},
-		{
-			name:   "stale page",
-			path:   options.RedrawPath(cardKind, "card-1", url.Values{"page": {"1"}}),
-			stale:  true,
-			kind:   htmlupdate.FailureStalePage,
-			status: http.StatusConflict,
-			named:  true,
+			name:    "unknown component",
+			request: redrawRequest("Gone@0000", "card-1", url.Values{"page": {"1"}}),
+			kind:    htmlupdate.FailureUnknownComponent,
+			status:  http.StatusNotFound,
+			named:   true,
 		},
 		{
 			name: "arguments too large",
-			path: options.RedrawPath(cardKind, "card-1", url.Values{"page": {"1"}}) +
-				"&pad=" + strings.Repeat("x", htmlupdate.DefaultMaxQueryBytes),
+			request: redrawRequest(cardKind, "card-1", url.Values{
+				"page": {"1"},
+				"pad":  {strings.Repeat("x", htmlupdate.DefaultMaxQueryBytes)},
+			}),
 			kind:   htmlupdate.FailureArgumentsTooLarge,
 			status: http.StatusRequestURITooLong,
 			named:  true,
 		},
 		{
-			name:   "invalid arguments",
-			path:   options.RedrawPath(cardKind, "card-1", url.Values{"page": {"not a number"}}),
-			kind:   htmlupdate.FailureInvalidArguments,
-			status: http.StatusBadRequest,
-			hasErr: true,
-			named:  true,
+			name:    "invalid arguments",
+			request: redrawRequest(cardKind, "card-1", url.Values{"page": {"not a number"}}),
+			kind:    htmlupdate.FailureInvalidArguments,
+			status:  http.StatusBadRequest,
+			hasErr:  true,
+			named:   true,
 		},
 	}
 	for _, testCase := range cases {
@@ -88,12 +72,8 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 					"status": failure.Status,
 				})
 			}
-			request := httptest.NewRequest(http.MethodGet, testCase.path, nil)
-			if !testCase.stale {
-				request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
-			}
 			recorder := httptest.NewRecorder()
-			redrawServerWith(t, opts).ServeHTTP(recorder, request)
+			redrawServerWith(t, opts).ServeHTTP(recorder, testCase.request)
 
 			if len(seen) != 1 {
 				t.Fatalf("hook called %d times, want 1", len(seen))
@@ -145,11 +125,8 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	mux := http.NewServeMux()
-	opts.Mount(mux, registry)
-
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, buildRequest(opts.RedrawPath("Broken@0001", "b-1", nil)))
+	opts.Redraw(recorder, redrawRequest("Broken@0001", "b-1", nil), registry)
 
 	if seen.Kind != htmlupdate.FailureInvalidArguments {
 		t.Fatalf("kind = %v", seen.Kind)
@@ -167,9 +144,8 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 // A caller supplying no hook sees exactly the bytes this package wrote before
 // the hook existed.
 func TestFailureDefaultsAreUnchanged(t *testing.T) {
-	path := options.RedrawPath(cardKind, "card-1", url.Values{"page": {"nope"}})
 	recorder := httptest.NewRecorder()
-	redrawServer(t).ServeHTTP(recorder, buildRequest(path))
+	redrawServer(t).ServeHTTP(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"nope"}}))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", recorder.Code)
 	}
@@ -183,10 +159,9 @@ func TestFailureDefaultsAreUnchanged(t *testing.T) {
 func TestRedrawQueryBoundIsConfigurable(t *testing.T) {
 	opts := options
 	opts.MaxQueryBytes = 32
-	path := options.RedrawPath(cardKind, "card-1", url.Values{"page": {"1"}}) +
-		"&pad=" + strings.Repeat("x", 64)
+	request := redrawRequest(cardKind, "card-1", url.Values{"page": {"1"}, "pad": {strings.Repeat("x", 64)}})
 	recorder := httptest.NewRecorder()
-	redrawServerWith(t, opts).ServeHTTP(recorder, buildRequest(path))
+	redrawServerWith(t, opts).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusRequestURITooLong {
 		t.Fatalf("status = %d, want the configured bound to apply", recorder.Code)
 	}

@@ -110,6 +110,9 @@ type renderOptions struct {
 	// boundaryPrefix names the placeholder element and the boundary
 	// identifiers. Empty means DefaultBoundaryPrefix.
 	boundaryPrefix string
+	// validatorTag seeds every digest this render produces. Empty is allowed and
+	// means the digests are seeded by the key alone.
+	validatorTag string
 	// provided memoizes each builtin element provider's result for the whole of
 	// this render, keyed by the provider rather than by the element, so two
 	// elements backed by one function share one value.
@@ -152,6 +155,22 @@ const DefaultBoundaryPrefix = "tb"
 // else produces markup a browser will not parse as an element.
 func WithBoundaryPrefix(prefix string) Option {
 	return func(o *renderOptions) { o.boundaryPrefix = prefix }
+}
+
+// WithValidatorTag seeds every validator this render produces, so two renders
+// that must never be compared cannot produce equal digests.
+//
+// The transport half passes its build identity. That is the axis that actually
+// moves: it covers a changed template, a changed Go function a template calls,
+// and a changed browser client, none of which a component's own identity sees.
+//
+// It replaced a protocol version this module owned. Once the browser client
+// belongs to the caller, a version constant here versions a contract this module
+// only half implements, and the caller is the party that can say what a mismatch
+// means. Leaving it empty is allowed and keeps the digests keyed by Key alone,
+// which is what a caller comparing renders within one build wants.
+func WithValidatorTag(tag string) Option {
+	return func(o *renderOptions) { o.validatorTag = tag }
 }
 
 // WithCache supplies the store used by components declared with the cache

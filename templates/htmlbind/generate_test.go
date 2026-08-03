@@ -676,14 +676,20 @@ func serve(t *testing.T, query url.Values) *httptest.ResponseRecorder {
 	options := htmlupdate.Options{Key: []byte("k")}
 	registry := &htmlupdate.Registry{}
 	registry.Register(CounterReloadable)
-	mux := http.NewServeMux()
-	options.Mount(mux, registry)
 	recorder := httptest.NewRecorder()
-	path := options.RedrawPath(CounterKind, "counter-1", query)
+	// A redraw is addressed at whatever URL the caller serves it from, with the
+	// component in headers. Here that is the page the region sits on.
+	path := "/dashboard"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.Header.Set("X-Tinybind-Render", "redraw")
+	request.Header.Set("X-Tinybind-Kind", CounterKind)
+	request.Header.Set("X-Tinybind-Instance", "counter-1")
 	// A real page carries the build it was rendered by, from its script tag.
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
-	mux.ServeHTTP(recorder, request)
+	options.Redraw(recorder, request, registry)
 	return recorder
 }
 

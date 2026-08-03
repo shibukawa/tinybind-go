@@ -3,7 +3,7 @@
 // It stubs only what the runtime touches, and deliberately does not implement
 // HTML parsing: a replacement is matched by its instance attribute and swapped
 // in a registry. What this verifies is the protocol half of the runtime -
-// header construction, version checking, validator bookkeeping, supersession,
+// header construction, mode checking, validator bookkeeping, supersession,
 // and fallback - which is the half a browser test would be a clumsy way to
 // cover. Real DOM insertion is the browser's job.
 
@@ -110,8 +110,7 @@ globalThis.document = {
   currentScript: {
     dataset: {
       config: JSON.stringify({
-        prefix: "/internal/tb",
-        build: "rev-abc",
+            build: "rev-abc",
         attr: "tb",
         header: "X-Tinybind",
         global: "tinybind",
@@ -214,9 +213,9 @@ function ndjson(lines) {
 }
 globalThis.URLSearchParams = URLSearchParams;
 
-// The protocol version is read from the runtime once it is loaded rather than
-// written here, so a bump does not silently pass a harness that agrees with
-// nobody.
+// The wire version is the caller's, and this harness plays a caller that uses
+// one: responses carry it and the client must tolerate it without ever having
+// sent it. Set once the runtime is loaded, below.
 let V = null;
 
 globalThis.fetch = (href, init) => {
@@ -274,7 +273,9 @@ globalThis.AbortController = class {
 
 eval(fs.readFileSync(process.argv[2], "utf8"));
 const runtime = globalThis.window.tinybind;
-V = runtime.protocolVersion;
+// This harness plays a caller that versions its own wire. The client sends
+// bare mode names and must tolerate a version on the way back.
+V = 7;
 
 function check(condition, message) {
   if (!condition) {
@@ -286,17 +287,19 @@ function check(condition, message) {
 const delta = (ops, manifest) => ({
   ok: true,
   headers: { "X-Tinybind-Render": "navigation;v=" + V },
-  body: { v: V, ops, manifest },
+  body: { ops, manifest },
 });
 
 async function main() {
-  check(runtime.endpointPrefix === "/internal/tb", "prefix should come from the script tag");
+  // The endpoint prefix no longer reaches the client: a redraw is addressed by
+  // header, so the client builds no URL from it and the asset arrives on the
+  // script tag's own src.
+  check(runtime.endpointPrefix === undefined, "the client must expose no endpoint prefix");
 
   // Every name is the caller's. A framework on top of this module owns the
   // attributes its users write by hand and the name its users call, so none of
   // them may be compiled into the asset.
   const named = globalThis.window.createPartialUpdateRuntime({
-    prefix: "/pw",
     attr: "pw",
     header: "X-Popcorn",
     global: "",
@@ -304,7 +307,10 @@ async function main() {
   check(named.idAttribute === "data-pw-id", "id attribute should follow the prefix");
   check(named.preserveAttribute === "data-pw-preserve", "preserve marker should follow the prefix");
   check(named.ignoreAttribute === "data-pw-ignore", "ignore marker should follow the prefix");
-  check(named.endpointPrefix === "/pw", "endpoint prefix should follow the configuration");
+  // The generator writes data-<prefix>-kind, so a client reading it under a
+  // fixed prefix meant a renamed deployment rendered one name and looked for
+  // another: redraw stopped working and nothing said so.
+  check(named.kindAttribute === "data-pw-kind", "kind attribute should follow the prefix, got " + named.kindAttribute);
   // An empty global installs nothing, which is what a caller merging this
   // runtime into its own asset asks for.
   check(globalThis.window[""] === undefined, "an empty global must install nothing");
@@ -318,7 +324,7 @@ async function main() {
   );
   let result = await runtime.update("/search?q=rust");
   check(result.applied, "first update should apply");
-  check(requests[0].headers["X-Tinybind-Render"] === "navigation;v=" + V, "render header");
+  check(requests[0].headers["X-Tinybind-Render"] === "navigation", "render header must be a bare mode name");
   // The build that rendered the page travels with every request, so a server
   // running a different one can answer with a whole document instead.
   check(requests[0].headers["X-Tinybind-Build"] === "rev-abc", "build header");
@@ -340,11 +346,21 @@ async function main() {
   check(result.fellBack, "a non-delta response should fall back");
   check(assigned === "https://example.test/search?q=go", "fallback should navigate");
 
-  // A protocol version the runtime does not speak is not applied either.
+  // A version on the served header is the caller's field, so any value is
+  // tolerated: the mode is what decides. This is the case that used to fall
+  // back, and it now applies.
   assigned = null;
-  response = { ok: true, headers: { "X-Tinybind-Render": "navigation;v=99" }, body: { v: 99 } };
+  response = { ok: true, headers: { "X-Tinybind-Render": "navigation;v=99" }, body: { ops: [], manifest: [] } };
   result = await runtime.update("/search?q=go");
-  check(result.fellBack, "a future version should fall back");
+  check(result.applied, "a version the client did not send must still apply");
+  check(assigned === null, "tolerating a version must not navigate");
+
+  // The mode is what decides, so a served mode this client did not ask for is
+  // still a fallback.
+  assigned = null;
+  response = { ok: true, headers: { "X-Tinybind-Render": "document" }, body: {} };
+  result = await runtime.update("/search?q=go");
+  check(result.fellBack, "a served mode of document should fall back");
 
   // A superseded request must not overwrite newer state.
   response = { abort: true };
@@ -363,14 +379,14 @@ async function main() {
     json: () => Promise.resolve(body),
   });
   result = await runtime.apply(
-    actionResponse(422, { v: V, ops: [{ kind: "replace", id: "cart", html: '<span id="cart">9</span>' }] }),
+    actionResponse(422, { ops: [{ kind: "replace", id: "cart", html: '<span id="cart">9</span>' }] }),
   );
   check(result.applied, "an action response should apply despite a 4xx status");
   check(authorRegions.get("cart").html === '<span id="cart">9</span>', "the region should be swapped");
 
   // An action carries no manifest, so it must leave navigation state alone
   // apart from the region it rewrote.
-  check(runtime.updateHeaders()["X-Tinybind-Render"] === "action;v=" + V, "action headers");
+  check(runtime.updateHeaders()["X-Tinybind-Render"] === "action", "action headers must be a bare mode name");
   check(runtime.updateHeaders()["X-Tinybind-Build"] === "rev-abc", "action build header");
 
   // A response that is not an update must not be mistaken for one.
@@ -432,7 +448,7 @@ async function main() {
   response = {
     ok: true,
     headers: { "X-Tinybind-Render": "navigation;v=" + V },
-    body: { v: V, ops: [], manifest: [], head: ["<title>Guides</title>", '<link href="/a.css">'] },
+    body: { ops: [], manifest: [], head: ["<title>Guides</title>", '<link href="/a.css">'] },
   };
   result = await runtime.navigate("/guides/intro");
   check(result.applied, "navigate should apply");
@@ -492,7 +508,7 @@ async function main() {
   boundaries.set("c2", region("c2", []));
   headPayload = null;
   streamResponse = [
-    JSON.stringify({ r: "head", v: V, head: [] }),
+    JSON.stringify({ r: "head", head: [] }),
     JSON.stringify({ r: "op", kind: "replace", id: "c2", html: '<p data-tb-id="c2">streamed</p>', frame: "s2" }),
     JSON.stringify({ r: "op", id: "c1", frame: "s1" }),
     JSON.stringify({ r: "end" }),
@@ -513,7 +529,7 @@ async function main() {
   // manifest is discarded and the next request is a complete render.
   assigned = null;
   streamResponse = [
-    JSON.stringify({ r: "head", v: V, head: [] }),
+    JSON.stringify({ r: "head", head: [] }),
     JSON.stringify({ r: "op", kind: "replace", id: "c2", html: '<p data-tb-id="c2">partial</p>', frame: "t2" }),
   ];
   result = await runtime.update("/search?q=cut");
@@ -548,13 +564,13 @@ async function main() {
   response = delta([], []);
   result = await runtime.update("/search?q=static");
   check(result.live === false, "a page with no live boundary should expect no live request");
-  response = { ok: true, headers: { "X-Tinybind-Render": "navigation;v=" + V }, body: { v: V, ops: [], manifest: [], live: true } };
+  response = { ok: true, headers: { "X-Tinybind-Render": "navigation;v=" + V }, body: { ops: [], manifest: [], live: true } };
   result = await runtime.update("/dashboard");
   check(result.live === true, "a live composition should be announced to the caller");
   // The streamed path says the same thing in its terminator, because a client
   // reading records rather than headers has to hear it too.
   streamResponse = [
-    JSON.stringify({ r: "head", v: V, head: [] }),
+    JSON.stringify({ r: "head", head: [] }),
     JSON.stringify({ r: "end", reason: "live_pending" }),
   ];
   result = await runtime.update("/dashboard");
@@ -577,10 +593,10 @@ async function main() {
     requests.push({ href, headers: init.headers });
     if (opens === 1) {
       // A stream with no terminator: dropped.
-      return Promise.resolve(liveResponse([JSON.stringify({ r: "head", v: V, head: [] })]));
+      return Promise.resolve(liveResponse([JSON.stringify({ r: "head", head: [] })]));
     }
     return Promise.resolve(
-      liveResponse([JSON.stringify({ r: "head", v: V, head: [] }), JSON.stringify({ r: "end", reason: "done" })]),
+      liveResponse([JSON.stringify({ r: "head", head: [] }), JSON.stringify({ r: "end", reason: "done" })]),
     );
   };
   const seenLive = [];
@@ -594,7 +610,7 @@ async function main() {
   // deployment could not route, time out, or bound an hours-long subscription
   // separately from ordinary navigation traffic.
   const liveRequest = requests[requests.length - 1];
-  check(liveRequest.headers["X-Tinybind-Render"] === "live;v=" + V, "live should send its own token, got " + liveRequest.headers["X-Tinybind-Render"]);
+  check(liveRequest.headers["X-Tinybind-Render"] === "live", "live should send its own bare token, got " + liveRequest.headers["X-Tinybind-Render"]);
   unLive();
 
   // A delivery may carry no validator — that is what makes them optional on this
@@ -608,7 +624,7 @@ async function main() {
     requests.push({ href, headers: init.headers });
     return Promise.resolve(
       liveResponse([
-        JSON.stringify({ r: "head", v: V, head: [] }),
+        JSON.stringify({ r: "head", head: [] }),
         JSON.stringify({ r: "op", kind: "replace", id: "c1", html: '<p data-tb-id="c1">delivered</p>' }),
         JSON.stringify({ r: "end", reason: "done" }),
       ]),
@@ -635,7 +651,7 @@ async function main() {
     requests.push({ href, headers: init.headers });
     const reason = opens <= 4 ? "retry" : "done";
     return Promise.resolve(
-      liveResponse([JSON.stringify({ r: "head", v: V, head: [] }), JSON.stringify({ r: "end", reason: reason })]),
+      liveResponse([JSON.stringify({ r: "head", head: [] }), JSON.stringify({ r: "end", reason: reason })]),
     );
   };
   outcome = await runtime.live("/feed", { maxAttempts: 3 }).done;
@@ -651,7 +667,7 @@ async function main() {
     opens++;
     requests.push({ href, headers: init.headers });
     return Promise.resolve(
-      liveResponse([JSON.stringify({ r: "head", v: V, head: [], build: "rev-next" })]),
+      liveResponse([JSON.stringify({ r: "head", head: [], build: "rev-next" })]),
     );
   };
   outcome = await runtime.live("/feed").done;
@@ -711,13 +727,32 @@ async function main() {
   nextControls = [];
   result = await runtime.redraw("card", { page: 2 });
   check(result.applied, "redraw should apply");
-  const redrawURL = requests[requests.length - 1].href;
+  // The component is named in headers, so the request goes to the page the
+  // component sits on. That is what lets the redraw inherit the page's own
+  // authorization instead of needing a path pattern kept in step with it.
+  const redrawRequest = requests[requests.length - 1];
   check(
-    redrawURL === "/internal/tb/redraw/UserCard%408Qv3n1/card?page=2",
-    "redraw should use the configured namespace and the element kind, got " + redrawURL,
+    redrawRequest.href === "https://example.test/search?page=2",
+    "redraw should address the page's own URL, got " + redrawRequest.href,
   );
+  check(redrawRequest.headers["X-Tinybind-Render"] === "redraw", "redraw mode header");
+  check(
+    redrawRequest.headers["X-Tinybind-Kind"] === "UserCard@8Qv3n1",
+    "redraw kind header, got " + redrawRequest.headers["X-Tinybind-Kind"],
+  );
+  check(redrawRequest.headers["X-Tinybind-Instance"] === "card", "redraw instance header");
+  check(redrawRequest.headers["X-Tinybind-Build"] === "rev-abc", "redraw build header");
 
-  check(requests[requests.length - 1].headers["X-Tinybind-Build"] === "rev-abc", "redraw build header");
+  // A deployment still routing to the mounted path passes it explicitly, which
+  // is the compatibility shape rather than the published one.
+  textResponse = { ok: true, status: 200, text: '<span id="card" data-tb-kind="UserCard@8Qv3n1">7</span>' };
+  nextControls = [];
+  result = await runtime.redraw("card", { page: 2 }, { url: "/internal/tb/redraw/UserCard%408Qv3n1/card" });
+  check(result.applied, "a redraw at an explicit url should apply");
+  check(
+    requests[requests.length - 1].href === "https://example.test/internal/tb/redraw/UserCard%408Qv3n1/card?page=2",
+    "an explicit url should be used as given, got " + requests[requests.length - 1].href,
+  );
 
   // A redraw's body is the bare subtree, so a component appearing for the first
   // time carries its stylesheet beside it. It must be installed before the

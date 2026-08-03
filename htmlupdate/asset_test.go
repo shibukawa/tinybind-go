@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func TestRuntimeAssetCarriesItsIdentity(t *testing.T) {
 	if !strings.Contains(asset.FileName, asset.Version) {
 		t.Fatalf("file name %q does not carry the digest, so an immutable cache would go stale", asset.FileName)
 	}
-	named := htmlupdate.Options{RuntimeFileName: "popcorn"}
+	named := htmlupdate.Options{RuntimeFileName: "popcorn", ServeRuntime: true}
 	if !strings.HasPrefix(named.RuntimeAsset().FileName, "popcorn.") {
 		t.Fatalf("file name = %q, want the caller's name", named.RuntimeAsset().FileName)
 	}
@@ -82,20 +83,17 @@ func TestCallerOwnedRuntimeIsNotServed(t *testing.T) {
 		t.Fatalf("script tag = %q, want none", tag)
 	}
 	mux := http.NewServeMux()
-	owned.Mount(mux, nil)
+	owned.Mount(mux)
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, owned.RuntimePath(), nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want the asset route to be absent", recorder.Code)
 	}
-	// The redraw endpoint is unaffected: owning the runtime is not owning the
-	// endpoints.
-	withRedraw := http.NewServeMux()
-	owned.Mount(withRedraw, cardRegistry(t))
+	// Redraw is unaffected: owning the runtime is not owning the endpoints, and
+	// a redraw is answered from the caller's handler rather than a mounted route.
 	redraw := httptest.NewRecorder()
-	withRedraw.ServeHTTP(redraw, buildRequest(owned.RedrawPath(cardKind, "card-1", nil)))
-	if redraw.Code == http.StatusNotFound {
-		t.Fatal("the redraw endpoint disappeared with the runtime asset")
+	if !owned.Redraw(redraw, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t)) {
+		t.Fatal("redraw stopped working when the runtime asset was disowned")
 	}
 }
 
@@ -110,6 +108,7 @@ func TestScriptTagCarriesEveryName(t *testing.T) {
 		HeaderPrefix:        "X-Popcorn",
 		DataAttributePrefix: "pw",
 		GlobalName:          "popcorn",
+		ServeRuntime:        true,
 	}
 	match := configAttr.FindStringSubmatch(custom.ScriptTag())
 	if match == nil {
@@ -123,8 +122,7 @@ func TestScriptTagCarriesEveryName(t *testing.T) {
 	if config != want {
 		t.Fatalf("tag config = %+v, want %+v", config, want)
 	}
-	if config.Prefix != "/internal/pw" || config.Header != "X-Popcorn" ||
-		config.Attr != "pw" || config.Global != "popcorn" {
+	if config.Header != "X-Popcorn" || config.Attr != "pw" || config.Global != "popcorn" {
 		t.Fatalf("configuration did not follow the options: %+v", config)
 	}
 	if config.Build == "" {
@@ -176,5 +174,51 @@ func TestPrefixReachesTheWholeDocument(t *testing.T) {
 	body := recorder.Body.String()
 	if strings.Contains(body, "tb-boundary") {
 		t.Fatalf("the default placeholder name survived the override:\n%s", body)
+	}
+}
+
+// Who serves the browser runtime has to be answered at startup, because the
+// wrong answer is invisible at run time: a build that serves none and owns none
+// compiles, starts, renders every page correctly, and then does nothing when a
+// boundary should update. Every other unusable option is wrong in a way somebody
+// notices.
+func TestRuntimeOwnershipMustBeStated(t *testing.T) {
+	if err := (htmlupdate.Options{Key: options.Key}).Validate(); err == nil {
+		t.Fatal("options naming no runtime owner were accepted, so a dead page would reach production")
+	}
+	// Both is refused too: a document carrying two runtimes has two boundary id
+	// spaces and two build identities, and nothing decides which owns a region.
+	both := htmlupdate.Options{Key: options.Key, ServeRuntime: true, CallerOwnsRuntime: true}
+	if err := both.Validate(); err == nil {
+		t.Fatal("a build claiming both was accepted")
+	}
+	for _, valid := range []htmlupdate.Options{
+		{Key: options.Key, ServeRuntime: true},
+		{Key: options.Key, CallerOwnsRuntime: true},
+	} {
+		if err := valid.Validate(); err != nil {
+			t.Fatalf("%+v was refused: %v", valid, err)
+		}
+	}
+}
+
+// The default ships no browser asset: no route, no script tag. A caller that
+// wants the reference client asks for it.
+func TestTheDefaultServesNoRuntime(t *testing.T) {
+	quiet := htmlupdate.Options{Key: options.Key, CallerOwnsRuntime: true}
+	if tag := quiet.ScriptTag(); tag != "" {
+		t.Fatalf("script tag = %q, want none", tag)
+	}
+	router := &countingRouter{mux: http.NewServeMux()}
+	quiet.Mount(router)
+	for _, pattern := range router.patterns {
+		if strings.Contains(pattern, "/runtime/") {
+			t.Fatalf("the runtime asset was routed anyway: %v", router.patterns)
+		}
+	}
+	// The bytes stay in the module, so a caller opting back in never copies
+	// them and a merged asset never drifts from what this build expects.
+	if len(htmlupdate.RuntimeSource()) == 0 {
+		t.Fatal("RuntimeSource must still return the reference client")
 	}
 }

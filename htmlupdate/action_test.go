@@ -108,7 +108,7 @@ func post(t *testing.T, handler http.Handler, headers map[string]string) *http.R
 }
 
 var actionHeader = map[string]string{
-	"X-Tinybind-Render": "action;v=" + strconv.Itoa(htmlupdate.Version),
+	"X-Tinybind-Render": "action;v=" + strconv.Itoa(clientVersion),
 	"X-Tinybind-Build":  htmlupdate.BuildID(),
 }
 
@@ -128,7 +128,10 @@ func TestActionWithoutTheHeaderStaysOrdinary(t *testing.T) {
 // One round trip performs the action and returns the regions it changed.
 func TestActionReturnsTheChangedRegions(t *testing.T) {
 	response := post(t, api(3, http.StatusOK), actionHeader)
-	if got := response.Header.Get("X-Tinybind-Render"); got != "action;v="+strconv.Itoa(htmlupdate.Version) {
+	// The echo names the served mode and no version. WriteUpdate takes no
+	// request, so it has no client version to echo, and inventing one is what
+	// this package stopped doing.
+	if got := response.Header.Get("X-Tinybind-Render"); got != "action" {
 		t.Fatalf("render header = %q", got)
 	}
 	if got := response.Header.Get("Cache-Control"); got != "no-store" {
@@ -192,7 +195,10 @@ func TestActionCanNavigate(t *testing.T) {
 }
 
 func TestWantsUpdateRejectsWhatItCannotServe(t *testing.T) {
-	for _, header := range []string{"", "navigation;v=1", "action;v=0", "action", "action;v=" + strconv.Itoa(htmlupdate.Version+1)} {
+	// Only the mode decides. A version this package never chose cannot make an
+	// action request unservable, so the rejected set is the wrong mode and the
+	// missing header.
+	for _, header := range []string{"", "navigation;v=1", "navigation", ";v=1"} {
 		request := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
 		if header != "" {
 			request.Header.Set("X-Tinybind-Render", header)
@@ -202,10 +208,19 @@ func TestWantsUpdateRejectsWhatItCannotServe(t *testing.T) {
 			t.Fatalf("header %q was accepted", header)
 		}
 	}
+	// The same request under any version, and under none, is servable.
+	for _, header := range []string{"action", "action;v=0", "action;v=" + strconv.Itoa(clientVersion+1)} {
+		request := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
+		request.Header.Set("X-Tinybind-Render", header)
+		request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+		if !options.WantsUpdate(request) {
+			t.Fatalf("header %q was refused", header)
+		}
+	}
 	// The right render header from a page another build rendered is refused
 	// too, because its regions are not ones this binary can hand back.
 	stale := httptest.NewRequest(http.MethodPost, "/cart/add", nil)
-	stale.Header.Set("X-Tinybind-Render", "action;v="+strconv.Itoa(htmlupdate.Version))
+	stale.Header.Set("X-Tinybind-Render", "action;v="+strconv.Itoa(clientVersion))
 	stale.Header.Set("X-Tinybind-Build", "older-revision")
 	if options.WantsUpdate(stale) {
 		t.Fatal("a page from another build was accepted")

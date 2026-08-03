@@ -102,6 +102,9 @@ func initialPass(ctx context.Context, collect *collector, wrappers []Wrapper, le
 		return nil, err
 	}
 	coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
+	if collect != nil {
+		collect.tag = coordinator.opts.validatorTag
+	}
 	head, err := mergeCallerHead(MergeHead(wrappers, leaf), coordinator.opts.head)
 	if err != nil {
 		coordinator.stop()

@@ -19,9 +19,6 @@ import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-// Version is the wire contract this package speaks.
-const Version = htmlbind.ProtocolVersion
-
 // DefaultHeaderPrefix names the request and response headers.
 const DefaultHeaderPrefix = "X-Tinybind"
 
@@ -57,6 +54,15 @@ const (
 	// not route, time out, or bound them separately, and a served-mode log could
 	// not tell an hours-long subscription from ordinary navigation traffic.
 	ModeLive
+	// ModeRedraw returns one registered component's subtree, addressed by the
+	// kind and instance headers rather than by the URL path.
+	//
+	// It is a request mode so a caller can answer a redraw at any URL it likes.
+	// Usually that is the page the component sits on, where the redraw inherits
+	// the page's own authorization rather than needing a second path pattern kept
+	// in step with the one protecting the page — two rules that must agree and
+	// that nothing forces to agree.
+	ModeRedraw
 )
 
 const (
@@ -96,14 +102,27 @@ type Options struct {
 	// Empty uses DefaultRuntimeFileName. The content digest and the .js suffix
 	// are appended either way, so the URL stays immutably cacheable.
 	RuntimeFileName string
-	// CallerOwnsRuntime stops this package serving or referencing a browser
-	// runtime. Mount registers no asset route and ScriptTag returns nothing.
+	// CallerOwnsRuntime says the caller ships its own browser runtime, so this
+	// package serves and references none: Mount registers no asset route and
+	// ScriptTag returns nothing.
 	//
-	// Set it when the caller ships its own runtime — usually ours, merged into
-	// a larger asset from RuntimeSource. Two runtimes on one document would
-	// mean two boundary id spaces and two build identities, so a framework that
-	// already has one takes this rather than adding a second.
+	// Usually that runtime is this one, merged into a larger asset from
+	// RuntimeSource. Two runtimes on one document would mean two boundary id
+	// spaces and two build identities, so a framework that already has one takes
+	// this rather than adding a second.
 	CallerOwnsRuntime bool
+	// ServeRuntime asks this package to serve the reference browser runtime at a
+	// content-hashed URL and to write the script tag that loads it.
+	//
+	// It is off by default, which is the whole of the difference from earlier
+	// versions: the browser half belongs to the caller, so serving one is
+	// something a deployment asks for rather than something it inherits.
+	//
+	// Exactly one of this and CallerOwnsRuntime must be set, and Validate says so
+	// at startup. A build that set neither would compile and then serve pages
+	// that silently stop updating, which is the worst failure shape available
+	// here: nothing fails, the page is just quietly dead.
+	ServeRuntime bool
 	// CSRFFieldName is the hidden field generated forms carry. Empty uses
 	// DefaultCSRFFieldName.
 	//
@@ -203,7 +222,14 @@ func (o Options) maxManifestBytes() int {
 // identifiers, and the instance attributes are one naming system rather than
 // two. Caller options follow, so a caller can still override.
 func (o Options) renderOptions(caller []htmlbind.Option) []htmlbind.Option {
-	owned := []htmlbind.Option{htmlbind.WithBoundaryPrefix(o.dataAttributePrefix())}
+	owned := []htmlbind.Option{
+		htmlbind.WithBoundaryPrefix(o.dataAttributePrefix()),
+		// Seeding every validator with the build identity is what keeps two
+		// builds from producing comparable digests. Negotiate already answers a
+		// build mismatch with a complete document before any validator is read,
+		// so this matters where the build header was dropped in transit.
+		htmlbind.WithValidatorTag(o.buildID()),
+	}
 	return append(owned, caller...)
 }
 
@@ -238,8 +264,14 @@ func (o Options) streamContentType() string {
 // Negotiated is what a request asked for, after validation.
 type Negotiated struct {
 	Mode Mode
-	// Version is the protocol version the client claims. It equals Version
-	// whenever Mode is not ModeDocument.
+	// Version is whatever the client wrote after "v=" in the render header, or
+	// zero when it wrote none. This package neither defines it nor compares it:
+	// the browser client belongs to the caller, so the caller owns its wire
+	// version and what a mismatch means. It is carried so a caller that does
+	// version its wire can read it, and it is echoed back on the response.
+	//
+	// The compatibility axis this package still operates is the build identity,
+	// whose value Options.BuildID already makes the caller's.
 	Version int
 	// Known holds the validators the client already has. It is empty on a
 	// client's first update, which simply yields a larger delta.
@@ -249,11 +281,12 @@ type Negotiated struct {
 // Negotiate resolves how a request must be answered.
 //
 // Anything unrecognized resolves to ModeDocument rather than to an error: a
-// stale client, a truncated header, a proxy that dropped a header, and a
-// version bump must all still produce a working page.
+// stale client, a truncated header, and a proxy that dropped a header must all
+// still produce a working page. That is a total function on the mode name
+// rather than a version comparison, so it holds with no version at all.
 func (o Options) Negotiate(r *http.Request) Negotiated {
 	name, version, ok := parseRender(r.Header.Get(o.renderHeader()))
-	if !ok || version != Version {
+	if !ok {
 		return Negotiated{Mode: ModeDocument}
 	}
 	var mode Mode
@@ -262,6 +295,8 @@ func (o Options) Negotiate(r *http.Request) Negotiated {
 		mode = ModeNavigation
 	case modeLive:
 		mode = ModeLive
+	case modeRedraw:
+		mode = ModeRedraw
 	default:
 		return Negotiated{Mode: ModeDocument}
 	}
@@ -286,28 +321,60 @@ func (o Options) Negotiate(r *http.Request) Negotiated {
 }
 
 // renderToken is the value a response echoes for one mode.
-func renderToken(mode Mode) string {
-	if mode == ModeLive {
-		return modeLive + ";v=" + versionText
-	}
-	return modeNavigation + ";v=" + versionText
+//
+// The version is the one the request carried, not one this package chose. A
+// caller versioning its own wire sees its own number come back; a caller that
+// versions nothing gets a bare mode name, because inventing a number here would
+// be this package versioning a contract it no longer owns.
+func renderToken(mode Mode, version int) string {
+	return modeName(mode) + versionSuffix(version)
 }
 
-// parseRender reads a render header of the form "navigation;v=1".
+func modeName(mode Mode) string {
+	switch mode {
+	case ModeLive:
+		return modeLive
+	case ModeRedraw:
+		return modeRedraw
+	default:
+		return modeNavigation
+	}
+}
+
+// versionSuffix writes back what the request claimed, and nothing when it
+// claimed nothing.
+func versionSuffix(version int) string {
+	if version == 0 {
+		return ""
+	}
+	return ";v=" + strconv.Itoa(version)
+}
+
+// parseRender reads a render header of the form "navigation;v=1" or a bare
+// "navigation".
+//
+// The version part is optional because it is the caller's field: a client that
+// does not version its wire writes the mode alone, and a malformed version is
+// read as none rather than as a reason to refuse. Refusing would cost the page
+// its update for a field this package does not interpret.
 func parseRender(value string) (mode string, version int, ok bool) {
 	name, rest, found := strings.Cut(value, ";")
-	if !found {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return "", 0, false
+	}
+	if !found {
+		return name, 0, true
 	}
 	digits, found := strings.CutPrefix(strings.TrimSpace(rest), "v=")
 	if !found {
-		return "", 0, false
+		return name, 0, true
 	}
-	version, err := strconv.Atoi(digits)
+	version, err := strconv.Atoi(strings.TrimSpace(digits))
 	if err != nil {
-		return "", 0, false
+		return name, 0, true
 	}
-	return strings.TrimSpace(name), version, true
+	return name, version, true
 }
 
 // DecodeManifest reads the compact validator list a client sends back. The
@@ -343,8 +410,12 @@ func EncodeManifest(manifest htmlbind.Manifest) string {
 }
 
 // deltaResponse is the JSON body of a navigation or action response.
+//
+// It carries no version field. Nothing compared the one it used to carry, and a
+// field nothing compares is not a version but a constant every response asks the
+// wire for and every client ignores. A caller versioning its own wire adds its
+// own field beside this shape.
 type deltaResponse struct {
-	Version    int              `json:"v"`
 	Operations []deltaOperation `json:"ops"`
 	Manifest   []deltaInstance  `json:"manifest,omitempty"`
 	// Head is the merged head of the new composition, sent so the client can
@@ -363,9 +434,6 @@ type deltaResponse struct {
 	// speculative request and costs the server no page execution.
 	Live bool `json:"live,omitempty"`
 }
-
-// versionText is the protocol version as it appears in a header value.
-var versionText = strconv.Itoa(Version)
 
 func encodeJSON(w http.ResponseWriter, body deltaResponse) error {
 	return json.NewEncoder(w).Encode(body)
@@ -411,6 +479,21 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 // live boundary.
 func (o Options) liveHeader() string { return o.prefix() + "-Live" }
 
+// kindHeader and instanceHeader name the component a redraw addresses.
+//
+// They are headers rather than path segments so a redraw can be answered at any
+// URL, which is what lets a caller serve one from the page the component sits
+// on. There the redraw inherits the page's own authorization; on a reserved path
+// it needs a second path pattern kept in step with the first, and nothing forces
+// two such rules to agree.
+//
+// They are headers rather than query parameters because the generated decoder
+// treats an unknown parameter name as an error, so a query-carried kind and
+// instance would reserve two names an author could then not declare.
+func (o Options) kindHeader() string { return o.prefix() + "-Kind" }
+
+func (o Options) instanceHeader() string { return o.prefix() + "-Instance" }
+
 // headHeader names the response header carrying a redraw's head contribution.
 // Every other mode has a body a head field fits into; a redraw's body is the
 // component's markup, and wrapping it would cost the plain-fragment property
@@ -442,7 +525,7 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 		// and serve an ordinary error page.
 		return err
 	}
-	body := deltaResponse{Version: Version}
+	body := deltaResponse{}
 	for _, operation := range delta.Operations {
 		body.Operations = append(body.Operations, deltaOperation{
 			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
@@ -459,6 +542,6 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	// A delta carries per-document validators, so it is never shareable.
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), renderToken(ModeNavigation))
+	w.Header().Set(o.renderHeader(), renderToken(ModeNavigation, negotiated.Version))
 	return encodeJSON(w, body)
 }
