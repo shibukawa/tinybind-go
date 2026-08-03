@@ -72,7 +72,10 @@ var pagePlan = &htmlbind.Plan[pageParams]{
 	},
 }
 
-var options = htmlupdate.Options{Key: []byte("test key")}
+// ServeRuntime is set because these tests exercise the served asset and the
+// script tag. It is off by default now: the browser half belongs to the caller,
+// so serving one is asked for rather than inherited.
+var options = htmlupdate.Options{Key: []byte("test key"), ServeRuntime: true}
 
 // server renders the same route in whichever mode the request asks for, which
 // is the whole point of the negotiation.
@@ -108,7 +111,7 @@ func get(t *testing.T, url string, headers map[string]string) *http.Response {
 func delta(t *testing.T, url string, known map[string]string) (*http.Response, deltaBody) {
 	t.Helper()
 	headers := map[string]string{
-		"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(htmlupdate.Version),
+		"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(clientVersion),
 		"X-Tinybind-Build":  htmlupdate.BuildID(),
 	}
 	if len(known) > 0 {
@@ -126,8 +129,12 @@ func delta(t *testing.T, url string, known map[string]string) (*http.Response, d
 	return response, body
 }
 
+// clientVersion is the wire version this test's client claims. The package
+// neither defines nor judges one, so a test picks its own exactly as a caller
+// does.
+const clientVersion = 1
+
 type deltaBody struct {
-	Version    int `json:"v"`
 	Operations []struct {
 		Kind string `json:"kind"`
 		ID   string `json:"id"`
@@ -167,7 +174,7 @@ func TestPlainRequestGetsTheDocument(t *testing.T) {
 func TestEveryResponseVariesOnTheRenderHeader(t *testing.T) {
 	for _, response := range []*http.Response{
 		get(t, "/search?q=go", nil),
-		get(t, "/search?q=go", map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(htmlupdate.Version), "X-Tinybind-Build": htmlupdate.BuildID()}),
+		get(t, "/search?q=go", map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(clientVersion), "X-Tinybind-Build": htmlupdate.BuildID()}),
 	} {
 		if got := response.Header.Values("Vary"); len(got) != 2 ||
 			got[0] != "X-Tinybind-Render" || got[1] != "X-Tinybind-Build" {
@@ -244,18 +251,22 @@ func TestLayoutChangeReplacesTheAncestorOnly(t *testing.T) {
 // error, because that is what lets later milestones stay incomplete safely.
 func TestUnusableRequestsFallBackToTheDocument(t *testing.T) {
 	tests := []struct{ name, header string }{
-		{"future version", "navigation;v=" + strconv.Itoa(htmlupdate.Version+1)},
-		{"past version", "navigation;v=0"},
-		{"unknown mode", "boundary;v=" + strconv.Itoa(htmlupdate.Version)},
+		{"unknown mode", "boundary;v=" + strconv.Itoa(clientVersion)},
 		// A buffered entry cannot hold a delivery stream open, so a live request
 		// reaching one takes the same fallback every unrecognized condition takes.
-		{"live at a buffered entry", "live;v=" + strconv.Itoa(htmlupdate.Version)},
-		{"malformed", "navigation"},
+		{"live at a buffered entry", "live;v=" + strconv.Itoa(clientVersion)},
+		{"unknown mode with no version at all", "boundary"},
 		{"empty", ""},
+		{"separator with no mode", ";v=1"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			response := get(t, "/search?q=go", map[string]string{"X-Tinybind-Render": test.header})
+			// The build matches, so anything that still falls back does so
+			// because of the mode rather than because of the build.
+			response := get(t, "/search?q=go", map[string]string{
+				"X-Tinybind-Render": test.header,
+				"X-Tinybind-Build":  htmlupdate.BuildID(),
+			})
 			if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
 				t.Fatalf("content type = %q, want a document", got)
 			}
@@ -266,11 +277,61 @@ func TestUnusableRequestsFallBackToTheDocument(t *testing.T) {
 	}
 }
 
+// The wire version belongs to the caller, so this package carries it and echoes
+// it without ever deciding what it means. A client claiming a version this
+// package has never heard of is served its delta, because the only thing that
+// could make the two incompatible is the build, and the build matches.
+func TestTheVersionIsCarriedRatherThanJudged(t *testing.T) {
+	for _, header := range []string{
+		"navigation;v=" + strconv.Itoa(clientVersion+1),
+		"navigation;v=9999",
+		// A version this package cannot parse is read as none rather than as a
+		// reason to refuse: refusing would cost the page its update over a field
+		// this package does not interpret.
+		"navigation;v=banana",
+		"navigation",
+	} {
+		t.Run(header, func(t *testing.T) {
+			response := get(t, "/search?q=go", map[string]string{
+				"X-Tinybind-Render": header,
+				"X-Tinybind-Build":  htmlupdate.BuildID(),
+			})
+			if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+				t.Fatalf("content type = %q, want a delta", got)
+			}
+			// The echo carries the client's own number back, or no number when
+			// the client sent none.
+			want := "navigation"
+			if _, rest, found := strings.Cut(header, ";v="); found {
+				if _, err := strconv.Atoi(rest); err == nil {
+					want = header
+				}
+			}
+			if got := response.Header.Get("X-Tinybind-Render"); got != want {
+				t.Fatalf("echoed %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// A version of zero is indistinguishable from no version, so it echoes bare.
+// Stated as its own case because the alternative — inventing a number to echo —
+// is what this package stopped doing.
+func TestAZeroVersionEchoesBare(t *testing.T) {
+	response := get(t, "/search?q=go", map[string]string{
+		"X-Tinybind-Render": "navigation;v=0",
+		"X-Tinybind-Build":  htmlupdate.BuildID(),
+	})
+	if got := response.Header.Get("X-Tinybind-Render"); got != "navigation" {
+		t.Fatalf("echoed %q, want a bare mode name", got)
+	}
+}
+
 // An oversized manifest is dropped rather than rejected, costing response bytes
 // instead of failing the request.
 func TestOversizedManifestIsIgnored(t *testing.T) {
 	response := get(t, "/search?q=go", map[string]string{
-		"X-Tinybind-Render":   "navigation;v=" + strconv.Itoa(htmlupdate.Version),
+		"X-Tinybind-Render":   "navigation;v=" + strconv.Itoa(clientVersion),
 		"X-Tinybind-Build":    htmlupdate.BuildID(),
 		"X-Tinybind-Manifest": "c1:" + strings.Repeat("x", htmlupdate.DefaultMaxManifestBytes),
 	})
@@ -345,10 +406,11 @@ func TestRuntimeIsServedImmutably(t *testing.T) {
 	if !strings.Contains(body, "createPartialUpdateRuntime") {
 		t.Fatalf("runtime body looks wrong: %q", body)
 	}
-	// The runtime hardcodes the protocol version, so a bump that forgets the
-	// script would silently disable every update.
-	if !strings.Contains(body, "VERSION = "+strconv.Itoa(htmlupdate.Version)) {
-		t.Fatal("runtime protocol version disagrees with the server")
+	// The reference client carries no protocol version, because the wire version
+	// is the caller's. A version compiled in here would be this module versioning
+	// a contract only half of which lives in a file the caller replaces.
+	if strings.Contains(body, "VERSION") {
+		t.Fatal("the reference client must carry no protocol version")
 	}
 	if tag := options.ScriptTag(); !strings.Contains(tag, path) {
 		t.Fatalf("script tag %q does not load %q", tag, path)
@@ -368,19 +430,24 @@ func read(t *testing.T, response *http.Response) string {
 // Every framework endpoint shares one configurable namespace, so a deployment
 // can route, cache, or protect the whole surface with a single rule.
 func TestEndpointNamespaceIsConfigurable(t *testing.T) {
-	custom := htmlupdate.Options{Key: options.Key, PathPrefix: "internal/tb"}
+	custom := htmlupdate.Options{Key: options.Key, PathPrefix: "internal/tb", ServeRuntime: true}
 	path := custom.RuntimePath()
 	if !strings.HasPrefix(path, "/internal/tb/") {
 		t.Fatalf("runtime path = %q, want the configured namespace", path)
 	}
-	// The runtime learns every name from its own script tag, so one shared
-	// asset serves any namespace without being rebuilt.
+	// The namespace reaches the browser in the asset URL and nowhere else. It
+	// used to travel in the configuration too, because the client built the
+	// redraw URL from it; a redraw is addressed by header now, so the client has
+	// nothing left to build and the field was dropped rather than kept as decor.
 	tag := custom.ScriptTag()
-	if !strings.Contains(tag, `&#34;prefix&#34;:&#34;/internal/tb&#34;`) {
-		t.Fatalf("script tag %q does not carry the namespace", tag)
+	if !strings.Contains(tag, path) {
+		t.Fatalf("script tag %q does not load %q", tag, path)
+	}
+	if strings.Contains(tag, "prefix") {
+		t.Fatalf("script tag %q still carries a path prefix the client cannot use", tag)
 	}
 	mux := http.NewServeMux()
-	custom.Mount(mux, nil)
+	custom.Mount(mux)
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, buildRequest(path))
 	if recorder.Code != http.StatusOK {
@@ -442,7 +509,7 @@ func TestAnotherBuildGetsTheDocument(t *testing.T) {
 		"absent":        "",
 	} {
 		t.Run(name, func(t *testing.T) {
-			headers := map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(htmlupdate.Version)}
+			headers := map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(clientVersion)}
 			if header != "" {
 				headers["X-Tinybind-Build"] = header
 			}

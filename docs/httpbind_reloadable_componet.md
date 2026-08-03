@@ -40,7 +40,8 @@ You do not compute hashes, assign IDs, or write update endpoints. Your handler r
               -> complete HTML, each boundary carrying data-tb-id
 
 update        GET /search?q=rust
-              X-Tinybind-Render: navigation;v=1
+              X-Tinybind-Render: navigation
+              X-Tinybind-Build: 3f9c2a…
               X-Tinybind-Manifest: c1:8Qv…,c2:Lm4…
               -> { ops: [ replace c2 with <p …>results for rust</p> ],
                    manifest: [ c1:8Qv…, c2:Nk9… ] }
@@ -85,9 +86,13 @@ Digests are keyed with a secret you supply. An unkeyed hash of low-entropy conte
 | Mode | Trigger | Response |
 | --- | --- | --- |
 | Document | No render header | Complete HTML |
-| Navigation | `X-Tinybind-Render: navigation;v=N` | Changed boundaries of the target route |
-| Redraw | `GET <prefix>/redraw/<kind>/<id>?args` | That one component's subtree |
-| Live delivery | `X-Tinybind-Render: live;v=N` on a second connection | A record stream of deliveries, held open |
+| Navigation | `X-Tinybind-Render: navigation` | Changed boundaries of the target route |
+| Redraw | `X-Tinybind-Render: redraw` plus `X-Tinybind-Kind` and `X-Tinybind-Instance` | That one component's subtree |
+| Live delivery | `X-Tinybind-Render: live` on a second connection | A record stream of deliveries, held open |
+
+Every mode is a header, so the URL is never part of the negotiation. That includes redraw, which used to be addressed by a reserved path; see [Addressing a redraw](#addressing-a-redraw).
+
+The module writes no protocol version and compares none. A token may carry a `;v=N` your client adds — the server parses it, echoes it back, and never judges it — because the browser half belongs to you and so does its wire version. The compatibility axis the module does operate is `X-Tinybind-Build`: it changes when a template, a Go function a template calls, the browser client, or a dependency changes, which is everything a version could have caught and more. A build mismatch answers with a complete document, and the page reloads holding the new client.
 
 The last row belongs to a different feature and is listed here because it shares this negotiation. A [live source](htmlbind.md#live-sources) settles in place during the document render, so the document response finishes; the runtime then opens a second connection that carries deliveries for as long as the sources produce. When that connection drops — a proxy timeout, a sleeping laptop — the regions would freeze with no signal, so the runtime reopens it. Reconnecting is the same request again.
 
@@ -143,15 +148,21 @@ The header is deliberately not `Accept`: shared caches normalize or drop `Vary: 
 
 Every response varies on the render header. Delta responses are `no-store`, since they carry per-document validators.
 
-Anything unrecognized — an unknown mode, a version the server does not speak, a truncated header, a proxy that stripped one — resolves to a complete document rather than an error. That rule is what lets each milestone stay incomplete without ever being incorrect.
+Anything unrecognized — an unknown mode, a truncated header, a proxy that stripped one — resolves to a complete document rather than an error. That rule is what lets each milestone stay incomplete without ever being incorrect.
 
-## Protocol version
+## Build identity, and the version that isn't there
 
-The version identifies the wire contract: attribute names, manifest fields, operation kinds, and how validators are built. It is a single integer owned by the framework, not a project setting, and it is mixed into every digest.
+**This module owns no protocol version.** It defines none, sends none, and compares none. The mode token accepts a `;v=N` you add and echoes it back untouched, because the browser half is yours and so is its wire version; a version owned here would version a contract only half of which lives here, and force the coordinated deploy that separating the halves was meant to avoid.
 
-It does **not** identify your templates. A template edit changes that component's version inside its validators; the protocol number stays put.
+What the server does compare is `X-Tinybind-Build`, the identity of the binary that rendered the page — the version control revision it was stamped with, or a per-process value from a dirty or unstamped tree so that every development restart invalidates.
 
-Client and server must match exactly. A mismatch serves a complete document, which is also what makes a rolling deploy safe: a page rendered by the old version whose next request reaches a new server falls back cleanly.
+It is strictly stronger than a protocol number. It moves when a template changes, when a Go function a template calls changes, when the browser client changes, and when a dependency changes. A component's own kind cannot see any of that: it hashes one component's compiled plan and misses everything around it.
+
+A mismatch serves a complete document rather than an error, which is what makes a rolling deploy safe: a page rendered by the old build whose next request reaches a new server falls back cleanly and comes back holding the new client.
+
+The build identity is also mixed into every validator, so two builds can never produce digests that compare equal even if the header were stripped in transit.
+
+The full wire description — every header, every record, every status, and what a conforming client must not get wrong — is in [The update wire contract](httpbind_update_wire_contract.md). Read that if you are writing your own client.
 
 ## Delta operations
 
@@ -207,37 +218,79 @@ registry := &htmlupdate.Registry{}
 if err := registry.Register(pages.UserCardReloadable); err != nil {
     return err // a duplicate kind, which must not be discovered in production
 }
-options.Mount(mux, registry)
+options.Mount(mux)
 ```
 
 Registering a repeated kind fails, because the kind covers a component's name, parameters, and markup but not its package: silently keeping the last one would serve a component that looks the same but calls another package's external functions. The failure is returned rather than raised, so a caller running a startup validation pass collects every problem and reports them together; `MustRegister` is there for a caller with nowhere to return one.
 
-`Mount` takes any router with a `Handle(string, http.Handler)` method, so a framework installs the whole surface on its own mux.
+`Mount` takes any router with a `Handle(string, http.Handler)` method and registers the runtime asset, which is the only endpoint this package still owns. It takes no registry: a redraw is answered from your handler at your URL.
 
-The `id` parameter is required and is filled from the path, not the query. The framework writes it and the component's kind onto the root element on every render, so a region stays addressable and redrawable after a redraw replaced it. A reloadable component must be exported and single-rooted, and every other parameter must be a type a query string carries deterministically — a record, a slice, and `html` are refused at generation time. Unlike an automatic boundary these are errors, because the author asked for the endpoint.
+The `id` parameter is required and is filled from the `X-Tinybind-Instance` header, not the query. The framework writes it and the component's kind onto the root element on every render, so a region stays addressable and redrawable after a redraw replaced it. A reloadable component must be exported and single-rooted, and every other parameter must be a type a query string carries deterministically — a record, a slice, and `html` are refused at generation time. Unlike an automatic boundary these are errors, because the author asked for the endpoint.
 
 ```js
 await tinybind.redraw("card-1", { userId: 42 });
 ```
 
-That becomes a plain GET:
+That becomes a plain GET to the page the component sits on:
 
 ```text
-GET /_tb/redraw/UserCard@8Qv3n1/card-1?userId=42
+GET /dashboard?userId=42
+X-Tinybind-Render: redraw
+X-Tinybind-Kind: UserCard@8Qv3n1
+X-Tinybind-Instance: card-1
+X-Tinybind-Build: 3f9c2a…
 ```
 
 The server runs **only that component**, with the arguments from the query string, and returns its subtree as a single root element carrying the same `id`. There is nothing to reconstruct, so there is no capability token, no signing key, and no page execution.
 
+### Addressing a redraw
+
+The component travels in headers, so the URL is yours. Branch on it inside your own page handler:
+
+```go
+mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
+    if !authorized(r) {
+        http.Error(w, "forbidden", http.StatusForbidden)
+        return
+    }
+    if options.Redraw(w, r, registry) {
+        return // it was a redraw, and it inherited the check above
+    }
+    // ordinary page render
+})
+```
+
+That placement is the point. Path protection is configured by path pattern, so a redraw served from a reserved path needs its own pattern maintained in parallel with the one protecting the page the component sits on — two rules that must agree and that nothing forces to agree. At the page's own URL the redraw inherits that protection automatically, and placed after the handler's own checks it inherits those too, not merely the middleware's.
+
+`Redraw` returns `false` with nothing written when the request is not a redraw, so the same handler serves the page. A request from a page another build rendered is one of those cases: at a page URL the right answer to a stale redraw is that page, which you are about to render anyway, so it costs one round trip rather than a refusal and then a reload.
+
+Because the page response and the redraw response now share a URL, `Redraw` declares `Vary` on the render, build, kind, and instance headers whichever one it turns out to serve. Without the kind and instance there, two components redrawing on one page would be a single cache entry and either could be answered with the other's markup.
+
+There is no reserved redraw path any more. `RedrawHandler`, `RedrawPath`, and the `Mount` registration are gone: an endpoint whose address the caller cannot choose was the defect, and keeping a second addressing alive meant publishing two shapes in one contract.
+
+Nothing is lost. A deployment that wants a dedicated route writes one, and it is the same few lines whatever URL it picks:
+
+```go
+mux.HandleFunc("GET /internal/redraw/{kind}/{instance}", func(w http.ResponseWriter, r *http.Request) {
+    r.Header.Set("X-Tinybind-Render", "redraw")
+    r.Header.Set("X-Tinybind-Kind", r.PathValue("kind"))
+    r.Header.Set("X-Tinybind-Instance", r.PathValue("instance"))
+    options.Redraw(w, r, registry)
+})
+```
+
+Pass `{ url: … }` as `redraw`'s third argument to address it from the browser. Doing this puts the parallel-path-pattern problem back, which is why it is a handler you write rather than one the module ships.
+
 The `id` is yours, not the framework's. Reloading a region is a deliberate act, so naming it should be too, and `getElementById` already solves lookup. Write it at the call site rather than inside the component, or every instance would share one id; in a loop, compose it from the item key as you would anyway.
 
-The path segment after the component name is a hash of its parameters and compiled markup. Its job is versioning: editing the template changes the URL, so a page loaded before a deploy gets a 404 and falls back to a full reload rather than rendering under changed semantics.
+The kind is a hash of the component's parameters and compiled markup. Its job is versioning: editing the template changes it, so a page loaded before a deploy names a kind this deployment does not publish, gets a 404, and falls back to a full reload rather than rendering under changed semantics.
 
 It distinguishes types as a side effect — two components sharing a name but differing in parameters or markup get different kinds — but it does **not** cover the package. Two templates identical in name, parameters, and markup collide, and the collision matters because identical plan text still resolves its external calls per package. Registering the same kind twice therefore fails at startup rather than overwriting.
 
 > [!WARNING]
 > **Registering a component publishes an HTTP endpoint, and its parameters become untrusted input.** Anyone can call `?userId=999`. A component's arguments used to be values a page had already authenticated, authorized, and derived; a registered one receives whatever the caller sends. A component that only formats values handed to it is safe to register. One that loads a record by identifier must check ownership or visibility itself, exactly as an ordinary handler would. Registration is the review point.
 
-Because a redraw is a GET, it must be repeatable with no observable effect: it is retried on supersession and may be answered from a cache. Per-user output must be marked private, since the URL alone identifies the response.
+Because a redraw is a GET, it must be repeatable with no observable effect: it is retried on supersession and may be answered from a cache. Per-user output must be marked private — and note that the URL no longer identifies the response on its own, which is why the kind and instance are `Vary` axes.
 
 ### Assets a redraw needs
 
@@ -424,13 +477,14 @@ options := htmlupdate.Options{
     GlobalName:          "tinybind",   // what the runtime installs itself as
     MaxManifestBytes:    8 << 10,      // oversized hints are dropped, not rejected
     MaxQueryBytes:       4 << 10,      // an oversized redraw query is rejected
+    ServeRuntime:        true,         // serve the reference browser client
 }
 
 if err := options.Validate(); err != nil {
-    return err // a prefix that cannot name an element, found at startup
+    return err // a prefix that cannot name an element, or no runtime owner
 }
 
-options.Mount(mux, registry) // the runtime asset and the redraw endpoint
+options.Mount(mux) // the runtime asset, which is the only endpoint left
 
 mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
     wrappers := []htmlbind.Wrapper{BindDocument(...), BindLayout(...)}
@@ -445,11 +499,19 @@ One prefix for every endpoint means one routing rule, one cache rule, and one ac
 
 `options.Render` negotiates the mode, sets `Vary`, and writes either the document or the delta. Everything else about the response stays yours, as elsewhere in this module.
 
-The runtime is served at a content-hashed path under the same prefix, so it is immutably cacheable and a deploy invalidates it. `options.ScriptTag()` returns the element that loads it, and that element carries the whole configuration, so one shared runtime asset works for any set of names without being rebuilt. Nothing is compiled into the bytes except the protocol version.
+The runtime is served at a content-hashed path under the same prefix, so it is immutably cacheable and a deploy invalidates it. `options.ScriptTag()` returns the element that loads it, and that element carries the whole configuration, so one shared runtime asset works for any set of names without being rebuilt. Nothing at all is compiled into the bytes — not even a protocol version.
 
-### Owning the runtime
+### Who serves the browser runtime
 
-A framework that already ships a browser runtime must not add a second one: two runtimes on one document means two boundary id spaces, two build identities, and two script tags with nothing deciding which owns a region. So take the bytes and merge them:
+**You must say.** Set exactly one of `ServeRuntime` and `CallerOwnsRuntime`; `Validate` refuses both and neither at startup.
+
+That is not ceremony. Every other misconfiguration here is wrong in a way somebody notices, and this one is not: a build that serves no runtime and claims no ownership compiles, starts, renders every page correctly, and then does nothing at all when a boundary should update. No error, no log line, no failed request — just a page that quietly stopped working. So the question is asked once, at startup, where the answer is cheap.
+
+`ServeRuntime` serves the reference client at a content-hashed path under your prefix and makes `ScriptTag` return the element that loads it. That is the whole of what a project using this module directly needs.
+
+`CallerOwnsRuntime` says you ship your own, and then `Mount` registers no asset route and `ScriptTag` returns nothing — a tag pointing at an asset this build does not serve is worse than no tag.
+
+A framework that already ships a browser runtime takes the second, because two runtimes on one document means two boundary id spaces, two build identities, and two script tags with nothing deciding which owns a region. Take the bytes and merge them:
 
 ```go
 options := htmlupdate.Options{Key: validatorKey, CallerOwnsRuntime: true}
@@ -459,9 +521,22 @@ asset := options.RuntimeAsset()           // bytes, digest, media type, file nam
 config := options.RuntimeConfig()         // what the merged runtime must be given
 ```
 
-With `CallerOwnsRuntime` set, `Mount` registers no asset route and `ScriptTag` returns nothing — a tag pointing at an asset this build does not serve is worse than no tag. Your merged asset calls `createPartialUpdateRuntime(config)` with a config carrying the same names, and installs the result wherever it likes.
+Your merged asset calls `createPartialUpdateRuntime(config)` with a config carrying the same names, and installs the result wherever it likes.
 
-Taking a copy of `runtime.js` instead is the shape to avoid: a copy is not a version-pinned dependency, so it drifts on upgrade with nothing in your build failing, and a drifted browser runtime is a silently dead page rather than a compile error.
+Taking a copy of `runtime.js` instead is the shape to avoid: a copy is not a version-pinned dependency, so it drifts on upgrade with nothing in your build failing, and a drifted browser runtime is a silently dead page rather than a compile error. `RuntimeSource` exists so you never have to.
+
+### Writing your own client
+
+`htmlupdate/runtime.js` is reference code. Everything it does is a consequence of the wire contract, so a client written from that contract alone is conforming whether or not it resembles this one — and it is worth reading in that light rather than as an implementation to subclass.
+
+What such a client must not get wrong, whatever else it does:
+
+- **Trigger a streaming swap from the commit marker, never from the template.** A template's start tag can arrive in its own chunk, and an observer watching the template will swap in empty content and destroy the fallback. The marker cannot appear before the template is complete. This only shows up once a proxy, a TLS record, or a compressing encoder splits the bytes, so it survives development.
+- **Apply each record at most once**, and treat a stream with no terminator as truncated: discard the manifest rather than trusting a partial one.
+- **Install head contributions before the markup that needs them**, or a region whose stylesheet just arrived paints unstyled.
+- **Fall back to an ordinary full navigation on every failure path** — a non-2xx, a body that is not what the mode promised, a missing target, a build that does not match. That fallback is what lets every other part of this design be incomplete without being incorrect.
+
+The version, if you want one, is yours: add `;v=N` to the mode token and the server will echo it back untouched. The module compares only `X-Tinybind-Build`.
 
 ### Reporting failures
 
@@ -486,7 +561,7 @@ The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render 
 | --- | --- |
 | Boundaries, identities, and both validators | Available |
 | Manifest comparison and change detection | Available |
-| Mode negotiation, protocol version, `Vary` | Available |
+| Mode negotiation, build identity, `Vary` | Available |
 | Navigation delta with `replace`, buffered | Available |
 | Browser runtime `update()` and URL replacement | Available |
 | Cross-route navigation, history, scroll, focus | Available |

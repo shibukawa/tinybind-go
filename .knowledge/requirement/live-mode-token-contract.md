@@ -89,6 +89,8 @@ related:
   - requirement:streaming-delta-response
   - decision:update-protocol-version
 open_questions:
-  - whether the live token needs its own protocol version axis, given a live body may stabilize on a different schedule from the navigation delta
   - whether a caller-owned token space is worth publishing as a fallback, which the reporter offers if convergence fails
+resolved:
+  live_version_axis: decision:caller-owned-wire-versioning removes the module-owned version entirely, so there is no axis for the live token to need its own of; the caller decides whether its live body versions separately
+  reads_back_on: as_built.protocol_version, whose kept_at_1 reasoning was that nothing had shipped yet; the same absence of a client to protect is what made giving the version up cheap two days later
 ```

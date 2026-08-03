@@ -26,11 +26,13 @@ func Replace(targetID string, fragment htmlbind.Fragment) Update {
 // An ordinary form submission cannot, so a handler branches on this and
 // redirects instead, which is what keeps a page working without JavaScript.
 func (o Options) WantsUpdate(r *http.Request) bool {
-	mode, version, ok := parseRender(r.Header.Get(o.renderHeader()))
-	if !ok || mode != modeAction || version != Version {
+	mode, _, ok := parseRender(r.Header.Get(o.renderHeader()))
+	if !ok || mode != modeAction {
 		return false
 	}
-	// A page from another build cannot be handed regions this one rendered.
+	// A page from another build cannot be handed regions this one rendered. It
+	// is the only compatibility axis this package judges, because the client
+	// belongs to the caller and so does its wire version.
 	return r.Header.Get(o.buildHeader()) == o.buildID()
 }
 
@@ -53,7 +55,7 @@ func (o Options) WriteUpdate(w http.ResponseWriter, updates ...Update) error {
 // The browser applies an update response whatever the status says, because
 // rendering the failure is the point.
 func (o Options) WriteUpdateStatus(w http.ResponseWriter, status int, updates ...Update) error {
-	body := deltaResponse{Version: Version}
+	body := deltaResponse{}
 	// An action can reveal a component the document never carried: a validation
 	// summary, a panel that was not there before. Its stylesheet is not in the
 	// live head, and markup landing before the sheet does is the flash of
@@ -86,16 +88,13 @@ func (o Options) WriteUpdateStatus(w http.ResponseWriter, status int, updates ..
 // that changed where the user belongs stays correct without guessing which
 // regions to rewrite.
 func (o Options) WriteNavigate(w http.ResponseWriter, url string) error {
-	return o.writeActionBody(w, http.StatusOK, deltaResponse{
-		Version:  Version,
-		Navigate: url,
-	})
+	return o.writeActionBody(w, http.StatusOK, deltaResponse{Navigate: url})
 }
 
 func (o Options) writeActionBody(w http.ResponseWriter, status int, body deltaResponse) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), modeAction+";v="+versionText)
+	w.Header().Set(o.renderHeader(), modeAction)
 	w.WriteHeader(status)
 	return encodeJSON(w, body)
 }

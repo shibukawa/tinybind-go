@@ -19,8 +19,9 @@ half_configured_axes:
     literals_in_runtime.js: RENDER_HEADER, MANIFEST_HEADER, BUILD_HEADER, and ID_ATTR 'data-tb-id'
     module_states_the_gap: the Options.HeaderPrefix comment says an overriding deployment needs a runtime built for the same prefix
     circular: v0.3.0 ships the only runtime, so no deployment can build one, and the option configures nothing end to end
-    pattern_already_present: the same file reads PREFIX and BUILD from the script tag dataset, with the comment that an endpoint namespace is a deployment choice rather than a protocol detail
+    pattern_already_present: the same file read PREFIX and BUILD from the script tag dataset, with the comment that an endpoint namespace is a deployment choice rather than a protocol detail
     reading: a header namespace is a deployment choice for the same reason a path prefix is
+    evidence_since_removed: requirement:caller-addressed-redraw took the path prefix out of the browser entirely, because a header-addressed redraw builds no URL and the asset arrives on the script tag's own src; the argument outlived the example it was drawn from, and a reader looking for PREFIX in runtime.js today will not find it
   data_attribute_prefix:
     configurable: data:generator-options DataAttributePrefix, defaulting to 'tb', producing 'data-<prefix>-id'
     not_configurable:
@@ -52,7 +53,7 @@ contradicts:
   resolution: either the module stops shipping the asset, or the names become discovered; keeping both is what makes the option a lie
 constraints:
   - a project overriding nothing emits byte-identical markup and byte-identical generated Go
-  - field names after a prefix stay protocol surface and change with decision:update-protocol-version
+  - field names after a prefix stay protocol surface, and per decision:caller-owned-wire-versioning a change to one is a change to requirement:update-wire-contract rather than to a version number this module owns
   - prefix validation stays as decision:update-manifest-transport states it, lowercase letters and digits with no leading or trailing hyphen
 acceptance:
   - a deployment renaming the headers is answered by the shipped runtime with no rebuild
@@ -82,8 +83,18 @@ related:
   - requirement:browser-runtime-asset-ownership
   - requirement:render-mode-negotiation
   - decision:update-manifest-transport
+one_axis_was_missed:
+  what: the kind attribute a reloadable component emits on its root element
+  generator_was_right: templates/htmlbind emits 'data-<prefix>-kind' from the configured prefix
+  client_was_not: runtime.js read a literal 'data-tb-kind' until 2026-08-04
+  effect: a deployment setting the prefix to 'pw' rendered data-pw-kind and looked for data-tb-kind, so redraw stopped working and nothing said so
+  why_it_survived_the_2026_08_01_sweep: that round enumerated the names a reader could see in one file, and this one is written by the generator and read by the client, so neither half looked wrong on its own
+  found_by: writing requirement:update-wire-contract, which had to state the attribute name and therefore had to check it
+  fixed: derived from the configured prefix and exposed as kindAttribute, with a harness case asserting it follows a renamed prefix
+  reading: this is the failure the concept's own acceptance predicts, and it still shipped; enumerating names by reading a file misses every name whose two halves live in different files
+resolved:
+  transport: one generated configuration object, settled by as_built on 2026-08-01
+  placeholder_rename_and_versions: dissolved rather than answered; decision:caller-owned-wire-versioning removes the module-owned version, so there is no bump to weigh a rename against and the build identity covers a live document holding an older element name
 open_questions:
-  - whether names travel as separate dataset attributes or one generated configuration object, given a header namespace has three derived names
-  - whether the placeholder element rename is a protocol version bump, since a live document holds the old element name
-  - whether a runtime reading its own names can still fail loudly on a prefix mismatch, which hardcoding gave for free
+  - whether a runtime reading its own names can still fail loudly on a prefix mismatch, which hardcoding gave for free; one_axis_was_missed is what that question costs when the answer stays no
 ```

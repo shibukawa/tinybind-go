@@ -81,7 +81,7 @@ func (o Options) runtimeFileName() string {
 	return o.RuntimeFileName
 }
 
-func (o Options) serveRuntime() bool { return !o.CallerOwnsRuntime }
+func (o Options) serveRuntime() bool { return o.ServeRuntime && !o.CallerOwnsRuntime }
 
 // RuntimeConfig is what the browser runtime reads to learn its own names.
 //
@@ -89,8 +89,6 @@ func (o Options) serveRuntime() bool { return !o.CallerOwnsRuntime }
 // builds the same object and passes it to the factory directly, rather than
 // reproducing the field names from the JavaScript.
 type RuntimeConfig struct {
-	// Prefix is the URL namespace of every framework-owned endpoint.
-	Prefix string `json:"prefix"`
 	// Build is the identity of the binary that rendered the page.
 	Build string `json:"build"`
 	// Attr is the data-attribute prefix, which names the instance attribute the
@@ -124,7 +122,6 @@ type RuntimeConfig struct {
 // belong to the process. Use RuntimeConfigFor to add one.
 func (o Options) RuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
-		Prefix:     o.pathPrefix(),
 		Build:      o.buildID(),
 		Attr:       o.dataAttributePrefix(),
 		Header:     o.prefix(),
@@ -226,17 +223,18 @@ type Router interface {
 	Handle(pattern string, handler http.Handler)
 }
 
-// Mount registers every framework-owned endpoint under the configured path
-// prefix. One call keeps the whole surface routable, cacheable, and protectable
-// by a single rule.
+// Mount registers every endpoint this package owns under the configured path
+// prefix, which is now the runtime asset and nothing else.
 //
-// The runtime asset is registered only when this build serves it; see
-// Options.CallerOwnsRuntime.
-func (o Options) Mount(router Router, registry *Registry) {
+// It takes no registry, because a redraw is no longer an endpoint this package
+// mounts: the caller answers one from its own handler with Options.Redraw, at
+// whatever URL it chooses. That is the whole point of the change — an endpoint
+// the caller routes, protects, and logs should have an address the caller picked.
+//
+// The asset is registered only when this build serves it; see
+// Options.ServeRuntime.
+func (o Options) Mount(router Router) {
 	if o.serveRuntime() {
 		router.Handle("GET "+o.pathPrefix()+"/runtime/", o.RuntimeHandler())
-	}
-	if registry != nil {
-		router.Handle("GET "+o.pathPrefix()+"/redraw/", o.RedrawHandler(registry))
 	}
 }

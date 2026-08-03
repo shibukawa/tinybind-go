@@ -84,7 +84,7 @@ func requestMode(t *testing.T, handler http.Handler, mode string) (*http.Respons
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/feed", nil)
 	if mode != "" {
-		request.Header.Set("X-Tinybind-Render", mode+";v="+strconv.Itoa(htmlupdate.Version))
+		request.Header.Set("X-Tinybind-Render", mode+";v="+strconv.Itoa(clientVersion))
 		request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
 	}
 	recorder := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func requestMode(t *testing.T, handler http.Handler, mode string) (*http.Respons
 // bound them separately.
 func TestLiveModeHasItsOwnToken(t *testing.T) {
 	response, _ := requestMode(t, liveServer(livePlan, "one", "two"), "live")
-	if got := response.Header.Get("X-Tinybind-Render"); got != "live;v="+strconv.Itoa(htmlupdate.Version) {
+	if got := response.Header.Get("X-Tinybind-Render"); got != "live;v="+strconv.Itoa(clientVersion) {
 		t.Fatalf("served mode = %q, want the live token echoed", got)
 	}
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/x-ndjson") {
@@ -122,7 +122,7 @@ func TestLiveModeHasItsOwnToken(t *testing.T) {
 // source has no settle.
 func TestNavigationOnALiveRouteTerminates(t *testing.T) {
 	response, records := requestMode(t, liveServer(livePlan, "one", "two"), "navigation")
-	if got := response.Header.Get("X-Tinybind-Render"); got != "navigation;v="+strconv.Itoa(htmlupdate.Version) {
+	if got := response.Header.Get("X-Tinybind-Render"); got != "navigation;v="+strconv.Itoa(clientVersion) {
 		t.Fatalf("served mode = %q", got)
 	}
 	last := records[len(records)-1]
@@ -247,7 +247,7 @@ func TestALiveRequestToANonLiveEntryTerminates(t *testing.T) {
 		}
 	})
 	response, records := requestMode(t, handler, "live")
-	if got := response.Header.Get("X-Tinybind-Render"); got != "navigation;v="+strconv.Itoa(htmlupdate.Version) {
+	if got := response.Header.Get("X-Tinybind-Render"); got != "navigation;v="+strconv.Itoa(clientVersion) {
 		t.Fatalf("served mode = %q, want the navigation it actually served", got)
 	}
 	if last := records[len(records)-1]; last["r"] != "end" {

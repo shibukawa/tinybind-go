@@ -16,8 +16,9 @@ import (
 type FailureKind int
 
 const (
-	// FailureMalformedPath is a request whose path is not <kind>/<instance>.
-	FailureMalformedPath FailureKind = iota
+	// FailureMalformedRequest is a redraw that named no component: the mode said
+	// redraw and the kind or instance header was missing or empty.
+	FailureMalformedRequest FailureKind = iota
 	// FailureUnknownComponent is a kind this deployment does not publish.
 	//
 	// It is the ordinary version-skew signal: a page loaded before a deploy
@@ -25,8 +26,6 @@ const (
 	// reloads. A sustained rate of it after a deploy has settled means
 	// something else.
 	FailureUnknownComponent
-	// FailureStalePage is a request from a page another build rendered.
-	FailureStalePage
 	// FailureArgumentsTooLarge is a query past the configured bound.
 	FailureArgumentsTooLarge
 	// FailureInvalidArguments is a query the generated decoder refused.
@@ -38,12 +37,10 @@ const (
 // String names the kind for a log line or a span attribute.
 func (k FailureKind) String() string {
 	switch k {
-	case FailureMalformedPath:
-		return "malformed_path"
+	case FailureMalformedRequest:
+		return "malformed_request"
 	case FailureUnknownComponent:
 		return "unknown_component"
-	case FailureStalePage:
-		return "stale_page"
 	case FailureArgumentsTooLarge:
 		return "arguments_too_large"
 	case FailureInvalidArguments:
@@ -123,6 +120,22 @@ func (o Options) Validate() error {
 	}
 	if o.MaxQueryBytes < 0 {
 		problems = append(problems, errors.New("htmlupdate: MaxQueryBytes must not be negative"))
+	}
+	// Who serves the browser runtime has to be answered, because the wrong
+	// answer is invisible at run time. A deployment that serves none and owns
+	// none compiles, starts, renders every page correctly, and then does nothing
+	// when a boundary should update: no error, no log line, no failed request.
+	// Every other setting here is wrong in a way somebody notices.
+	switch {
+	case o.ServeRuntime && o.CallerOwnsRuntime:
+		problems = append(problems, errors.New(
+			"htmlupdate: ServeRuntime and CallerOwnsRuntime are both set; a document carrying two runtimes has"+
+				" two boundary id spaces and two build identities, so set exactly one"))
+	case !o.ServeRuntime && !o.CallerOwnsRuntime:
+		problems = append(problems, errors.New(
+			"htmlupdate: neither ServeRuntime nor CallerOwnsRuntime is set, so no browser runtime reaches the page"+
+				" and every update silently does nothing; set ServeRuntime to serve the reference client, or"+
+				" CallerOwnsRuntime if you ship your own (RuntimeSource returns the bytes to merge)"))
 	}
 	return errors.Join(problems...)
 }

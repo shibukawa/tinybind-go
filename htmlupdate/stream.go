@@ -20,11 +20,12 @@ const DefaultStreamContentType = "application/x-ndjson; charset=utf-8"
 // cannot be written before the operations it describes. That is also why the
 // stream ends with an explicit terminator: a client that stops receiving has no
 // other way to tell a finished render from a truncated one.
+// It carries no version field, for the reason deltaResponse carries none: the
+// browser client belongs to the caller, so the caller owns its wire version.
 type record struct {
 	Record string `json:"r"`
 	// head fields
-	Version int      `json:"v,omitempty"`
-	Head    []string `json:"head,omitempty"`
+	Head []string `json:"head,omitempty"`
 	// Build identifies the binary that opened this stream. A client reconnecting
 	// into a redeployed server would otherwise apply deliveries addressed at a
 	// document it is no longer showing; reading it from the first record means a
@@ -106,7 +107,7 @@ type DeltaStream struct {
 // because after it the status is fixed and a failure can only be reported in
 // band through Fail.
 func (o Options) OpenStream(w http.ResponseWriter, head []string) *DeltaStream {
-	return o.openStream(w, ModeNavigation, head)
+	return o.openStream(w, ModeNavigation, 0, head)
 }
 
 // OpenLiveStream commits a delivery stream: the same records on the same
@@ -118,19 +119,22 @@ func (o Options) OpenStream(w http.ResponseWriter, head []string) *DeltaStream {
 // bound. A client keys its retry policy on that rather than on the fact that
 // the stream ended.
 func (o Options) OpenLiveStream(w http.ResponseWriter, head []string) *DeltaStream {
-	return o.openStream(w, ModeLive, head)
+	return o.openStream(w, ModeLive, 0, head)
 }
 
-func (o Options) openStream(w http.ResponseWriter, mode Mode, head []string) *DeltaStream {
+// openStream commits the response. version is the one the request claimed, so
+// the echoed token carries the caller's own number back rather than one this
+// package invented; zero writes a bare mode name.
+func (o Options) openStream(w http.ResponseWriter, mode Mode, version int, head []string) *DeltaStream {
 	w.Header().Set("Content-Type", o.streamContentType())
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), renderToken(mode))
+	w.Header().Set(o.renderHeader(), renderToken(mode, version))
 	ending := endFinal
 	if mode == ModeLive {
 		ending = endDone
 	}
 	stream := &DeltaStream{writer: newRecordWriter(w), ending: ending}
-	stream.writer.write(record{Record: recordHead, Version: Version, Head: head, Build: o.buildID()})
+	stream.writer.write(record{Record: recordHead, Head: head, Build: o.buildID()})
 	return stream
 }
 
@@ -276,9 +280,9 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 	}
 	var stream *DeltaStream
 	if live {
-		stream = o.OpenLiveStream(w, head)
+		stream = o.openStream(w, ModeLive, negotiated.Version, head)
 	} else {
-		stream = o.OpenStream(w, head)
+		stream = o.openStream(w, ModeNavigation, negotiated.Version, head)
 		if htmlbind.HasLiveBlock(wrappers, leaf) {
 			stream.ExpectLive()
 		}
@@ -341,7 +345,7 @@ func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers [
 	if err != nil {
 		return err
 	}
-	stream := o.OpenStream(w, delta.Head)
+	stream := o.openStream(w, ModeNavigation, negotiated.Version, delta.Head)
 	if htmlbind.HasLiveBlock(wrappers, leaf) {
 		stream.ExpectLive()
 	}

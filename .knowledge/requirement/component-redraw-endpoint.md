@@ -37,6 +37,7 @@ kind_attribute:
   found_by: implementation, when a second redraw of the same region failed
 request:
   shape: 'GET <prefix>/redraw/<kind_id>/<instance_id>?<declared parameters>'
+  superseded_as_normative: requirement:caller-addressed-redraw moves kind and instance into headers so the caller chooses the URL; this path form stays working as a compatibility shape and stops being the published contract
   prefix: configurable, defaulting to the module namespace
   instance_id: decision:author-declared-boundary-id value, carried so the returned root element arrives already addressable
   method: GET, because a redraw renders and must be side-effect free
@@ -75,5 +76,6 @@ delivered:
 open_questions:
   - whether an enum parameter should be checked against its members at decode time rather than accepted as any string
   - policy:html-update-csrf-protection applicability, given a side-effect-free GET with ambient credentials
-  - whether the instance id belongs in the path, given its cost as a cache key
+resolved:
+  instance_id_in_the_path: requirement:caller-addressed-redraw takes both the kind and the instance out, for authorization rather than for the cache-key cost this concept had raised; the stronger argument arrived from the caller that owns the route
 ```

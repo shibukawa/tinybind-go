@@ -6,8 +6,10 @@
 //
 // That is not a preference. A framework building on this module owns the names
 // its users write and the name its users call, and it cannot own a name that is
-// compiled in. The only fixed axis is the protocol version, which is the one
-// thing a client and a server genuinely have to agree on rather than choose.
+// compiled in. Nothing here is fixed any more, not even a protocol version: this
+// file is reference code a caller replaces, so the wire version is the caller's
+// too. What a client and a server must agree on is the build, which arrives as
+// configuration like every other name.
 //
 // The file exposes a factory rather than installing itself, so a framework
 // merging this runtime into its own asset constructs one directly. A page
@@ -16,14 +18,28 @@
 (function () {
   "use strict";
 
-  // VERSION is the wire contract, and the only name here that is not the
-  // caller's: a version a deployment could rename would negotiate nothing.
-  var VERSION = 1;
+  // There is no protocol version here, and that is deliberate. The browser
+  // client belongs to the caller, so the wire version and what a mismatch means
+  // belong to the caller too; a version this file owned would version a contract
+  // only half of which lives in it. The mode header still accepts a ";v=N" a
+  // caller adds, and the server echoes back whatever arrived.
+  //
+  // The compatibility axis that remains is BUILD: it changes when a template, a
+  // Go function a template calls, this file, or a dependency changes, which is
+  // everything a version could have caught and more.
+  //
+  // servedMode reads the mode out of a render header, ignoring any version a
+  // caller layered on, so this client keeps working under a caller that versions
+  // and under one that does not.
+  function servedMode(value) {
+    if (!value) return "";
+    var cut = value.indexOf(";");
+    return (cut < 0 ? value : value.slice(0, cut)).trim();
+  }
 
   // DEFAULTS mirror the Go defaults, so a caller configuring nothing gets the
   // same document it got before any of this was configurable.
   var DEFAULTS = {
-    prefix: "/_tb",
     build: "",
     attr: "tb",
     header: "X-Tinybind",
@@ -56,6 +72,11 @@
     // this module's.
     var ID_ATTR = "data-" + config.attr + "-id";
     var PRESERVE_ATTR = "data-" + config.attr + "-preserve";
+    // The component identity a redraw names. The generator writes it as
+    // data-<prefix>-kind, so reading it under a fixed prefix meant a deployment
+    // that renamed the prefix rendered data-pw-kind and looked for data-tb-kind:
+    // redraw stopped working and nothing said so.
+    var KIND_ATTR = "data-" + config.attr + "-kind";
     var IGNORE_ATTR = "data-" + config.attr + "-ignore";
 
     // A header namespace is a deployment choice for the same reason an endpoint
@@ -68,6 +89,11 @@
     // screen that will never deliver anything. Its absence means no live
     // boundary, which is why a page that has none is unchanged by all of this.
     var LIVE_HEADER = config.header + "-Live";
+    // The component a redraw names. They are headers so the URL stays the
+    // caller's: a redraw answered at the page's own URL inherits that page's
+    // authorization instead of needing a rule of its own.
+    var KIND_HEADER = config.header + "-Kind";
+    var INSTANCE_HEADER = config.header + "-Instance";
     // A redraw's head contribution. Every other mode writes a JSON body a head
     // field fits into; a redraw writes the component's markup, so its
     // contribution travels beside the body rather than inside it.
@@ -89,7 +115,6 @@
       return headers;
     }
 
-    var PREFIX = config.prefix;
     // The build that rendered this page. A server running a different one cannot
     // vouch for the state this page holds, so it answers with a whole document
     // and the page reloads rather than patching across the change.
@@ -393,7 +418,6 @@
     // apply installs head contributions before content, so a region whose
     // stylesheet just arrived is never painted unstyled.
     function apply(body) {
-      if (body.v !== VERSION) return Promise.resolve(false);
       if (body.navigate) {
         window.location.assign(body.navigate);
         return Promise.resolve(true);
@@ -425,7 +449,7 @@
       var controller = new AbortController();
       inFlight = controller;
       var headers = withCSRF({});
-      headers[RENDER_HEADER] = "navigation;v=" + VERSION;
+      headers[RENDER_HEADER] = "navigation";
       headers[BUILD_HEADER] = BUILD;
       var hints = manifestHeader();
       if (hints) headers[MANIFEST_HEADER] = hints;
@@ -442,7 +466,7 @@
           if (!response.ok) throw new Error("update failed: " + response.status);
           var served = response.headers.get(RENDER_HEADER);
           // A cache or proxy may have answered with the document body instead.
-          if (served !== "navigation;v=" + VERSION) throw new Error("not a delta");
+          if (servedMode(served) !== "navigation") throw new Error("not a delta");
           expectsLive = response.headers.get(LIVE_HEADER) === "1";
           var type = response.headers.get("Content-Type") || "";
           if (type.indexOf(STREAM_TYPE) >= 0 && response.body && response.body.getReader) {
@@ -588,10 +612,21 @@
       Object.keys(params || {}).forEach(function (name) {
         query.set(name, String(params[name]));
       });
-      var url = PREFIX + "/redraw/" + encodeURIComponent(kind) + "/" + encodeURIComponent(elementId);
+      // The component is named in headers, so the URL is free. It defaults to
+      // the page the component sits on, where the redraw inherits that page's
+      // own authorization; a reserved path would need a second path pattern kept
+      // in step with the first, and nothing forces two such rules to agree.
+      //
+      // options.url points it elsewhere, which is what a deployment serving the
+      // mounted <prefix>/redraw route passes.
+      var url = new URL((options && options.url) || window.location.href, document.baseURI);
       var suffix = query.toString();
-      if (suffix) url += "?" + suffix;
+      url.search = suffix;
+      url = url.href;
       var headers = withCSRF({});
+      headers[RENDER_HEADER] = "redraw";
+      headers[KIND_HEADER] = kind;
+      headers[INSTANCE_HEADER] = elementId;
       headers[BUILD_HEADER] = BUILD;
       return fetch(url, { credentials: "same-origin", headers: headers })
         .then(function (response) {
@@ -633,7 +668,6 @@
         });
     }
 
-    var KIND_ATTR = "data-tb-kind";
     var redrawTickets = new Map();
 
     var STREAM_TYPE = "application/x-ndjson";
@@ -669,7 +703,6 @@
         if (!line) return;
         var item = JSON.parse(line);
         if (item.r === "head") {
-          if (item.v !== VERSION) throw new Error("version mismatch");
           // A stream opened by another build is addressed at a document this page
           // is no longer showing. Nothing in it can be applied, and the records
           // are self-describing so a client reading no response headers still
@@ -729,7 +762,7 @@
         if (!item.html) return;
         chain = chain.then(function () {
           if (failed) return;
-          if (!applyOps({ v: VERSION, ops: [item] })) failed = true;
+          if (!applyOps({ ops: [item] })) failed = true;
         });
       }
 
@@ -811,7 +844,7 @@
       function open() {
         if (stopped) return Promise.resolve({ stopped: true });
         var headers = withCSRF({});
-        headers[RENDER_HEADER] = "live;v=" + VERSION;
+        headers[RENDER_HEADER] = "live";
         headers[BUILD_HEADER] = BUILD;
         var hints = manifestHeader();
         if (hints) headers[MANIFEST_HEADER] = hints;
@@ -823,7 +856,7 @@
             // stripped the header, a caller whose entry does not hold one open.
             // None of those is repaired by asking again, so this stops rather
             // than reloading into the same answer.
-            if (response.headers.get(RENDER_HEADER) !== "live;v=" + VERSION) {
+            if (servedMode(response.headers.get(RENDER_HEADER)) !== "live") {
               stopped = true;
               emit("liveUnavailable", { url: target.href });
               return { unavailable: true };
@@ -881,7 +914,7 @@
     // for an ordinary form submission.
     function updateHeaders() {
       var headers = withCSRF({});
-      headers[RENDER_HEADER] = "action;v=" + VERSION;
+      headers[RENDER_HEADER] = "action";
       headers[BUILD_HEADER] = BUILD;
       return headers;
     }
@@ -895,7 +928,7 @@
     // be shown.
     function applyResponse(response) {
       var served = response.headers.get(RENDER_HEADER);
-      if (served !== "action;v=" + VERSION) {
+      if (servedMode(served) !== "action") {
         return Promise.resolve({ applied: false, reason: "not an update response" });
       }
       return response
@@ -916,14 +949,13 @@
       live: live,
       apply: applyResponse,
       updateHeaders: updateHeaders,
-      protocolVersion: VERSION,
-      endpointPrefix: PREFIX,
       // The attribute names are exposed because an application that writes a
       // preserve marker from script needs the same name its templates use, and
       // guessing it from a prefix it did not choose is how the two drift.
       csrfHeader: CSRF_HEADER,
       idAttribute: ID_ATTR,
       preserveAttribute: PRESERVE_ATTR,
+      kindAttribute: KIND_ATTR,
       ignoreAttribute: IGNORE_ATTR,
     };
   }

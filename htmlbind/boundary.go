@@ -98,27 +98,18 @@ func (m Manifest) Changed(previous Manifest) []Instance {
 	return changed
 }
 
-// ProtocolVersion identifies the wire contract between the server and the
-// browser runtime: the attribute names, the manifest fields, the operation
-// kinds, and the way validators are built. It is a framework constant rather
-// than a project option, because it names a contract instead of a namespace.
-//
-// Bump it when any of those change. A version the peer does not accept is not
-// an error: it falls back to a complete document, which is also what makes a
-// rolling deploy safe when a page loaded from the old version sends its next
-// request to a new server.
-//
-// It is still 1. The live mode, the terminator reasons, and the handoff marker
-// all changed the contract, and every one of them would have been a bump — but
-// nothing has been released under this number yet, so there is no client holding
-// a page rendered by an older shape and nothing for a bump to protect. Spending
-// a version to protect nobody would only cost the first real deployment a
-// needless fallback.
-const ProtocolVersion = 1
-
 // collector accumulates boundary state during one render.
 type collector struct {
-	key      []byte
+	key []byte
+	// tag seeds every digest this render produces, so two renders that must
+	// never compare equal cannot. WithValidatorTag supplies it; the transport
+	// half passes its build identity, which is the axis that actually moves.
+	//
+	// It replaced a protocol version constant. A version the module owned was a
+	// second, weaker copy of the same idea: it could only change when this
+	// module's wire shape changed, while a build identity also covers a changed
+	// template, a changed external function, and a changed client.
+	tag      string
 	manifest Manifest
 	stack    []*openBoundary
 	// pending holds the boundary whose root element has not yet written its
@@ -159,10 +150,10 @@ func (c *collector) open(id, componentID, attr, input string) {
 		frame: hmac.New(sha256.New, c.key),
 		attr:  attr,
 	}
-	// Seeding with the protocol version and the component identity keeps two
-	// frames from ever comparing equal across a version bump or across two
-	// components that happen to render the same bytes.
-	state.frame.Write([]byte("frame\x00" + strconv.Itoa(ProtocolVersion) + "\x00" + componentID + "\x00"))
+	// Seeding with the validator tag and the component identity keeps two frames
+	// from ever comparing equal across two builds or across two components that
+	// happen to render the same bytes.
+	state.frame.Write([]byte("frame\x00" + c.tag + "\x00" + componentID + "\x00"))
 	c.stack = append(c.stack, state)
 	c.pending = state
 }
@@ -206,7 +197,7 @@ func (c *collector) digest(tag, data string) string {
 	mac := hmac.New(sha256.New, c.key)
 	mac.Write([]byte(tag))
 	mac.Write([]byte{0})
-	mac.Write([]byte(strconv.Itoa(ProtocolVersion)))
+	mac.Write([]byte(c.tag))
 	mac.Write([]byte{0})
 	mac.Write([]byte(data))
 	return truncate(mac.Sum(nil))

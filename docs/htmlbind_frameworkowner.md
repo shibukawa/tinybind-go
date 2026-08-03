@@ -740,7 +740,7 @@ What is yours is the token itself:
 
 ```go
 htmlbind.WithCSRFToken(csrf.FromContext(ctx))   // in your render entry, once
-htmlupdate.Options{}.ScriptTagFor(token)        // so the runtime sends it too
+options.ScriptTagFor(token)                     // so the runtime sends it too
 options.VerifyCSRF(r, csrf.FromSession(r))      // in your middleware
 ```
 

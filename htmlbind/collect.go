@@ -31,6 +31,9 @@ func CollectChain(w io.Writer, key []byte, wrappers []Wrapper, leaf Fragment, op
 // component brought with it.
 func collectChain(w io.Writer, collect *collector, wrappers []Wrapper, leaf Fragment, options []Option) (Manifest, []string, error) {
 	opts := newRenderOptions(options)
+	if collect != nil {
+		collect.tag = opts.validatorTag
+	}
 	if err := validateChain(wrappers, leaf); err != nil {
 		return Manifest{}, nil, err
 	}

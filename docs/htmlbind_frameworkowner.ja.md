@@ -723,7 +723,7 @@ context に入れ、provider が取り出すだけ — 往復ではなく map �
 
 ```go
 htmlbind.WithCSRFToken(csrf.FromContext(ctx))   // 自分の描画入口で1回
-htmlupdate.Options{}.ScriptTagFor(token)        // ランタイムにも送らせる
+options.ScriptTagFor(token)                     // ランタイムにも送らせる
 options.VerifyCSRF(r, csrf.FromSession(r))      // 自分のミドルウェアで
 ```
 
