@@ -12,7 +12,7 @@ source:
 review_gate: proposed protocol surface requires user approval
 signal:
   form: dedicated request header carrying mode plus client protocol version
-  value: 'mode;v=N', per decision:update-protocol-version
+  value: 'mode;v=N'; decision:caller-owned-wire-versioning keeps the grammar and makes N the caller's field, parsed and carried through rather than compared
   names: one configurable header prefix yields the render header and the manifest header, so a deployment has one knob rather than several
   endpoints: every framework-owned endpoint shares one configurable path prefix, so routing, caching, and access rules apply to the whole surface at once
   runtime_discovery: the path prefix reaches the browser on the runtime script tag, unlike the header names, which the runtime hardcodes
@@ -25,12 +25,12 @@ signal:
 modes:
   document: ordinary complete HTML through decision:html-document-shell
   navigation: requirement:component-delta-rendering navigation execution for a path or search-parameter change
-  redraw: requirement:component-redraw-endpoint, addressed by URL rather than by this header
+  redraw: requirement:component-redraw-endpoint; requirement:caller-addressed-redraw changes this from addressed-by-URL to a request mode on this header, with kind and instance in headers, so the caller chooses the address
   live_reconnect: requirement:live-reconnect resumption of a dropped delivery stream
   action: requirement:action-response-update, where a mutating endpoint returns the regions its action changed
 selection:
   timing: resolved before route execution, so requirement:chain-render-pipeline validation can still change status and mode
-  version_mismatch: unknown mode or incompatible protocol version renders a complete document instead of failing
+  version_mismatch: an unknown mode renders a complete document instead of failing; per decision:caller-owned-wire-versioning the module no longer judges the version, so this is a total function on the mode name rather than a comparison
   authorization: mode never relaxes authentication, authorization, typed validation, or request limits
   endpoint: navigation mode targets the same page URL and method as the document; boundary mode targets the generated update endpoint
 response_contract:
@@ -44,7 +44,7 @@ redirect_and_error:
   error_status: keep the real HTTP status and let the runtime fall back to full navigation, so server-owned error pages and monitoring stay unchanged
   after_commit: requirement:streaming-delta-response in-band error record only
 caching:
-  vary: every generated response varies on the mode header
+  vary: every generated response varies on the mode header, and a redraw additionally on the kind and instance headers once requirement:caller-addressed-redraw stops the URL identifying which component the bytes belong to
   delta_privacy: delta responses default to private or no-store, because they carry per-document validators and tokens
   never_share: a delta body must never be served to a document request, and a shared cache that cannot vary must be bypassed
 observability: log the served mode, so delta traffic is distinguishable from document traffic

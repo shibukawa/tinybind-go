@@ -41,6 +41,7 @@ as_built:
   why_no_cache_not_no_store: no-store would forbid the conditional request the ETag exists for, because a browser that may not keep the bytes can never ask whether they changed
   conditional: If-None-Match is honoured, including the list form and the weak prefix, and an unchanged redraw answers 304 with no body
   vary: the response now varies on the build header, which the fixed no-store had made unnecessary and a cacheable response makes required
+  vary_becomes_load_bearing: this policy assumes the URL identifies which component the bytes belong to; requirement:caller-addressed-redraw removes that assumption, so the kind and instance headers join the vary set or a cache may answer one component with another's fragment
   override: Options.RedrawCacheControl
   open_question_resolved: the ETag is computed by the module over the rendered bytes, which is free because the render is already buffered
   keyed: the tag is an HMAC under Options.Key, because a 304 confirms a guess and a redraw usually renders low-entropy per-user content; this is rule:update-validator-computation reasoning arriving at a second surface

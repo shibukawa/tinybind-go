@@ -26,7 +26,10 @@ canonical_content:
   excluded: compression framing, request-unique marker attributes, and injected bootstrap metadata
   no_normalization: bytes are hashed as emitted; whitespace-insensitive comparison is not attempted
 hashing:
-  algorithm: one declared cryptographic hash with a protocol-version tag
+  algorithm: one declared cryptographic hash with a build-identity tag, which decision:caller-owned-wire-versioning substitutes for the protocol-version tag it removes
+  why_the_build_identity: it is the axis that actually moves, it already covers a changed client and a changed external function, and Options.BuildID makes its value the caller's
+  not_the_component_version: canonical_input_encoding already mixes the generated component version so a template edit invalidates every validator; the tag here guards against the wire shape changing instead
+  belt_and_braces: Negotiate already answers a build mismatch with a complete document before any validator is read, so the tag matters only where the build header was dropped in transit
   keyed: keyed with a per-server secret so an attacker cannot confirm guessed low-entropy content by replaying a hash
   truncation: truncate only to a length where collision is negligible, because a collision silently keeps stale DOM
   encoding: opaque URL-safe text, safe in an HTML attribute and in protocol fields
@@ -36,7 +39,7 @@ determinism:
   no_static_guarantee: external function purity cannot be proven at generation time, so this stays a documented contract
 authority:
   - client validators are hints; the server never derives arguments or access decisions from them
-  - an unparseable, oversized, or version-mismatched validator set is ignored in favor of a larger safe delta
+  - an unparseable, oversized, or build-mismatched validator set is ignored in favor of a larger safe delta
   - a boundary the server cannot validate is sent in full
 acceptance:
   - two renders with equal declared inputs and equal state produce one content validator

@@ -71,8 +71,11 @@ rationale:
   - the caller already owns framing, so owning the script that consumes it removes the last asymmetry
   - the two protocol modes have different drivers, so bundling one runtime into the async entry hardcoded a choice that does not generalize
   - moving injection to requirement:render-time-script-contribution means one mechanism covers module, framework, and application scripts alike
+resolved_2026_08_04:
+  contract_form: requirement:update-wire-contract answers the first open question below with a normative document plus a conformance harness over observable wire behavior
+  why_it_took_a_downstream_report: the question sat open under a status line saying shipped for the module half, and nothing re-read it; a caller could not own the script until it existed
+  versioning_inverted: decision:caller-owned-wire-versioning removes the version constant this decision's constraints and reference_runtime.versioning assume, and leaves the build identity as the only compatibility axis the module operates
+  default_asset: requirement:runtime-default-retirement retires the deviation_in_htmlupdate above
 open_questions:
-  - whether the protocol contract lives in documentation, a versioned schema file, or a conformance test suite
   - whether the reference runtime covers navigation delta as a second opt-in registration
-  - how the protocol version is surfaced to the client script, given data:html-client-bootstrap already carries one
 ```

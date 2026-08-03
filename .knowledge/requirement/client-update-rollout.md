@@ -63,7 +63,8 @@ milestones:
         reason: requirement:static-asset-extraction and requirement:html-runtime-bootstrap injection do not exist yet
         no_exit_scheduled: the deviation reached v0.3.0 unretired and was read downstream as policy reversing decision:client-runtime-ownership, per decision:update-runtime-ownership-seams
         exit: requirement:browser-runtime-asset-ownership, shipped 2026-08-01; the module still serves an asset by default but the bytes are exported and the serving is switchable, so a framework merges rather than copies
-        fully_retired_when: requirement:html-runtime-bootstrap selects and injects the runtime, at which point a direct user has a replacement and the default can ship none
+        fully_retired_when: a direct user has a replacement and the default can ship none
+        replacement_chosen: requirement:runtime-default-retirement supplies it as requirement:update-wire-contract plus a version-pinnable reference client outside this module, rather than the requirement:html-runtime-bootstrap injection this line had assumed, which takes that requirement off the critical path
         lesson: a deviation names the milestone that retires it when it is taken, or the next release turns it into a decision
       transport_package:
         rule: HTTP negotiation lives beside htmlbind rather than inside it, because decision:runtime-package-boundaries keeps the render runtime free of net/http

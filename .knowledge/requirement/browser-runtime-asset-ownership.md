@@ -69,7 +69,8 @@ deviation_from_the_ask:
     - the round's own closing rule is that a project using none of these seams gets byte-identical output, and flipping the default changes it
     - requirement:html-runtime-bootstrap injection does not exist, so a direct user losing the default would get a compiling program and a page that silently stops updating
   cost_to_the_reporter: none; it sets the switch either way
-  revisit: when requirement:html-runtime-bootstrap selects and injects the runtime, at which point a direct user has a replacement and the default can flip
+  revisit: requirement:runtime-default-retirement flips it, and finds the replacement cheaper than this line assumed; a published contract plus a pinnable reference client satisfies 'a direct user has a replacement' without the requirement:html-runtime-bootstrap injection path
+  what_made_the_flip_safe: a startup diagnostic on Options.Validate, so a direct user who changes nothing gets a startup error rather than the compiling program and silently dead page this concept warned about
 script_tag_not_byte_identical:
   what: ScriptTag now writes one data-config attribute holding the whole configuration, replacing two dataset attributes
   why_acceptable: the tag is written by this module and read by this module's runtime, so nothing outside that loop depends on its shape
@@ -80,7 +81,8 @@ related:
   - requirement:component-asset-requirements
   - decision:framework-integration-seams
 open_questions:
-  - whether the exported form is the source string, an assembly function taking naming choices, or both
   - whether opt-in serving keeps RuntimeHandler as a convenience or removes it
-  - how a merged framework asset reports the protocol version it implements, given decision:client-runtime-ownership wants a mismatch to fail loudly
+resolved:
+  exported_form: the source string; as_built settled it on 2026-08-01, because the runtime reads its names at load and needs no assembly entry
+  version_reporting: decision:caller-owned-wire-versioning dissolves the question rather than answering it; a merged asset reports no protocol version because the module owns none, and the build identity is what a mismatch is judged against
 ```

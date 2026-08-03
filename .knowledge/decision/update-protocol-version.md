@@ -6,6 +6,12 @@ title: Update Protocol Version
 Version the wire contract as one framework-owned integer, and treat any mismatch as a complete document rather than an error.
 
 ```yaml
+superseded_2026_08_04:
+  by: decision:caller-owned-wire-versioning
+  what_is_reversed: ownership, comparison, and validator_binding; the module stops deciding a version, stops comparing one, and stops mixing one into a digest
+  what_survives: the mismatch behavior, because serving a complete document rather than an error was never a versioning rule but the requirement:client-update-rollout fallback invariant
+  replacement_axis: the build identity, already compared on every update request and already caller-overridable through Options.BuildID
+  read_the_rest_as: the reasoning that made a single framework-owned integer the right answer while the module also shipped the client
 source:
   - requirement:render-mode-negotiation
   - user protocol question 2026-08-01
