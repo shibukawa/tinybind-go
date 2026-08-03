@@ -7,6 +7,23 @@ The generate command receives one whitelist of hyphenated element names, and eve
 
 ```yaml
 priority: should
+status: delivered 2026-08-03; see as_built
+as_built:
+  surface: GenerateOptions.BuiltinElements and .PassthroughElements, normalized into an immutable snapshot before analysis, so a registration mistake is reported against the generate command rather than against the first template that uses the element
+  open_question_answered:
+    registry: options fields rather than the CallRegistry; the whitelist is data a command declares, and the registry exists to resolve Go symbols, which this deliberately does not do
+  closed_space: an undeclared hyphenated element is a generation error naming file, line, and column, with a nearest-name suggestion; a project registering none regenerates byte for byte
+  foreign_content: SVG and MathML subtrees are outside the whitelist, tracked by depth in both the analysis walk and the emitter
+  patterns: passthrough entries accept an exact name or a prefix glob ending at a hyphen; a builtin always wins over a glob covering it
+  registration_time_checks: duplicate name, name declared as both kinds, malformed name or glob, hole with no matching parameter or provider, provider filling no hole, provider without its Result type named, hole in a position that cannot be escaped as a value, opaque shape
+  analysis_time_checks: undeclared element, unknown attribute, missing required attribute, attribute type mismatch, children supplied to a definition declaring none, head-only element written in the body
+  vary_axis: declared per entry, rolled up over the call graph, and emitted as Plan.Vary; readable as Fragment.Vary, Wrapper.Vary, and MergeVary
+  assets: a definition's Assets join the required set of every component writing the element, folding into the same transitiveAssets walk as head declarations
+  not_built:
+    provider_symbol_resolution: a signature is checked by the Go compiler rather than here, as with ContextExternals; resolving Go symbols would mean loading the target package, which this package does not depend on
+    head_region: a builtin element inside a head declaration is still refused by the head validator, so PlaceHead means "refuse in the body" and not yet "accept in the head"
+    scripts_field: requirement:framework-script-contribution is not built, so no script contribution field ships
+    cli_spelling: the passthrough list is a Go option only
 source:
   - concept:framework-template-extensions
   - user design discussion 2026-07-27

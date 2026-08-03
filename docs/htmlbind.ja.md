@@ -689,14 +689,14 @@ func Decorate(value string, tone Tone) string {
 取ります。
 
 ```go
-func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+func RequestID(ctx context.Context) string { return traceFrom(ctx) }
 ```
 
-テンプレート側の宣言はどちらでも `external CSRFToken(): string` のままです。つま
+テンプレート側の宣言はどちらでも `external RequestID(): string` のままです。つま
 りこれは Go を書く人が関数ごとに決めることです。引数を書かなければ、これまでどお
 り素朴に呼ばれます。
 
-ページではなくリクエストに属する値 — CSRF トークン、リクエスト ID、nonce — を、
+ページではなくリクエストに属する値 — リクエスト ID、nonce、ロケール — を、
 必要なページすべてのパラメータ構造体を経由させずに markup へ届けるための仕組みで
 す。これは読み取りであって、この形で呼ばれる関数がレスポンスに書いてはいけません。
 
@@ -704,11 +704,20 @@ func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
 ます。トークンだけでなく hidden input 全体を返せます。
 
 ```text
-external CSRFField(): html
+external RequestBanner(): html
 ```
 
 ```go
-func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
+func RequestBanner(ctx context.Context) htmlbind.Fragment { ... }
+```
+
+> [!NOTE]
+> **CSRF トークンはこれではありません。** かつてはここの例でしたが、今はモジュールが
+> 自動で出します。unsafe form はすべて hidden field を自動的に持ち、トークンは context
+> ではなく描画呼び出しの `htmlbind.WithCSRFToken(token)` で渡します。
+> [htmlbind_frameworkowner.ja.md](htmlbind_frameworkowner.ja.md#csrf-トークンのライフサイクルを持つ) を参照してください。
+
+```go
 ```
 
 ## 非同期 component

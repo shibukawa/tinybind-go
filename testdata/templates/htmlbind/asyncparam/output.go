@@ -142,6 +142,9 @@ var planLayoutOps = htmlbind.Builder[LayoutParams]{}
 var planLayoutPlan = &htmlbind.Plan[LayoutParams]{
 	Head:          nil,
 	HasAwaitBlock: true,
+	Slots: func(p LayoutParams) []htmlbind.Fragment {
+		return []htmlbind.Fragment{p.Children}
+	},
 	Check: func(p LayoutParams) error {
 		if !p.Customer.Orders.IsSet() {
 			return htmlbind.ErrUnsetPending("customer.orders")

@@ -7,6 +7,21 @@ Make one live token mean one body, emit the handoff marker that says whether a l
 
 ```yaml
 priority: must
+status: delivered 2026-08-03; see as_built
+as_built:
+  protocol_version: bumped to 2, because the mode spellings and the record framing are what the version identifies; a version 1 client falls back to a complete document and arrives holding the version 2 runtime, which is the mechanism that made settling this late cheap rather than a coordinated deploy
+  token: ModeLive parses and echoes 'live;v=N'; Negotiate resolves navigation and live and still resolves everything else to a document
+  entries: RenderLiveStream serves document, navigation, and live from one chain and keeps subscriptions open only in the live mode; RenderStreamAsync serves the first two and answers a live request as a terminated navigation
+  defect_fixed_on_the_way: RenderLiveStream previously set WithLiveSubscriptions unconditionally, so an ordinary navigation delta to a live route would never have terminated
+  validators:
+    answer: a delivery carries none and the opening delta does
+    why: a live delivery is a region the server already decided to repaint, so there is nothing to compare; deliveries travel as await-completion records, which never carried a frame
+    also: a live stream no longer restates unchanged boundaries, and the client merges into its manifest instead of rebuilding it, so a client carrying no validators at all loses nothing
+  handoff_marker: response header '<prefix>-Live: 1', a 'live' field on the buffered delta body, and an 'end' record whose reason is live_pending; all three absent when the composition owns no live boundary
+  terminator_reasons: final, live_pending, failed, done, retry, per rule:stream-termination-marker; retry carries the optional retryMs server hint that rule left deferred
+  open_record: the head record carries the build, which is the reporter's open record merged into the record that already opens every stream
+  client_policy: the live entry sends the live token, resets the attempt count on a healthy close, backs off exponentially with jitter on a fault, reloads on a build change, and stops without retrying when the route is not served live
+  not_built: the requirement:live-boundary-lifecycle bounds that would make the server emit a retry record on its own; Retry is the seam and nothing calls it yet
 source:
   - downstream framework composition seam report 2026-08-02, against v0.3.1
   - requirement:live-reconnect open questions

@@ -27,6 +27,9 @@ var planBadgeOps = htmlbind.Builder[renderBadgeParams]{}
 
 var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
 	Head: nil,
+	Slots: func(p renderBadgeParams) []htmlbind.Fragment {
+		return []htmlbind.Fragment{p.Children}
+	},
 	Ops: []htmlbind.Op[renderBadgeParams]{
 		planBadgeOps.Static(" <span class=\"badge\"><strong>"),
 		planBadgeOps.Text(func(p renderBadgeParams) string { return p.Label }),

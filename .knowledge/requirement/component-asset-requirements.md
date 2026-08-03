@@ -7,6 +7,21 @@ Let a component declare the static assets it requires, report the required set o
 
 ```yaml
 priority: must as of 2026-08-02, raised from should
+status: static_required_set delivered 2026-08-03; the rest open, see as_built
+as_built:
+  delivered:
+    static_required_set: htmlbind.Asset{ID, Type, URL} on Plan.Assets, accessors on Fragment and Wrapper beside Head, and MergeAssets over the MergeHead argument pair
+    identity: the content-hashed file base requirement:static-asset-extraction already computes, so two components requiring one asset carry one ID and an edited file is a different one
+    timing: bound to the value, readable before rendering starts, conservative through a slot that never renders
+    call_graph: transitiveAssets walks what transitiveHead walks, so a caller's set covers everything it can reach
+    slot_carried: folded by requirement:slot-fragment-head-merge in the same pass
+    redraw: Reloadable.Assets and Registry.RequiredAssets, which is what requirement:fragment-response-head chose over a fourth channel
+    external_urls_excluded: a link or script already naming a URL is already located, so there is nothing for a caller to decide and it joins no set
+  still_open:
+    declaration_for_a_registered_component: data:builtin-element-definition, which waits on requirement:builtin-element-registration
+    embedded_table: generated Go holding the bytes; the set carries identity and URL, not content
+    url_function: the caller-supplied identity-to-URL function; a URL is still the generation-time PublicURLBase reference
+    reading: the hardest property named in this requirement is the one that shipped, and the three above are additive to it rather than blocked by it
 priority_history: named in three consecutive downstream rounds, and requirement:fragment-response-head makes its static required set the answer to a defect rather than a capability
 source:
   - downstream framework component seam report 2026-07-31

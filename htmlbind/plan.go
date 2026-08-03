@@ -47,6 +47,19 @@ type Plan[P any] struct {
 	// It is generated data, so reading it costs nothing and needs no reflection.
 	// It is nil for a component with no contribution, which is most of them.
 	HeadSources []string
+	// Assets names the static files this component and everything it calls
+	// require, deduplicated by identity. Generation computes it over the same
+	// call graph as Head, from the same declarations, and leaves it nil for a
+	// component requiring none.
+	//
+	// It is what Head cannot be: a head entry is markup, and a caller needs an
+	// identity it can compare, refuse, or preload. See Fragment.Assets.
+	Assets []Asset
+	// Vary names the request properties this component's output depends on,
+	// declared by whoever registered the builtin elements it reaches. It is nil
+	// for a component depending on none, which is most of them. See
+	// Fragment.Vary.
+	Vary []string
 	// HasAwaitBlock reports whether this component, or any component it calls,
 	// owns an await boundary. Generation computes it over the call graph, so a
 	// component that only calls an async one still reports true.
@@ -65,6 +78,21 @@ type Plan[P any] struct {
 	// needs the runtime that applies boundaries, and whether this screen has
 	// anything that will keep updating after the document finishes.
 	HasLiveBlock bool
+	// Slots returns the fragments this component's parameters carry, in
+	// declaration order. Generation emits it for a component with an html
+	// parameter and leaves it nil for every other, which is most of them.
+	//
+	// It exists because a slot argument is a whole component the binder cannot
+	// otherwise see: Bind copies this plan's own head, and a fragment arriving
+	// inside a caller's parameter struct is not reachable without reflection. A
+	// component library's whole shape is a component supplied through a slot, so
+	// without this accessor its styles are dropped — and dropped before the guard
+	// that exists to refuse an undeliverable contribution ever hears about them,
+	// which makes the guard silent for exactly the case it was built for.
+	//
+	// An absent optional slot yields an absent Fragment, which contributes
+	// nothing.
+	Slots func(P) []Fragment
 	// Check rejects parameters this component cannot render, before it writes
 	// anything. Generation emits it for a required async parameter, whose
 	// absence has to be reported while the response can still carry an error
@@ -140,6 +168,8 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 type Fragment struct {
 	head        []string
 	headSources []string
+	assets      []Asset
+	vary        []string
 	boundary    *boundary
 	hasAwait    bool
 	hasLive     bool
@@ -152,6 +182,8 @@ func Bind[P any](plan *Plan[P], params P) Fragment {
 	fragment := Fragment{
 		head:        plan.Head,
 		headSources: plan.HeadSources,
+		assets:      plan.Assets,
+		vary:        plan.Vary,
 		boundary:    bindBoundary(plan.Boundary, params),
 		hasAwait:    plan.HasAwaitBlock,
 		hasLive:     plan.HasLiveBlock,
@@ -160,7 +192,71 @@ func Bind[P any](plan *Plan[P], params P) Fragment {
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
 	}
+	return foldSlots(fragment, plan.Slots, params)
+}
+
+// foldSlots merges what the fragments in a parameter struct contribute into the
+// value the binder returns: their head, and whether rendering will open an await
+// or a live boundary.
+//
+// A component with no slots has a nil accessor and returns unchanged, so it
+// costs nothing and needs no reflection.
+func foldSlots[P any](fragment Fragment, slots func(P) []Fragment, params P) Fragment {
+	if slots == nil {
+		return fragment
+	}
+	for _, slot := range slots(params) {
+		if !slot.Present() {
+			continue
+		}
+		fragment.hasAwait = fragment.hasAwait || slot.hasAwait
+		fragment.hasLive = fragment.hasLive || slot.hasLive
+		fragment.head, fragment.headSources = appendHead(fragment.head, fragment.headSources, slot.head, slot.headSources)
+		// Whatever is walked for head has to be walked here too, or the same
+		// hole reopens one layer down: a slot-supplied component's script would
+		// go unrequired for exactly the composition the head walk was added for.
+		fragment.assets = appendAssets(fragment.assets, slot.assets)
+		fragment.vary = appendVary(fragment.vary, slot.vary)
+	}
 	return fragment
+}
+
+// appendHead adds contributions to a list, dropping tags already in it.
+//
+// The result is a fresh slice whenever anything is added, because the list it
+// starts from is the plan's own and a plan is shared by every render.
+func appendHead(head, sources, addHead, addSources []string) ([]string, []string) {
+	if len(addHead) == 0 {
+		return head, sources
+	}
+	seen := make(map[string]bool, len(head))
+	for _, tag := range head {
+		seen[tag] = true
+	}
+	// HeadSources is the second view of one list, so it is only meaningful when
+	// it lines up entry for entry. A plan with no sources contributes none, and
+	// the pair stays either both empty or both the same length.
+	grown := append([]string(nil), head...)
+	grownSources := append([]string(nil), sources...)
+	for len(grownSources) < len(head) {
+		grownSources = append(grownSources, "")
+	}
+	for i, tag := range addHead {
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		grown = append(grown, tag)
+		if i < len(addSources) {
+			grownSources = append(grownSources, addSources[i])
+		} else {
+			grownSources = append(grownSources, "")
+		}
+	}
+	if len(grown) == len(head) {
+		return head, sources
+	}
+	return grown, grownSources
 }
 
 // Validate runs the fragment's parameter check without rendering. Chain
@@ -177,7 +273,13 @@ func (f Fragment) Validate() error {
 // slot renders its default instead.
 func (f Fragment) Present() bool { return f.render != nil }
 
-// Head returns the fragment's own head contributions, one entry per tag.
+// Head returns the fragment's head contributions, one entry per tag: its own,
+// plus those of every component supplied to it through a slot parameter.
+//
+// The slot half matters because a component library's whole shape is a
+// component handed in through a slot. Reporting only the outer component's
+// contributions would drop a library's stylesheet, and drop it before a caller
+// that refuses an undeliverable contribution could ever see it.
 func (f Fragment) Head() []string { return f.head }
 
 // HeadSources names the component that declared each Head entry, in the same
@@ -193,17 +295,16 @@ func (f Fragment) HeadSources() []string { return f.headSources }
 // boundary, so a caller knows whether a response will need the client runtime
 // that applies settled boundaries. Reading it renders nothing.
 //
-// A fragment passed in through a parameter is not counted, because the binder
-// cannot look inside a caller's parameter struct without reflection. That
-// fragment is in the caller's own hand, so a caller composing slots unions the
-// flag across the values it holds. HasAwaitBlock over a chain does that for the
+// A fragment passed in through a slot parameter is counted, because generation
+// emits the accessor that reaches it. A fragment a caller holds and has not yet
+// bound in is its own to union, which HasAwaitBlock over a chain does for the
 // ordinary document, layout, and page shape.
 func (f Fragment) HasAwaitBlock() bool { return f.hasAwait }
 
 // HasLiveBlock reports whether rendering this fragment can open a live
 // boundary: a region the server keeps re-rendering after the document has
-// finished. It follows the same rules as HasAwaitBlock, including that a
-// fragment arriving through a parameter is counted by whoever holds it.
+// finished. It follows the same rules as HasAwaitBlock, including how a
+// fragment arriving through a slot parameter is counted.
 //
 // A caller reads it to decide whether this screen is worth a live request at
 // all. A document whose render owns no live boundary will never produce another

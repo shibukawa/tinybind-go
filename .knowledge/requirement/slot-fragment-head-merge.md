@@ -7,6 +7,14 @@ Walk the head contributions of a fragment supplied through a component's paramet
 
 ```yaml
 priority: should
+status: delivered 2026-08-03; see as_built
+as_built:
+  shape: the plan_carried_slot_accessor this requirement already preferred — Plan.Slots, nil for a component with no html parameter
+  generation: emitted in declaration order for determinism, and only for a component that declares one, so a project using no slot-carried fragment regenerates byte-identical Go
+  folded: head, HeadSources, the required asset set, HasAwaitBlock, and HasLiveBlock, all deduplicated and all onto a fresh slice so a shared plan never grows
+  wrapper: BindWrapper folds its named slots; its unnamed one is still unset at bind time and the chain merges that member itself
+  guard: the reporting half needed nothing extra — Fragment.Head now includes the slot's contribution, so the caller's existing refusal sees it
+  asset_half: the constraint that whatever is walked for head must be walked for requirement:component-asset-requirements is satisfied in the same fold
 source:
   - downstream framework composition seam report 2026-08-02, against v0.3.1
   - requirement:fragment-capability-introspection slot_parameter_propagation

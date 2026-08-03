@@ -102,18 +102,60 @@ type RuntimeConfig struct {
 	// Global is the name the runtime instance is installed under. Empty
 	// installs nothing, which is what a caller using only the factory wants.
 	Global string `json:"global"`
+	// CSRFHeader is the header the runtime puts the token in. It is not derived
+	// from Header, because X-CSRF-Token is a name every framework already
+	// recognizes rather than one this module owns.
+	CSRFHeader string `json:"csrfHeader,omitempty"`
+	// CSRF is the session's token. It is empty for a deployment that turned the
+	// token off, and then the runtime sends no header, so a page without one is
+	// byte-identical to what it was before this existed.
+	//
+	// A token in a data attribute is readable by script, which is the same
+	// exposure the hidden field in every form already has. It is not what
+	// protects against XSS: script that runs in the page can act as the user
+	// whether or not it can read this.
+	CSRF string `json:"csrf,omitempty"`
 }
 
 // RuntimeConfig is the configuration matching these options, so the server and
 // the browser cannot disagree about a name.
+//
+// It carries no CSRF token: a token belongs to a session and these options
+// belong to the process. Use RuntimeConfigFor to add one.
 func (o Options) RuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
-		Prefix: o.pathPrefix(),
-		Build:  o.buildID(),
-		Attr:   o.dataAttributePrefix(),
-		Header: o.prefix(),
-		Global: o.globalName(),
+		Prefix:     o.pathPrefix(),
+		Build:      o.buildID(),
+		Attr:       o.dataAttributePrefix(),
+		Header:     o.prefix(),
+		Global:     o.globalName(),
+		CSRFHeader: o.csrfHeader(),
 	}
+}
+
+// RuntimeConfigFor is RuntimeConfig carrying this session's CSRF token, so the
+// runtime sends it on every request it issues.
+//
+// The header is the channel for anything the runtime fetches; the hidden field
+// generated into each form is the channel for a submission with no script. They
+// carry the same value, which is what a header carrying exactly one value
+// requires of the token: one per session.
+func (o Options) RuntimeConfigFor(csrfToken string) RuntimeConfig {
+	config := o.RuntimeConfig()
+	config.CSRF = csrfToken
+	return config
+}
+
+// DefaultCSRFHeaderName is where the runtime puts the token. Unlike the render
+// and manifest headers it does not follow HeaderPrefix, because this one is a
+// name middleware already looks for rather than a namespace this module owns.
+const DefaultCSRFHeaderName = "X-CSRF-Token"
+
+func (o Options) csrfHeader() string {
+	if o.CSRFHeaderName == "" {
+		return DefaultCSRFHeaderName
+	}
+	return o.CSRFHeaderName
 }
 
 // RuntimePath is the URL the browser runtime is served from. The version
@@ -146,11 +188,19 @@ func (o Options) RuntimeHandler() http.Handler {
 //
 // A caller owning the runtime gets an empty string: a tag pointing at an asset
 // this build does not serve is worse than no tag at all.
-func (o Options) ScriptTag() string {
+func (o Options) ScriptTag() string { return o.scriptTag(o.RuntimeConfig()) }
+
+// ScriptTagFor is ScriptTag carrying this session's CSRF token, which is what a
+// handler that renders forms uses.
+func (o Options) ScriptTagFor(csrfToken string) string {
+	return o.scriptTag(o.RuntimeConfigFor(csrfToken))
+}
+
+func (o Options) scriptTag(config RuntimeConfig) string {
 	if !o.serveRuntime() {
 		return ""
 	}
-	encoded, err := json.Marshal(o.RuntimeConfig())
+	encoded, err := json.Marshal(config)
 	if err != nil {
 		// Every field is a string, so this cannot fail; a nil config would
 		// silently disable updates, which is the one outcome worth a panic.

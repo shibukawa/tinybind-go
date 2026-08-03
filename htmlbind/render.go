@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,8 @@ import (
 type Wrapper struct {
 	head        []string
 	headSources []string
+	assets      []Asset
+	vary        []string
 	boundary    *boundary
 	hasAwait    bool
 	hasLive     bool
@@ -36,6 +39,8 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 	wrapper := Wrapper{
 		head:        plan.Head,
 		headSources: plan.HeadSources,
+		assets:      plan.Assets,
+		vary:        plan.Vary,
 		boundary:    bindBoundary(plan.Boundary, params),
 		hasAwait:    plan.HasAwaitBlock,
 		hasLive:     plan.HasLiveBlock,
@@ -51,6 +56,16 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 		// for.
 		wrapper.validate = func() error { return plan.Check(params) }
 	}
+	// A wrapper's own named slots are already filled; its unnamed one is not,
+	// and it contributes nothing until it is, which is correct because the chain
+	// merges the child separately.
+	folded := foldSlots(Fragment{
+		head: wrapper.head, headSources: wrapper.headSources, assets: wrapper.assets,
+		vary: wrapper.vary, hasAwait: wrapper.hasAwait, hasLive: wrapper.hasLive,
+	}, plan.Slots, params)
+	wrapper.head, wrapper.headSources, wrapper.assets = folded.head, folded.headSources, folded.assets
+	wrapper.vary = folded.vary
+	wrapper.hasAwait, wrapper.hasLive = folded.hasAwait, folded.hasLive
 	return wrapper
 }
 
@@ -95,6 +110,26 @@ type renderOptions struct {
 	// boundaryPrefix names the placeholder element and the boundary
 	// identifiers. Empty means DefaultBoundaryPrefix.
 	boundaryPrefix string
+	// provided memoizes each builtin element provider's result for the whole of
+	// this render, keyed by the provider rather than by the element, so two
+	// elements backed by one function share one value.
+	//
+	// It lives here because this value is already the one thing every renderer in
+	// a render shares — a buffered subtree, a boundary subtree, and a cached
+	// component all carry the same pointer — so memoizing costs no allocation
+	// beyond the map itself, and none at all for a render that reaches no
+	// provider.
+	//
+	// The lock is not decorative: await boundaries render in their own
+	// goroutines, and two of them may each hold the same element.
+	providedMu sync.Mutex
+	provided   map[string]any
+	// csrf is the session token every unsafe form in this render writes.
+	// csrfSupplied separates an absent option from a supplied empty string, and
+	// csrfOmitted is the explicit statement that this render has no session.
+	csrf         string
+	csrfSupplied bool
+	csrfOmitted  bool
 }
 
 // DefaultBoundaryPrefix names the placeholder element a progressive render

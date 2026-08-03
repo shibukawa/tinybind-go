@@ -54,11 +54,18 @@ then states what the unbuilt ones would give you and why they are not built yet.
 
 ## Per-request values in markup
 
+> [!NOTE]
+> **A CSRF token is no longer one of these.** It was this section's worked
+> example until it became native: every unsafe form now carries a hidden field
+> emitted for you, and the token arrives as `htmlbind.WithCSRFToken(token)` on
+> the render call rather than through the context. What follows still applies to
+> every *other* per-request value.
+
 ### The problem
 
 A component never receives an `http.Request`, and a `Fragment` is immutable and
-reusable across requests. So a value that belongs to the request — a CSRF token,
-a request id, a nonce, a cookie test — has nowhere obvious to live.
+reusable across requests. So a value that belongs to the request — a request id,
+a nonce, a cookie test — has nowhere obvious to live.
 
 Passing it through the parameter struct works and is what most frameworks do
 first. It has two costs. Every page that needs the value repeats the plumbing
@@ -75,16 +82,16 @@ An `external async` function's Go implementation may declare a leading
 Nothing changes in the template. The declaration says what it always said:
 
 ```
-external CSRFToken(): string
-external CSRFField(): html
+external RequestID(): string
+external LocaleBanner(): html
 ```
 
 The choice belongs to whoever writes the Go, function by function:
 
 ```go
-// Takes the render context, because the token belongs to the request.
-func CSRFToken(ctx context.Context) string {
-	return tokenFrom(ctx)
+// Takes the render context, because the id belongs to the request.
+func RequestID(ctx context.Context) string {
+	return traceFrom(ctx)
 }
 
 // Takes none, and is called exactly as it was before.
@@ -103,25 +110,25 @@ map you already pass for async externals:
 
 ```go
 out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
-	ContextExternals: map[string]bool{"CSRFToken": true},
+	ContextExternals: map[string]bool{"RequestID": true},
 })
 ```
 
 **Return a fragment, not a string, when the value is markup.** An external
 declared `: html` renders as a subtree rather than as escaped text or trusted
-raw bytes — so a framework can return a whole hidden input instead of a bare
-token, and it goes through the ordinary context checks:
+raw bytes — so a framework can return a whole element instead of a bare value,
+and it goes through the ordinary context checks:
 
 ```
-<form method="post">
-  {CSRFField()}
-  <input name="title" value="{title}">
-</form>
+<header>
+  {LocaleBanner()}
+  <h1>{title}</h1>
+</header>
 ```
 
 ```go
-func CSRFField(ctx context.Context) htmlbind.Fragment {
-	return forms.CSRF(forms.CSRFParams{Token: tokenFrom(ctx)})
+func LocaleBanner(ctx context.Context) htmlbind.Fragment {
+	return banners.Locale(banners.LocaleParams{Tag: localeFrom(ctx)})
 }
 ```
 
@@ -148,7 +155,7 @@ context as a leading closure parameter and is named for it:
 planPageOps.Text(func(p PageParams) string { return SiteName() }),
 
 // With one:
-planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return CSRFToken(ctx) }),
+planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return RequestID(ctx) }),
 ```
 
 The forms are `TextCtx`, `RawCtx`, `AttrCtx`, `BoolAttrCtx`, `IfCtx`, `SlotCtx`,

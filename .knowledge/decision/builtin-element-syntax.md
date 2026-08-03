@@ -11,6 +11,11 @@ source:
   - user syntax request 2026-07-27
   - user whitelist decision 2026-07-27
 review_gate: proposed; requires user approval
+status: implemented 2026-08-03, per requirement:builtin-element-registration as_built
+spelling_settled:
+  open_questions:
+    two_frameworks: both may contribute; the whitelist is one merged set and a name declared twice fails registration rather than one silently winning
+    suggestion: a prefix and length blend rather than full edit distance, because the whitelist is small and a merely plausible suggestion still beats listing every entry
 problem:
   casing: rule:template-name-casing assigns kebab-case to real HTML elements, so a bare csrf-token sits in the custom-element space
   web_components: a hyphen is the HTML custom-element marker, so a project may legitimately write its own hyphenated element

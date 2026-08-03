@@ -11,10 +11,10 @@ source:
   - decision:live-transport-boundary
   - user termination discussion 2026-07-30
 review_gate: proposed
-status: partly implemented; the requirement:component-delta-rendering blocker cleared when that shipped
+status: delivered 2026-08-03 for the record form; the document_mode marker below is served as a response header and a terminator reason rather than as an inert element, because a delta reuses the shell and never sees this response's head
 what_shipped: the delta stream's terminal record, and the client rule that a stream ending without it is truncated
-what_did_not: the marker on a document response naming whether a live connection is expected at all, so a page with no live boundary cannot be told not to open one
-consequence: requirement:live-mode-token-contract carries the missing half
+what_shipped_2026_08_03: the terminator reasons final, live_pending, failed, done, and retry; the retry record's server_hint delay; and the handoff marker on every mode
+spelling_settled: the open_questions element and record names are the end record's reason field and the '<prefix>-Live' header, per requirement:live-mode-token-contract as_built
 principle: completion is never inferred from transport; it is always an explicit record in the byte stream
 why_transport_cannot_say:
   document:
@@ -78,7 +78,7 @@ backoff_by_reason:
     resolved: yes, worth carrying, decided 2026-07-31
     why: a client's backoff can only react to failure, while the server is the only party that knows it is overloaded or mid-deploy and can spread load before anything fails
     shape: an optional delay on the retry record, the Retry-After idea applied to this protocol
-  status: deferred with the rest of the transport layer
+  status: shipped 2026-08-03 as the retry record's retryMs field; nothing on the server side fills it yet, because that waits on requirement:live-boundary-lifecycle bounds
 constraints:
   - the marker is inert and carries no script, so the no-nonce guarantee of decision:client-runtime-ownership holds for it too
   - the marker is the last thing written; nothing may follow it in either mode

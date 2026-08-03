@@ -23,6 +23,10 @@ dependency, writes no headers, serves no files, and makes no routing decision.
 | Navigation, history, and any SPA behavior | you |
 | Framing of every completion, and the client script that applies it | you |
 | When to open a live connection, how to re-establish it, and what to do when it cannot be | you |
+| Bounding how long a live response stays open, and closing it | you |
+| Making a builtin element's provider a read of session state rather than a mint | you |
+| Creating, storing, and destroying the CSRF token, and verifying it | you |
+| Putting a redraw's head contributions in the document shell | you |
 
 That last row is broader than it may look. `htmlbind.Content` carries a boundary
 id and rendered HTML, and nothing else — deliberately, so that a framework can
@@ -30,6 +34,11 @@ put it in a streamed document, a JSON payload, or anything else it invents. The
 module writes no `<script>` on any path and injects nothing into the merged head,
 so what a completion looks like on the wire is a decision you make once and pair
 with the runtime you ship.
+
+The last three rows are newer, and each is a place where the module built the
+mechanism and deliberately stopped short of the policy. They are collected in
+[what you have to do yourself](#what-you-have-to-do-yourself) below, because each
+one is a thing that silently does nothing until you wire it.
 
 ## Deciding whether a response needs a client runtime
 
@@ -479,11 +488,112 @@ must not depend on a per-run counter. Two directories are two processes.
 `Options` also carries the template file patterns, the SQL API shape, and the
 feature switches that let a framework turn off generation phases it does not use.
 
-Note that component styles and scripts are merged into the document head as
-inline markup today. There is no extraction to files under a public directory, so
-there is nothing for you to serve yet and no asset URL to configure. If your
-framework needs external stylesheets for caching or for a policy that forbids
-inline style, that is on you for now.
+Component styles and inline scripts are extracted into content-hashed files under
+`PublicURLBase`, and the head carries reference tags rather than inline blocks, so
+a policy that forbids inline style works. `Result.Assets` is what your build
+writes. `htmlbind.MergeAssets(wrappers, leaf)` is the same set as identities, read
+from the bound value before rendering starts, for deciding what a document shell
+must already carry.
+
+### Builtin elements
+
+A framework can register markup an author writes by name:
+
+```go
+options.BuiltinElements = []htmlbind.BuiltinElement{{
+	Name:   "csrf-token",
+	Markup: `<input type="hidden" name="{{.FieldName}}" value="{{.Token}}">`,
+	Vary:   []string{"Cookie"},
+	Provider: &htmlbind.ElementProvider{
+		Package: "example.com/framework",
+		Name:    "TokenFor",
+		Result:  "CSRF",
+	},
+}}
+```
+
+An author then writes `<csrf-token />` in any template of the generation unit,
+with no prefix, no import, and no per-file declaration.
+
+The reason this is a seam of its own rather than sugar over an external call is
+what does *not* happen: **the value never enters template scope.** No name is
+bound to it, so it cannot be interpolated somewhere else, put in a query string,
+or logged. An external returning the same token hands it to the template, and
+everything a template may do with a value becomes possible. Both seams exist and
+neither replaces the other.
+
+Generation rewrites the element. The fixed part of the markup folds into the
+surrounding static run, so it costs what typing it would; what remains is one
+plan step calling `TokenFor(ctx)` and writing each hole. A definition with no
+provider and no expression attribute reduces entirely to static bytes and adds no
+step at all.
+
+Each hole is escaped for its position, and a hole may only sit in element text or
+a quoted attribute value. A token containing a quote cannot break out of the
+attribute it sits in — which is the property that would be lost if a framework
+built the same markup as a trusted string.
+
+Three things follow from a declared provider, and all three are derived rather
+than declared, so a registration cannot disagree with itself:
+
+- **It is per-request.** A component reaching one cannot be `@cache`d — a stored
+  body would serve one visitor's token to the next, which is a security failure
+  rather than a staleness bug. The exclusion follows the call graph.
+- **It needs a context.** Rendering with none fails naming the element, rather
+  than rendering the absence of a value.
+- **The provider may fail.** During the initial pass that is before the response
+  commits, so you can still choose an error status.
+
+`Vary` is the one thing you must declare, because only your implementation knows
+what its provider reads. It reaches the bound value as `Fragment.Vary()` and
+`htmlbind.MergeVary(wrappers, leaf)` — a response depending on a cookie says so
+nowhere else, and neither a `Vary` header nor a cache key can be built from a
+dependency nothing reports.
+
+The provider signature is `func(context.Context) (V, error)`. Nothing here checks
+it: as with a context-taking external, you read your own Go sources and the Go
+compiler rejects a mismatch. `Result` names `V` because a hole closure has to be
+written down and Go infers a call's type arguments but never a function literal's
+parameter types.
+
+### The hyphenated element space is closed
+
+A hyphen is HTML's own custom-element marker, so registering builtins means
+deciding what happens to every *other* hyphenated element. The answer is that the
+space is a whitelist: anything in it is declared, and anything else is a
+generation error naming the file, line, and column.
+
+That removes the case a prefix was supposed to solve. `<csrf-toekn />` today is
+markup a browser ignores and nothing reports; with the space closed it is a
+compile error suggesting `<csrf-token>`.
+
+Your application's Web Components go in the same whitelist, by name or by a
+prefix glob:
+
+```go
+options.PassthroughElements = []htmlbind.PassthroughElement{
+	{Name: "sl-*"},        // a whole component library, declared once
+	{Name: "my-widget"},
+}
+```
+
+A passthrough element is emitted verbatim and produces no plan step. A builtin
+name always wins over a glob that happens to cover it; the reverse never happens.
+Hyphenated names inside `<svg>` and `<math>` are standard foreign-namespace
+elements and stay outside the whitelist entirely.
+
+**This is the one behavior change for an existing project.** A project already
+writing Web Components adds passthrough entries once, and the diagnostic names
+every element it has to declare. A project writing none is unaffected and
+regenerates byte for byte.
+
+Two things from the design are not built. The **opaque shape** — a provider
+returning a trusted value or a fragment, for output whose *structure* varies
+rather than only its values — is deferred, because its cost is that the trust
+assertion moves into your code and generation can no longer verify the emitted
+structure. And a builtin element in a **`<head>` declaration** is still refused
+by the head validator, so `Placement: PlaceHead` today means "refuse this in the
+body" and not yet "accept it in the head".
 
 ### Reading a component's signature
 
@@ -555,6 +665,155 @@ the Go package between passes.
 The discovered router does all of this for you. What it derives — the hash, the
 endpoint path, which handlers are exposed — is described in
 [httpbind_discovered_router.md](httpbind_discovered_router.md).
+
+## What you have to do yourself
+
+Everything below is a mechanism the module ships and a policy it does not. Each
+one works without you, and each does something slightly wrong until you wire it.
+They are gathered here because a seam that silently degrades is worse than one
+that fails, and none of these fails.
+
+### Bound how long a live response stays open
+
+The module never closes a healthy live response on its own. It has no opinion on
+how long a subscription may live, how many one session may hold, or how long a
+boundary may sit idle — those are budgets only your deployment knows.
+
+What it gives you is the record that says a close was healthy:
+
+```go
+if time.Since(opened) > lifetime {
+	return stream.Retry(0)          // or Retry(d) to spread the return yourself
+}
+```
+
+A client reading `retry` reconnects promptly and **spends no attempt**, where a
+close it reads as a fault backs off exponentially. So an unbounded response is not
+merely long-lived: it also never re-checks authorization, never rolls onto a new
+deploy, and never rebalances, because those are the things a bounded lifetime buys.
+
+The one case the module does handle is its own: a cancelled request context —
+a shutdown, a rolling deploy, a deadline you set — closes `retry` rather than
+`done`. Without that, a deploy would tell every open screen its sources had
+finished, and they would sit frozen until somebody reloaded.
+
+`retryMs` is yours to fill and only you can. A client's backoff reacts to failure;
+you are the only party that knows you are shedding load or mid-deploy, and so the
+only one who can spread the return **before** anything fails.
+
+### Make a provider a read, not a mint
+
+**A provider must return the same value for the same session.** Calling it once,
+twice, or never has to yield one answer. The usual shape is that your middleware
+puts the value in the context and the provider takes it out — a map lookup, not a
+round trip.
+
+This is a requirement rather than a performance note, and the reason is the second
+channel. A CSRF token reaches the browser twice: in a response header for script
+to read, and in a hidden input so a form still works without script. **A header
+carries one value.** Two forms on a page holding two different tokens is a bug
+nobody observes until one of them is submitted, and then it is a failed submission
+with no diagnostic attached.
+
+So the module holds up its half: **a provider is called at most once per render,
+and every occurrence shares the result.** The memo is keyed by the *provider*, not
+by the element, so a hidden input and a meta tag backed by one function cannot
+disagree either.
+
+The scope is one render. A redraw and a live delivery call again, which is correct
+— each is a separate response carrying its own header. A failure is never
+memoized, because it ends the render and there is nothing left to share it with.
+
+A provider that mints a fresh value per call breaks this, and nothing can detect
+it: the module cannot tell a stable read from an unstable one, and the symptom
+surfaces in a form submission rather than in a render.
+
+### Own the CSRF token's lifecycle
+
+Every unsafe form this module renders carries a hidden field, and the runtime
+puts the same value in a header on every request it issues. **An author writes
+nothing**, which is the point: a security control you have to remember to write
+is one you will forget, and the omission renders a working page that fails only
+on submission.
+
+What is yours is the token itself:
+
+```go
+htmlbind.WithCSRFToken(csrf.FromContext(ctx))   // in your render entry, once
+htmlupdate.Options{}.ScriptTagFor(token)        // so the runtime sends it too
+options.VerifyCSRF(r, csrf.FromSession(r))      // in your middleware
+```
+
+It is a render option rather than something read from the context because **this
+module cannot read it from a context**: the key belongs to whoever owns the
+session, and there is nothing here to look up. Passing it once inside your own
+render entry means no handler changes.
+
+Create it at login or session creation, store one per session, destroy it at
+logout and at session regeneration. **Do not rotate per request.** A second tab's
+form would carry a token the first tab's submission had already replaced, and you
+would buy nothing for it: one value per session is also what lets the header and
+the hidden field agree, and a header carries one value.
+
+A render with no session behind it — a mail body, a static export, a golden test
+— says `WithoutCSRFToken()`. That is explicit because the alternative, treating
+an absent token as "none wanted", turns a forgotten option into a form that
+submits and is rejected with nothing pointing at the cause.
+
+**Origin and Fetch Metadata validation stay yours**, and are worth having. This
+module never inspects where a request came from — that is a check on an inbound
+request before any render, so it belongs to middleware, and Go's own
+`http.CrossOriginProtection` is what you wrap handlers with. Run both: the two
+defenses fail for unrelated reasons. A proxy that rewrites `Origin`, or a
+credentialed CORS misconfiguration, removes the whole origin defense at once and
+with no failing request to notice; the token does not share that failure. And a
+sibling subdomain is `same-site` to both SameSite and `Sec-Fetch-Site`, so a rule
+that only rejects `cross-site` lets it through.
+
+If you have settled on origin checks alone, `CSRFMode: CSRFOff` turns the field,
+the header, and the per-request marking off — which is what gives you back the
+one thing the token costs:
+
+### Split a cached list from an uncached form
+
+**A component rendering an unsafe form cannot be `@cache`d.** A stored body would
+serve one session's token to whoever asked next, which is a security failure
+rather than a staleness bug, so it is a generation error and it follows the call
+graph.
+
+The composition this pushes you toward is the right one anyway: cache the list
+that came from the database, leave the form uncached, and make them two
+components.
+
+```
+@cache(ttl: "1m") component List(rows: string[])   ← cacheable
+component Form()                                   ← carries the token
+export component Page(rows: string[])              ← composes both
+```
+
+### Put a redraw's head in the document shell
+
+A redraw swaps markup into a page the endpoint never rendered, so it cannot merge
+into a head it owns. The response carries `X-Tinybind-Head` and the runtime
+installs what is missing before swapping — but that is the repair, not the plan.
+The plan is that the tags are already there:
+
+```go
+shell := layout.LayoutParams{Head: registry.RequiredHead()}
+```
+
+Do this and the header installs nothing on every redraw, because everything it
+names is present. Skip it and every first redraw of a component pays a stylesheet
+fetch mid-swap, which is a slower swap rather than a broken one — which is exactly
+why it is easy to leave undone for a long time without noticing.
+
+### Decide what a fragment response owes
+
+`Fragment.Head()` and `Fragment.Assets()` report what a value needs, including
+what a component handed in through a slot needs. A response with no document
+shell has nowhere to put either. The module does not decide what that means:
+dropping them silently and refusing the response are both defensible, and only
+you know which your framework promises.
 
 ## Routing
 

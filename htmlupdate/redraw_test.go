@@ -1,6 +1,8 @@
 package htmlupdate_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -297,5 +299,207 @@ func TestRedrawFromAnotherBuildIsRefused(t *testing.T) {
 	redrawServer(t).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", recorder.Code)
+	}
+}
+
+// The stylesheet of a component appearing for the first time is not in the live
+// document head, and its markup landing before the sheet does is the flash of
+// unstyled content the navigation delta added its own head field to prevent. A
+// redraw's body is the bare subtree, so the contribution travels beside it.
+const styledKind = "StyledCard@2Rq9x0"
+
+var styledHead = []string{`<link rel="stylesheet" href="/public/generated/cards.style.abc123.css">`}
+
+var styledAsset = htmlbind.Asset{
+	ID:   "cards.style.abc123",
+	Type: htmlbind.AssetTypeStyle,
+	URL:  "/public/generated/cards.style.abc123.css",
+}
+
+func styledRegistry(t *testing.T) *htmlupdate.Registry {
+	t.Helper()
+	registry := &htmlupdate.Registry{}
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: styledKind,
+		Head:   styledHead,
+		Assets: []htmlbind.Asset{styledAsset},
+		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID, Count: 1}), nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+func TestRedrawCarriesTheComponentHead(t *testing.T) {
+	mux := http.NewServeMux()
+	options.Mount(mux, styledRegistry(t))
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, buildRequest(options.RedrawPath(styledKind, "card-1", nil)))
+	response := recorder.Result()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	encoded := response.Header.Get("X-Tinybind-Head")
+	if encoded == "" {
+		t.Fatal("a component contributing head must say so")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("head header is not decodable: %v", err)
+	}
+	var tags []string
+	if err := json.Unmarshal(raw, &tags); err != nil {
+		t.Fatalf("head header is not a tag list: %v", err)
+	}
+	if len(tags) != 1 || tags[0] != styledHead[0] {
+		t.Fatalf("head = %q, want the component's contribution", tags)
+	}
+	// The body stays the bare subtree: no envelope, so the endpoint is still
+	// what curl shows and a client parses what it already parsed.
+	body := recorder.Body.String()
+	if !strings.HasPrefix(strings.TrimSpace(body), "<span") {
+		t.Fatalf("body is not a bare fragment: %q", body)
+	}
+}
+
+// A component contributing no head produces the response it produced before the
+// field existed.
+func TestRedrawWithoutHeadIsUnchanged(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	redrawServer(t).ServeHTTP(recorder, buildRequest(options.RedrawPath(cardKind, "card-1", url.Values{"page": {"2"}})))
+	if got := recorder.Header().Get("X-Tinybind-Head"); got != "" {
+		t.Fatalf("head header = %q, want none", got)
+	}
+}
+
+// The required set is readable without a request and without a render, so a
+// document shell built once at startup covers every redraw the deployment will
+// serve. That is what makes the guarantee a caller gives a checkable one.
+func TestRegistryPublishesWhatARedrawRequires(t *testing.T) {
+	registry := styledRegistry(t)
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: "Second@1a2b3c",
+		// The same stylesheet, because two components of one generation unit
+		// share a bundle. It must appear once.
+		Head:   styledHead,
+		Assets: []htmlbind.Asset{styledAsset},
+		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID}), nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := registry.RequiredHead(); len(got) != 1 || got[0] != styledHead[0] {
+		t.Fatalf("required head = %q, want one shared tag", got)
+	}
+	if got := registry.RequiredAssets(); len(got) != 1 || got[0] != styledAsset {
+		t.Fatalf("required assets = %+v, want one shared file", got)
+	}
+	if got := cardRegistry(t).RequiredHead(); got != nil {
+		t.Fatalf("a registry of components contributing nothing requires %q", got)
+	}
+}
+
+// An oversized head is a fact about the templates rather than about a request,
+// so it is discovered at startup instead of by a proxy dropping the header in
+// production.
+func TestOversizedHeadIsRefusedAtRegistration(t *testing.T) {
+	huge := make([]string, 0, 64)
+	for i := 0; i < 64; i++ {
+		huge = append(huge, `<link rel="stylesheet" href="/public/generated/`+strings.Repeat("x", 60)+strconv.Itoa(i)+`.css">`)
+	}
+	err := (&htmlupdate.Registry{}).Register(htmlupdate.Reloadable{
+		KindID: "Huge@000000",
+		Head:   huge,
+		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+			return htmlbind.Fragment{}, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("an oversized head must be refused while a caller can still act on it")
+	}
+	if !strings.Contains(err.Error(), "RequiredHead") {
+		t.Fatalf("the failure must name the way out, got %v", err)
+	}
+}
+
+// The token reaches this package by two channels because a browser has two: the
+// runtime sends a header on everything it fetches, and a form submitted without
+// script carries the hidden field instead.
+func TestCSRFTokenIsReadFromEitherChannel(t *testing.T) {
+	header := httptest.NewRequest(http.MethodPost, "/send", nil)
+	header.Header.Set("X-CSRF-Token", "tok")
+	if got := options.CSRFToken(header); got != "tok" {
+		t.Fatalf("header channel = %q", got)
+	}
+
+	form := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader("_csrf=tok&body=x"))
+	form.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if got := options.CSRFToken(form); got != "tok" {
+		t.Fatalf("form channel = %q", got)
+	}
+
+	// The header wins, so an ordinary fetch never pays for parsing a body it
+	// does not have.
+	both := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader("_csrf=from-body"))
+	both.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	both.Header.Set("X-CSRF-Token", "from-header")
+	if got := options.CSRFToken(both); got != "from-header" {
+		t.Fatalf("want the header to win, got %q", got)
+	}
+}
+
+func TestVerifyCSRF(t *testing.T) {
+	request := func(token string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/send", nil)
+		if token != "" {
+			r.Header.Set("X-CSRF-Token", token)
+		}
+		return r
+	}
+	if err := options.VerifyCSRF(request("tok"), "tok"); err != nil {
+		t.Fatalf("a matching token must pass: %v", err)
+	}
+	if err := options.VerifyCSRF(request("other"), "tok"); !errors.Is(err, htmlupdate.ErrCSRFMismatch) {
+		t.Fatalf("want a mismatch, got %v", err)
+	}
+	if err := options.VerifyCSRF(request(""), "tok"); !errors.Is(err, htmlupdate.ErrCSRFMissing) {
+		t.Fatalf("want a missing token, got %v", err)
+	}
+	// A session lookup that quietly returned nothing would otherwise disable the
+	// whole control for exactly the requests that most need it.
+	if err := options.VerifyCSRF(request("tok"), ""); !errors.Is(err, htmlupdate.ErrCSRFMissing) {
+		t.Fatalf("an empty expectation must be refused, got %v", err)
+	}
+}
+
+// The token belongs to a session and the options belong to the process, so it
+// reaches the runtime through the script tag rather than through the config.
+func TestScriptTagCarriesTheSessionToken(t *testing.T) {
+	// The header name travels either way, because it is a name rather than a
+	// secret; the token itself does not.
+	if got := options.ScriptTag(); strings.Contains(got, `"csrf"`) || strings.Contains(got, "tok") {
+		t.Fatalf("the plain tag carries no session token: %s", got)
+	}
+	tagged := options.ScriptTagFor("tok")
+	if !strings.Contains(tagged, "csrf") || !strings.Contains(tagged, "tok") {
+		t.Fatalf("the token never reached the tag: %s", tagged)
+	}
+	if got := options.RuntimeConfigFor("tok"); got.CSRF != "tok" || got.CSRFHeader != htmlupdate.DefaultCSRFHeaderName {
+		t.Fatalf("config = %+v", got)
+	}
+}
+
+// The generator writes the field and this reads it back, and nothing links the
+// two at compile time, so a renamed field has to reach both.
+func TestConfiguredCSRFFieldNameIsRead(t *testing.T) {
+	renamed := options
+	renamed.CSRFFieldName = "authenticity_token"
+	request := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader("authenticity_token=tok"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if got := renamed.CSRFToken(request); got != "tok" {
+		t.Fatalf("the configured field was not read, got %q", got)
 	}
 }

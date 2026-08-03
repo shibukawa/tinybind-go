@@ -233,6 +233,32 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		// anywhere keeps its previous generated output byte for byte.
 		headSources = "\tHeadSources: []string{" + strings.Join(sourceParts, ", ") + "},\n"
 	}
+	// The required set is what Head cannot be: a head entry is markup, so a
+	// caller reading it gets a tag rather than something it can compare, refuse,
+	// or put in a document shell ahead of a swap that will need it. It is written
+	// only for a component that requires a file, so a project extracting none
+	// regenerates byte for byte.
+	assets := ""
+	// Vary is written only for a component whose builtin elements declare an
+	// axis, so a project registering none regenerates byte for byte. It exists
+	// because nothing else says so: an element reading a cookie makes the whole
+	// response depend on it, and the template shows a caller nothing.
+	vary := ""
+	if axes := e.c.transitiveVary(component.Name); len(axes) > 0 {
+		parts := make([]string, 0, len(axes))
+		for _, axis := range axes {
+			parts = append(parts, strconv.Quote(axis))
+		}
+		vary = "\tVary: []string{" + strings.Join(parts, ", ") + "},\n"
+	}
+	if required := e.c.transitiveAssets(component.Name); len(required) > 0 {
+		parts := make([]string, 0, len(required))
+		for _, asset := range required {
+			parts = append(parts, fmt.Sprintf("{ID: %s, Type: %s, URL: %s}",
+				strconv.Quote(asset.Base), strconv.Quote(asset.MediaType()), strconv.Quote(asset.URL)))
+		}
+		assets = "\tAssets: []htmlbind.Asset{" + strings.Join(parts, ", ") + "},\n"
+	}
 	ops := plan.literal()
 	// The flag is written only when it is true, so a project with no await
 	// boundary anywhere keeps its previous generated output byte for byte. The
@@ -247,6 +273,17 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	// too, and a project with no live boundary regenerates unchanged.
 	if e.c.reachesLive(component.Name, map[string]bool{}) != "" {
 		await += "\tHasLiveBlock: true,\n"
+	}
+	// The Slots field is written only for a component that declares an html
+	// parameter, so every other component keeps its previous output byte for
+	// byte. It reaches the components a caller handed in, whose head the binder
+	// could not otherwise see: a slot argument is a whole component sitting
+	// inside a parameter struct, and reading it back out is exactly what a
+	// reflection-free runtime cannot do for itself.
+	slots := ""
+	if accessors := e.slotAccessors(component, info); len(accessors) > 0 {
+		slots = fmt.Sprintf("\tSlots: func(%s %s) []htmlbind.Fragment {\n\t\treturn []htmlbind.Fragment{%s}\n\t},\n",
+			receiverIdent, params, strings.Join(accessors, ", "))
 	}
 	// The Check field is written only for a component with a required async
 	// parameter, so every other component keeps its previous output.
@@ -277,8 +314,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s%s\tOps: %s,\n}\n\n",
-		prefix, params, head, headSources, boundaryField, await, check, cache, indentBlock(ops, "\t"))
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s%s%s%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, headSources, assets, vary, boundaryField, await, slots, check, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -293,6 +330,21 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			prefix, params)
 	}
 	return nil
+}
+
+// slotAccessors names each html parameter of a component, in declaration order.
+//
+// The order is the declaration's rather than the map's, because `--check` in CI
+// compares bytes and a map walk would produce a different file on every run.
+func (e *goEmitter) slotAccessors(component *TemplateDecl, info *componentInfo) []string {
+	var accessors []string
+	for _, parameter := range info.order {
+		if t, ok := info.params[parameter.Name]; !ok || t.kind != kindHTML {
+			continue
+		}
+		accessors = append(accessors, fmt.Sprintf("%s.%s", receiverIdent, goPublicName(parameter.Name)))
+	}
+	return accessors
 }
 
 // emitCachePolicy writes the cache configuration of one component: its identity
@@ -506,6 +558,15 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 }
 
 func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
+	// A builtin element is not an element in the output at all: it was checked
+	// under its own name and it lowers to whatever its definition's markup says.
+	if builtin, ok := e.builtinAt(node); ok {
+		return e.emitBuiltinElement(p, node, builtin)
+	}
+	if foreignRoot(node.Name) {
+		e.foreignDepth++
+		defer func() { e.foreignDepth-- }()
+	}
 	p.static("<" + node.Name)
 	// The instance attribute goes first, so it stays in a predictable position
 	// and cannot be displaced by an author attribute rendered conditionally.
@@ -525,7 +586,13 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 				"data-"+e.prefix+"-kind", p.scope.goType, e.kindConst))
 		}
 	}
+	optOut := "data-" + e.c.attrPrefix + "-no-csrf"
 	for _, attribute := range node.Attributes {
+		// The opt-out is read at generation time and means nothing to a browser,
+		// so it does not travel.
+		if attribute.Name == optOut {
+			continue
+		}
 		if err := e.emitAttributeOp(p, attribute); err != nil {
 			return err
 		}
@@ -535,6 +602,14 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 		return nil
 	}
 	p.static(">")
+	// The field goes first, so a later field of the same name cannot displace it
+	// and an author reading the output finds it in one place.
+	if unsafe, err := e.c.unsafeForm(node); err != nil {
+		return err
+	} else if unsafe {
+		p.flush()
+		p.op("CSRFField(" + strconv.Quote(e.c.csrfFieldName()) + ")")
+	}
 	if err := e.emitOps(p, node.Children); err != nil {
 		return err
 	}
@@ -1249,6 +1324,44 @@ func (c *compiler) transitiveHead(name string) []headTag {
 			}
 			emitted[tag.html] = true
 			out = append(out, tag)
+		}
+		for _, called := range c.calledComponents(info) {
+			visit(called)
+		}
+	}
+	visit(name)
+	return out
+}
+
+// transitiveAssets collects the static files a component and everything it calls
+// require, over the same call graph as transitiveHead and for the same reason: a
+// nested call's stylesheet is required by whoever renders the outer component,
+// which is the only value a caller holds before rendering starts.
+//
+// Identity is the file, so two components referencing one stylesheet collapse
+// here exactly as their tags do.
+func (c *compiler) transitiveAssets(name string) []Asset {
+	var out []Asset
+	visited := map[string]bool{}
+	emitted := map[string]bool{}
+	var visit func(string)
+	visit = func(current string) {
+		if visited[current] {
+			return
+		}
+		visited[current] = true
+		info, ok := c.components[current]
+		if !ok {
+			return
+		}
+		// A component's own head declarations and the builtin elements it writes
+		// are two sources of one requirement, so they fold into one set.
+		for _, asset := range append(append([]Asset(nil), info.assets...), info.builtinAssets...) {
+			if asset.Base == "" || emitted[asset.Base] {
+				continue
+			}
+			emitted[asset.Base] = true
+			out = append(out, asset)
 		}
 		for _, called := range c.calledComponents(info) {
 			visit(called)

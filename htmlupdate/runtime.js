@@ -18,7 +18,7 @@
 
   // VERSION is the wire contract, and the only name here that is not the
   // caller's: a version a deployment could rename would negotiate nothing.
-  var VERSION = 1;
+  var VERSION = 2;
 
   // DEFAULTS mirror the Go defaults, so a caller configuring nothing gets the
   // same document it got before any of this was configurable.
@@ -28,6 +28,8 @@
     attr: "tb",
     header: "X-Tinybind",
     global: "tinybind",
+    csrfHeader: "X-CSRF-Token",
+    csrf: "",
   };
 
   function withDefaults(config) {
@@ -61,6 +63,31 @@
     var RENDER_HEADER = config.header + "-Render";
     var MANIFEST_HEADER = config.header + "-Manifest";
     var BUILD_HEADER = config.header + "-Build";
+    // The handoff marker. A live request re-executes the whole route, so a client
+    // that cannot tell a live page from a static one pays a page execution per
+    // screen that will never deliver anything. Its absence means no live
+    // boundary, which is why a page that has none is unchanged by all of this.
+    var LIVE_HEADER = config.header + "-Live";
+    // A redraw's head contribution. Every other mode writes a JSON body a head
+    // field fits into; a redraw writes the component's markup, so its
+    // contribution travels beside the body rather than inside it.
+    var HEAD_HEADER = config.header + "-Head";
+    // The session's CSRF token, and where to put it. A form carries the same
+    // value in a hidden field, because a form cannot set a header and has to
+    // submit with scripting disabled; this is the channel for everything the
+    // runtime fetches itself.
+    //
+    // Empty means the deployment turned tokens off, and then nothing is added,
+    // so a page without one issues exactly the requests it issued before.
+    var CSRF_HEADER = config.csrfHeader || "X-CSRF-Token";
+    var CSRF = config.csrf;
+
+    // withCSRF adds the token to a header set. Every request this runtime makes
+    // goes through it, so there is no path that forgets.
+    function withCSRF(headers) {
+      if (CSRF) headers[CSRF_HEADER] = CSRF;
+      return headers;
+    }
 
     var PREFIX = config.prefix;
     // The build that rendered this page. A server running a different one cannot
@@ -397,11 +424,15 @@
       if (inFlight) inFlight.abort();
       var controller = new AbortController();
       inFlight = controller;
-      var headers = {};
+      var headers = withCSRF({});
       headers[RENDER_HEADER] = "navigation;v=" + VERSION;
       headers[BUILD_HEADER] = BUILD;
       var hints = manifestHeader();
       if (hints) headers[MANIFEST_HEADER] = hints;
+      // Whether the route just navigated to owns a live boundary. It is read
+      // rather than assumed because a live request re-executes the whole route,
+      // so guessing costs a page execution per screen that has nothing to deliver.
+      var expectsLive = false;
       return fetch(target.href, {
         headers: headers,
         credentials: "same-origin",
@@ -412,15 +443,20 @@
           var served = response.headers.get(RENDER_HEADER);
           // A cache or proxy may have answered with the document body instead.
           if (served !== "navigation;v=" + VERSION) throw new Error("not a delta");
+          expectsLive = response.headers.get(LIVE_HEADER) === "1";
           var type = response.headers.get("Content-Type") || "";
           if (type.indexOf(STREAM_TYPE) >= 0 && response.body && response.body.getReader) {
-            return consumeStream(response).then(function () { return null; });
+            return consumeStream(response, false).then(function (result) {
+              if (result.ending === "live_pending") expectsLive = true;
+              return null;
+            });
           }
           return response.json();
         })
         .then(function (body) {
           // A superseded navigation must not overwrite newer state.
           if (ticket !== sequence) return { superseded: true };
+          if (body && body.live) expectsLive = true;
           // A streamed delta already applied itself record by record.
           return (body === null ? Promise.resolve(true) : apply(body)).then(function (ok) {
             if (ticket !== sequence) return { superseded: true };
@@ -431,8 +467,11 @@
               window.history.replaceState(window.history.state, "", target.href);
             }
             applyScroll(scroll, restoreTo, target.hash);
-            emit("applied", { url: target.href });
-            return { applied: true };
+            // The handoff marker travels to whoever is watching rather than
+            // opening a connection here: which screens are worth a live request,
+            // and whether a hidden tab keeps one, is the caller's policy.
+            emit("applied", { url: target.href, live: expectsLive });
+            return { applied: true, live: expectsLive };
           });
         })
         .catch(function (error) {
@@ -552,7 +591,7 @@
       var url = PREFIX + "/redraw/" + encodeURIComponent(kind) + "/" + encodeURIComponent(elementId);
       var suffix = query.toString();
       if (suffix) url += "?" + suffix;
-      var headers = {};
+      var headers = withCSRF({});
       headers[BUILD_HEADER] = BUILD;
       return fetch(url, { credentials: "same-origin", headers: headers })
         .then(function (response) {
@@ -562,7 +601,17 @@
             throw new Error("stale page");
           }
           if (!response.ok) throw new Error("redraw failed: " + response.status);
-          return response.text();
+          // A redraw's body is the component's markup with no envelope, so its
+          // head contribution travels beside it. A component whose stylesheet is
+          // not on the page would otherwise render unstyled, which is the flash
+          // the navigation delta added its own head field to prevent. Nothing is
+          // installed when the tags are already there, which is the ordinary case
+          // for a document shell built from Registry.RequiredHead.
+          var contributed = response.headers.get(HEAD_HEADER);
+          return response.text().then(function (html) {
+            if (!contributed) return html;
+            return syncHead(JSON.parse(atob(contributed))).then(function () { return html; });
+          });
         })
         .then(function (html) {
           // A superseded redraw of the same region must not overwrite newer state.
@@ -593,16 +642,24 @@
     // its own manifest entry, because a trailing manifest cannot be written
     // before the operations it describes.
     //
-    // The stream ends with an explicit terminator. One that stops without it
-    // leaves the manifest state unknown, so it is discarded and the next request
-    // is a complete render rather than a delta built on a guess.
-    function consumeStream(response) {
+    // The stream ends with an explicit terminator naming which ending it is. One
+    // that stops without it leaves the manifest state unknown, so it is discarded
+    // and the next request is a complete render rather than a delta built on a
+    // guess.
+    //
+    // live says whether this is a delivery stream. The difference is what the
+    // manifest means: a navigation restates the whole set, so it is rebuilt from
+    // what arrived, while a delivery stream describes the document the client
+    // already holds and only ever adds to what it knows.
+    function consumeStream(response, live) {
       var reader = response.body.getReader();
       var decoder = new TextDecoder();
       var buffered = "";
       var next = new Map();
       var complete = false;
       var failed = false;
+      var ending = live ? "done" : "final";
+      var retryMs = 0;
       // Records are applied in order through one chain. Failure is tracked in a
       // flag rather than threaded as a resolved value, because a step that
       // resolves with nothing would otherwise read as a failure.
@@ -613,11 +670,25 @@
         var item = JSON.parse(line);
         if (item.r === "head") {
           if (item.v !== VERSION) throw new Error("version mismatch");
+          // A stream opened by another build is addressed at a document this page
+          // is no longer showing. Nothing in it can be applied, and the records
+          // are self-describing so a client reading no response headers still
+          // finds out.
+          if (BUILD && item.build && item.build !== BUILD) {
+            var skew = new Error("build changed");
+            skew.stale = true;
+            throw skew;
+          }
           chain = chain.then(function () { return syncHead(item.head); });
           return;
         }
         if (item.r === "end") {
           complete = true;
+          // An older server sends no reason. Reading its absence as the ordinary
+          // ending is what keeps a client meeting one from either looping or
+          // sitting on a dead screen.
+          ending = item.reason || ending;
+          retryMs = item.retryMs || 0;
           return;
         }
         if (item.r === "await") {
@@ -635,7 +706,24 @@
           return;
         }
         if (item.r !== "op") return;
-        next.set(item.id, item.frame);
+        // A delivery stream carries no restatement of the manifest, so a
+        // validator it does send is recorded as it arrives rather than collected
+        // for a rebuild that never happens. A validator it omits leaves whatever
+        // the document render established, which is still true.
+        if (live) {
+          if (item.frame) {
+            validators.set(item.id, item.frame);
+          } else if (item.html) {
+            // A delivery may carry no validator, which is the point of them
+            // being optional here. But this one replaced markup, so the
+            // validator the document render established no longer describes what
+            // is on screen: keeping it would let a later navigation call the
+            // boundary unchanged and leave the delivered content in place.
+            validators.delete(item.id);
+          }
+        } else {
+          next.set(item.id, item.frame);
+        }
         // An entry with no markup is an unchanged boundary restating its
         // validator, so there is nothing to apply.
         if (!item.html) return;
@@ -660,16 +748,39 @@
       return pump().then(function () {
         if (!complete) {
           // Applied operations are not rolled back; the state is simply unknown.
-          validators.clear();
+          // A delivery stream never rebuilt the manifest, so losing it would
+          // discard what the document render established for no reason.
+          if (!live) validators.clear();
           throw new Error("truncated stream");
         }
         if (failed) throw new Error("could not apply delta");
-        validators.clear();
-        next.forEach(function (frame, id) {
-          if (frame) validators.set(id, frame);
-        });
-        return true;
+        if (!live) {
+          validators.clear();
+          next.forEach(function (frame, id) {
+            if (frame) validators.set(id, frame);
+          });
+        }
+        return { ending: ending, retryMs: retryMs };
       });
+    }
+
+    // stale is set on the head record of a stream another build opened, so the
+    // reconnect loop can tell a redeploy from a fault and reload instead of
+    // retrying into a document it can no longer patch.
+    function isStale(error) {
+      return !!(error && error.stale);
+    }
+
+    // wait resolves after ms, spread by up to a quarter either way.
+    //
+    // The jitter is not politeness. A server closing responses at a fixed
+    // lifetime re-synchronizes its clients every cycle, so one restart produces a
+    // herd that then repeats forever instead of dispersing; scattering the return
+    // desynchronizes the population on the first cycle.
+    function wait(ms) {
+      var spread = ms * 0.25;
+      var delay = Math.max(0, ms - spread + Math.random() * spread * 2);
+      return new Promise(function (resolve) { setTimeout(resolve, delay); });
     }
 
     // live keeps a delivery stream open and reopens it when it drops.
@@ -678,6 +789,12 @@
     // state of its region rather than an increment, so nothing has to be resumed
     // and a missed value costs nothing. What the runtime must not do is retry
     // forever, or a server restart attracts a reconnect storm.
+    //
+    // The retry policy keys on why the stream ended rather than on the fact that
+    // it did. The server deliberately closes healthy responses at their lifetime
+    // bound, so treating every ending as a failure would back a working screen off
+    // further on every rotation until it reloaded. A close it names healthy costs
+    // no attempt.
     function live(url, options) {
       var target = new URL(url || window.location.href, document.baseURI);
       var settings = options || {};
@@ -686,36 +803,67 @@
       var stopped = false;
       var attempts = 0;
 
+      function reopen(delay, reason) {
+        emit("liveReconnecting", { url: target.href, attempt: attempts, reason: reason });
+        return wait(delay).then(open);
+      }
+
       function open() {
         if (stopped) return Promise.resolve({ stopped: true });
-        var headers = {};
-        headers[RENDER_HEADER] = "navigation;v=" + VERSION;
+        var headers = withCSRF({});
+        headers[RENDER_HEADER] = "live;v=" + VERSION;
         headers[BUILD_HEADER] = BUILD;
         var hints = manifestHeader();
         if (hints) headers[MANIFEST_HEADER] = hints;
         return fetch(target.href, { headers: headers, credentials: "same-origin" })
           .then(function (response) {
             if (!response.ok) throw new Error("live failed: " + response.status);
+            // A server that answered with anything but a delivery stream is not
+            // serving live on this route: an unrecognized token, a proxy that
+            // stripped the header, a caller whose entry does not hold one open.
+            // None of those is repaired by asking again, so this stops rather
+            // than reloading into the same answer.
+            if (response.headers.get(RENDER_HEADER) !== "live;v=" + VERSION) {
+              stopped = true;
+              emit("liveUnavailable", { url: target.href });
+              return { unavailable: true };
+            }
             if (!response.body || !response.body.getReader) throw new Error("not a stream");
-            return consumeStream(response);
+            return consumeStream(response, true).then(function (result) {
+              if (stopped) return { stopped: true };
+              if (result.ending === "retry") {
+                // A lifetime rollover, a shutdown, a rebalance. Nothing failed, so
+                // the budget this screen has for real faults is restored, and the
+                // server's own hint wins over the client's guess.
+                attempts = 0;
+                return reopen(result.retryMs || backoff, "rollover");
+              }
+              // Every source finished, or the render failed and will not be
+              // retried into the same failure.
+              stopped = true;
+              emit("liveEnded", { url: target.href, reason: result.ending });
+              return { ended: true, reason: result.ending };
+            });
           })
-          .then(function () {
-            // The server finished on purpose, so there is nothing to reconnect to.
-            stopped = true;
-            emit("liveEnded", { url: target.href });
-            return { ended: true };
-          })
-          .catch(function () {
+          .catch(function (error) {
+            if (stopped) return { stopped: true };
+            // A stream another build opened describes a document this page is no
+            // longer showing, and no number of retries changes that.
+            if (isStale(error)) {
+              stopped = true;
+              emit("fellBack", { url: target.href, reason: "build changed" });
+              window.location.reload();
+              return { fellBack: true };
+            }
             attempts++;
-            if (stopped || attempts >= maxAttempts) {
+            if (attempts >= maxAttempts) {
               emit("fellBack", { url: target.href, reason: "live stream lost" });
               window.location.reload();
               return { fellBack: true };
             }
-            emit("liveReconnecting", { url: target.href, attempt: attempts });
-            return new Promise(function (resolve) {
-              setTimeout(resolve, backoff * attempts);
-            }).then(open);
+            // A fault, unlike a rollover, may be a server that is still coming
+            // back, so this backs off rather than returning promptly.
+            return reopen(backoff * Math.pow(2, attempts - 1), "lost");
           });
       }
 
@@ -732,7 +880,7 @@
     // server knows the caller can apply an update response and can still redirect
     // for an ordinary form submission.
     function updateHeaders() {
-      var headers = {};
+      var headers = withCSRF({});
       headers[RENDER_HEADER] = "action;v=" + VERSION;
       headers[BUILD_HEADER] = BUILD;
       return headers;
@@ -773,6 +921,7 @@
       // The attribute names are exposed because an application that writes a
       // preserve marker from script needs the same name its templates use, and
       // guessing it from a prefix it did not choose is how the two drift.
+      csrfHeader: CSRF_HEADER,
       idAttribute: ID_ATTR,
       preserveAttribute: PRESERVE_ATTR,
       ignoreAttribute: IGNORE_ATTR,

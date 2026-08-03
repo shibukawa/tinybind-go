@@ -7,6 +7,7 @@ Carry the merged head on the redraw and action responses too, or state that the 
 
 ```yaml
 priority: must
+status: delivered 2026-08-03; see as_built redraw_half
 source:
   - downstream framework composition seam report 2026-08-02, against v0.3.1
   - requirement:delta-head-sync
@@ -46,11 +47,19 @@ acceptance:
   - a caller can read a chain's required assets before rendering starts
   - a response whose assets are all present is unchanged
 as_built:
+  redraw_half_shipped: 2026-08-03
+  chosen: the guarantee_and_report recommendation, plus the header, because the two are complementary rather than alternatives
+  guarantee: Reloadable.Head and Reloadable.Assets are filled by generation, and Registry.RequiredHead and Registry.RequiredAssets union them; a document shell built once at startup covers every redraw the deployment will serve, so nothing is fetched mid-swap
+  report: a redraw whose component contributes head sets '<prefix>-Head', base64 of the tag list, and the runtime installs what is missing and waits for stylesheets before swapping
+  why_both: in a deployment that built its shell from RequiredHead the header installs nothing, because every tag is already present; it exists so the failure mode of a caller that did not is a slower swap rather than an unstyled one
+  envelope_avoided: the body is still the bare subtree, so the endpoint stays what curl shows and a client parses what it already parsed
+  size_treatment: the bound is checked in Register rather than per request, because a component's head is a static declaration; the failure names RequiredHead as the way out, so it is a startup failure instead of a proxy dropping a header in production
+  open_question_answered: the head travels unconditionally rather than only for a component the client has not seen, because asking the client what it holds would cost a request-shaped channel to save bytes the runtime already skips
   action_half_shipped: 2026-08-02
   what: WriteUpdateStatus collects each written fragment's head, dropping later duplicates by the htmlbind.MergeHead rule, and the field is omitted when there is nothing to say
   why_it_was_one_field: the client already installed head on this path; apply calls syncHead before applying operations, so only the server was never filling it
   byte_identical: a component contributing no head produces the response it produced before
-  redraw_half_open: it needs one of the three options above, and the recommendation is requirement:component-asset-requirements rather than a fourth channel built for one endpoint
+  redraw_half_open: closed 2026-08-03 by redraw_half_shipped above
 related:
   - requirement:component-asset-requirements
   - requirement:component-redraw-endpoint

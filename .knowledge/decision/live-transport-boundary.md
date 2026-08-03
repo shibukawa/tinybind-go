@@ -12,9 +12,9 @@ source:
   - decision:client-runtime-ownership
   - user reconnect discussion 2026-07-30
 review_gate: proposed
-status: half implemented; the requirement:component-delta-rendering blocker cleared when that shipped
+status: implemented 2026-08-03; the live mode this decision names now has its own spelling
 document_mode_shipped: a live boundary settles in place through the blocking op, so the document response commits first content and finishes, which is chosen.document_mode and first_delivery_inline built
-live_mode_did_not: the deliveries connection travels on the navigation token, so the mode this decision names has no spelling in any code
+live_mode_shipped: the deliveries connection travels on 'live;v=N', and only that mode keeps subscriptions open
 independently_confirmed: a downstream reached rejected_endless_document_response on its own, from the proxy timeout and sleep-resume argument, and offered its implementation; see decision:update-composition-seams
 problem:
   terminating_by_design: requirement:suspense-html-streaming ends its sequence when every request-owned boundary settles, and the response completes; a live boundary has no settle, so keeping it on that sequence means a document response that never finishes

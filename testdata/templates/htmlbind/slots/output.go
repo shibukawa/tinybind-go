@@ -29,6 +29,9 @@ var planPanelOps = htmlbind.Builder[renderPanelParams]{}
 
 var planPanelPlan = &htmlbind.Plan[renderPanelParams]{
 	Head: nil,
+	Slots: func(p renderPanelParams) []htmlbind.Fragment {
+		return []htmlbind.Fragment{p.Header, p.Children, p.Footer}
+	},
 	Ops: []htmlbind.Op[renderPanelParams]{
 		planPanelOps.Static(" <section class=\"panel\"> <div class=\"head\">"),
 		planPanelOps.Slot(func(p renderPanelParams) htmlbind.Fragment { return p.Header },
