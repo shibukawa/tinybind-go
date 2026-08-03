@@ -18,7 +18,7 @@
 
   // VERSION is the wire contract, and the only name here that is not the
   // caller's: a version a deployment could rename would negotiate nothing.
-  var VERSION = 2;
+  var VERSION = 1;
 
   // DEFAULTS mirror the Go defaults, so a caller configuring nothing gets the
   // same document it got before any of this was configurable.

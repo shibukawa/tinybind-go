@@ -9,7 +9,10 @@ Make one live token mean one body, emit the handoff marker that says whether a l
 priority: must
 status: delivered 2026-08-03; see as_built
 as_built:
-  protocol_version: bumped to 2, because the mode spellings and the record framing are what the version identifies; a version 1 client falls back to a complete document and arrives holding the version 2 runtime, which is the mechanism that made settling this late cheap rather than a coordinated deploy
+  protocol_version:
+    kept_at_1: the mode spellings and the record framing are what the version identifies, so this would have been a bump; nothing has been released under it yet, so there is no client holding a page rendered by the older shape and nothing for a bump to protect
+    decided: 2026-08-03 by the user, before release
+    if_it_had_shipped: a version 1 client falls back to a complete document and arrives holding the new runtime, which is the mechanism that would have made settling this late cheap rather than a coordinated deploy; it is still there for the first bump that has someone to protect
   token: ModeLive parses and echoes 'live;v=N'; Negotiate resolves navigation and live and still resolves everything else to a document
   entries: RenderLiveStream serves document, navigation, and live from one chain and keeps subscriptions open only in the live mode; RenderStreamAsync serves the first two and answers a live request as a terminated navigation
   defect_fixed_on_the_way: RenderLiveStream previously set WithLiveSubscriptions unconditionally, so an ordinary navigation delta to a live route would never have terminated
