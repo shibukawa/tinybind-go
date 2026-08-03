@@ -108,13 +108,13 @@ func (m Manifest) Changed(previous Manifest) []Instance {
 // rolling deploy safe when a page loaded from the old version sends its next
 // request to a new server.
 //
-// Version 2 named the live mode, so a delivery stream is no longer a navigation
-// held open, and gave the stream terminator a reason: a client can tell a
-// finished stream from a healthy close at a lifetime bound instead of inferring
-// it. A version 1 client falls back to a complete document and arrives holding
-// the version 2 runtime, which is why the rule that a mismatch is ordinary
-// rather than exceptional is what made this change cheap.
-const ProtocolVersion = 2
+// It is still 1. The live mode, the terminator reasons, and the handoff marker
+// all changed the contract, and every one of them would have been a bump — but
+// nothing has been released under this number yet, so there is no client holding
+// a page rendered by an older shape and nothing for a bump to protect. Spending
+// a version to protect nobody would only cost the first real deployment a
+// needless fallback.
+const ProtocolVersion = 1
 
 // collector accumulates boundary state during one render.
 type collector struct {
