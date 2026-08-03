@@ -47,9 +47,22 @@ const (
 	ModeDocument Mode = iota
 	// ModeNavigation returns only the changed boundaries of the same route.
 	ModeNavigation
+	// ModeLive returns the deliveries of the same route's live boundaries, on a
+	// response held open for as long as the subscriptions live.
+	//
+	// It is its own mode rather than a navigation held open because the two
+	// differ in duration and in termination: a navigation ends when the route has
+	// been described, a live response ends when every source finishes or when the
+	// server reaches a lifetime bound. Sharing one name meant a deployment could
+	// not route, time out, or bound them separately, and a served-mode log could
+	// not tell an hours-long subscription from ordinary navigation traffic.
+	ModeLive
 )
 
-const modeNavigation = "navigation"
+const (
+	modeNavigation = "navigation"
+	modeLive       = "live"
+)
 
 // Options configure one set of update endpoints.
 type Options struct {
@@ -91,6 +104,20 @@ type Options struct {
 	// mean two boundary id spaces and two build identities, so a framework that
 	// already has one takes this rather than adding a second.
 	CallerOwnsRuntime bool
+	// CSRFFieldName is the hidden field generated forms carry. Empty uses
+	// DefaultCSRFFieldName.
+	//
+	// It must match the generator's own CSRFFieldName, because that is what
+	// wrote the field into the markup this reads back: one writes it and the
+	// other reads it, and nothing links the two at compile time.
+	CSRFFieldName string
+	// CSRFHeaderName overrides the header the browser runtime puts the CSRF
+	// token in. Empty uses DefaultCSRFHeaderName.
+	//
+	// It does not follow HeaderPrefix on purpose: the render, manifest, and
+	// build headers name this protocol, and this one names a convention every
+	// framework's middleware already looks for.
+	CSRFHeaderName string
 	// PathPrefix overrides the URL namespace of every framework endpoint.
 	// Empty uses DefaultPathPrefix. Unlike the header names, the runtime learns
 	// this one at load time, so overriding it needs no rebuilt runtime.
@@ -225,8 +252,17 @@ type Negotiated struct {
 // stale client, a truncated header, a proxy that dropped a header, and a
 // version bump must all still produce a working page.
 func (o Options) Negotiate(r *http.Request) Negotiated {
-	mode, version, ok := parseRender(r.Header.Get(o.renderHeader()))
-	if !ok || mode != modeNavigation || version != Version {
+	name, version, ok := parseRender(r.Header.Get(o.renderHeader()))
+	if !ok || version != Version {
+		return Negotiated{Mode: ModeDocument}
+	}
+	var mode Mode
+	switch name {
+	case modeNavigation:
+		mode = ModeNavigation
+	case modeLive:
+		mode = ModeLive
+	default:
 		return Negotiated{Mode: ModeDocument}
 	}
 	// A render request must stay side-effect free, which is also why it needs
@@ -246,7 +282,15 @@ func (o Options) Negotiate(r *http.Request) Negotiated {
 	if len(encoded) > o.maxManifestBytes() {
 		encoded = ""
 	}
-	return Negotiated{Mode: ModeNavigation, Version: version, Known: DecodeManifest(encoded)}
+	return Negotiated{Mode: mode, Version: version, Known: DecodeManifest(encoded)}
+}
+
+// renderToken is the value a response echoes for one mode.
+func renderToken(mode Mode) string {
+	if mode == ModeLive {
+		return modeLive + ";v=" + versionText
+	}
+	return modeNavigation + ";v=" + versionText
 }
 
 // parseRender reads a render header of the form "navigation;v=1".
@@ -310,6 +354,14 @@ type deltaResponse struct {
 	// Navigate asks the browser to leave the page, which an action uses when
 	// it changed where the user belongs.
 	Navigate string `json:"navigate,omitempty"`
+	// Live says the composition this response describes owns a live boundary, so
+	// a client that applied it should open a live request. It is the handoff
+	// marker of rule:stream-termination-marker on the buffered path.
+	//
+	// Absent means no live boundary, and a page that has none is what it was
+	// before this field existed: a client that reads no marker issues no
+	// speculative request and costs the server no page execution.
+	Live bool `json:"live,omitempty"`
 }
 
 // versionText is the protocol version as it appears in a header value.
@@ -339,14 +391,48 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	w.Header().Add("Vary", o.renderHeader())
 	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
+	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeNavigation {
 		return renderDelta(w, o, negotiated, wrappers, leaf)
 	}
+	// This entry buffers, so it cannot hold a delivery stream open. A live
+	// request reaching it is answered with the document, which is the same
+	// fallback every unrecognized condition takes and leaves the client with a
+	// working page rather than an error.
+	//
 	// The document render collects so every boundary carries its instance
 	// attribute; without them a later delta could not find its targets.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
 	return err
+}
+
+// liveHeader names the response header saying whether this composition owns a
+// live boundary.
+func (o Options) liveHeader() string { return o.prefix() + "-Live" }
+
+// headHeader names the response header carrying a redraw's head contribution.
+// Every other mode has a body a head field fits into; a redraw's body is the
+// component's markup, and wrapping it would cost the plain-fragment property
+// that makes the endpoint testable with curl.
+func (o Options) headHeader() string { return o.prefix() + "-Head" }
+
+// markLive writes the handoff marker for a chain that owns a live boundary, so
+// a client knows whether a live request is worth issuing at all.
+//
+// A live request re-executes the route, its layouts, and its page, so a client
+// that cannot tell a live page from a static one pays a full page execution per
+// screen that never had a live boundary. The marker is therefore a cost control
+// rather than tidiness, and it is written on every mode: a browser loading the
+// document reads the header, and a client that arrived by delta reads the body
+// field, because a delta reuses the shell and never sees this response's head.
+//
+// Nothing is written when the chain owns no live boundary, so a page that had
+// none is byte-identical to what it was before the marker existed.
+func (o Options) markLive(w http.ResponseWriter, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) {
+	if htmlbind.HasLiveBlock(wrappers, leaf) {
+		w.Header().Set(o.liveHeader(), "1")
+	}
 }
 
 func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
@@ -366,9 +452,13 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 		body.Manifest = append(body.Manifest, deltaInstance{ID: instance.ID, Frame: instance.FrameValidator})
 	}
 	body.Head = delta.Head
+	// A navigation can arrive at a route whose composition owns a live boundary,
+	// and the client reused its document shell, so this body is the only place
+	// that can tell it so.
+	body.Live = htmlbind.HasLiveBlock(wrappers, leaf)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	// A delta carries per-document validators, so it is never shareable.
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), modeNavigation+";v="+versionText)
+	w.Header().Set(o.renderHeader(), renderToken(ModeNavigation))
 	return encodeJSON(w, body)
 }

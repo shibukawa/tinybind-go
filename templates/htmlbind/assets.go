@@ -59,16 +59,18 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 
 	var assets []Asset
 	styleURL := ""
+	var styleAsset Asset
 	if bundle := c.styleBundle(); bundle != "" {
-		asset := newAsset(AssetStyle, unit, cssGeneratedHeader+bundle, urlBase)
-		assets = append(assets, asset)
-		styleURL = asset.URL
+		styleAsset = newAsset(AssetStyle, unit, cssGeneratedHeader+bundle, urlBase)
+		assets = append(assets, styleAsset)
+		styleURL = styleAsset.URL
 	}
 
 	seen := map[string]bool{}
 	for _, component := range c.componentDecls() {
 		info := c.components[component.Name]
 		var tags []headTag
+		var required []Asset
 		for _, node := range info.head {
 			if _, ok := node.(*TextNode); ok {
 				continue
@@ -83,6 +85,7 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 					continue
 				}
 				html = referenceTag("link", "href", styleURL, element.Attributes)
+				required = append(required, styleAsset)
 			case isElement && element.Name == "script" && inlineScript(element):
 				body := strings.TrimSpace(elementText(element))
 				asset := newAsset(AssetScript, unit, jsGeneratedHeader+body+"\n", urlBase)
@@ -91,9 +94,12 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 					assets = append(assets, asset)
 				}
 				html = referenceTag("script", "src", asset.URL, element.Attributes)
+				required = append(required, asset)
 			default:
 				// A script or link already naming an external URL contributes
-				// its tag unchanged and produces no file.
+				// its tag unchanged and produces no file. It is already located,
+				// so there is nothing for a caller to decide about it and it
+				// joins no required set.
 				html = renderStaticHTML([]Node{node})
 			}
 			if strings.TrimSpace(html) == "" {
@@ -102,8 +108,17 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 			tags = append(tags, headTag{html: html, source: c.headSource(info, node)})
 		}
 		info.headTags = tags
+		info.assets = required
 	}
 	return assets, nil
+}
+
+// MediaType is what the reference tag says this asset is.
+func (a Asset) MediaType() string {
+	if a.Kind == AssetStyle {
+		return "text/css"
+	}
+	return "text/javascript"
 }
 
 // styleBundle concatenates every already scoped component style of the module

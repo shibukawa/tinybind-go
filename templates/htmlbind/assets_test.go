@@ -226,3 +226,120 @@ export component Blank(): html {
 		t.Fatalf("empty style block still emitted a link:\n%s", result.GoSource)
 	}
 }
+
+const requiredSetSource = `package pages
+
+export component Widget(label: string): html {
+<head>
+<script>console.log("widget")</script>
+<style>.widget { color: blue }</style>
+<link rel="stylesheet" href="https://cdn.example.com/reset.css">
+</head>
+<div class="widget">{label}</div>
+}
+
+export component Page(title: string): html {
+<main><h1>{title}</h1><Widget label={title} /></main>
+}
+`
+
+// The required set travels over the call graph, because the value a caller holds
+// before rendering is the outer component, and what it needs includes whatever
+// the components it calls need.
+func TestRequiredAssetSetFollowsTheCallGraph(t *testing.T) {
+	result, err := htmlbind.GenerateModule("widget.tb.html", []byte(requiredSetSource), htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(result.GoSource)
+	if len(result.Assets) != 2 {
+		t.Fatalf("want a stylesheet and a script, got %+v", result.Assets)
+	}
+	// Twice each: once on the component that declared it, once on the component
+	// that calls it, because the caller is the value a handler holds.
+	for _, asset := range result.Assets {
+		want := `{ID: "` + asset.Base + `", Type: "` + asset.MediaType() + `", URL: "` + asset.URL + `"}`
+		if got := strings.Count(generated, want); got != 2 {
+			t.Fatalf("%s appears %d times, want the declarer and its caller:\n%s", want, got, generated)
+		}
+	}
+	// A link already naming an external URL is already located, so there is
+	// nothing for a caller to decide about it and it joins no required set.
+	if strings.Contains(generated, `ID: "https://cdn.example.com/reset.css"`) {
+		t.Fatalf("an external URL must not become a required asset:\n%s", generated)
+	}
+}
+
+// A project extracting nothing regenerates byte for byte, so the field is absent
+// rather than empty.
+func TestAComponentRequiringNoAssetEmitsNoSet(t *testing.T) {
+	source := "package pages\n\nexport component Plain(label: string): html {\n<p>{label}</p>\n}\n"
+	result, err := htmlbind.GenerateModule("plain.tb.html", []byte(source), htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result.GoSource), "Assets:") {
+		t.Fatalf("a component requiring nothing must carry no set:\n%s", result.GoSource)
+	}
+}
+
+const reloadableAssetSource = `package pages
+@reloadable
+export component Card(id: string, page: int): html {
+<head><style>.card { color: blue }</style></head>
+<article class="card">{page}</article>
+}
+`
+
+// A redraw swaps markup into a page this endpoint never rendered, so it cannot
+// merge into a head it owns. The registration publishes what the component
+// contributes, which is what lets a caller put it in the document shell and
+// lets the response install it if the caller did not.
+func TestReloadableRegistrationPublishesItsHead(t *testing.T) {
+	result, err := htmlbind.GenerateModule("card.tb.html", []byte(reloadableAssetSource), htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Assets) != 1 {
+		t.Fatalf("want one stylesheet, got %+v", result.Assets)
+	}
+	style := result.Assets[0]
+	// The registration is the part under test, so the assertion is scoped to it:
+	// the plan carries the same two values, and matching the whole file would
+	// pass on the plan alone.
+	generated := string(result.GoSource)
+	start := strings.Index(generated, "var CardReloadable = htmlupdate.Reloadable{")
+	if start < 0 {
+		t.Fatalf("no registration value:\n%s", generated)
+	}
+	registration := generated[start:]
+	registration = registration[:strings.Index(registration, "\n}\n")]
+	for _, want := range []string{
+		`[]string{"<link rel=\"stylesheet\" href=\"` + style.URL + `\">"}`,
+		`[]htmlbind.Asset{{ID: "` + style.Base + `", Type: "text/css", URL: "` + style.URL + `"}}`,
+	} {
+		if !strings.Contains(registration, want) {
+			t.Fatalf("registration lacks %s:\n%s", want, registration)
+		}
+	}
+}
+
+// A redraw endpoint whose component contributes nothing regenerates byte for
+// byte, so the fields are absent rather than empty.
+func TestReloadableWithoutHeadPublishesNothing(t *testing.T) {
+	source := "package pages\n@reloadable\nexport component Card(id: string, page: int): html {\n<article>{page}</article>\n}\n"
+	result, err := htmlbind.GenerateModule("card.tb.html", []byte(source), htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(result.GoSource)
+	start := strings.Index(generated, "var CardReloadable = htmlupdate.Reloadable{")
+	if start < 0 {
+		t.Fatalf("no registration value:\n%s", generated)
+	}
+	registration := generated[start:]
+	registration = registration[:strings.Index(registration, "\n}\n")]
+	if strings.Contains(registration, "Head:") || strings.Contains(registration, "Assets:") {
+		t.Fatalf("a component contributing nothing must publish nothing:\n%s", registration)
+	}
+}

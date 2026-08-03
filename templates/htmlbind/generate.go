@@ -71,6 +71,26 @@ type GenerateOptions struct {
 	//
 	// Registering none leaves output byte-identical.
 	ReferenceHooks []ReferenceHook
+	// CSRFMode turns the automatic CSRF field off. Empty is [CSRFAuto], which
+	// puts the hidden field in every unsafe form.
+	CSRFMode CSRFMode
+	// CSRFFieldName renames the hidden field. Empty uses
+	// [DefaultCSRFFieldName]. It has to agree with whatever middleware reads the
+	// token back out.
+	CSRFFieldName string
+	// BuiltinElements are the hyphenated elements a framework contributes, each
+	// rewritten at generation time into plan steps. See [BuiltinElement].
+	BuiltinElements []BuiltinElement
+	// PassthroughElements are the hyphenated elements an application uses and
+	// this package emits verbatim: its Web Components, named exactly or by a
+	// prefix glob such as "sl-*".
+	//
+	// Registering neither leaves the hyphenated space closed and empty, so every
+	// hyphenated element in a template is a generation error naming the file,
+	// line, and column. That is the one behavior change for an existing project,
+	// and it is the point: an unrecognized hyphenated element emitted unchanged
+	// renders nothing and reports nothing.
+	PassthroughElements []PassthroughElement
 	// StrictReferenceHooks turns an expression-valued attribute at a registered
 	// element and attribute pair into a compile error. It is off by default,
 	// because a project may legitimately mix authored references with
@@ -135,6 +155,20 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 		DynamicReferences: hooks.dynamic,
 	}
 	compiler := newCompiler(filename, string(source), module, !options.PreserveWhitespace)
+	// The whitelist is normalized before analysis, so a registration mistake is
+	// reported against whoever wrote the generate command rather than against
+	// the first template that happens to use the element.
+	elements, err := normalizeElements(options.BuiltinElements, options.PassthroughElements)
+	if err != nil {
+		return Result{}, err
+	}
+	compiler.elements = elements
+	compiler.csrfMode = options.CSRFMode
+	compiler.csrfField = options.CSRFFieldName
+	compiler.attrPrefix = options.DataAttributePrefix
+	if compiler.attrPrefix == "" {
+		compiler.attrPrefix = DefaultDataAttributePrefix
+	}
 	if err := compiler.analyze(); err != nil {
 		return Result{}, err
 	}
@@ -187,6 +221,12 @@ type goEmitter struct {
 	// redraw endpoint, and kindConst names the constant holding its identity.
 	reloadable bool
 	kindConst  string
+	// foreignDepth mirrors the compiler's: inside SVG or MathML a hyphenated
+	// name is a standard foreign-namespace element rather than a registered one.
+	foreignDepth int
+	// providerImports collects the packages the builtin elements actually used
+	// need, so a project using none imports none.
+	providerImports map[string]string
 	// cacheRecords names the record types needing a generated cache key
 	// encoder, on the same terms.
 	cacheRecords []valueType
@@ -271,6 +311,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e.jsonRecords = e.collectJSONRecords()
 	e.canonRecords = e.collectCanonRecords()
 	e.cacheRecords = e.collectCacheRecords()
+	e.providerImports = e.collectProviderImports()
 	e.emitImports()
 	e.emitDeclaredTypes()
 	if err := e.emitComponentParams(); err != nil {
@@ -325,6 +366,16 @@ func (e *goEmitter) emitImports() {
 	e.b.WriteString("\n\t\"github.com/shibukawa/tinybind-go/htmlbind\"\n")
 	if e.c.usesReloadable() {
 		e.b.WriteString("\t\"github.com/shibukawa/tinybind-go/htmlupdate\"\n")
+	}
+	// A provider's package is imported only where a builtin element backed by
+	// one is actually written, so a project using none imports none.
+	for _, path := range sortedKeys(e.providerImports) {
+		alias := e.providerImports[path]
+		if alias == pathBase(path) {
+			fmt.Fprintf(&e.b, "\t%s\n", strconv.Quote(path))
+			continue
+		}
+		fmt.Fprintf(&e.b, "\t%s %s\n", alias, strconv.Quote(path))
 	}
 	for _, imported := range e.c.module.Imports {
 		alias := imported.Alias

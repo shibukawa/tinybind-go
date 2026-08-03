@@ -45,6 +45,7 @@ var planBadgeBoundary = &htmlbind.Boundary[BadgeParams]{
 var planBadgePlan = &htmlbind.Plan[BadgeParams]{
 	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
 	HeadSources: []string{"Badge (headcontrib/input.txt:5:1)", "Badge (headcontrib/input.txt:6:1)"},
+	Assets:      []htmlbind.Asset{{ID: "input.style.c028744bd69d", Type: "text/css", URL: "/public/generated/input.style.c028744bd69d.css"}},
 	Boundary:    planBadgeBoundary,
 	Ops: []htmlbind.Op[BadgeParams]{
 		planBadgeOps.Static("<span"),
@@ -78,6 +79,7 @@ var planNoteBoundary = &htmlbind.Boundary[NoteParams]{
 var planNotePlan = &htmlbind.Plan[NoteParams]{
 	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
 	HeadSources: []string{"Note (headcontrib/input.txt:13:1)", "Note (headcontrib/input.txt:14:1)"},
+	Assets:      []htmlbind.Asset{{ID: "input.style.c028744bd69d", Type: "text/css", URL: "/public/generated/input.style.c028744bd69d.css"}},
 	Boundary:    planNoteBoundary,
 	Ops: []htmlbind.Op[NoteParams]{
 		planNoteOps.Static("<p"),
@@ -112,6 +114,7 @@ var planPanelBoundary = &htmlbind.Boundary[PanelParams]{
 var planPanelPlan = &htmlbind.Plan[PanelParams]{
 	Head:        []string{"<link rel=\"stylesheet\" href=\"/shared.css\">", "<link rel=\"stylesheet\" href=\"/public/generated/input.style.c028744bd69d.css\">"},
 	HeadSources: []string{"Badge (headcontrib/input.txt:5:1)", "Badge (headcontrib/input.txt:6:1)"},
+	Assets:      []htmlbind.Asset{{ID: "input.style.c028744bd69d", Type: "text/css", URL: "/public/generated/input.style.c028744bd69d.css"}},
 	Boundary:    planPanelBoundary,
 	Ops: []htmlbind.Op[PanelParams]{
 		planPanelOps.Static(" <div"),
@@ -130,6 +133,9 @@ var planDocumentOps = htmlbind.Builder[DocumentParams]{}
 
 var planDocumentPlan = &htmlbind.Plan[DocumentParams]{
 	Head: nil,
+	Slots: func(p DocumentParams) []htmlbind.Fragment {
+		return []htmlbind.Fragment{p.Children}
+	},
 	Ops: []htmlbind.Op[DocumentParams]{
 		planDocumentOps.Static("<!DOCTYPE html><html><head><title>t</title>"),
 		planDocumentOps.MergedHead(),

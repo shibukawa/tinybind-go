@@ -15,7 +15,7 @@ existing_feature:
   transport: one chunked response written by the live render entry points
   identity: boundary ids are allocated by position, so rendering the same chain again reproduces the ids already on the client's screen
 problem: a chunked stream ends on any network fault, proxy timeout, or sleep and resume, leaving live regions frozen with no signal
-status: partly delivered; the reconnect behavior ships and the mode it was designed to travel in does not
+status: delivered 2026-08-03; the mode it was designed to travel in now exists, per requirement:live-mode-token-contract as_built
 what_shipped_2026_08_01:
   client: detection, backoff, give-up, and the normal-end distinction, all as client_policy_shipped below
   server: a delivery stream that stays open, reached by delegating the live entry to the streaming navigation entry
@@ -57,9 +57,11 @@ acceptance:
   - a reconnected region shows current state rather than a loading placeholder
   - a client whose page navigated away issues no further reconnects
   - repeated failures degrade to an ordinary page load rather than retrying forever
+answered_2026_08_03:
+  mode_spelling: 'live;v=N', its own mode rather than a navigation held open
+  body: the delta record stream, which already carried both a delta and a delivery
+  validators: the opening delta carries them and a delivery does not, so a reconnect skips unchanged non-live boundaries without a delivery ever needing one
+  backoff: exponential with jitter on a fault, prompt with jitter on a healthy close, honouring the server's retryMs hint; defaults are client policy through the live entry's options
 open_questions:
-  - mode spelling and whether reconnection reuses the navigation delta body or a delivery stream directly
-  - backoff defaults and their configuration surface
-  - whether a reconnect may also carry validators, so unchanged non-live boundaries are skipped at the same time
-  - server-side cost control when many clients reconnect at once
+  - server-side cost control when many clients reconnect at once, which is requirement:live-boundary-lifecycle
 ```

@@ -783,28 +783,27 @@ page is rendering under — the `ctx` you passed to an async entry, or the one
 `WithContext` supplied to a synchronous one:
 
 ```go
-func CSRFToken(ctx context.Context) string { return tokenFrom(ctx) }
+func RequestID(ctx context.Context) string { return traceFrom(ctx) }
 ```
 
-The template declaration is unchanged — `external CSRFToken(): string` either way
+The template declaration is unchanged — `external RequestID(): string` either way
 — so this is a decision for whoever writes the Go, function by function. Leave
 the parameter out and the function is called plainly, exactly as before.
 
-This is how a value that belongs to the request rather than to the page — a CSRF
-token, a request id, a nonce — reaches markup without travelling through the
+This is how a value that belongs to the request rather than to the page — a
+request id, a nonce, a locale — reaches markup without travelling through the
 parameter struct of every page that needs it. It is a read: a function called
 this way must not write the response.
 
 An external declared `: html` returns an `htmlbind.Fragment` and renders as a
-subtree, so a whole hidden input can come back instead of a bare token:
+subtree, so a whole element can come back instead of a bare value.
 
-```text
-external CSRFField(): html
-```
-
-```go
-func CSRFField(ctx context.Context) htmlbind.Fragment { ... }
-```
+> [!NOTE]
+> **A CSRF token is not one of these.** It used to be the example here, and it is
+> now emitted for you: every unsafe form carries a hidden field automatically,
+> and the token arrives as `htmlbind.WithCSRFToken(token)` on the render call
+> rather than through the context. See
+> [htmlbind_frameworkowner.md](htmlbind_frameworkowner.md#own-the-csrf-tokens-lifecycle).
 
 ## Async components
 

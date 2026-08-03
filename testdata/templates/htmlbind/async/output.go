@@ -226,6 +226,9 @@ var planShellBoundary = &htmlbind.Boundary[ShellParams]{
 var planShellPlan = &htmlbind.Plan[ShellParams]{
 	Head:     nil,
 	Boundary: planShellBoundary,
+	Slots: func(p ShellParams) []htmlbind.Fragment {
+		return []htmlbind.Fragment{p.Children}
+	},
 	Ops: []htmlbind.Op[ShellParams]{
 		planShellOps.Static(" <div"),
 		planShellOps.BoundaryAttr(),

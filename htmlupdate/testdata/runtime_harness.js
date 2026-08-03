@@ -115,6 +115,7 @@ globalThis.document = {
         attr: "tb",
         header: "X-Tinybind",
         global: "tinybind",
+        csrf: "tok-session",
       }),
     },
   },
@@ -213,6 +214,11 @@ function ndjson(lines) {
 }
 globalThis.URLSearchParams = URLSearchParams;
 
+// The protocol version is read from the runtime once it is loaded rather than
+// written here, so a bump does not silently pass a harness that agrees with
+// nobody.
+let V = null;
+
 globalThis.fetch = (href, init) => {
   requests.push({ href, headers: init.headers });
   if (streamResponse) {
@@ -224,7 +230,7 @@ globalThis.fetch = (href, init) => {
         get: (name) =>
           name === "Content-Type"
             ? "application/x-ndjson; charset=utf-8"
-            : "navigation;v=1",
+            : "navigation;v=" + V,
       },
       body: ndjson(current),
     });
@@ -234,7 +240,7 @@ globalThis.fetch = (href, init) => {
     return Promise.resolve({
       ok: current.ok,
       status: current.status,
-      headers: { get: () => null },
+      headers: { get: (name) => (current.headers || {})[name] || null },
       text: () => Promise.resolve(current.text),
     });
   }
@@ -268,6 +274,7 @@ globalThis.AbortController = class {
 
 eval(fs.readFileSync(process.argv[2], "utf8"));
 const runtime = globalThis.window.tinybind;
+V = runtime.protocolVersion;
 
 function check(condition, message) {
   if (!condition) {
@@ -278,8 +285,8 @@ function check(condition, message) {
 
 const delta = (ops, manifest) => ({
   ok: true,
-  headers: { "X-Tinybind-Render": "navigation;v=1" },
-  body: { v: 1, ops, manifest },
+  headers: { "X-Tinybind-Render": "navigation;v=" + V },
+  body: { v: V, ops, manifest },
 });
 
 async function main() {
@@ -311,7 +318,7 @@ async function main() {
   );
   let result = await runtime.update("/search?q=rust");
   check(result.applied, "first update should apply");
-  check(requests[0].headers["X-Tinybind-Render"] === "navigation;v=1", "render header");
+  check(requests[0].headers["X-Tinybind-Render"] === "navigation;v=" + V, "render header");
   // The build that rendered the page travels with every request, so a server
   // running a different one can answer with a whole document instead.
   check(requests[0].headers["X-Tinybind-Build"] === "rev-abc", "build header");
@@ -352,18 +359,18 @@ async function main() {
   const actionResponse = (status, body) => ({
     ok: status < 400,
     status,
-    headers: { get: (name) => (name === "X-Tinybind-Render" ? "action;v=1" : null) },
+    headers: { get: (name) => (name === "X-Tinybind-Render" ? "action;v=" + V : null) },
     json: () => Promise.resolve(body),
   });
   result = await runtime.apply(
-    actionResponse(422, { v: 1, ops: [{ kind: "replace", id: "cart", html: '<span id="cart">9</span>' }] }),
+    actionResponse(422, { v: V, ops: [{ kind: "replace", id: "cart", html: '<span id="cart">9</span>' }] }),
   );
   check(result.applied, "an action response should apply despite a 4xx status");
   check(authorRegions.get("cart").html === '<span id="cart">9</span>', "the region should be swapped");
 
   // An action carries no manifest, so it must leave navigation state alone
   // apart from the region it rewrote.
-  check(runtime.updateHeaders()["X-Tinybind-Render"] === "action;v=1", "action headers");
+  check(runtime.updateHeaders()["X-Tinybind-Render"] === "action;v=" + V, "action headers");
   check(runtime.updateHeaders()["X-Tinybind-Build"] === "rev-abc", "action build header");
 
   // A response that is not an update must not be mistaken for one.
@@ -424,8 +431,8 @@ async function main() {
   ];
   response = {
     ok: true,
-    headers: { "X-Tinybind-Render": "navigation;v=1" },
-    body: { v: 1, ops: [], manifest: [], head: ["<title>Guides</title>", '<link href="/a.css">'] },
+    headers: { "X-Tinybind-Render": "navigation;v=" + V },
+    body: { v: V, ops: [], manifest: [], head: ["<title>Guides</title>", '<link href="/a.css">'] },
   };
   result = await runtime.navigate("/guides/intro");
   check(result.applied, "navigate should apply");
@@ -485,7 +492,7 @@ async function main() {
   boundaries.set("c2", region("c2", []));
   headPayload = null;
   streamResponse = [
-    JSON.stringify({ r: "head", v: 1, head: [] }),
+    JSON.stringify({ r: "head", v: V, head: [] }),
     JSON.stringify({ r: "op", kind: "replace", id: "c2", html: '<p data-tb-id="c2">streamed</p>', frame: "s2" }),
     JSON.stringify({ r: "op", id: "c1", frame: "s1" }),
     JSON.stringify({ r: "end" }),
@@ -506,7 +513,7 @@ async function main() {
   // manifest is discarded and the next request is a complete render.
   assigned = null;
   streamResponse = [
-    JSON.stringify({ r: "head", v: 1, head: [] }),
+    JSON.stringify({ r: "head", v: V, head: [] }),
     JSON.stringify({ r: "op", kind: "replace", id: "c2", html: '<p data-tb-id="c2">partial</p>', frame: "t2" }),
   ];
   result = await runtime.update("/search?q=cut");
@@ -519,29 +526,62 @@ async function main() {
     "a truncated stream must not leave validators behind",
   );
 
+  // Every request the runtime issues carries the token. A form carries the same
+  // value in its hidden field, because a form cannot set a header and has to
+  // submit without script; two channels, one value.
+  streamResponse = null;
+  response = delta([], []);
+  await runtime.update("/search?q=csrf");
+  check(
+    requests[requests.length - 1].headers["X-CSRF-Token"] === "tok-session",
+    "a navigation must carry the token, got " + JSON.stringify(requests[requests.length - 1].headers),
+  );
+  check(runtime.updateHeaders()["X-CSRF-Token"] === "tok-session", "an action must carry the token");
+
+  // The handoff marker says whether the route just navigated to is worth a live
+  // request at all. Without it every navigation either opens a speculative
+  // connection, which costs the server a whole page execution per screen that
+  // will never deliver, or the caller hardcodes which routes are live.
+  boundaries.set("c1", region("c1", []));
+  boundaries.set("c2", region("c2", []));
+  streamResponse = null;
+  response = delta([], []);
+  result = await runtime.update("/search?q=static");
+  check(result.live === false, "a page with no live boundary should expect no live request");
+  response = { ok: true, headers: { "X-Tinybind-Render": "navigation;v=" + V }, body: { v: V, ops: [], manifest: [], live: true } };
+  result = await runtime.update("/dashboard");
+  check(result.live === true, "a live composition should be announced to the caller");
+  // The streamed path says the same thing in its terminator, because a client
+  // reading records rather than headers has to hear it too.
+  streamResponse = [
+    JSON.stringify({ r: "head", v: V, head: [] }),
+    JSON.stringify({ r: "end", reason: "live_pending" }),
+  ];
+  result = await runtime.update("/dashboard");
+  check(result.live === true, "a live_pending terminator should be announced too");
+  streamResponse = null;
+
   // A live stream that ends on purpose stops; one that drops reconnects and
   // eventually gives up rather than retrying forever.
   let opens = 0;
   globalThis.setTimeout = (fn) => fn();
   const originalFetch = globalThis.fetch;
+  const liveResponse = (lines) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => "live;v=" + V },
+    body: ndjson(lines),
+  });
   globalThis.fetch = (href, init) => {
     opens++;
     requests.push({ href, headers: init.headers });
     if (opens === 1) {
       // A stream with no terminator: dropped.
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        headers: { get: () => "navigation;v=1" },
-        body: ndjson([JSON.stringify({ r: "head", v: 1, head: [] })]),
-      });
+      return Promise.resolve(liveResponse([JSON.stringify({ r: "head", v: V, head: [] })]));
     }
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      headers: { get: () => "navigation;v=1" },
-      body: ndjson([JSON.stringify({ r: "head", v: 1, head: [] }), JSON.stringify({ r: "end" })]),
-    });
+    return Promise.resolve(
+      liveResponse([JSON.stringify({ r: "head", v: V, head: [] }), JSON.stringify({ r: "end", reason: "done" })]),
+    );
   };
   const seenLive = [];
   const unLive = runtime.subscribe((event) => seenLive.push(event.kind));
@@ -550,7 +590,88 @@ async function main() {
   check(outcome.ended, "a terminated live stream should stop, got " + JSON.stringify(outcome));
   check(opens === 2, "a dropped stream should reconnect once, got " + opens);
   check(seenLive.includes("liveReconnecting"), "reconnecting should be observable: " + seenLive);
+  // A live connection is its own mode. Sharing the navigation token meant a
+  // deployment could not route, time out, or bound an hours-long subscription
+  // separately from ordinary navigation traffic.
+  const liveRequest = requests[requests.length - 1];
+  check(liveRequest.headers["X-Tinybind-Render"] === "live;v=" + V, "live should send its own token, got " + liveRequest.headers["X-Tinybind-Render"]);
   unLive();
+
+  // A delivery may carry no validator — that is what makes them optional on this
+  // path. But one that replaced markup invalidates the validator the document
+  // render established, or a later navigation would call the boundary unchanged
+  // and leave the delivered content in place.
+  boundaries.set("c1", region("c1", []));
+  opens = 0;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    return Promise.resolve(
+      liveResponse([
+        JSON.stringify({ r: "head", v: V, head: [] }),
+        JSON.stringify({ r: "op", kind: "replace", id: "c1", html: '<p data-tb-id="c1">delivered</p>' }),
+        JSON.stringify({ r: "end", reason: "done" }),
+      ]),
+    );
+  };
+  await runtime.live("/feed").done;
+  globalThis.fetch = originalFetch;
+  streamResponse = null;
+  response = delta([], []);
+  await runtime.update("/search?q=after-live");
+  const afterLive = requests[requests.length - 1].headers["X-Tinybind-Manifest"] || "";
+  check(
+    afterLive.indexOf("c1:") < 0,
+    "a delivery with no validator must not leave a stale one behind, got " + afterLive,
+  );
+
+  // A healthy close at the server's own lifetime bound is not a failure, so it
+  // costs no attempt. A screen the server rotates every few minutes would
+  // otherwise walk its own reconnect budget down to a reload.
+  opens = 0;
+  reloaded = false;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    const reason = opens <= 4 ? "retry" : "done";
+    return Promise.resolve(
+      liveResponse([JSON.stringify({ r: "head", v: V, head: [] }), JSON.stringify({ r: "end", reason: reason })]),
+    );
+  };
+  outcome = await runtime.live("/feed", { maxAttempts: 3 }).done;
+  check(outcome.ended, "a rollover should reconnect rather than give up, got " + JSON.stringify(outcome));
+  check(opens === 5, "four rollovers past a three-attempt bound should still reconnect, got " + opens);
+  check(!reloaded, "a healthy rollover must not reload the page");
+
+  // A stream another build opened is addressed at a document this page is no
+  // longer showing, so retrying is pointless and the page reloads at once.
+  opens = 0;
+  reloaded = false;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    return Promise.resolve(
+      liveResponse([JSON.stringify({ r: "head", v: V, head: [], build: "rev-next" })]),
+    );
+  };
+  outcome = await runtime.live("/feed").done;
+  check(outcome.fellBack, "a redeployed server should be a fallback");
+  check(opens === 1, "a build change must not be retried, got " + opens);
+  check(reloaded, "a build change should reload the page");
+
+  // A server that does not serve live on this route answered with something
+  // else. Asking again returns the same answer, so this stops instead of
+  // reloading into a loop.
+  opens = 0;
+  reloaded = false;
+  globalThis.fetch = (href, init) => {
+    opens++;
+    requests.push({ href, headers: init.headers });
+    return Promise.resolve({ ok: true, status: 200, headers: { get: () => "text/html" }, body: null });
+  };
+  outcome = await runtime.live("/feed").done;
+  check(outcome.unavailable, "a route not served live should report so");
+  check(opens === 1 && !reloaded, "an unavailable live route must not retry or reload");
 
   // Repeated failure gives up rather than retrying forever.
   reloaded = false;
@@ -597,6 +718,32 @@ async function main() {
   );
 
   check(requests[requests.length - 1].headers["X-Tinybind-Build"] === "rev-abc", "redraw build header");
+
+  // A redraw's body is the bare subtree, so a component appearing for the first
+  // time carries its stylesheet beside it. It must be installed before the
+  // markup lands, or the region flashes unstyled — the failure the navigation
+  // delta added its own head field to prevent.
+  const beforeHead = head.children.length;
+  headPayload = [
+    { tagName: "LINK", rel: "", getAttributeNames: () => ["href"], getAttribute: () => "/cards.css" },
+  ];
+  authorRegions.set("card", region("card", []));
+  authorRegions.get("card").getAttribute = (name) =>
+    name === "data-tb-kind" ? "UserCard@8Qv3n1" : null;
+  textResponse = {
+    ok: true,
+    status: 200,
+    headers: {
+      "X-Tinybind-Head": Buffer.from(
+        JSON.stringify(['<link rel="stylesheet" href="/cards.css">']),
+      ).toString("base64"),
+    },
+    text: '<span id="card" data-tb-kind="UserCard@8Qv3n1">8</span>',
+  };
+  result = await runtime.redraw("card", { page: 3 });
+  check(result.applied, "a redraw carrying head should apply");
+  check(head.children.length === beforeHead + 1, "the component's stylesheet should be installed");
+  textResponse.headers = {};
 
   // A kind the server does not publish, and a page from another build, both
   // mean this page is stale rather than the region.

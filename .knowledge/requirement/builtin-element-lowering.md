@@ -7,6 +7,20 @@ Rewrite a registered builtin element at generation time into render plan steps, 
 
 ```yaml
 priority: should
+status: markup shape delivered 2026-08-03; opaque shape deferred, see as_built
+as_built:
+  markup_shape: parsed once at registration into static runs and holes, folded into the enclosing plan's own static bytes, with one step left for the per-request part
+  constant_folding: a definition with no provider and no expression attribute reduces entirely to static bytes and adds no plan step
+  no_provider_with_params: lowers to ordinary Static and Text steps reading the call site's own expression, so it needs no provider machinery
+  escaping: element text and a quoted attribute value take the same escaping in this module, and a hole anywhere else is a registration error rather than a widened rule
+  one_call_per_occurrence: the whole element is one step, so a provider runs once for the occurrence rather than once per hole; the open question of memoizing across occurrences is answered conservatively, since a framework that wants one value per response can memoize on its own context
+  capability_effects:
+    cache: a per-request element inside a cached component is a generation error, followed over the call graph
+    needs_context: checked at the step rather than statically, and reported naming the element
+  not_built:
+    opaque_shape: deferred; the trust assertion would move into framework code and the generator could no longer verify the emitted structure, which is why the verifiable shape went first
+    layout_reuse_exclusion: requirement:layout-reuse-boundaries is not built, so there is no reusable frame to exclude from yet
+    script_contributions: requirement:framework-script-contribution is not built
 source:
   - requirement:builtin-element-registration
   - user design discussion 2026-07-27

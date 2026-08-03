@@ -9,7 +9,12 @@ Generation-time record describing one framework builtin element: its name, typed
 source:
   - requirement:builtin-element-registration
   - concept:framework-template-extensions
-status: proposed
+status: implemented 2026-08-03 as templates/htmlbind.BuiltinElement, with these differences
+as_built_differences:
+  Kind: dropped; a passthrough entry is its own type rather than a discriminated field
+  Children: not built, so a builtin element takes no children and one written with any is a generation error
+  Scripts: not built, because requirement:framework-script-contribution is not
+  Provider: gains Package, Alias, and Result; Result names the result type because a hole closure has to be written down, and symbol resolution is left to the Go compiler rather than done here
 fields:
   Kind: builtin, the rewritten form; a decision:builtin-element-syntax passthrough entry carries only a name or pattern and needs no definition
   Name: bare kebab-case element name, unique in the whitelist
@@ -30,6 +35,7 @@ capabilities_derivation:
   scripts_present: contributes the named requirement:framework-script-contribution entries
   vary_declared: not derived, because only the implementation knows what its provider reads; an undeclared axis is the invisible dependency decision:library-component-seams accepted this field to close
   conservative: a provider returning a process-constant value is still treated as per_request, because the safe direction is cache exclusion
+  stable_within_a_render: per_request means per response, not per occurrence; requirement:render-value-provider stability requires one value per session and the module shares one call per render
 parameter_types: the template types of requirement:template-language-core, so an attribute expression is checked exactly as on an ordinary element
 markup_holes:
   reference: a hole names a Provider result field or a declared parameter

@@ -87,13 +87,57 @@ Digests are keyed with a secret you supply. An unkeyed hash of low-entropy conte
 | Document | No render header | Complete HTML |
 | Navigation | `X-Tinybind-Render: navigation;v=N` | Changed boundaries of the target route |
 | Redraw | `GET <prefix>/redraw/<kind>/<id>?args` | That one component's subtree |
-| Live delivery | `X-Tinybind-Render: navigation;v=N` on a second connection | A record stream of deliveries, held open |
+| Live delivery | `X-Tinybind-Render: live;v=N` on a second connection | A record stream of deliveries, held open |
 
 The last row belongs to a different feature and is listed here because it shares this negotiation. A [live source](htmlbind.md#live-sources) settles in place during the document render, so the document response finishes; the runtime then opens a second connection that carries deliveries for as long as the sources produce. When that connection drops — a proxy timeout, a sleeping laptop — the regions would freeze with no signal, so the runtime reopens it. Reconnecting is the same request again.
 
-That connection travels on the navigation token today. A dedicated `live;v=N` token is designed and not implemented: nothing on either side sends or parses one, so do not build against it yet.
+Live is its own token rather than a navigation held open, because the two differ in exactly the ways a deployment has to act on. A navigation ends when the route has been described; a live response ends when every source finishes or when the server closes it at a lifetime bound. Sharing a name meant neither could be routed, timed out, or bounded separately, and a served-mode log could not tell an hours-long subscription from ordinary traffic.
+
+The same route answers both. `options.RenderLiveStream` serves a navigation by settling live boundaries in place and finishing, and serves a live request by keeping the subscriptions open — one entry, so the reconnect path and the render path are the same code. `options.RenderStreamAsync` serves only the first; a live request reaching it is answered as a navigation and terminated, so a client learns at once instead of holding a connection that will never deliver.
 
 That resumption is unusually cheap, and for a structural reason: **every live delivery carries the whole state of its region rather than an increment.** A missed value costs nothing, so there is no cursor, no event log, no replay, and no equivalent of `Last-Event-ID`. Boundary ids are allocated by position, so a re-render reproduces the ids already on screen. The reconnected region paints current state immediately instead of showing a placeholder.
+
+A delivery therefore carries no validator. A validator exists so an unchanged boundary can be skipped, and a delivery is a region the server already decided to repaint; the opening delta of a live response still carries them, so a client that skips unchanged boundaries can, and one that ignores them entirely — as a client holding the document it just loaded reasonably does — loses nothing.
+
+### Knowing whether to open one
+
+A live request re-executes the route, its layouts, and its page. A client that cannot tell a live screen from a static one therefore pays a whole page execution per screen that will never deliver anything, so the server says which it is:
+
+- the document and delta responses carry `X-Tinybind-Live: 1`
+- a navigation delta body carries `"live": true`
+- a streamed navigation terminates with `{"r":"end","reason":"live_pending"}` rather than `"final"`
+
+All three are absent when the composition owns no live boundary, so a page that has none is byte-identical to what it was before any of this existed. In Go the same fact is `htmlbind.HasLiveBlock(wrappers, leaf)`, readable before rendering starts.
+
+### Why a stream ended
+
+A close alone cannot say. The server deliberately closes healthy responses at their lifetime bound, so a client that read every ending as a failure would back a working screen off further on every rotation until it reloaded. The terminator names which it is:
+
+| `reason` | Mode | The client should |
+| --- | --- | --- |
+| `final` | navigation | Stop. Nothing more is coming. |
+| `live_pending` | navigation | Open a live request. |
+| `failed` | either | Stop. The screen is known incomplete; recovery is the caller's policy. |
+| `done` | live | Stop. Every source finished. |
+| `retry` | live | Reconnect promptly, spending no attempt. |
+
+A `retry` record may carry `retryMs`, the server's own hint. A client's backoff can only react to a failure; the server is the only party that knows it is shedding load or rolling a deploy, and so the only one that can spread the return before anything fails. `stream.Retry(d)` writes it.
+
+**Closing a healthy live response is yours to do.** This package never ends one on its own: how long a subscription may live, how many one session may hold, and how long a boundary may sit idle are budgets only your deployment knows. `Retry` is the record that makes your close readable as healthy, so the client comes straight back instead of backing off:
+
+```go
+if time.Since(opened) > lifetime {
+    return stream.Retry(0)   // or Retry(d) to spread the return yourself
+}
+```
+
+An unbounded response is not merely long-lived. It also never re-checks authorization, never rolls onto a new deploy, and never rebalances — those are what a bounded lifetime buys, and none of them happen until you set one.
+
+The one ending this package does own is its own: a cancelled request context — a shutdown, a rolling deploy, a deadline you set — closes `retry` rather than `done`. Without that a deploy would tell every open screen its sources had finished, and they would sit frozen until somebody reloaded.
+
+The opening record carries `build`. A stream another build opened describes a document the page is no longer showing, and no number of retries changes that, so the runtime reloads rather than reconnecting.
+
+A stream that ends with no terminator at all is truncation, which is a fault: the runtime backs off exponentially with jitter and falls back to a full page load after a configured number of attempts.
 
 The header is deliberately not `Accept`: shared caches normalize or drop `Vary: Accept`, and one URL must stay one cacheable document resource. It is deliberately not a query parameter either, because that would change canonical, shareable, and logged URLs.
 
@@ -194,6 +238,26 @@ It distinguishes types as a side effect — two components sharing a name but di
 > **Registering a component publishes an HTTP endpoint, and its parameters become untrusted input.** Anyone can call `?userId=999`. A component's arguments used to be values a page had already authenticated, authorized, and derived; a registered one receives whatever the caller sends. A component that only formats values handed to it is safe to register. One that loads a record by identifier must check ownership or visibility itself, exactly as an ordinary handler would. Registration is the review point.
 
 Because a redraw is a GET, it must be repeatable with no observable effect: it is retried on supersession and may be answered from a cache. Per-user output must be marked private, since the URL alone identifies the response.
+
+### Assets a redraw needs
+
+A redraw swaps markup into a page this endpoint never rendered, so unlike a navigation it cannot merge into a head it owns. A component whose stylesheet is not already on the page therefore renders unstyled — the flash the navigation delta added its own head field to prevent.
+
+Two things close that, and a deployment wants both.
+
+**Put them in the shell.** The registration publishes what each component contributes, and the registry unions it:
+
+```go
+shell := layout.LayoutParams{Head: registry.RequiredHead()}
+```
+
+Reading it needs no request and no render, so a shell built once at startup covers every redraw the deployment will ever serve. `registry.RequiredAssets()` is the same set as identities rather than markup — an `ID`, a media type, and a URL — for a caller deciding where each file is served or which to preload.
+
+**The response carries it anyway.** A redraw whose component contributes head sets `X-Tinybind-Head`, base64 of the tag list, and the runtime installs anything missing and waits for stylesheets before swapping. The body stays the bare subtree — no envelope, so the endpoint is still what `curl` shows — and a component contributing no head sends no header at all.
+
+In a deployment that did the first, the second does nothing: every tag is already present and none is installed. It exists so the failure mode is a slower swap rather than an unstyled one.
+
+The header is bounded, and the bound is checked at registration rather than at request time. A component's head is a static declaration, so an oversized one is a fact about the templates; `Register` refuses it and names `RequiredHead` as the way out, which is a startup failure instead of a proxy silently dropping a header in production.
 
 > [!TIP]
 > If the state can live in the URL, put it there and use a navigation delta instead. Redrawing earns its keep for widget-local state that should not appear in a shareable URL, or for a region whose inputs the browser genuinely owns.
@@ -427,6 +491,8 @@ The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render 
 | Browser runtime `update()` and URL replacement | Available |
 | Cross-route navigation, history, scroll, focus | Available |
 | Head and asset synchronization | Available |
+| Head on the redraw response, and the required-asset set | Available |
+| Head of a fragment supplied through a slot | Available |
 | Link interception and `navigate()` | Available |
 | Form state reconciliation | Available |
 | Registered component redraw endpoint | Available |
@@ -435,8 +501,8 @@ The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render 
 | Lifecycle events and GET form interception | Available |
 | Streamed delta records | Available |
 | Await completions on the same stream | Available |
-| Live delivery and reconnection | Available, on the navigation token |
-| A dedicated live mode token | Planned |
+| Live delivery and reconnection, on the `live` token | Available |
+| Handoff marker and terminator reasons | Available |
 | Acting and refreshing in one round trip | Available |
 
 | Morphing or static-dynamic application | Planned |

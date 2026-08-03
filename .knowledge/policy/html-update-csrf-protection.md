@@ -40,9 +40,14 @@ defense_in_depth:
 cache:
   - inject token outside requirement:component-output-cache and requirement:layout-reuse-boundaries validators
   - do not share personalized token-bearing complete HTML through public caches
+settled_2026_08_03:
+  by: requirement:csrf-token-rendering, proposed
+  token_interface: a render option carrying the token string, because htmlbind cannot read one from a context whose key belongs to the framework
+  rotation: per session, created at login and destroyed at logout or session regeneration; per-request rotation costs multi-tab correctness and buys nothing here
+  emission: the module emits the hidden field into every unsafe form and the header from its runtime, so an author writes nothing and cannot forget
+  division: the module puts the token everywhere a request can carry it; the framework owns the session, the cookie, and the verification middleware
 open_questions:
-  - framework token-provider interface versus application middleware integration
-  - per-session versus per-request rotation and multi-tab behavior
+  - whether an existing framework middleware's field name forces the name to be a deployment setting rather than a generation one
   - delta-response token refresh header; the one downstream that wanted it withdrew the ask on 2026-08-02, having moved to a cookie read at request time and refreshed by set-cookie, which is what Django, Laravel, and Spring's SPA configuration all do and needs no module change, per decision:update-composition-seams
   - policy for unauthenticated but computationally expensive render updates
 ```

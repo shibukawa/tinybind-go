@@ -178,7 +178,29 @@ func (e *goEmitter) emitReloadable(component *TemplateDecl, params, kind string)
 		fmt.Fprintf(&e.b, "\t\tif err := %s(values, %s, &params.%s); err != nil {\n\t\t\treturn htmlbind.Fragment{}, err\n\t\t}\n",
 			queryDecoder(t), strconv.Quote(parameter.Name), goPublicName(parameter.Name))
 	}
-	fmt.Fprintf(&e.b, "\t\treturn %s(params), nil\n\t},\n}\n\n", name)
+	fmt.Fprintf(&e.b, "\t\treturn %s(params), nil\n\t},\n", name)
+	// A redraw swaps markup into a page this endpoint never rendered, so unlike
+	// a navigation it cannot merge into a head it owns. Publishing what the
+	// component contributes is what lets a caller put it in the document shell
+	// before anything is swapped, and lets the response install it if the caller
+	// did not. Both fields are written only when there is something to say, so a
+	// component contributing nothing regenerates byte for byte.
+	if tags := e.c.transitiveHead(component.Name); len(tags) > 0 {
+		parts := make([]string, 0, len(tags))
+		for _, tag := range tags {
+			parts = append(parts, strconv.Quote(tag.html))
+		}
+		fmt.Fprintf(&e.b, "\tHead: []string{%s},\n", strings.Join(parts, ", "))
+	}
+	if required := e.c.transitiveAssets(component.Name); len(required) > 0 {
+		parts := make([]string, 0, len(required))
+		for _, asset := range required {
+			parts = append(parts, fmt.Sprintf("{ID: %s, Type: %s, URL: %s}",
+				strconv.Quote(asset.Base), strconv.Quote(asset.MediaType()), strconv.Quote(asset.URL)))
+		}
+		fmt.Fprintf(&e.b, "\tAssets: []htmlbind.Asset{%s},\n", strings.Join(parts, ", "))
+	}
+	e.b.WriteString("}\n\n")
 	return nil
 }
 

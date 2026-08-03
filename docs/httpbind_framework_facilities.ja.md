@@ -53,10 +53,16 @@ tinybind が計算します。URL を決めることも、ファイルを配信�
 
 ## markup の中のリクエスト固有値
 
+> [!NOTE]
+> **CSRF トークンはもうこれではありません。** ネイティブになるまではこの節の題材でし
+> たが、今は unsafe form がすべて hidden field を自動で持ち、トークンは context では
+> なく描画呼び出しの `htmlbind.WithCSRFToken(token)` で渡します。以下は CSRF *以外*
+> のリクエスト固有の値には今もそのまま当てはまります。
+
 ### 問題
 
 component は `http.Request` を受け取りません。`Fragment` は不変で、リクエストを
-またいで再利用できます。つまり、リクエストに属する値 — CSRF トークン、リクエスト
+またいで再利用できます。つまり、リクエストに属する値 — リクエスト
 ID、nonce、cookie の有無 — には自明な置き場所がありません。
 
 パラメータ構造体を通す方法は動きますし、たいていのフレームワークが最初にやること
@@ -73,15 +79,15 @@ ID、nonce、cookie の有無 — には自明な置き場所がありません�
 テンプレート側は何も変わりません。宣言はこれまでどおりです。
 
 ```
-external CSRFToken(): string
-external CSRFField(): html
+external RequestID(): string
+external LocaleBanner(): html
 ```
 
 選ぶのは Go を書く人であり、関数ごとに決められます。
 
 ```go
 // トークンはリクエストのものなので render context を受け取る。
-func CSRFToken(ctx context.Context) string {
+func RequestID(ctx context.Context) string {
 	return tokenFrom(ctx)
 }
 
@@ -100,7 +106,7 @@ generator コマンド経由で生成しているなら自動です。コンパ�
 
 ```go
 out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
-	ContextExternals: map[string]bool{"CSRFToken": true},
+	ContextExternals: map[string]bool{"RequestID": true},
 })
 ```
 
@@ -111,14 +117,14 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 
 ```
 <form method="post">
-  {CSRFField()}
+  {LocaleBanner()}
   <input name="title" value="{title}">
 </form>
 ```
 
 ```go
-func CSRFField(ctx context.Context) htmlbind.Fragment {
-	return forms.CSRF(forms.CSRFParams{Token: tokenFrom(ctx)})
+func LocaleBanner(ctx context.Context) htmlbind.Fragment {
+	return banners.Locale(banners.LocaleParams{Tag: localeFrom(ctx)})
 }
 ```
 
@@ -145,7 +151,7 @@ context を渡さなかった render にも context はあります。ですか�
 planPageOps.Text(func(p PageParams) string { return SiteName() }),
 
 // ある場合:
-planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return CSRFToken(ctx) }),
+planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return RequestID(ctx) }),
 ```
 
 形は `TextCtx`、`RawCtx`、`AttrCtx`、`BoolAttrCtx`、`IfCtx`、`SlotCtx`、

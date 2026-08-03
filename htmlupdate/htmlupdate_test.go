@@ -167,7 +167,7 @@ func TestPlainRequestGetsTheDocument(t *testing.T) {
 func TestEveryResponseVariesOnTheRenderHeader(t *testing.T) {
 	for _, response := range []*http.Response{
 		get(t, "/search?q=go", nil),
-		get(t, "/search?q=go", map[string]string{"X-Tinybind-Render": "navigation;v=1", "X-Tinybind-Build": htmlupdate.BuildID()}),
+		get(t, "/search?q=go", map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(htmlupdate.Version), "X-Tinybind-Build": htmlupdate.BuildID()}),
 	} {
 		if got := response.Header.Values("Vary"); len(got) != 2 ||
 			got[0] != "X-Tinybind-Render" || got[1] != "X-Tinybind-Build" {
@@ -246,7 +246,10 @@ func TestUnusableRequestsFallBackToTheDocument(t *testing.T) {
 	tests := []struct{ name, header string }{
 		{"future version", "navigation;v=" + strconv.Itoa(htmlupdate.Version+1)},
 		{"past version", "navigation;v=0"},
-		{"unknown mode", "boundary;v=1"},
+		{"unknown mode", "boundary;v=" + strconv.Itoa(htmlupdate.Version)},
+		// A buffered entry cannot hold a delivery stream open, so a live request
+		// reaching one takes the same fallback every unrecognized condition takes.
+		{"live at a buffered entry", "live;v=" + strconv.Itoa(htmlupdate.Version)},
 		{"malformed", "navigation"},
 		{"empty", ""},
 	}
@@ -267,7 +270,7 @@ func TestUnusableRequestsFallBackToTheDocument(t *testing.T) {
 // instead of failing the request.
 func TestOversizedManifestIsIgnored(t *testing.T) {
 	response := get(t, "/search?q=go", map[string]string{
-		"X-Tinybind-Render":   "navigation;v=1",
+		"X-Tinybind-Render":   "navigation;v=" + strconv.Itoa(htmlupdate.Version),
 		"X-Tinybind-Build":    htmlupdate.BuildID(),
 		"X-Tinybind-Manifest": "c1:" + strings.Repeat("x", htmlupdate.DefaultMaxManifestBytes),
 	})
@@ -439,7 +442,7 @@ func TestAnotherBuildGetsTheDocument(t *testing.T) {
 		"absent":        "",
 	} {
 		t.Run(name, func(t *testing.T) {
-			headers := map[string]string{"X-Tinybind-Render": "navigation;v=1"}
+			headers := map[string]string{"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(htmlupdate.Version)}
 			if header != "" {
 				headers["X-Tinybind-Build"] = header
 			}

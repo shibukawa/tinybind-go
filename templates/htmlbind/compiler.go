@@ -109,6 +109,11 @@ type componentInfo struct {
 	// per tag, with extracted assets replaced by their reference tags. It is
 	// filled by extractAssets.
 	headTags []headTag
+	// assets holds the extracted files this component's own contributions
+	// reference, in the order they were declared. It is filled by extractAssets
+	// beside headTags, because the two are the same declarations read as markup
+	// and as identity.
+	assets []Asset
 	// style is the scoped CSS of this component's style block, which
 	// requirement:static-asset-extraction moves into a generated stylesheet.
 	style string
@@ -130,6 +135,21 @@ type componentInfo struct {
 	// exists so a caller can tell a screen that keeps changing from one that is
 	// merely progressive.
 	live bool
+	// perRequest marks a component writing a builtin element whose output comes
+	// from a provider, and perRequestElement names the first one for the
+	// diagnostic. A cached component may not reach one, because storing a
+	// per-request value and serving it to the next visitor is a security failure
+	// rather than a staleness bug.
+	perRequest        bool
+	perRequestElement string
+	// builtinAssets and vary are what the builtin elements this component writes
+	// require and depend on. They roll up over the call graph exactly as head
+	// contributions do.
+	builtinAssets []Asset
+	vary          []string
+	// builtins names the builtin elements this component writes, in source
+	// order, so emission can resolve each occurrence without re-walking.
+	builtins []string
 }
 
 type compiler struct {
@@ -142,6 +162,18 @@ type compiler struct {
 	externals   map[string]functionSig
 	components  map[string]*componentInfo
 	exprTypes   map[Expr]valueType
+	// elements is the resolved hyphenated-element whitelist, frozen before
+	// analysis.
+	elements *elementSet
+	// csrfMode, csrfField, and attrPrefix decide whether an unsafe form carries
+	// a token, what the field is called, and what the opt-out attribute is named.
+	csrfMode   CSRFMode
+	csrfField  string
+	attrPrefix string
+	// foreignDepth is non-zero inside an SVG or MathML subtree, where a
+	// hyphenated name is a standard foreign-namespace element rather than a
+	// custom element and so sits outside the whitelist entirely.
+	foreignDepth int
 	// liveBoundaries marks the await boundaries that bind at least one live
 	// source, and therefore re-render per delivery instead of settling once.
 	// It is derived from the bindings rather than written at the wait site,
@@ -417,8 +449,74 @@ func (c *compiler) validateCachedComponents() error {
 			}
 			return c.error(component.Pos, "cached component "+component.Name+" cannot reach an await boundary; "+where+" declares one")
 		}
+		// A stored body outlives the request that produced it, so a per-request
+		// value inside one is served to whoever asks next. For a CSRF token that
+		// is not a staleness bug but a security failure, which is why the
+		// exclusion is a generation error rather than a note.
+		if owner, element := c.reachesPerRequest(component.Name, map[string]bool{}); owner != "" {
+			where := "it"
+			if owner != component.Name {
+				where = owner
+			}
+			return c.error(component.Pos, "cached component "+component.Name+" cannot reach the per-request <"+element+
+				">; "+where+" writes one, and a stored body would serve one request's value to the next")
+		}
 	}
 	return nil
+}
+
+// reachesPerRequest returns the first component in the call graph writing a
+// builtin element backed by a provider, and the element it writes.
+func (c *compiler) reachesPerRequest(name string, seen map[string]bool) (string, string) {
+	if seen[name] {
+		return "", ""
+	}
+	seen[name] = true
+	info, ok := c.components[name]
+	if !ok {
+		return "", ""
+	}
+	if info.perRequest {
+		return name, info.perRequestElement
+	}
+	for _, called := range c.calledComponents(info) {
+		if owner, element := c.reachesPerRequest(called, seen); owner != "" {
+			return owner, element
+		}
+	}
+	return "", ""
+}
+
+// transitiveVary collects the request properties a component's output depends
+// on, over the same call graph as transitiveHead: a nested call reading a cookie
+// makes the whole response depend on it, and only the value a caller holds can
+// say so.
+func (c *compiler) transitiveVary(name string) []string {
+	var out []string
+	visited, emitted := map[string]bool{}, map[string]bool{}
+	var visit func(string)
+	visit = func(current string) {
+		if visited[current] {
+			return
+		}
+		visited[current] = true
+		info, ok := c.components[current]
+		if !ok {
+			return
+		}
+		for _, axis := range info.vary {
+			if axis == "" || emitted[axis] {
+				continue
+			}
+			emitted[axis] = true
+			out = append(out, axis)
+		}
+		for _, called := range c.calledComponents(info) {
+			visit(called)
+		}
+	}
+	visit(name)
+	return out
 }
 
 // reachesLive returns the name of the first component in the call graph that
@@ -614,6 +712,28 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			}
 			c.loopDepth--
 		case *ElementNode:
+			unsafe, err := c.unsafeForm(node)
+			if err != nil {
+				return err
+			}
+			if unsafe && c.current != nil {
+				// The token is a per-request value, so a component reaching one
+				// cannot be a cached body: a stored form would serve one
+				// session's token to whoever asked next.
+				c.current.perRequest = true
+				c.current.perRequestElement = "form"
+			}
+			builtin, handled, err := c.resolveElement(node)
+			if err != nil {
+				return err
+			}
+			if builtin != nil {
+				if err := c.analyzeBuiltinElement(node, builtin, scope); err != nil {
+					return err
+				}
+				continue
+			}
+			_ = handled
 			for _, attribute := range node.Attributes {
 				if attribute.Name == ServerActionAttr {
 					if err := c.analyzeServerAction(node.Name, attribute, node.Attributes); err != nil {
@@ -625,8 +745,17 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 					return err
 				}
 			}
+			// A hyphenated name inside SVG or MathML is a standard
+			// foreign-namespace element, not a custom element, so the whitelist
+			// does not reach into one.
+			if foreign := foreignRoot(node.Name); foreign {
+				c.foreignDepth++
+			}
 			if err := c.analyzeNodes(node.Children, scope); err != nil {
 				return err
+			}
+			if foreignRoot(node.Name) {
+				c.foreignDepth--
 			}
 		case *HeadNode:
 			// Contributions are validated and scoped by collectHead before the

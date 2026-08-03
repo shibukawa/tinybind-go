@@ -7,6 +7,19 @@ Supply per-request values to a builtin element through a context-taking framewor
 
 ```yaml
 priority: should
+status: delivered 2026-08-03; see as_built
+as_built:
+  signature: func(context.Context) (V, error), called at the element's plan step
+  linked_symbol: the default this requirement chose; the typed provider-struct variant stays unshipped as recorded
+  result_type_named: ElementProvider.Result names V, because a hole closure has to be written down and Go infers a call's type arguments but never a function literal's parameter types; a single-hole element may use {{.}} for a provider returning a bare value
+  symbol_checking: left to the Go compiler, as with ContextExternals, because resolving Go symbols would mean loading the target package
+  context_channel: the async entry's ctx or the sync entry's WithContext; a render given neither fails with ErrNoRenderContext naming the element, rather than reading a substituted Background and rendering the absence of a value
+  before_commit: a provider failure during the initial pass is an ordinary render error, so a caller can still choose a status
+  imports: the provider's package is imported only where an element backed by one is written, per rule:usage-directed-generation
+  cache_exclusion: enforced at generation time by requirement:builtin-element-lowering
+  open_questions_answered:
+    memoization: per render, keyed by the provider; see stability
+    provider_failure: it may fail the render; the head pass never runs one, because head contributions stay static markup
 source:
   - requirement:builtin-element-lowering
   - user design discussion 2026-07-27
@@ -14,6 +27,15 @@ review_gate: proposed
 problem:
   boundary: requirement:html-component-api forbids http.ResponseWriter and http.Request parameters on a component, and a fragment is immutable and reusable across requests
   need: a CSRF token, a request ID, or a nonce is per request, so it cannot live in the fragment or in generated static bytes
+stability:
+  rule: a provider returns the same value for the same session, so calling it once, twice, or never yields one answer
+  it_is_a_read_not_a_mint: the framework's middleware puts the value in the context and the provider takes it out; a provider that generates a fresh value per call breaks the rule
+  why_it_is_a_requirement_rather_than_a_preference:
+    two_channels: a CSRF token reaches the browser twice — a response header for script, and a hidden input for a form that must work without script — and a header carries one value
+    consequence: two forms on a page holding two different tokens is a bug nobody observes until one of them is submitted, and then it is a failed submission with no diagnostic
+  module_side: the module calls a provider at most once per render and shares the result, keyed by the provider rather than by the element, so two elements backed by one function cannot disagree
+  scope_is_one_render: a redraw and a live delivery are separate renders and call again, which is correct because each is a separate response carrying its own header
+  errors_not_memoized: a failure ends the render, so there is nothing left to share it with
 signature:
   form: func(ctx context.Context) (V, error)
   V: a named struct type, or a single value type when the definition declares one hole
@@ -43,6 +65,7 @@ constraints:
   - htmlbind gains no net/http dependency, so decision:runtime-package-boundaries is unchanged
   - a provider result is treated as untrusted data and escaped by position, unless the definition uses the opaque shape
 acceptance:
+  - two occurrences of one element in a render carry the same value, and two elements sharing a provider do too
   - a handler passing a request context renders the token without the component naming a request type
   - rendering the same fragment to a buffer with no context fails before writing, naming the offending element
   - a provider error during the initial pass produces an error response rather than a half-written document
@@ -66,6 +89,5 @@ sync_external_alternative:
   consequence: the cache exclusion above holds only for this seam; a token reaching a template through an external is outside it
 open_questions:
   - whether the typed provider-struct variant ships alongside the linked-symbol default
-  - whether a provider result is memoized per render, per response, or invoked per occurrence
   - whether a provider may take typed element parameters in addition to the context
 ```
