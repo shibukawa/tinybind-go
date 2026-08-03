@@ -51,10 +51,23 @@ packages:
       - github.com/shibukawa/tinygodriver/nosql/dynamodb
     excludes:
       - database/sql
+  firestorebind:
+    status: proposed by decision:firestorebind-runtime-package
+    path: github.com/shibukawa/tinybind-go/firestorebind
+    owns:
+      - api:firestorebind-operations
+      - EntityEncoder, EntityDecoder, and Keyer used by generated Firestore codecs
+      - the Context client and namespace resolution of decision:firestore-context-client-api
+      - the typed transaction wrapper of decision:firestore-transaction-scope
+    imports:
+      - github.com/shibukawa/tinygodriver/nosql/datastore
+    excludes:
+      - database/sql
+    name_note: the only runtime named after its service rather than its driver package, per decision:firestorebind-runtime-package
 dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf
-  - dynamobind -> system:tinygodriver-dynamodb, the one runtime that depends on an external driver
+  - dynamobind -> system:tinygodriver-dynamodb, and firestorebind -> system:tinygodriver-firestore; the two runtimes that depend on an external driver, and the two that share no code with each other
 forbidden:
   - jsonbind -> httpbind
   - tinygodriver -> tinybind-go, in any package, example, or test
@@ -65,6 +78,7 @@ generation:
   HTTP: import httpbind and jsonbind; register each entry with its owner
   SQL-only: import and register with sqlbind
   DynamoDB-only: import the driver for the emitted methods; no registration, per decision:dynamobind-static-dispatch
+  Firestore-only: import the driver for the emitted methods; no registration, for the same reason
 generator:
   command: cmd/tinybind-gen
   mapping_file: tinybind_gen.go
