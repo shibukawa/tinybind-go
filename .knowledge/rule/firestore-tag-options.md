@@ -6,8 +6,9 @@ title: firestore Tag Options And Generation Checks
 The firestore tag names the property and its options; an option the generator does not know is a generation error, never a silently ignored string.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04; the checks below are generator/firestorebind.go and generator/firestorebind_types.go, covered by generator/firestorebind_test.go
 tag:
   spelling: firestore
   reason: it matches the package name of decision:firestorebind-runtime-package, and the house style where a tag is short and names its purpose, as with dynamo, check, db, opt, enum, query, payload and groupkey
@@ -37,7 +38,7 @@ identity_options:
   parent: at most one, on a datastore.Key field or on another bound type
 kind:
   default: the Go type name
-  override: open; either a kind option on a blank field or a generator option, decided when the codec is built rather than now
+  override: none is implemented; a kind= option or a generator option remains the shape if one is ever wanted, per decision:firestore-key-identity
   no_per_statement_form: unlike the table clause of requirement:dynamo-typed-queries, since a kind belongs to the type
 unknown_option:
   behavior: generation error naming the field and the option
@@ -55,6 +56,8 @@ generation_checks:
   - a generated method name colliding with a method the type already declares
   - a set option borrowed from rule:dynamo-tag-options, which names an encoding Datastore does not have
   - datastore present where firestore is absent
+  - a uint, uint64 or uintptr field, which exceeds the int64 a Datastore integer holds, per data:firestore-property-mapping
+  - a map field of any key type
 message: every failure names the struct, the field, and what was expected
 unexported_fields: skipped without error, as in every other mode
 what_has_no_counterpart_here:

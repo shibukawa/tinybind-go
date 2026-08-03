@@ -6,8 +6,9 @@ title: The Client And The Namespace Come From The Context
 Carry the Datastore client in the Context, give no entry of firestorebind a client parameter, and let the namespace be a Context fact rather than a tag or an argument.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, in firestorebind/context.go
 follows: decision:dynamo-context-client-api, whose call-site property is the requirement being restated
 one_surface:
   rule: there is no client-taking form, no suffixed variant and no generation option

@@ -6,12 +6,13 @@ title: The Key Is A Path, Not Two Attributes
 A generated key builder produces a datastore.Key path from a kind fixed by the type and one identifier field, with ancestors declared by a parent field rather than inferred.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, except the kind override, which stayed open below because nothing has needed it
 why_this_is_its_own_decision: the DynamoDB key model is two attributes that are also item attributes, and every difference in requirement:firestorebind-generated-entity-codec traces back to this one
 kind:
   default: the Go type name, unqualified
-  override: "firestore:\"-,kind=Reading\"" on a blank field, or a generator option; open, decided when the codec is built
+  override: none yet; a kind= option or a generator option remains the shape if one is ever needed, and nothing in the fixture or the runtime wanted it
   why_the_type_name_is_the_default:
     a_kind_is_intrinsic: an entity of kind Reading is a Reading wherever it is stored, unlike a table name, which decision:dynamo-single-table-scope calls a deployment fact
     consequence: requirement:firestore-typed-queries needs no table clause, and an item operation needs no kind argument, so both signatures lose a string the DynamoDB ones carry

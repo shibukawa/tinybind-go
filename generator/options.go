@@ -53,6 +53,8 @@ const (
 	// because it is what makes a key name single-source; a project that manages
 	// tables with IaC and never creates one in Go can drop it.
 	FeatureItemTable Feature = "item-table"
+	// FeatureEntityCodec turns off Firestore entity codec generation entirely.
+	FeatureEntityCodec Feature = "entity-codec"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
 	// structs. Disable it to keep hand-written sources untouched.
 	FeatureHelpBackfill Feature = "help-backfill"
@@ -205,7 +207,7 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:       PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath}},
+		RuntimePackages:       PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath}},
 		FileTypes:             PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
 		HTMLTemplatePattern:   DefaultHTMLTemplatePattern,
 		SQLTemplatePattern:    DefaultSQLTemplatePattern,
@@ -325,6 +327,13 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 	patterns := o.Calls.Set
 	if patterns == nil && !o.RuntimePackages.Disabled {
 		for _, path := range o.RuntimePackages.Set {
+			if path == firestorebindImportPath {
+				// firestorebind shares no signature with the others: its entries
+				// name neither a table nor a client, so the value argument sits
+				// one place earlier and the canonical set would mis-read it.
+				patterns = append(patterns, canonicalFirestoreCalls(path)...)
+				continue
+			}
 			patterns = append(patterns, canonicalRuntimeCalls(path)...)
 		}
 		if len(o.RuntimePackages.Set) > 0 {
@@ -387,6 +396,37 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 	return patterns
 }
 
+// canonicalFirestoreCalls declares the firestorebind entries discovery reads.
+//
+// The read side names its type explicitly, since T appears only in the result,
+// so the AST carries it even before any codec exists. The write side takes it
+// from the value argument at index 1: the signature is (ctx, v, opts...), with
+// no table and no client, so it is one earlier than the DynamoDB equivalent.
+func canonicalFirestoreCalls(path string) []CallPattern {
+	return []CallPattern{
+		EntityDecodeCall(Function(path, "Load"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "LoadAll"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "LoadTx"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "LoadAllTx"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "Query"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "QueryPage"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "QueryPageTx"), GenericType("entity", 0)),
+		EntityEncodeCall(Function(path, "Store"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Function(path, "Insert"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Function(path, "Update"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Function(path, "StoreAll"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Function(path, "InsertAll"), ArgumentType("entity", 1)),
+		EntityKeyCall(Function(path, "Remove"), ArgumentType("entity", 1)),
+		EntityKeyCall(Function(path, "RemoveAll"), ArgumentType("entity", 1)),
+		// The transaction writes are methods, and their value is the first
+		// argument because the receiver carries the handle.
+		EntityEncodeCall(Method(path, "Store", path, "Tx"), ArgumentType("entity", 0)),
+		EntityEncodeCall(Method(path, "Insert", path, "Tx"), ArgumentType("entity", 0)),
+		EntityEncodeCall(Method(path, "Update", path, "Tx"), ArgumentType("entity", 0)),
+		EntityKeyCall(Method(path, "Remove", path, "Tx"), ArgumentType("entity", 0)),
+	}
+}
+
 func usageForCallOperation(operation CallOperation) Usage {
 	switch operation {
 	case OperationRequestBind:
@@ -409,6 +449,12 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageEncodeItem | UsageDecodeItem
 	case OperationItemKeyDecode:
 		return UsageItemKey | UsageDecodeItem
+	case OperationEntityEncode:
+		return UsageEncodeEntity
+	case OperationEntityDecode:
+		return UsageDecodeEntity
+	case OperationEntityKey:
+		return UsageEntityKey
 	default:
 		return 0
 	}
@@ -433,13 +479,15 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,
 		OperationItemEncodeDecode, OperationItemKeyDecode:
 		return disabled[FeatureItemCodec]
+	case OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
+		return disabled[FeatureEntityCodec]
 	default:
 		return false
 	}
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "decode", "encode", "row", "item", "config"}
+	roles := []string{"request", "response", "stream", "decode", "encode", "row", "item", "entity", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source

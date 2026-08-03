@@ -33,6 +33,8 @@ type GenerateRequest struct {
 	DynamoName string
 	// DynamoQueryName is the generated DynamoDB query output file.
 	DynamoQueryName string
+	// FirestoreName is the Firestore entity codec output file.
+	FirestoreName string
 	// PublicDir and PublicURLBase override where extracted static assets are
 	// written and how they are referenced. Empty values retain the generator
 	// options; setting one requires setting the other.
@@ -56,6 +58,7 @@ type GenerateResult struct {
 	ConfigBindPath  string
 	DynamoPath      string
 	DynamoQueryPath string
+	FirestorePath   string
 	OpenAPIPath     string
 	TemplatesPath   string
 	// AssetPaths holds the static files extracted from component style and
@@ -100,7 +103,7 @@ func (result GenerateResult) Paths() []string {
 	if result.DepsPath != "" {
 		paths = append(paths, result.DepsPath)
 	}
-	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -113,7 +116,7 @@ func (result GenerateResult) Paths() []string {
 // Go and its name already records the hash of its bytes.
 func (result GenerateResult) goPaths() []string {
 	paths := make([]string, 0, 6)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -152,6 +155,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.DynamoQueryName == "" {
 		request.DynamoQueryName = defaultDynamoQueryOut
+	}
+	if request.FirestoreName == "" {
+		request.FirestoreName = defaultFirestoreOut
 	}
 
 	options := request.applyTo(g.Options)
@@ -223,6 +229,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.DynamoQueryPath, err = runner.generateDynamoQueries(load, request.Out, request.DynamoQueryName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate dynamobind queries: %w", err)
+	}
+	result.FirestorePath, err = runner.generateFirestoreEntities(load, request.Out, request.FirestoreName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate firestorebind: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err

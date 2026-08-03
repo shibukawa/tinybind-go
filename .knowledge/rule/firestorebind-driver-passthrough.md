@@ -6,8 +6,9 @@ title: firestorebind Driver Passthrough
 The binding layer adds typing only; it never absorbs an error, a retry, a transaction restart, or a batch boundary that the driver made visible.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04; the limits rule is enforced by there being no numeric literal in firestorebind/ or in generated code
 errors:
   - wrap with %w or not at all
   - errors.Is against ErrNoSuchEntity, ErrAlreadyExists, ErrAborted, ErrFailedPrecondition and every other driver sentinel keeps working

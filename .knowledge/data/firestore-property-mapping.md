@@ -9,8 +9,7 @@ The Go type set the generator accepts and the property value each one produces; 
 scalar:
   string: String; the empty string is valid and is stored, and differs from an absent property
   int, int8, int16, int32, int64: Integer, which is text on the wire
-  uint, uint8, uint16, uint32: Integer
-  uint64: Integer, and a value above math.MaxInt64 is a runtime encode error rather than a wrap
+  uint8, uint16, uint32: Integer; every value fits the int64 Datastore stores
   float32, float64: Double, a real JSON number
   bool: Bool
   "[]byte": Blob, base64 on the wire
@@ -36,6 +35,14 @@ maps_are_rejected:
   changed_2026_08_03: an earlier draft mapped map[string]T to a nested entity; that was written before v1.1.5 and against a weaker version of this argument
 escape_hatch:
   datastore.Value: passed through unchanged, for what this table cannot express
+unsigned_wider_than_int64_is_rejected:
+  kinds: uint, uint64 and uintptr are generation errors naming the field
+  reason: a Datastore integer is an int64, and the driver refuses to marshal an Integer whose text does not parse as one, so nothing wider ever reaches the wire
+  measured_2026_08_03: an IntString carrying math.MaxUint64 fails inside the driver's own MarshalJSON with "integerValue is not an int64"; the value cannot be sent at all, so there is no stored form to describe
+  why_reject_the_field_rather_than_the_value: a field that accepted uint64 would compile, store small values for months and fail on the first large one, with the error surfacing from inside json.Marshal without naming the property
+  changed_2026_08_03: an earlier draft mapped uint64 through IntString and called an over-large value a runtime encode error; that was written before the driver's marshal-side check was measured
+  contrast: data:dynamodb-attribute-mapping takes every unsigned kind, because a DynamoDB N is arbitrary-precision text with 38 significant digits
+  workaround: int64 where the range allows, or a string property where the value really is that wide and is never ordered on
 two_number_types:
   statement: Integer and Double are separate types, not two spellings of one
   forbidden: encoding an int field as Double, or decoding a Double into an int field

@@ -139,11 +139,17 @@ const (
 	UsageEncodeItem
 	UsageDecodeItem
 	UsageItemKey
+	UsageEncodeEntity
+	UsageDecodeEntity
+	UsageEntityKey
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
 	// UsageItem is every DynamoDB item entry point. It stays out of UsageAll:
 	// the item codec has its own generate-all rule, which requires a dynamo tag,
 	// so an unrelated request struct never acquires one.
 	UsageItem = UsageEncodeItem | UsageDecodeItem | UsageItemKey
+	// UsageEntity is every Firestore entity entry point, and stays out of
+	// UsageAll for the same reason, requiring a firestore tag instead.
+	UsageEntity = UsageEncodeEntity | UsageDecodeEntity | UsageEntityKey
 )
 
 // DiscoverySymbol identifies a generic function and the entry point it needs.

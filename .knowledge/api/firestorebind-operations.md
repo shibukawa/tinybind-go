@@ -6,8 +6,9 @@ title: firestorebind Operations
 Typed wrappers over the driver entity calls: the caller passes and receives application types, and every driver result the wrapper cannot carry stays reachable.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, in firestorebind/
 package: github.com/shibukawa/tinybind-go/firestorebind
 shape_source: api:dynamobind-operations, with the arguments the key model removes
 constraints:
@@ -18,6 +19,7 @@ constraints:
 single:
   Load: "func Load[T any, PT interface{*T; EntityDecoder}](ctx, key datastore.Key, opts ...datastore.ReadOption) (T, error)"
   Store: "func Store[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) (datastore.Key, error)"
+  version_precondition: Store and Update append datastore.WithBaseVersion when the value implements Versioner and reports a non-zero version, per decision:firestore-transaction-scope
   Insert: "func Insert[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) (datastore.Key, error)"
   Update: "func Update[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) error"
   Remove: "func Remove[T Keyer](ctx, v T, opts ...datastore.WriteOption) error"
@@ -48,8 +50,10 @@ count:
 batch:
   MaxLookupKeys: not redeclared here; the driver exports it and rule:firestorebind-driver-passthrough forbids a parallel constant that could drift from it
   LoadAll: "func LoadAll[T any, PT ...](ctx, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing []datastore.Key, deferred []datastore.Key, err error)"
-  StoreAll: "func StoreAll[T EntityEncoder](ctx, vs []T) ([]datastore.Key, error)"
-  RemoveAll: "func RemoveAll[T Keyer](ctx, vs []T) error"
+  StoreAll: "func StoreAll[T EntityEncoder](ctx, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error)"
+  InsertAll: "func InsertAll[T EntityEncoder](ctx, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error)"
+  RemoveAll: "func RemoveAll[T Keyer](ctx, vs []T, opts ...datastore.WriteOption) error"
+  not_a_transaction: chunking means a large batch commits in pieces, so a failure leaves the earlier pieces written; the godoc says so and points at Run for all-or-nothing
   three_results_from_a_lookup: found, missing and deferred are three different facts, and collapsing missing into an absent value would lose the difference between "not stored" and "not read yet"
   deferred: returned, never looped, matching how the driver treats them and what rule:firestorebind-driver-passthrough requires
   chunking:
