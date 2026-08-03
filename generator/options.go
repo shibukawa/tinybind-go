@@ -77,6 +77,9 @@ type Options struct {
 	// DynamoTemplatePattern is the base-name glob for DynamoDB query
 	// declarations. An empty value uses DefaultDynamoTemplatePattern.
 	DynamoTemplatePattern string
+	// FirestoreTemplatePattern is the base-name glob for Firestore query
+	// declarations. An empty value uses DefaultFirestoreTemplatePattern.
+	FirestoreTemplatePattern string
 	// SQLDialect names the target database for SQL templates: "postgresql",
 	// "mysql", or "sqlite". A run that discovers a SQL template must set it.
 	// There is no default, because an assumed dialect emits placeholders the
@@ -207,13 +210,14 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:       PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath}},
-		FileTypes:             PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
-		HTMLTemplatePattern:   DefaultHTMLTemplatePattern,
-		SQLTemplatePattern:    DefaultSQLTemplatePattern,
-		DynamoTemplatePattern: DefaultDynamoTemplatePattern,
-		PublicDir:             DefaultPublicDir,
-		PublicURLBase:         DefaultPublicURLBase,
+		RuntimePackages:          PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath}},
+		FileTypes:                PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
+		HTMLTemplatePattern:      DefaultHTMLTemplatePattern,
+		SQLTemplatePattern:       DefaultSQLTemplatePattern,
+		DynamoTemplatePattern:    DefaultDynamoTemplatePattern,
+		FirestoreTemplatePattern: DefaultFirestoreTemplatePattern,
+		PublicDir:                DefaultPublicDir,
+		PublicURLBase:            DefaultPublicURLBase,
 	}
 }
 

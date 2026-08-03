@@ -20,6 +20,7 @@ func sample() firestorefixture.Reading {
 	extra := "present"
 	return firestorefixture.Reading{
 		ID:     "r-1",
+		Sensor: "s-9",
 		Note:   "多バイト note",
 		At:     time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC),
 		Scale:  1.5,

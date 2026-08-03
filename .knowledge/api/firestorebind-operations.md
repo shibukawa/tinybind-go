@@ -43,6 +43,12 @@ iterated:
   cost_disclosure: the godoc states that one range can issue many requests, and that a kind-only query walks every entity of the kind
   discards: SkippedResults and the final EndCursor; a caller who needs to resume or to diagnose an offset uses QueryPage
   no_scan: a kind-only Query is what Scan would have been, so there is no second entry point
+keys_only:
+  QueryKeysPage: "func QueryKeysPage(ctx, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error)"
+  KeyPage: "type KeyPage struct { Keys []datastore.Key; EndCursor datastore.Cursor; More datastore.MoreResults; SkippedResults int32 }"
+  ungenericized: nothing is decoded, so there is no type to infer
+  does_not_set_keys_only: the query must already carry KeysOnly; a wrapper that set it would return keys where the caller's query said entities
+  used_by: the keys result shape of requirement:firestore-typed-queries, which sets it in generated code
 count:
   Count: "func Count(ctx, q *datastore.Query, opts ...datastore.ReadOption) (int64, error)"
   ungenericized: a count returns no entities, so there is nothing to decode and no type parameter to infer
@@ -75,10 +81,11 @@ errors:
   type: "firestorebind.Error{Property, Expected, Got, Message}", built by TypeError for a wrong kind and ValueError for a value the field cannot hold
   finding_it: firestorebind.AsError walks the chain by type assertion, as jsonbind.AsError does, because errors.As needs reflection
 untyped_query_escape_hatch:
-  status: the query is built with the driver's own builder, so a property name is a string until requirement:firestore-typed-queries lands
-  unchecked: a renamed property still compiles and returns an empty batch, which is the quiet failure that requirement makes loud
+  status: the escape hatch, now that requirement:firestore-typed-queries generates the declared form
+  unchecked: a query built with the driver's own builder names properties as strings, so a renamed tag still compiles and returns an empty batch
 deferred:
   - a batch-level iterator yielding Page[T]
+  - a keys-only iterator; QueryKeysPage is one request, and nothing has needed the paging form
   - a typed query builder; the declaration of requirement:firestore-typed-queries is the answer, not a fluent API
   - AllocateIDs, until a caller needs a key before the write
 related:

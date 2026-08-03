@@ -89,6 +89,60 @@ func Query[T any, PT interface {
 	}
 }
 
+// KeyPage is one batch of a keys-only query.
+//
+// A keys-only query reads no properties, which is the cheap way to test
+// existence in bulk or to collect keys for a later LoadAll. It pages like any
+// other query, and the reason a batch ended is kept for the same reason.
+type KeyPage struct {
+	Keys      []datastore.Key
+	EndCursor datastore.Cursor
+	More      datastore.MoreResults
+
+	SkippedResults int32
+}
+
+// HasMore reports whether running the query again from EndCursor could return
+// anything.
+func (p KeyPage) HasMore() bool {
+	return p.More == datastore.NotFinished || p.More == datastore.MoreResultsAfterLimit
+}
+
+// QueryKeysPage runs one keys-only query and collects the keys of its batch.
+//
+// It is not generic: nothing is decoded, so there is no type to infer. The
+// query must already be keys-only; this does not set that for the caller,
+// because a query that silently returned keys where the caller expected
+// entities would be the surprise this package avoids.
+func QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
+	c, _, err := clientFor(ctx)
+	if err != nil {
+		return KeyPage{}, err
+	}
+	batch, err := c.Run(ctx, q, opts...)
+	if err != nil {
+		return KeyPage{}, err
+	}
+	if batch == nil {
+		return KeyPage{}, nil
+	}
+	out := KeyPage{
+		Keys:           make([]datastore.Key, 0, len(batch.Entities)),
+		EndCursor:      batch.EndCursor,
+		More:           batch.More,
+		SkippedResults: batch.SkippedResults,
+	}
+	for _, entity := range batch.Entities {
+		if entity.Key == nil {
+			// A keys-only reply that carries no key is a reply this cannot use,
+			// and skipping it silently would under-report the batch.
+			return KeyPage{}, KeyError("a keys-only result carried no key")
+		}
+		out.Keys = append(out.Keys, *entity.Key)
+	}
+	return out, nil
+}
+
 // Count runs an aggregation query and returns how many entities match.
 //
 // It is not generic: a count decodes no entity, so there is no type to infer. It

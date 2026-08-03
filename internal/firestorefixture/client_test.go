@@ -5,6 +5,7 @@ package firestorefixture_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
@@ -397,5 +398,96 @@ func TestVersionMakesTheWriteConditional(t *testing.T) {
 	}
 	if got := fake.lastBaseVersion(); got == "" {
 		t.Error("a value read at a version wrote unconditionally")
+	}
+}
+
+// A declared query reaches the wire with the kind its type carries, and returns
+// typed values without the caller naming a property.
+func TestDeclaredQueryRunsAgainstTheDeclaredKind(t *testing.T) {
+	ctx, fake := withFake(t)
+	for _, id := range []string{"a", "b", "c"} {
+		r := sample()
+		r.ID = firestorefixture.SensorID(id)
+		if _, err := firestorefixture.StoreReading(ctx, r); err != nil {
+			t.Fatalf("store %s: %v", id, err)
+		}
+	}
+	// A Task shares the store and must not come back from a Reading query.
+	if _, err := firestorefixture.InsertTask(ctx, firestorefixture.Task{Number: 1, Title: "t"}); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	var seen int
+	for reading, err := range firestorefixture.ReadingsBySensor(ctx, "s-9") {
+		if err != nil {
+			t.Fatalf("iterate: %v", err)
+		}
+		if reading.Sensor != "s-9" {
+			t.Errorf("sensor: got %q", reading.Sensor)
+		}
+		seen++
+	}
+	if seen != 3 {
+		t.Errorf("got %d readings, want 3", seen)
+	}
+	if got := fake.lastKind(); got != "Reading" {
+		t.Errorf("kind on the wire: got %q, want Reading", got)
+	}
+}
+
+// A declared count runs the aggregation query rather than paging entities.
+func TestDeclaredCountUsesAggregation(t *testing.T) {
+	ctx, fake := withFake(t)
+	for _, id := range []string{"a", "b"} {
+		r := sample()
+		r.ID = firestorefixture.SensorID(id)
+		if _, err := firestorefixture.StoreReading(ctx, r); err != nil {
+			t.Fatalf("store %s: %v", id, err)
+		}
+	}
+
+	n, err := firestorefixture.ActiveReadingCount(ctx, true)
+	if err != nil {
+		t.Fatalf("ActiveReadingCount: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count: got %d, want 2", n)
+	}
+	if got := fake.countOf("runQuery"); got != 0 {
+		t.Errorf("a declared count paged entities: runQuery ran %d times", got)
+	}
+}
+
+// A declared keys-only query sends keysOnly and returns keys, not entities.
+func TestDeclaredKeysQuery(t *testing.T) {
+	ctx, fake := withFake(t)
+	if _, err := firestorefixture.InsertTask(ctx, firestorefixture.Task{Number: 7, Title: "find me"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	page, err := firestorefixture.TaskKeys(ctx, "find me")
+	if err != nil {
+		t.Fatalf("TaskKeys: %v", err)
+	}
+	if len(page.Keys) != 1 || page.Keys[0].Path[0].ID != 7 {
+		t.Fatalf("keys: got %v", page.Keys)
+	}
+	if !fake.lastKeysOnly() {
+		t.Error("the query did not ask for keys only")
+	}
+}
+
+// The declared index is a value a deploy step can marshal, and it describes the
+// query the author wrote rather than one the generator guessed.
+func TestDeclaredIndexMarshals(t *testing.T) {
+	yaml, err := datastore.MarshalIndexYAML([]datastore.Index{firestorefixture.WarmReadingsBySensorIndex})
+	if err != nil {
+		t.Fatalf("MarshalIndexYAML: %v", err)
+	}
+	text := string(yaml)
+	for _, want := range []string{"Reading", "sensor", "at", "desc"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("index yaml is missing %q\n%s", want, text)
+		}
 	}
 }

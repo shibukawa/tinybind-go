@@ -43,6 +43,22 @@ type fakeDatastore struct {
 	// baseVersion is the precondition on the most recent write mutation, empty
 	// when none was sent.
 	baseVersion string
+	// kind and keysOnly are what the most recent query asked for, which is how
+	// a test sees that a declaration reached the wire as written.
+	kind     string
+	keysOnly bool
+}
+
+func (f *fakeDatastore) lastKind() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.kind
+}
+
+func (f *fakeDatastore) lastKeysOnly() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.keysOnly
 }
 
 func (f *fakeDatastore) lastBaseVersion() string {
@@ -274,6 +290,11 @@ func (f *fakeDatastore) runQuery(w http.ResponseWriter, body map[string]json.Raw
 		Kind []struct {
 			Name string `json:"name"`
 		} `json:"kind"`
+		Projection []struct {
+			Property struct {
+				Name string `json:"name"`
+			} `json:"property"`
+		} `json:"projection"`
 		StartCursor string `json:"startCursor"`
 	}
 	_ = json.Unmarshal(body["query"], &query)
@@ -284,6 +305,10 @@ func (f *fakeDatastore) runQuery(w http.ResponseWriter, body map[string]json.Raw
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.kind = kind
+	// A keys-only query is a projection of the __key__ pseudo-property, which
+	// is how it travels on this wire.
+	f.keysOnly = len(query.Projection) == 1 && query.Projection[0].Property.Name == "__key__"
 	all := f.matching(kind)
 	start := 0
 	if query.StartCursor != "" {

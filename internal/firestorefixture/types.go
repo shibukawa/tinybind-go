@@ -32,6 +32,7 @@ type Reading struct {
 	ID     SensorID         `firestore:"-,name"`
 	Parent datastore.Key    `firestore:"-,parent"`
 	Ver    int64            `firestore:"-,version"`
+	Sensor SensorID         `firestore:"sensor"`
 	Note   string           `firestore:"note"`
 	At     time.Time        `firestore:"at"`
 	Scale  float64          `firestore:"scale"`

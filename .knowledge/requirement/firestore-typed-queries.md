@@ -6,9 +6,16 @@ title: Typed Firestore Datastore Queries
 Generate one named function per declared access pattern, so a query names no kind, no property and no operator at the call site.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04
 stage: 2 of requirement:firestorebind-product-goals
+built:
+  grammar: templates/firestorebind/query.go, beside the HTML, SQL and DynamoDB template packages
+  checks: generator/firestorequery_plan.go
+  emitter: generator/firestorequery_emit.go
+  wiring: generator/firestorequery_generate.go, writing firestorequery_gen.go
+  fixture: internal/firestorefixture/readings.tb.firestore
 problem:
   now: "firestorebind.Query[Reading](ctx, datastore.NewQuery(\"Reading\").Filter(\"sensor\", datastore.Equal, datastore.String(id)).Order(\"at\"))"
   strings: the kind, the property name and the order property are three unrelated strings, and a tag rename breaks none of them at compile time
@@ -31,7 +38,11 @@ result_type_slot:
   batch: one request, returning Page[T]
   many: the iterator over every batch
   count: an int64 through the aggregation query, with no entities decoded
-  keys: a key-only query, returning []datastore.Key, which is the cheap way to test existence in bulk
+  keys: a keys-only query, returning KeyPage
+  keys_returns_a_page_not_a_slice:
+    changed_2026_08_04: an earlier draft said []datastore.Key
+    why: a flat slice would have to page internally to be complete, which hides the request count the shape exists to keep visible; KeyPage carries the cursor and the reason the batch ended, exactly as Page does
+    runtime: firestorebind.QueryKeysPage, added for this shape
   reason: rule:firestorebind-driver-passthrough keeps the request count visible, so the author picks rather than a default
 body_clauses:
   where: property filters composed with and, using ==, !=, <, <=, >, >=, in and not in
@@ -54,7 +65,8 @@ type_checking:
 generated:
   one_function_per_declaration: named by the declaration, returning the batch, iterator, count or key form its result type selects
   signature: context, the declared parameters, then variadic driver read options, and nothing else
-  query_value: built once as a package-level *datastore.Query where every filter is constant, and per call where a parameter binds one
+  query_value: built per call, since datastore.Query is a builder whose methods clone; only the kind is a package-level constant
+  kind_constant: one per statement, taken from the type's own Kind rather than from the declaration, so the two cannot disagree
   no_builder: the function embeds its query directly; no per-type query builder is generated
   transaction_form: open, per decision:firestore-transaction-scope
 counts_as_usage:
@@ -63,9 +75,13 @@ counts_as_usage:
   effect: a package whose only Datastore use is a declaration still gets a codec, per rule:usage-directed-generation
 what_typing_still_cannot_promise:
   index: a query combining an equality filter with an inequality or an order on another property needs a composite index, so it compiles and fails on first run with FAILED_PRECONDITION
-  no_warning_either: the generator does not work out which declarations need one, per decision:firestore-no-schema-artifact; the upstream driver declined the same derivation in v1.1.5 and the argument holds here
-  what_the_author_can_do: an optional index clause in the declaration emits a datastore.Index value a deploy step can apply, so the index is declared rather than inferred
-  duty: the guide says a declaration is not a deployment, and that an author who writes no index clause gets no warning
+  no_derivation: the generator does not work out which index a declaration needs, per decision:firestore-no-schema-artifact; the upstream driver declined the same derivation in v1.1.5 and the argument holds here
+  what_the_author_can_do: an index clause emits a datastore.Index value a deploy step can marshal, exported when the statement is, so the index is declared rather than inferred
+  a_hint_that_names_nothing:
+    what: a declaration whose shape commonly needs a composite index, and that declares none, gets a godoc line saying it may need one
+    why_this_is_not_the_declined_derivation: it names no index and claims no certainty, so an author cannot act on it wrongly; the failure mode upstream warned about is a named index that does not fix the query
+    where: the generated godoc, not a build diagnostic, so it is read by someone already looking at the function
+  duty: the guide says a declaration is not a deployment
   comparison: requirement:dynamo-typed-queries could lean on decision:dynamobind-table-definition for the schema half; here the schema half is opt-in and the author owns it
 depends_on:
   - requirement:firestorebind-generated-entity-codec, for the property names and value encoders

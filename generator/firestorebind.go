@@ -170,7 +170,17 @@ func analyzeFirestoreEntities(load *packageLoad, opts Options) (*FirestorePackag
 	}
 	plan := &FirestorePackagePlan{Package: pkg.Name, PackagePath: pkg.PkgPath}
 	symbols := firestoreSymbols(normalized.symbols)
-	if len(symbols) == 0 && !opts.GenerateAll {
+	// A declared query is a use of its result type as surely as a call is: the
+	// generated function instantiates firestorebind.Query with it, which does
+	// not compile without the decoder. Reading the declarations here rather than
+	// at the query pass means the codec and the query agree on what is bound,
+	// and that a package whose only Firestore use is a declaration still gets a
+	// codec.
+	declared, err := declaredFirestoreEntityTypes(load.dir, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(symbols) == 0 && len(declared) == 0 && !opts.GenerateAll {
 		return plan, nil
 	}
 
@@ -206,6 +216,14 @@ func analyzeFirestoreEntities(load *packageLoad, opts Options) (*FirestorePackag
 			if hasFirestoreTag(pkg, name) {
 				usage[name] |= FirestoreEncode | FirestoreDecode | FirestoreKey
 			}
+		}
+	}
+	// A name the package does not declare with firestore tags is left out, so
+	// the query pass reports it against the declaration that named it rather
+	// than this pass failing on a type it cannot collect.
+	for _, name := range declared {
+		if _, ok := sources[name]; ok && hasFirestoreTag(pkg, name) {
+			usage[name] |= FirestoreDecode
 		}
 	}
 	// A bound type that declares an identity always gets its key builder,
@@ -276,6 +294,7 @@ func skipFirestoreFile(f *ast.File, pkg *packages.Package, normalized normalized
 		base == defaultDynamoOut ||
 		base == defaultDynamoQueryOut ||
 		base == defaultFirestoreOut ||
+		base == defaultFirestoreQueryOut ||
 		base == "tinybind_gen.go" ||
 		base == "tinybind_openapi_gen.go" ||
 		gensource.IsGenerated(f, normalized.parserConfig.GeneratedHeaders...)
