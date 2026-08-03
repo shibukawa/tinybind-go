@@ -148,6 +148,7 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (template
 	}
 	cache := newConversionCache(g.Options.ConversionCacheDir)
 	hooks := runScopedHooks(g.Options.ReferenceHooks, cache)
+	g.prewarmConversions(files, hooks)
 	var produced []htmlbind.ProducedFile
 	var generated [][]byte
 	var assets []htmlbind.Asset

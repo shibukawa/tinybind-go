@@ -2,6 +2,7 @@ package htmlbind_test
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -502,5 +503,289 @@ func TestRewritingIsDeterministic(t *testing.T) {
 		if string(first) != string(again) {
 			t.Fatalf("rewriting is not deterministic:\n--- first ---\n%s--- again ---\n%s", first, again)
 		}
+	}
+}
+
+// stylesheetHook is the CSS-module case: a TypeScript entry point whose build
+// emits a companion stylesheet that no attribute in the template can name.
+func stylesheetHook(entry, script, stylesheet string) htmlbind.ReferenceHook {
+	return htmlbind.ReferenceHook{
+		Name: "ts-build", Element: "script", Attribute: "src",
+		Match: func(value string) bool { return strings.HasSuffix(value, ".ts") },
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			if request.Value != entry {
+				return htmlbind.ReferenceResult{Skip: true, Reason: "not the entry point"}, nil
+			}
+			return htmlbind.ReferenceResult{
+				Value: script,
+				Head: []htmlbind.HeadEntry{{
+					Element:    "link",
+					Attributes: map[string]string{"rel": "stylesheet", "href": stylesheet},
+				}},
+			}, nil
+		},
+	}
+}
+
+// TestHookContributesHead covers the case the whole feature exists for: the
+// build produces a stylesheet, and without a contribution no page loads it.
+func TestHookContributesHead(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<head>
+<script src="/public/app.ts" type="module"></script>
+</head>
+<div>body</div>
+}
+`
+	result, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{
+			stylesheetHook("/public/app.ts", "/public/app.js", "/public/app.css"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(result.GoSource)
+	if !strings.Contains(generated, `<link href=\"/public/app.css\" rel=\"stylesheet\">`) {
+		t.Fatalf("the produced stylesheet was not linked:\n%s", generated)
+	}
+	// The author's own entry comes first: a contribution is a consequence of a
+	// rewrite, not something placed in the template.
+	script := strings.Index(generated, `/public/app.js`)
+	link := strings.Index(generated, `/public/app.css`)
+	if script < 0 || link < 0 || script > link {
+		t.Fatalf("a contribution did not land after the authored head entry:\n%s", generated)
+	}
+}
+
+// TestHookContributesHeadWithoutADeclaration covers a component that writes no
+// head of its own, which is the ordinary case for one that names its entry
+// point from the document shell.
+func TestHookContributesHeadWithoutADeclaration(t *testing.T) {
+	source := `package pages
+
+export component Widget(): html {
+<div><script src="/public/app.ts" type="module"></script></div>
+}
+`
+	result, err := htmlbind.GenerateModule("widget.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{
+			stylesheetHook("/public/app.ts", "/public/app.js", "/public/app.css"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(result.GoSource)
+	if !strings.Contains(generated, `<link href=\"/public/app.css\" rel=\"stylesheet\">`) {
+		t.Fatalf("a component with no head declaration got no contribution:\n%s", generated)
+	}
+	// The synthesized head is hoisted, so nothing of it is emitted in the body.
+	if strings.Contains(generated, `<div><link`) {
+		t.Fatalf("a contribution was emitted in place rather than hoisted:\n%s", generated)
+	}
+}
+
+// TestHookHeadContributionIsDeduplicated covers two entry points importing one
+// CSS module, which is one link and not two.
+func TestHookHeadContributionIsDeduplicated(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<div>
+<script src="/public/a.ts" type="module"></script>
+<script src="/public/b.ts" type="module"></script>
+<script src="/public/a.ts" type="module"></script>
+</div>
+}
+`
+	shared := htmlbind.ReferenceHook{
+		Name: "ts-build", Element: "script", Attribute: "src",
+		Match: func(value string) bool { return strings.HasSuffix(value, ".ts") },
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			return htmlbind.ReferenceResult{
+				Value: strings.TrimSuffix(request.Value, ".ts") + ".js",
+				Head: []htmlbind.HeadEntry{{
+					Element:    "link",
+					Attributes: map[string]string{"rel": "stylesheet", "href": "/public/shared.css"},
+				}},
+			}, nil
+		},
+	}
+	result, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{shared},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(result.GoSource), "/public/shared.css"); count != 1 {
+		t.Fatalf("one stylesheet produced %d links, want 1:\n%s", count, result.GoSource)
+	}
+}
+
+// TestHookHeadContributionsDisagree covers two conversions naming one file with
+// different attributes, which cannot both be right and must not be settled by
+// whichever template was walked first.
+func TestHookHeadContributionsDisagree(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<div>
+<script src="/public/a.ts" type="module"></script>
+<script src="/public/b.ts" type="module"></script>
+</div>
+}
+`
+	disagreeing := htmlbind.ReferenceHook{
+		Name: "ts-build", Element: "script", Attribute: "src",
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			media := "all"
+			if strings.Contains(request.Value, "b.ts") {
+				media = "print"
+			}
+			return htmlbind.ReferenceResult{
+				Value: strings.TrimSuffix(request.Value, ".ts") + ".js",
+				Head: []htmlbind.HeadEntry{{
+					Element:    "link",
+					Attributes: map[string]string{"rel": "stylesheet", "href": "/public/shared.css", "media": media},
+				}},
+			}, nil
+		},
+	}
+	_, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{disagreeing},
+	})
+	if err == nil {
+		t.Fatal("two contributions disagreeing about one file were accepted")
+	}
+	if !strings.Contains(err.Error(), "shared.css") {
+		t.Fatalf("the conflict does not name the file: %v", err)
+	}
+}
+
+// TestHookSkipContributesNoHead covers a declined conversion, which produced no
+// file and so has nothing to load.
+func TestHookSkipContributesNoHead(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<div><script src="/public/vendor.ts" type="module"></script></div>
+}
+`
+	result, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{
+			stylesheetHook("/public/app.ts", "/public/app.js", "/public/app.css"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result.GoSource), "app.css") {
+		t.Fatalf("a skip contributed a head entry:\n%s", result.GoSource)
+	}
+}
+
+// TestHookHeadContributionIsRestricted covers a hook reaching past loading what
+// it produced and into rewriting the document.
+func TestHookHeadContributionIsRestricted(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<div><script src="/public/app.ts" type="module"></script></div>
+}
+`
+	for _, element := range []string{"title", "meta", "base"} {
+		_, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+			ReferenceHooks: []htmlbind.ReferenceHook{{
+				Name: "ts-build", Element: "script", Attribute: "src",
+				Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+					return htmlbind.ReferenceResult{
+						Value: "/public/app.js",
+						Head:  []htmlbind.HeadEntry{{Element: element, Attributes: map[string]string{"content": "x"}}},
+					}, nil
+				},
+			}},
+		})
+		if err == nil {
+			t.Fatalf("a hook contributed a %s to the head", element)
+		}
+		if !strings.Contains(err.Error(), element) {
+			t.Fatalf("the diagnostic does not name %s: %v", element, err)
+		}
+	}
+}
+
+// TestHookHeadContributionEscapes covers a transform handing over a value that
+// would break out of the attribute it lands in.
+func TestHookHeadContributionEscapes(t *testing.T) {
+	source := `package pages
+
+export component Page(): html {
+<div><script src="/public/app.ts" type="module"></script></div>
+}
+`
+	result, err := htmlbind.GenerateModule("page.tb.html", []byte(source), htmlbind.GenerateOptions{
+		ReferenceHooks: []htmlbind.ReferenceHook{{
+			Name: "ts-build", Element: "script", Attribute: "src",
+			Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+				return htmlbind.ReferenceResult{
+					Value: "/public/app.js",
+					Head: []htmlbind.HeadEntry{{
+						Element:    "link",
+						Attributes: map[string]string{"rel": "stylesheet", "href": `x" onload="alert(1)`},
+					}},
+				}, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result.GoSource), `onload=\"alert`) {
+		t.Fatalf("a contributed value escaped its attribute:\n%s", result.GoSource)
+	}
+}
+
+// TestCollectReferencesCallsNoTransform covers the discovery pass: it must find
+// exactly what the rewrite would claim, and convert none of it.
+func TestCollectReferencesCallsNoTransform(t *testing.T) {
+	source := []byte(`package pages
+
+export component Page(): html {
+<head>
+<script src="/public/app.ts" type="module"></script>
+</head>
+<div>
+<img src="/public/a.png">
+<img src="/public/a.png">
+<img src="/public/b.png">
+<img src={item.Image}>
+<svg><image src="/public/c.png"/></svg>
+</div>
+}
+`)
+	calls := 0
+	hooks := []htmlbind.ReferenceHook{
+		imageHook(&calls),
+		stylesheetHook("/public/app.ts", "/public/app.js", "/public/app.css"),
+	}
+	claims, err := htmlbind.CollectReferences("page.tb.html", source, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("discovery called %d transforms, want none", calls)
+	}
+	var found []string
+	for _, claim := range claims {
+		found = append(found, claim.Hook+" "+claim.Value)
+	}
+	want := []string{"image-format /public/a.png", "image-format /public/b.png", "ts-build /public/app.ts"}
+	got := append([]string(nil), found...)
+	sort.Strings(got)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("discovery found %v, want %v", got, want)
 	}
 }

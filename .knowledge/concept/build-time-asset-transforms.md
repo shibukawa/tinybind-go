@@ -68,6 +68,9 @@ non_goals:
   - a plugin surface loaded after generation
 later_items:
   intrinsic_size: a transform holding decoded image bytes knows the pixel size, so it could add width and height to an img that omits them; same hook, separate decision
-  preload: whether a hook may contribute a head link, which requirement:head-merging would carry
-  css_url: requirement:scoped-component-style already rewrites a style block, so a url() pass has a natural home and no design
+  css_url: requirement:scoped-component-style already rewrites a style block, so a url() pass has a natural home and no design; a standalone stylesheet in a project's own asset tree is outside every requirement here and stays the caller's, so the two never contend
+taken_2026_08_04:
+  head_contribution: the preload item, promoted to requirement:hook-head-contribution once a downstream project found the case that makes it a correctness problem rather than a latency one
+  parallel_conversion: requirement:parallel-conversion, which converts before the compile rather than after it, so the cold-cache serialization goes without giving up the outcome the rewrite depends on
+  neither_widens_the_non_goals: a head entry references a file the transform already produced, and concurrency changes wall clock; no codec, bundler, or format table comes in with either
 ```

@@ -147,6 +147,28 @@ type Options struct {
 	// A produced file with no directory configured is a configuration error
 	// rather than a silent discard.
 	DerivedAssetDir string
+	// ConversionWorkers converts what the compile is about to ask for ahead of
+	// it, on this many goroutines, instead of one encode at a time inside a
+	// sequential compile. It changes wall clock and nothing else: the same
+	// bytes, the same produced files, and the same diagnostics in the same
+	// order.
+	//
+	// Zero or one keeps every transform on one goroutine, which is the default
+	// because concurrency is a promise about the caller's transform that only
+	// the caller can make. Being a pure function of what it reads is necessary
+	// and not sufficient: a transform holding a shared scratch buffer is pure by
+	// that definition and unsafe by this one. Set this only once Transform is
+	// safe for concurrent use.
+	//
+	// A warm cache converts nothing and starts nothing whatever this says.
+	//
+	// It is excluded from the hashed options deliberately. Every other field
+	// here can change what is generated, and this one cannot: it says how many
+	// goroutines do the same work. Hashing it would stamp the machine that ran
+	// the build into the output, so a four-core laptop and a sixteen-core runner
+	// would disagree on bytes that are identical in every way that matters, and
+	// `--check` would fail on the difference between two correct builds.
+	ConversionWorkers int `json:"-"`
 
 	DisableFeatures []Feature
 	GenerateAll     bool

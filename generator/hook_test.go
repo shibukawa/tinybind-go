@@ -2,10 +2,14 @@ package generator_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/generator"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
@@ -425,5 +429,309 @@ func TestOneAssetConvertsOnceAcrossTemplates(t *testing.T) {
 	}
 	if strings.Count(string(generated), `/public/hero.png.webp`) != 2 {
 		t.Fatalf("both templates should carry the rewrite:\n%s", generated)
+	}
+}
+
+// parallelTemplate names several distinct images plus one repeated, so a test
+// can tell concurrent conversion from concurrent re-conversion.
+const parallelTemplate = `package fixture
+
+export component Page(): html {
+<img src="/public/a.png" alt="a">
+<img src="/public/b.png" alt="b">
+<img src="/public/c.png" alt="c">
+<img src="/public/d.png" alt="d">
+<img src="/public/a.png" alt="a again">
+}
+`
+
+// writeParallelFixture lays out a module whose conversions are independent, so
+// converting them together is the only thing that changes.
+func writeParallelFixture(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	files := map[string]string{
+		"page.tb.html": parallelTemplate,
+		"doc.go":       "package fixture\n\nimport _ \"github.com/shibukawa/tinybind-go/htmlbind\"\n",
+		"go.mod": "module fixture\n\ngo 1.26\n\n" +
+			"require github.com/shibukawa/tinybind-go v0.0.0\n\n" +
+			"replace github.com/shibukawa/tinybind-go => " + filepath.ToSlash(root) + "\n",
+	}
+	for name, source := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assets := filepath.Join(dir, "public")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.png", "b.png", "c.png", "d.png"} {
+		if err := os.WriteFile(filepath.Join(assets, name), []byte("png "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tidyTempModule(t, dir)
+	return dir
+}
+
+// slowImageHook is safe for concurrent use and slow enough that running four of
+// them in sequence is visibly different from running them together.
+func slowImageHook(dir string, calls *int64, delay time.Duration, fail map[string]bool) htmlbind.ReferenceHook {
+	return htmlbind.ReferenceHook{
+		Name: "image-format", Element: "img", Attribute: "src",
+		Match: func(value string) bool { return strings.HasSuffix(value, ".png") },
+		CacheKey: func(request htmlbind.ReferenceRequest) (htmlbind.ConversionInputs, error) {
+			name := strings.TrimPrefix(request.Value, "/public/")
+			return htmlbind.ConversionInputs{
+				Sources: []string{filepath.Join(dir, "public", name)},
+				Params:  "webp q80",
+			}, nil
+		},
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			atomic.AddInt64(calls, 1)
+			time.Sleep(delay)
+			if fail[request.Value] {
+				return htmlbind.ReferenceResult{}, errors.New("encoder refused " + request.Value)
+			}
+			name := strings.TrimPrefix(request.Value, "/public/") + ".webp"
+			return htmlbind.ReferenceResult{
+				Value: request.Value + ".webp",
+				Files: []htmlbind.ProducedFile{{
+					Name: name, MediaType: "image/webp", Content: []byte("converted " + name),
+				}},
+			}, nil
+		},
+	}
+}
+
+func parallelOptions(dir, derived string, calls *int64, workers int, delay time.Duration, fail map[string]bool) generator.Options {
+	options := generator.DefaultOptions()
+	options.ReferenceHooks = []htmlbind.ReferenceHook{slowImageHook(dir, calls, delay, fail)}
+	options.DerivedAssetDir = derived
+	options.ConversionWorkers = workers
+	return options
+}
+
+// TestParallelConversionProducesIdenticalOutput is the property the whole
+// option rests on: it buys wall clock and changes nothing else.
+//
+// Both builds run over one directory with one derived root, so the only thing
+// that differs between them is the worker count. That also proves the count
+// stays out of the hashed options: it appears in neither the stamp nor the
+// bytes under it.
+func TestParallelConversionProducesIdenticalOutput(t *testing.T) {
+	dir := writeParallelFixture(t)
+	derived := t.TempDir()
+	build := func(workers int) ([]byte, []string) {
+		var calls int64
+		options := parallelOptions(dir, derived, &calls, workers, 0, nil)
+		result, err := generator.New(options).GeneratePackage(context.Background(),
+			generator.GenerateRequest{Dir: dir, Out: dir, Force: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.ReadFile(result.TemplatesPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rewrites []string
+		for _, rewrite := range result.Rewrites {
+			rewrites = append(rewrites, rewrite.From+" -> "+rewrite.To)
+		}
+		return source, rewrites
+	}
+	sequential, sequentialRewrites := build(0)
+	concurrent, concurrentRewrites := build(4)
+	if string(sequential) != string(concurrent) {
+		t.Fatalf("concurrent conversion changed the generated bytes:\n--- one ---\n%s--- many ---\n%s", sequential, concurrent)
+	}
+	// The report is built by the sequential compile, so worker completion order
+	// must be invisible in it.
+	if strings.Join(sequentialRewrites, ",") != strings.Join(concurrentRewrites, ",") {
+		t.Fatalf("the report order changed: %v against %v", sequentialRewrites, concurrentRewrites)
+	}
+}
+
+// TestParallelConversionConvertsEachValueOnce covers the single-flight memo: the
+// repeated reference must not become a second encode just because the discovery
+// pass found it first.
+func TestParallelConversionConvertsEachValueOnce(t *testing.T) {
+	dir := writeParallelFixture(t)
+	var calls int64
+	options := parallelOptions(dir, t.TempDir(), &calls, 4, 10*time.Millisecond, nil)
+	if _, err := generator.New(options).GeneratePackage(context.Background(), generator.GenerateRequest{Dir: dir, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt64(&calls); got != 4 {
+		t.Fatalf("converted %d times, want one per distinct value (4)", got)
+	}
+}
+
+// TestParallelConversionDefersErrors covers the reporting rule: a conversion
+// that fails on a worker says nothing there, and the compile raises it at the
+// template position, so the reported failure is the first in template order
+// rather than whichever goroutine lost the race.
+func TestParallelConversionDefersErrors(t *testing.T) {
+	dir := writeParallelFixture(t)
+	derived := t.TempDir()
+	fail := map[string]bool{"/public/b.png": true, "/public/c.png": true}
+	message := func(workers int) string {
+		var calls int64
+		options := parallelOptions(dir, derived, &calls, workers, 0, fail)
+		_, err := generator.New(options).GeneratePackage(context.Background(),
+			generator.GenerateRequest{Dir: dir, Out: dir, Force: true})
+		if err == nil {
+			t.Fatal("a failing conversion did not fail the build")
+		}
+		return err.Error()
+	}
+	sequential := message(0)
+	// Repeated, because a race that resolves one way most of the time is the
+	// failure mode this rule exists to remove.
+	for i := 0; i < 5; i++ {
+		if concurrent := message(4); sequential != concurrent {
+			t.Fatalf("the reported error depends on concurrency:\n--- one ---\n%s\n--- many ---\n%s", sequential, concurrent)
+		}
+	}
+	// b.png is written before c.png, so it is the one a build reports.
+	if !strings.Contains(sequential, "b.png") || strings.Contains(sequential, "c.png") {
+		t.Fatalf("the first failure in template order was not the one reported: %s", sequential)
+	}
+}
+
+// TestParallelConversionWarmCacheConvertsNothing covers the interaction that
+// matters most in practice: an incremental build starts no worker because there
+// is nothing to convert.
+func TestParallelConversionWarmCacheConvertsNothing(t *testing.T) {
+	dir := writeParallelFixture(t)
+	cacheDir := t.TempDir()
+	derived := t.TempDir()
+	build := func(calls *int64) {
+		options := generator.DefaultOptions()
+		options.ReferenceHooks = []htmlbind.ReferenceHook{slowImageHook(dir, calls, 0, nil)}
+		options.DerivedAssetDir = derived
+		options.ConversionCacheDir = cacheDir
+		options.ConversionWorkers = 4
+		if _, err := generator.New(options).GeneratePackage(context.Background(),
+			generator.GenerateRequest{Dir: dir, Out: dir, Force: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var cold int64
+	build(&cold)
+	if cold != 4 {
+		t.Fatalf("the cold build converted %d times, want 4", cold)
+	}
+	var warm int64
+	build(&warm)
+	if warm != 0 {
+		t.Fatalf("the warm build converted %d times, want none", warm)
+	}
+}
+
+// TestCachedConversionReplaysHeadContribution covers the entry surviving a
+// cache round trip: a build answered entirely from the store must still link
+// the stylesheet, or the second build serves a page the first one did not.
+func TestCachedConversionReplaysHeadContribution(t *testing.T) {
+	dir := writeHookFixture(t)
+	writeHookSources(t, dir)
+	cacheDir := t.TempDir()
+	derived := t.TempDir()
+	var calls int64
+	stylesheet := htmlbind.ReferenceHook{
+		Name: "script-compile", Element: "script", Attribute: "src",
+		Match: func(value string) bool { return strings.HasSuffix(value, ".ts") },
+		CacheKey: func(request htmlbind.ReferenceRequest) (htmlbind.ConversionInputs, error) {
+			return htmlbind.ConversionInputs{
+				Sources: []string{filepath.Join(dir, "public", "app.ts")},
+				Params:  "esnext",
+			}, nil
+		},
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			atomic.AddInt64(&calls, 1)
+			return htmlbind.ReferenceResult{
+				Value: strings.TrimSuffix(request.Value, ".ts") + ".js",
+				Files: []htmlbind.ProducedFile{
+					{Name: "app.js", Content: []byte("built")},
+					{Name: "app.css", Content: []byte(".a{}")},
+				},
+				Head: []htmlbind.HeadEntry{{
+					Element:    "link",
+					Attributes: map[string]string{"rel": "stylesheet", "href": "/public/app.css"},
+				}},
+			}, nil
+		},
+	}
+	build := func() string {
+		options := generator.DefaultOptions()
+		options.ReferenceHooks = []htmlbind.ReferenceHook{stylesheet}
+		options.DerivedAssetDir = derived
+		options.ConversionCacheDir = cacheDir
+		result, err := generator.New(options).GeneratePackage(context.Background(),
+			generator.GenerateRequest{Dir: dir, Out: dir, Force: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.ReadFile(result.TemplatesPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(source)
+	}
+	first := build()
+	if !strings.Contains(first, `app.css`) {
+		t.Fatalf("the produced stylesheet was not linked:\n%s", first)
+	}
+	again := build()
+	if atomic.LoadInt64(&calls) != 1 {
+		t.Fatalf("the second build converted again: %d calls", calls)
+	}
+	if first != again {
+		t.Fatalf("a cached conversion lost its head contribution:\n--- first ---\n%s--- again ---\n%s", first, again)
+	}
+}
+
+// TestParallelConversionOverlaps proves the conversions actually run together
+// rather than merely producing the right answer.
+//
+// It asserts overlap directly instead of timing the build: each transform waits
+// until every other one has started, so a serialized implementation blocks its
+// first conversion and fails with a message saying so, while a concurrent one
+// releases immediately. Nothing here depends on how fast the machine is.
+func TestParallelConversionOverlaps(t *testing.T) {
+	dir := writeParallelFixture(t)
+	const want = 4
+	var inflight int64
+	overlapped := make(chan struct{})
+	var once sync.Once
+	hook := htmlbind.ReferenceHook{
+		Name: "image-format", Element: "img", Attribute: "src",
+		Match: func(value string) bool { return strings.HasSuffix(value, ".png") },
+		Transform: func(request htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
+			if atomic.AddInt64(&inflight, 1) == want {
+				once.Do(func() { close(overlapped) })
+			}
+			select {
+			case <-overlapped:
+			case <-time.After(10 * time.Second):
+				return htmlbind.ReferenceResult{}, errors.New("conversions did not overlap")
+			}
+			return htmlbind.ReferenceResult{Value: request.Value + ".webp"}, nil
+		},
+	}
+	options := generator.DefaultOptions()
+	options.ReferenceHooks = []htmlbind.ReferenceHook{hook}
+	options.ConversionWorkers = want
+	if _, err := generator.New(options).GeneratePackage(context.Background(),
+		generator.GenerateRequest{Dir: dir, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt64(&inflight); got != want {
+		t.Fatalf("%d conversions ran, want %d", got, want)
 	}
 }

@@ -31,7 +31,8 @@ conversion_timing:
   cache_honesty: a key is only as good as the Params string a hook writes, so an encoder upgrade nobody mentions serves stale bytes; that is the caller's to state and is the same class as an under-reported read set
 as_built:
   where: templates/htmlbind/hook.go, GenerateOptions.ReferenceHooks, Result.Produced and its siblings; generator/hooks.go for the run memo and the conversion cache
-  results_shipped: value and skip
+  results_shipped: value and skip, plus head entries from 2026-08-04 per requirement:hook-head-contribution
+  transform_concurrency: a transform is called from one goroutine unless the caller sets generator Options.ConversionWorkers, which is opt-in precisely because being pure is necessary and not sufficient for being safe under requirement:parallel-conversion
   element_result_deferred:
     what: the markup-replacing result is designed and not built
     why: no shipped policy uses it, decision:transform-seam-ownership records the image case rejecting the use it was added for, and it needs fragment parsing plus an insertion-context check that the value result does not
@@ -135,9 +136,24 @@ related:
   - requirement:builtin-element-lowering
   - requirement:configurable-generator-discovery
   - decision:framework-integration-seams
+answered_2026_08_04:
+  reviewed_by: the first downstream project to build against this seam, reading the shipped API rather than this catalog
+  head_entry:
+    was: whether a hook may contribute a head entry, which a preload link would need
+    now: yes, and it is the only thing that project needs and cannot have; taken as requirement:hook-head-contribution
+    driving_case_is_stronger_than_the_one_asked_about: a preload is a latency loss and a CSS module's companion stylesheet is a correctness one
+  hyphenated_element:
+    was: whether a hook may match an attribute on a hyphenated passthrough element
+    now: no, closed rather than deferred; that project keeps its reference sites to img src and script src, and nothing else has asked
+    reopen_when: a caller names an attribute on a component-supplied element as a reference site
+  srcset:
+    was: whether srcset is matched as one value or parsed into candidates by the seam
+    now: as one value, which is what already happens; Value replaces the whole attribute string, so a transform parses the descriptor list and reassembles it, and the escaper touches only the quote and the angle brackets, which a descriptor list never contains
+    no_change_needed: the seam does nothing here, and whether to do it is the caller's question rather than a capability question
+  element_result:
+    was: not an open question but a built-and-unbuilt half, recorded above under element_result_deferred
+    now: stays unbuilt; the first caller refuses tree-changing rewrites as its own policy, so the use it was designed for has no user
+    kept_as_designed: the design is not deleted, because a project that has verified its own CSS may still want it
 open_questions:
-  - whether a hook may match an attribute on a hyphenated passthrough element, which the whitelist emits verbatim today
-  - whether a hook may contribute a head entry, which a preload link would need
-  - whether srcset, a comma and descriptor list rather than one URL, is matched as one value or parsed into candidates by the seam
   - whether an application config file may enable a stock hook, given the transform itself needs Go
 ```
