@@ -41,7 +41,10 @@ iterated:
 batch:
   StoreAll: "func StoreAll[T ItemEncoder](ctx, table string, vs []T) (unprocessed []T, err error)"
   LoadAll: "func LoadAll[T any, PT ...](ctx, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) (items []T, unprocessed []dynamodb.Key, err error)"
-  limits: exported as MaxBatchWrite 25 and MaxBatchGet 100, so a caller sizing its own input reads the same numbers the chunking uses
+  limits:
+    was: exported here as MaxBatchWrite 25 and MaxBatchGet 100, because the driver named neither
+    now: system:tinygodriver-dynamodb exports MaxBatchWrite, MaxBatchGet, MaxItemBytes and MaxRequestBytes as of tinygodriver v1.1.5
+    to_do: name the driver constants instead of declaring these, keeping the current spellings as deprecated aliases so a caller sizing its own input is not broken; a copied limit is what drifts when the service changes it, per rule:firestorebind-driver-passthrough
   matching_back: StoreAll matches a declined write to the value that produced it by comparing encoded items, since the service returns the item rather than an index; the comparison is written out because AttributeValue holds pointers and slices and reflect.DeepEqual is not available here
   order: LoadAll returns items in DynamoDB's reply order, and a key matching nothing is absent rather than an error or an unprocessed key
   chunking:
