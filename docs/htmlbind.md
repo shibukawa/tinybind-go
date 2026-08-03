@@ -1318,6 +1318,64 @@ bytes:
   not one byte range that can be stored.
 - It cannot own the document `head`, because the merged head depends on the
   chain rather than on its parameters.
+- It cannot reach an unsafe `<form>`, or a registered element backed by a
+  provider, directly or through a component it calls. Both carry a per-request
+  value, and a stored body would serve one session's to whoever asked next.
+
+## Forms and CSRF tokens
+
+A form that posts, puts, patches, or deletes carries a CSRF token, and **you
+write nothing**:
+
+```html
+<form method="post" action="/orders">
+  <input name="title" value="{title}">
+  <button>Create</button>
+</form>
+```
+
+The hidden field is generated as the form's first child. The token itself comes
+from your framework — it is a render option, not something a template names — so
+the same value reaches every form on the page and the browser runtime sends it as
+a request header too.
+
+Four rules follow, and three of them are generation errors rather than surprises
+in a browser:
+
+| Case | What happens |
+| --- | --- |
+| `method="get"`, or no method | No token. A GET form's fields become the query string, and a token in a URL reaches history, logs, and referrers. |
+| `action` is a static absolute URL | **Generation error.** Inserting the token would hand your session's secret to another origin. |
+| `method` is an expression | **Generation error.** It cannot be read at generation time, and guessing wrong either leaks the token or leaves the form unprotected. |
+| The form already has a field of that name | Left alone, so a hand-written token still works. |
+
+For the rare form that genuinely posts off-origin, mark it and it is skipped. The
+marker follows the configured attribute prefix and never reaches the browser:
+
+```html
+<form method="post" action="https://payments.example.com/checkout" data-tb-no-csrf>
+```
+
+A deployment that has settled on `Origin` and Fetch Metadata checks alone can
+turn the whole thing off at generation time, which also lifts the cache
+restriction above.
+
+## Hyphenated elements
+
+A hyphen is HTML's own custom-element marker, so the hyphenated element space is
+a whitelist your build declares. An element that is not in it is a generation
+error naming the file, line, and column — which is the point: an unrecognized
+hyphenated element emitted unchanged renders nothing and reports nothing, so
+`<csrf-toekn />` used to be invisible and is now a compile error suggesting the
+name you meant.
+
+Two kinds go in the whitelist. A framework registers **builtin** elements, which
+are rewritten at generation time into plan steps. Your application registers
+**passthrough** entries for the Web Components it uses, by name or by a prefix
+glob such as `sl-*`; those are emitted verbatim and produce no plan step.
+
+Hyphenated names inside `<svg>` and `<math>` are standard foreign-namespace
+elements and stay outside the whitelist entirely.
 
 ## Generated API shapes
 
