@@ -184,7 +184,8 @@ upstream_requests:
     or_filters:
       asked: whether the AND-only comment was still true, since the wire type carried an Op and we could not check the service
       answer: it was not; v1.1.6 added Condition, Prop, And, Or and Query.Where, keeping Query.Filter as sugar over Where(Prop(...))
-      effect_here: requirement:firestore-typed-queries still parse-errors on or, citing a limitation that no longer exists, and the grammar can now express it
+      effect_here: requirement:firestore-typed-queries builds a filter tree, implemented 2026-08-04
+      why_the_naming_worked_for_a_generator: Prop, And and Or all take and return one Condition, so the emitter is a recursive walk with one case per node; keeping Filter meant the flat declaration generates byte-identical code to before
     sum_and_avg:
       argued: counting by paging can be keys-only and summing cannot, so the reasoning that included COUNT applies harder to SUM and AVG
       status: added in v1.1.6, returning Value rather than a Go number so the integer-versus-double distinction survives, and Avg returning null rather than zero when nothing matched

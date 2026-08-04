@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,8 +16,15 @@ type FirestoreQueryPlan struct {
 	// against.
 	Entity FirestoreEntityPlan
 	// Filters pairs each predicate with the field it names and the parameter
-	// that fills it, in emission order.
+	// that fills it, in the order the source wrote them.
 	Filters []FirestoreQueryFilter
+	// Where is the checked filter tree, or nil when there is no where clause.
+	// Filters is its leaves; the tree is what the emitter walks when the
+	// declaration uses or.
+	Where *FirestoreCondition
+	// HasOr reports whether the tree needs datastore.Where at all. Without it
+	// the emitter keeps to the per-predicate Filter calls it always wrote.
+	HasOr bool
 	// Orders are the checked sort keys.
 	Orders []FirestoreQueryOrder
 	// Ancestor is the parameter holding the ancestor key, or "".
@@ -92,20 +100,35 @@ func planFirestoreQuery(decl FirestoreQueryDecl, entities map[string]FirestoreEn
 	plan := FirestoreQueryPlan{Decl: decl, Entity: entity, Ancestor: decl.Ancestor}
 	used := map[string]bool{}
 
-	for _, predicate := range decl.Where {
-		field, err := firestoreQueryField(entity, predicate.Property)
-		if err != nil {
-			return fail(predicate.Line, "%s", err)
+	if decl.Where != nil {
+		plan.Where, plan.HasOr = decl.Where, decl.Where.HasOr()
+		// The checks are the same whatever the tree shape; only the walk is new.
+		// A leaf is checked where it sits, so an error still names the line the
+		// author wrote the comparison on.
+		var failure error
+		_ = decl.Where.Walk(func(predicate *FirestorePredicate) error {
+			field, err := firestoreQueryField(entity, predicate.Property)
+			if err != nil {
+				failure = fmt.Errorf("%s:%d: statement %s: %s", decl.SourcePath, predicate.Line, decl.Name, err)
+				return err
+			}
+			param, ok := params[predicate.Param]
+			if !ok {
+				failure = fmt.Errorf("%s:%d: statement %s: no parameter named %s is declared",
+					decl.SourcePath, predicate.Line, decl.Name, predicate.Param)
+				return errStopWalk
+			}
+			if err := checkFirestoreParamType(param, field, predicate.Op); err != nil {
+				failure = fmt.Errorf("%s:%d: statement %s: %s", decl.SourcePath, param.Line, decl.Name, err)
+				return err
+			}
+			used[param.Name] = true
+			plan.Filters = append(plan.Filters, FirestoreQueryFilter{Predicate: *predicate, Field: field, Param: param})
+			return nil
+		})
+		if failure != nil {
+			return FirestoreQueryPlan{}, failure
 		}
-		param, ok := params[predicate.Param]
-		if !ok {
-			return fail(predicate.Line, "no parameter named %s is declared", predicate.Param)
-		}
-		if err := checkFirestoreParamType(param, field, predicate.Op); err != nil {
-			return fail(param.Line, "%s", err)
-		}
-		used[param.Name] = true
-		plan.Filters = append(plan.Filters, FirestoreQueryFilter{Predicate: predicate, Field: field, Param: param})
 	}
 
 	if decl.Ancestor != "" {
@@ -218,6 +241,11 @@ func planFirestoreQuery(decl FirestoreQueryDecl, entities map[string]FirestoreEn
 	}
 	return plan, nil
 }
+
+// errStopWalk ends a Walk once the failure it found has been recorded. The
+// value never reaches a caller; Walk stops on any error and the recorded one is
+// what gets returned.
+var errStopWalk = errors.New("firestorebind: stop")
 
 // firestoreQueryField resolves the property a clause names.
 //

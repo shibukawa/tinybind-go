@@ -158,3 +158,48 @@ func TestFormatOrdersProjectionAndCursorClauses(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// A tree round-trips through the formatter with the grouping the author wrote,
+// and without brackets the precedence already gives.
+func TestFormatConditionTree(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{
+			// and binds tighter, so an and inside an or needs no brackets.
+			in:   "export statement A(s: Sensor): firestore.many<Reading> {\n where a == {s} or b == {s} and c == {s}\n}\n",
+			want: "  where a == {s} or b == {s} and c == {s}\n",
+		},
+		{
+			// An or inside an and does, or it would read as a different tree.
+			in:   "export statement A(s: Sensor): firestore.many<Reading> {\n where (a == {s} or b == {s}) and c == {s}\n}\n",
+			want: "  where (a == {s} or b == {s}) and c == {s}\n",
+		},
+		{
+			// Redundant brackets are dropped, since the precedence says it.
+			in:   "export statement A(s: Sensor): firestore.many<Reading> {\n where a == {s} or (b == {s} and c == {s})\n}\n",
+			want: "  where a == {s} or b == {s} and c == {s}\n",
+		},
+	}
+	for _, test := range cases {
+		got := format(t, test.in)
+		if !strings.Contains(got, test.want) {
+			t.Errorf("got:\n%s\nwant it to contain:\n%s", got, test.want)
+		}
+		if second := format(t, got); second != got {
+			t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, second)
+		}
+	}
+}
+
+// A tree too wide for one line breaks at its outermost junction, with the
+// joining word starting each continuation line.
+func TestFormatBreaksALongCondition(t *testing.T) {
+	long := strings.Repeat("a", 40)
+	got := format(t, "export statement A(s: Sensor): firestore.many<Reading> {\n where "+
+		long+"1 == {s} or "+long+"2 == {s} or "+long+"3 == {s}\n}\n")
+	if !strings.Contains(got, "\n    or "+long+"2 == {s}") {
+		t.Errorf("the condition did not break at the junction:\n%s", got)
+	}
+	if second := format(t, got); second != got {
+		t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, second)
+	}
+}

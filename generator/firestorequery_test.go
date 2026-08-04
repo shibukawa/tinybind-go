@@ -261,11 +261,6 @@ func TestFirestoreQueryErrors(t *testing.T) {
 			want:  "parameter extra is declared but never used",
 		},
 		{
-			name:  "or is not on the wire",
-			decls: "export statement A(s: Sensor): firestore.many<Reading> {\n where sensor == {s} or sensor == {s}\n}",
-			want:  "there is no OR on this wire",
-		},
-		{
 			name:  "single equals",
 			decls: "export statement A(s: Sensor): firestore.many<Reading> {\n where sensor = {s}\n}",
 			want:  `equality is spelled "==" here`,
@@ -586,5 +581,138 @@ export statement A(s: Sensor): firestore.batch<Reading> {
 `)
 	if !strings.Contains(code, `q = q.DistinctOn("celsius")`) {
 		t.Errorf("the distinct clause is missing\n%s", code)
+	}
+}
+
+// A declaration without or generates exactly the per-predicate Filter calls it
+// always did. Query.Filter is sugar over Where(Prop(...)) upstream, so keeping
+// the flat form costs nothing and the common declaration does not churn.
+func TestFirestoreQueryFlatAndKeepsTheFilterForm(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Warm(sensor: Sensor, from: time.Time): firestore.many<Reading> {
+  where sensor == {sensor} and at > {from}
+}
+`)
+	for _, want := range []string{
+		`q = q.Filter("sensor", datastore.Equal, datastore.String(string(sensor)))`,
+		`q = q.Filter("at", datastore.GreaterThan, datastore.Time(from))`,
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated code is missing %q\n%s", want, code)
+		}
+	}
+	if strings.Contains(code, "datastore.Where(") || strings.Contains(code, "datastore.And(") {
+		t.Errorf("an all-and declaration built a condition tree\n%s", code)
+	}
+}
+
+// or builds the tree, and only then.
+func TestFirestoreQueryOr(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Either(sensor: Sensor, from: time.Time): firestore.many<Reading> {
+  where sensor == {sensor} or at > {from}
+}
+`)
+	for _, want := range []string{
+		"q = q.Where(datastore.Or(",
+		`datastore.Prop("sensor", datastore.Equal, datastore.String(string(sensor))),`,
+		`datastore.Prop("at", datastore.GreaterThan, datastore.Time(from)),`,
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("generated code is missing %q\n%s", want, code)
+		}
+	}
+	if strings.Contains(code, "q = q.Filter(") {
+		t.Errorf("a disjunctive declaration still emitted a flat Filter\n%s", code)
+	}
+}
+
+// and binds tighter than or, so an unparenthesised mix nests the and inside the
+// or. Getting this backwards would silently change which entities match.
+func TestFirestoreQueryPrecedence(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Mixed(sensor: Sensor, from: time.Time, c: float64): firestore.many<Reading> {
+  where sensor == {sensor} or at > {from} and celsius > {c}
+}
+`)
+	if !strings.Contains(code, "q = q.Where(datastore.Or(") {
+		t.Errorf("or is not the outermost junction\n%s", code)
+	}
+	if !strings.Contains(code, "datastore.And(") {
+		t.Errorf("the and did not nest inside the or\n%s", code)
+	}
+	// The and's operands are the second and third comparisons, not the first.
+	or := strings.Index(code, "datastore.Or(")
+	and := strings.Index(code, "datastore.And(")
+	sensor := strings.Index(code, `datastore.Prop("sensor"`)
+	if !(or < sensor && sensor < and) {
+		t.Errorf("the tree groups the wrong operands\n%s", code)
+	}
+}
+
+// Parentheses override the precedence, which is the whole reason they exist.
+func TestFirestoreQueryParentheses(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Grouped(sensor: Sensor, from: time.Time, c: float64): firestore.many<Reading> {
+  where (sensor == {sensor} or at > {from}) and celsius > {c}
+}
+`)
+	if !strings.Contains(code, "q = q.Where(datastore.And(") {
+		t.Errorf("and is not the outermost junction\n%s", code)
+	}
+	or := strings.Index(code, "datastore.Or(")
+	celsius := strings.Index(code, `datastore.Prop("celsius"`)
+	if !(or > 0 && or < celsius) {
+		t.Errorf("the parenthesised or did not become the first operand\n%s", code)
+	}
+}
+
+// An in inside a tree hoists its candidates before the expression that uses
+// them, since the slice is built by statements and the tree is one expression.
+func TestFirestoreQueryOrWithIn(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Either(sensors: []Sensor, from: time.Time): firestore.batch<Reading> {
+  where sensor in {sensors} or at > {from}
+}
+`)
+	members := strings.Index(code, "make([]datastore.Value")
+	where := strings.Index(code, "q = q.Where(")
+	if members < 0 || where < 0 || members > where {
+		t.Errorf("the candidate slice was not hoisted above the condition\n%s", code)
+	}
+	if !strings.Contains(code, "datastore.In, datastore.Array(") {
+		t.Errorf("the in comparison is not an array filter\n%s", code)
+	}
+}
+
+// The checks are the same wherever a comparison sits, so a rename inside an or
+// fails as loudly as one at the top.
+func TestFirestoreQueryChecksReachInsideTheTree(t *testing.T) {
+	err := firestoreQueryErr(t, `
+export statement A(s: Sensor, c: float64): firestore.many<Reading> {
+  where sensor == {s} or (celsius > {c} and sensr == {s})
+}
+`)
+	if err == nil {
+		t.Fatal("a renamed property nested in a tree was accepted")
+	}
+	if !strings.Contains(err.Error(), `Reading has no property "sensr"`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// A disjunctive query gets the disjunction note, which names MaxDisjunctions
+// and counts nothing.
+func TestFirestoreQueryDisjunctionNote(t *testing.T) {
+	code := generateFirestoreQuery(t, `
+export statement Either(sensor: Sensor, from: time.Time): firestore.many<Reading> {
+  where sensor == {sensor} or at > {from}
+}
+`)
+	if !strings.Contains(code, "datastore.MaxDisjunctions") {
+		t.Errorf("the disjunction note is missing\n%s", code)
+	}
+	if !strings.Contains(code, "Nothing counts that here") {
+		t.Errorf("the note does not say the count is left to the service\n%s", code)
 	}
 }

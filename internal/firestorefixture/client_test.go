@@ -5,8 +5,10 @@ package firestorefixture_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
 
@@ -520,5 +522,32 @@ func TestDeclaredQueryTransactionTwin(t *testing.T) {
 	}
 	if !fake.lastKeysOnly() {
 		t.Error("the twin did not ask for keys only")
+	}
+}
+
+// A disjunctive declaration sends one composite filter with op OR, rather than
+// two filters ANDed together, which is what a flat emitter would have produced.
+func TestDeclaredOrQuerySendsADisjunction(t *testing.T) {
+	ctx, fake := withFake(t)
+	for _, id := range []string{"a", "b"} {
+		r := sample()
+		r.ID = firestorefixture.SensorID(id)
+		if _, err := firestorefixture.StoreReading(ctx, r); err != nil {
+			t.Fatalf("store %s: %v", id, err)
+		}
+	}
+
+	page, err := firestorefixture.HotOrNamed(ctx, "s-9", "多バイト note", sample().At.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("HotOrNamed: %v", err)
+	}
+	if len(page.Values) == 0 {
+		t.Error("no readings came back")
+	}
+	if got := fake.lastFilterOps(); !slices.Contains(got, "OR") {
+		t.Errorf("no OR reached the wire: ops were %v", got)
+	}
+	if got := fake.lastFilterOps(); !slices.Contains(got, "AND") {
+		t.Errorf("the outer AND is missing: ops were %v", got)
 	}
 }

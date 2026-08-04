@@ -53,6 +53,17 @@ type FirestoreQueryParam = firestorebind.QueryParam
 // FirestorePredicate is one comparison in a where clause.
 type FirestorePredicate = firestorebind.Predicate
 
+// FirestoreCondition is one node of a where clause.
+type FirestoreCondition = firestorebind.Condition
+
+// FirestoreJunction is how a condition joins its operands.
+type FirestoreJunction = firestorebind.Junction
+
+const (
+	FirestoreAnd = firestorebind.JunctionAnd
+	FirestoreOr  = firestorebind.JunctionOr
+)
+
 // FirestoreOrder is one sort key of an order clause.
 type FirestoreOrder = firestorebind.Order
 

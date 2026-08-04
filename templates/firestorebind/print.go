@@ -61,9 +61,9 @@ func (f *formatter) declaration(decl QueryDecl) {
 	f.decl.MarkWrote()
 	f.p.Indent()
 
-	if len(decl.Where) > 0 {
-		f.decl.FlushBefore(decl.Where[0].Line)
-		f.where(decl.Where)
+	if decl.Where != nil {
+		f.decl.FlushBefore(decl.Where.Line)
+		f.where(*decl.Where)
 	}
 	if decl.Ancestor != "" {
 		f.decl.FlushBefore(decl.AncestorLine)
@@ -114,31 +114,67 @@ func (f *formatter) declaration(decl QueryDecl) {
 	f.decl.MarkWrote()
 }
 
-// where writes the filters, joining them with and. It opens a line per predicate
-// only when the joined form does not fit, which is the one place this grammar
-// needs the width at all.
-func (f *formatter) where(predicates []Predicate) {
-	parts := make([]string, len(predicates))
-	for i, predicate := range predicates {
-		parts[i] = predicateText(predicate)
-	}
-	flat := "where " + strings.Join(parts, " and ")
-	if f.p.Column()+len(flat) <= f.p.Width() {
+// where writes the filter tree. It keeps to one line while that fits, and
+// otherwise breaks at the outermost junction, which is where a reader looks
+// first.
+func (f *formatter) where(c Condition) {
+	flat := "where " + conditionText(c, false)
+	if f.p.Column()+len(flat) <= f.p.Width() || c.IsLeaf() {
 		f.p.Write(flat)
-		f.decl.FlushTrailing(predicates[len(predicates)-1].Line)
+		f.decl.FlushTrailing(lastLineOf(c))
 		f.p.Line()
 		return
 	}
-	f.p.Write("where " + parts[0])
-	f.decl.FlushTrailing(predicates[0].Line)
+	// Breaking puts the junction at the start of each continuation line, so the
+	// word that joins two operands is the first thing on the line rather than
+	// something trailing off the end of the one above.
+	f.p.Write("where " + conditionText(c.Operands[0], needsParens(c.Operands[0], c.Junction)))
+	f.decl.FlushTrailing(lastLineOf(c.Operands[0]))
 	f.p.Indent()
-	for i, part := range parts[1:] {
+	for _, operand := range c.Operands[1:] {
 		f.p.Line()
-		f.p.Write("and " + part)
-		f.decl.FlushTrailing(predicates[i+1].Line)
+		f.p.Write(string(c.Junction) + " " + conditionText(operand, needsParens(operand, c.Junction)))
+		f.decl.FlushTrailing(lastLineOf(operand))
 	}
 	f.p.Dedent()
 	f.p.Line()
+}
+
+// conditionText renders one node, parenthesising it when the surrounding
+// junction would otherwise read as a different tree.
+func conditionText(c Condition, parens bool) string {
+	if c.Predicate != nil {
+		return predicateText(*c.Predicate)
+	}
+	parts := make([]string, len(c.Operands))
+	for i, operand := range c.Operands {
+		parts[i] = conditionText(operand, needsParens(operand, c.Junction))
+	}
+	text := strings.Join(parts, " "+string(c.Junction)+" ")
+	if parens {
+		return "(" + text + ")"
+	}
+	return text
+}
+
+// needsParens reports whether an operand has to be grouped inside the given
+// junction. Only an or inside an and does: and binds tighter, so an and inside
+// an or already reads the way it parses, and printing those brackets would add
+// noise the parser does not need.
+func needsParens(operand Condition, within Junction) bool {
+	return within == JunctionAnd && !operand.IsLeaf() && operand.Junction == JunctionOr
+}
+
+// lastLineOf is the source line the node ended on, which is where a trailing
+// comment would have been written.
+func lastLineOf(c Condition) int {
+	if c.Predicate != nil {
+		return c.Predicate.Line
+	}
+	if len(c.Operands) == 0 {
+		return c.Line
+	}
+	return lastLineOf(c.Operands[len(c.Operands)-1])
 }
 
 func (f *formatter) bound(keyword string, bound Bound) {

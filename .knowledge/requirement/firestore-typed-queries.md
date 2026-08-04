@@ -46,13 +46,7 @@ result_type_slot:
     runtime: firestorebind.QueryKeysPage, added for this shape
   reason: rule:firestorebind-driver-passthrough keeps the request count visible, so the author picks rather than a default
 body_clauses:
-  where: property filters composed with and, using ==, !=, <, <=, >, >=, in and not in
-  and_only: a declaration with or is a parse error citing the wire, which was true when written and is not any more
-  or_is_now_available:
-    fact: tinygodriver v1.1.6 added datastore.Or, Prop and Query.Where, after this side asked whether the AND-only claim still held
-    state: not implemented here; the grammar still rejects or, so it is telling authors something false
-    shape_when_built: a where clause becomes a tree rather than a list, emitted as datastore.Where(datastore.Or(datastore.Prop(...), ...)); Query.Filter stays sugar for the flat AND case, so the common declaration generates the same code it does today
-    cost_to_watch: MaxDisjunctions is 30 after the filter is put in disjunctive normal form, so an Or nested inside an And multiplies; the driver leaves that to the service and this side should too
+  where: a filter tree over ==, !=, <, <=, >, >=, in and not in, joined by and and or
   ancestor: "ancestor {parent}", which is HAS_ANCESTOR on the key path rather than a property filter
   order: one or more properties, each ascending or descending
   limit and offset: constants or parameters; an offset reads and bills the entities it steps over, which the generated godoc says
@@ -61,8 +55,8 @@ body_clauses:
   distinct: collapses results sharing the named properties
   start and end: cursor parameters, typed datastore.Cursor
 scope:
-  in: kind, property filters, ancestor, order, projection, distinctOn, limit, offset, cursor paging, read consistency
-  out: OR, GQL, aggregations beyond count
+  in: kind, property filters joined by and and or, ancestor, order, projection, distinctOn, limit, offset, cursor paging, read consistency
+  out: GQL, aggregations beyond count
   reason: what is left out is absent from the wire, not merely unbuilt
   covers_the_driver_builder: every datastore.Query method has a clause, so a declaration can express what the escape hatch can; the escape hatch remains for a query built at run time rather than for one this grammar cannot say
 projection:
@@ -82,6 +76,23 @@ projection:
   service_rules_not_checked:
     what: the service rejects projecting a property an equality filter already fixes
     why_not_checked: it is a published rule this repository has not measured, and a check that is wrong here would refuse a query that works; the godoc names it instead
+disjunction:
+  added: 2026-08-04, against tinygodriver v1.1.6
+  history: the grammar rejected or by name, citing an AND-only wire. That was true when written; the driver gained OR after this side asked whether the claim still held, and the parse error then became this module telling authors something false
+  tree_not_a_list: a where clause is a Condition tree, so a declaration says what it means rather than being restructured into two statements
+  precedence: Go's, with and binding tighter than or, and parentheses to override it
+  why_parentheses: two operators and no way to override precedence forces an author to restructure a query to express it, which is the thing a declaration language exists to avoid
+  flat_and_is_unchanged:
+    what: a declaration without or emits the same per-predicate Query.Filter calls it always did
+    why_it_can: upstream kept Filter as sugar over Where(Prop(...)), so the flat form costs nothing and the common declaration does not churn
+    tested: an all-and declaration that emits a condition tree is a test failure, not just a diff
+  checks_are_the_same: the property, parameter type and noindex checks run over the tree by walking it, so a rename nested inside an or fails exactly as one at the top does
+  in_inside_a_tree: a multi-valued comparison builds its candidates as statements, so those are hoisted above the expression that refers to them
+  max_disjunctions_is_not_counted:
+    fact: the whole filter goes into disjunctive normal form and is capped at datastore.MaxDisjunctions, so an or nested inside an and multiplies rather than adds
+    decision: the generated godoc names the constant and counts nothing
+    why: the expansion rule is the service's, and a count that disagreed would refuse a query that works. This is the line decision:firestore-no-schema-artifact drew for composite indexes, and the driver drew the same one by exporting the number and leaving the check to the service
+  index_hint: a disjunctive query gets the may-require-a-composite-index note, since each disjunct is indexed on its own terms
 distinct_on:
   added: 2026-08-04
   result_type_is_unchanged: it collapses results rather than reshaping them

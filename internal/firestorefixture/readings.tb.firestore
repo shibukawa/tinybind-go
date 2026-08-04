@@ -58,3 +58,15 @@ export statement ReadingsFrom(cursor: datastore.Cursor, size: int): firestore.ba
   start {cursor}
   limit {size}
 }
+
+// Datastore composes with OR as well as AND since tinygodriver v1.1.6. and binds
+// tighter than or, and parentheses group, so a declaration says what it means
+// without being restructured.
+export statement HotOrNamed(sensor: SensorID, note: string, from: time.Time): firestore.batch<Reading> {
+  where (sensor == {sensor} or note == {note}) and at > {from}
+  index sensor, at
+}
+
+export statement AnySensorOrNote(sensors: []SensorID, note: string): firestore.many<Reading> {
+  where sensor in {sensors} or note == {note}
+}

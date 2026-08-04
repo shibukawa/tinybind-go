@@ -127,6 +127,13 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 			b.WriteString("// element rather than one per entity.\n")
 		}
 	}
+	if plan.HasOr {
+		b.WriteString("//\n// The filter is disjunctive. Datastore puts the whole filter in disjunctive\n")
+		b.WriteString("// normal form and caps the result at datastore.MaxDisjunctions, so an or\n")
+		b.WriteString("// nested inside an and multiplies rather than adds. Nothing counts that here:\n")
+		b.WriteString("// the expansion rule is the service's, and a count that disagreed would refuse\n")
+		b.WriteString("// a query that works.\n")
+	}
 	if !decl.HasIndex && firestoreNeedsIndexHint(plan) {
 		b.WriteString("//\n// This query combines filters and ordering in a shape that may require a\n")
 		b.WriteString("// composite index. Nothing in the toolchain verifies that one exists, so a\n")
@@ -203,10 +210,8 @@ func (e *firestoreQueryEmitter) queryValue(b *bytes.Buffer, plan FirestoreQueryP
 	decl := plan.Decl
 	base := lowerFirst(decl.Name)
 	fmt.Fprintf(b, "\tq := datastore.NewQuery(%sKind)\n", base)
-	for _, filter := range plan.Filters {
-		if err := e.filter(b, filter); err != nil {
-			return fmt.Errorf("firestorebind: statement %s: %w", decl.Name, err)
-		}
+	if err := e.filters(b, plan); err != nil {
+		return fmt.Errorf("firestorebind: statement %s: %w", decl.Name, err)
 	}
 	if plan.Ancestor != "" {
 		fmt.Fprintf(b, "\tq = q.Ancestor(%s)\n", plan.Ancestor)
@@ -273,6 +278,108 @@ func (e *firestoreQueryEmitter) index(b *bytes.Buffer, plan FirestoreQueryPlan, 
 	b.WriteString("\t},\n}\n\n")
 }
 
+// filters emits the where clause.
+//
+// A declaration with no or keeps the per-predicate Filter calls this has always
+// written: Query.Filter is sugar over Where(Prop(...)) upstream, so the flat
+// form costs nothing and reads as it did. Only a tree that actually needs OR
+// becomes one.
+func (e *firestoreQueryEmitter) filters(b *bytes.Buffer, plan FirestoreQueryPlan) error {
+	if plan.Where == nil {
+		return nil
+	}
+	if !plan.HasOr {
+		for _, filter := range plan.Filters {
+			if err := e.filter(b, filter); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// A multi-valued comparison builds its candidates as statements, so those
+	// come out before the expression that refers to them.
+	names := make([]string, len(plan.Filters))
+	for i, filter := range plan.Filters {
+		if !filter.Predicate.Op.Multi() {
+			continue
+		}
+		name, err := e.members(b, filter)
+		if err != nil {
+			return err
+		}
+		names[i] = name
+	}
+
+	at := 0
+	expr, err := e.condition(*plan.Where, plan.Filters, names, &at)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(b, "\tq = q.Where(%s)\n", expr)
+	return nil
+}
+
+// condition renders one node of the tree. Leaves are consumed in walk order,
+// which is the order the checker recorded them in, so the expression and the
+// hoisted statements cannot disagree about which parameter belongs where.
+func (e *firestoreQueryEmitter) condition(c FirestoreCondition, filters []FirestoreQueryFilter, names []string, at *int) (string, error) {
+	if c.IsLeaf() {
+		i := *at
+		*at++
+		if i >= len(filters) {
+			return "", fmt.Errorf("the condition tree has more comparisons than the checker recorded")
+		}
+		return e.propExpr(filters[i], names[i])
+	}
+	parts := make([]string, len(c.Operands))
+	for i, operand := range c.Operands {
+		part, err := e.condition(operand, filters, names, at)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = part
+	}
+	entry := "datastore.And"
+	if c.Junction == FirestoreOr {
+		entry = "datastore.Or"
+	}
+	// One operand per line. A nested tree on one line is the kind of generated
+	// code that has to be re-read to be understood, and gofmt indents what is
+	// already broken rather than joining it back up.
+	return entry + "(\n" + strings.Join(parts, ",\n") + ",\n)", nil
+}
+
+// propExpr is one comparison as a datastore.Prop call.
+func (e *firestoreQueryEmitter) propExpr(filter FirestoreQueryFilter, members string) (string, error) {
+	property := strconv.Quote(filter.Field.Property)
+	op := firestoreOpConstant(filter.Predicate.Op)
+	if filter.Predicate.Op.Multi() {
+		return fmt.Sprintf("datastore.Prop(%s, %s, datastore.Array(%s...))", property, op, members), nil
+	}
+	expr, ok := firestoreScalarEncode(filter.Param.Name, filter.Field.Type)
+	if !ok {
+		return "", fmt.Errorf("property %s cannot be a filter value", filter.Field.Property)
+	}
+	return fmt.Sprintf("datastore.Prop(%s, %s, %s)", property, op, expr), nil
+}
+
+// members builds the candidate slice an in or not-in comparison needs, and
+// returns the variable holding it.
+func (e *firestoreQueryEmitter) members(b *bytes.Buffer, filter FirestoreQueryFilter) (string, error) {
+	name := e.temp("members")
+	element := e.temp("member")
+	fmt.Fprintf(b, "\t%s := make([]datastore.Value, 0, len(%s))\n", name, filter.Param.Name)
+	fmt.Fprintf(b, "\tfor _, %s := range %s {\n", element, filter.Param.Name)
+	expr, ok := firestoreScalarEncode(element, filter.Field.Type)
+	if !ok {
+		return "", fmt.Errorf("property %s cannot be a filter value", filter.Field.Property)
+	}
+	fmt.Fprintf(b, "\t\t%s = append(%s, %s)\n", name, name, expr)
+	b.WriteString("\t}\n")
+	return name, nil
+}
+
 // filter emits one property filter. The value goes through the same encoders the
 // codec uses, so a filter and a stored property cannot disagree about how a
 // value is written.
@@ -281,16 +388,10 @@ func (e *firestoreQueryEmitter) filter(b *bytes.Buffer, filter FirestoreQueryFil
 	op := firestoreOpConstant(filter.Predicate.Op)
 
 	if filter.Predicate.Op.Multi() {
-		members := e.temp("members")
-		element := e.temp("member")
-		fmt.Fprintf(b, "\t%s := make([]datastore.Value, 0, len(%s))\n", members, filter.Param.Name)
-		fmt.Fprintf(b, "\tfor _, %s := range %s {\n", element, filter.Param.Name)
-		expr, ok := firestoreScalarEncode(element, filter.Field.Type)
-		if !ok {
-			return fmt.Errorf("property %s cannot be a filter value", filter.Field.Property)
+		members, err := e.members(b, filter)
+		if err != nil {
+			return err
 		}
-		fmt.Fprintf(b, "\t\t%s = append(%s, %s)\n", members, members, expr)
-		b.WriteString("\t}\n")
 		fmt.Fprintf(b, "\tq = q.Filter(%s, %s, datastore.Array(%s...))\n", property, op, members)
 		return nil
 	}
@@ -390,6 +491,11 @@ func firestoreNeedsIndexHint(plan FirestoreQueryPlan) bool {
 		properties[order.Field.Property] = true
 	}
 	switch {
+	case plan.HasOr:
+		// Each disjunct is indexed on its own terms, so an OR over more than one
+		// property is at least as likely to need a composite as the AND shapes
+		// below.
+		return true
 	case len(plan.Select) > 0 || len(plan.Distinct) > 0:
 		// A projection always reads from an index, and one over more than the
 		// automatic single-property indexes needs a composite.

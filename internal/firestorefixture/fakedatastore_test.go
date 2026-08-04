@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,35 @@ type fakeDatastore struct {
 	// a test sees that a declaration reached the wire as written.
 	kind     string
 	keysOnly bool
+	// filterOps are the composite operators of the most recent query, so a test
+	// can see that a disjunction went out as one rather than being flattened
+	// into a conjunction.
+	filterOps []string
+}
+
+func (f *fakeDatastore) lastFilterOps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.filterOps)
+}
+
+// compositeOps collects the op of every compositeFilter in a query, at any
+// depth.
+func compositeOps(raw json.RawMessage) []string {
+	var node struct {
+		CompositeFilter *struct {
+			Op      string            `json:"op"`
+			Filters []json.RawMessage `json:"filters"`
+		} `json:"compositeFilter"`
+	}
+	if json.Unmarshal(raw, &node) != nil || node.CompositeFilter == nil {
+		return nil
+	}
+	out := []string{node.CompositeFilter.Op}
+	for _, child := range node.CompositeFilter.Filters {
+		out = append(out, compositeOps(child)...)
+	}
+	return out
 }
 
 func (f *fakeDatastore) lastKind() string {
@@ -321,7 +351,8 @@ func (f *fakeDatastore) runQuery(w http.ResponseWriter, body map[string]json.Raw
 				Name string `json:"name"`
 			} `json:"property"`
 		} `json:"projection"`
-		StartCursor string `json:"startCursor"`
+		Filter      json.RawMessage `json:"filter"`
+		StartCursor string          `json:"startCursor"`
 	}
 	_ = json.Unmarshal(body["query"], &query)
 	kind := ""
@@ -335,6 +366,7 @@ func (f *fakeDatastore) runQuery(w http.ResponseWriter, body map[string]json.Raw
 	// A keys-only query is a projection of the __key__ pseudo-property, which
 	// is how it travels on this wire.
 	f.keysOnly = len(query.Projection) == 1 && query.Projection[0].Property.Name == "__key__"
+	f.filterOps = compositeOps(query.Filter)
 	all := f.matching(kind)
 	start := 0
 	if query.StartCursor != "" {

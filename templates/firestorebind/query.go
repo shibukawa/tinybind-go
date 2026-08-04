@@ -35,8 +35,7 @@ const (
 	Keys ResultShape = "keys"
 )
 
-// Op is a property filter comparison. Datastore composes filters with AND only;
-// there is no OR on this wire.
+// Op is a property filter comparison.
 type Op string
 
 const (
@@ -79,6 +78,82 @@ type Predicate struct {
 	Line     int
 }
 
+// Junction is how a Condition joins its operands.
+type Junction string
+
+const (
+	// JunctionAnd requires every operand.
+	JunctionAnd Junction = "and"
+	// JunctionOr requires at least one.
+	JunctionOr Junction = "or"
+)
+
+// Condition is one node of a where clause: either a comparison or a junction of
+// other conditions.
+//
+// A where clause is a tree rather than a list because Datastore composes with
+// both AND and OR. It was AND-only when this grammar was written, and the parser
+// said so while rejecting or; the driver gained OR in tinygodriver v1.1.6 after
+// this side asked whether the claim still held.
+//
+// Exactly one of Predicate and Operands is set. A leaf carries the comparison; a
+// junction carries its operands and the word that joins them.
+type Condition struct {
+	Predicate *Predicate
+	Junction  Junction
+	Operands  []Condition
+	Line      int
+}
+
+// IsLeaf reports whether the condition is a single comparison.
+func (c Condition) IsLeaf() bool { return c.Predicate != nil }
+
+// Walk calls visit on every leaf, in the order the source wrote them, which is
+// the order a generated function binds its parameters in.
+func (c Condition) Walk(visit func(*Predicate) error) error {
+	if c.Predicate != nil {
+		return visit(c.Predicate)
+	}
+	for i := range c.Operands {
+		if err := c.Operands[i].Walk(visit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HasOr reports whether any junction below this one is an or, which is what
+// decides whether generated code needs the condition tree at all.
+func (c Condition) HasOr() bool {
+	if c.Predicate != nil {
+		return false
+	}
+	if c.Junction == JunctionOr {
+		return true
+	}
+	for _, operand := range c.Operands {
+		if operand.HasOr() {
+			return true
+		}
+	}
+	return false
+}
+
+// Flatten returns the leaves of an all-and tree, and reports whether the tree is
+// one. The emitter uses it to keep the common declaration generating the same
+// per-predicate Filter calls it always has.
+func (c Condition) Flatten() ([]Predicate, bool) {
+	if c.HasOr() {
+		return nil, false
+	}
+	var out []Predicate
+	_ = c.Walk(func(p *Predicate) error {
+		out = append(out, *p)
+		return nil
+	})
+	return out, true
+}
+
 // Order is one sort key of an order clause.
 type Order struct {
 	Property  string
@@ -119,7 +194,8 @@ type QueryDecl struct {
 	Params     []QueryParam
 	Shape      ResultShape
 	EntityType string
-	Where      []Predicate
+	// Where is the filter tree, or nil when the declaration has no where clause.
+	Where *Condition
 	// Ancestor names the parameter holding the ancestor key, when the
 	// declaration has an ancestor clause.
 	Ancestor     string
@@ -534,26 +610,82 @@ func (p *parser) resultType() (ResultShape, string, error) {
 	return shape, entity.text, nil
 }
 
-// whereClause parses property filters joined by "and". Datastore composes with
-// AND on the wire and offers no OR, so "or" is rejected by name rather than
-// silently expanded into several queries.
-func (p *parser) whereClause() ([]Predicate, error) {
-	var out []Predicate
-	for {
-		predicate, err := p.predicate()
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, predicate)
-		t := p.peek()
-		if t.is("or") {
-			return nil, p.errorf(t.line, "Datastore composes filters with AND only; there is no OR on this wire, so a query needing one is two queries")
-		}
-		if !t.is("and") {
-			return out, nil
-		}
-		p.next()
+// whereClause parses the filter tree.
+//
+// Precedence is Go's: and binds tighter than or, so "a or b and c" is
+// "a or (b and c)". Parentheses group, because a grammar with two operators and
+// no way to override precedence forces an author to restructure a query to say
+// what they meant.
+func (p *parser) whereClause() (*Condition, error) {
+	c, err := p.orExpr()
+	if err != nil {
+		return nil, err
 	}
+	return &c, nil
+}
+
+func (p *parser) orExpr() (Condition, error) {
+	first, err := p.andExpr()
+	if err != nil {
+		return Condition{}, err
+	}
+	if !p.peek().is("or") {
+		return first, nil
+	}
+	out := Condition{Junction: JunctionOr, Operands: []Condition{first}, Line: first.Line}
+	for p.peek().is("or") {
+		p.next()
+		operand, err := p.andExpr()
+		if err != nil {
+			return Condition{}, err
+		}
+		out.Operands = append(out.Operands, operand)
+	}
+	return out, nil
+}
+
+func (p *parser) andExpr() (Condition, error) {
+	first, err := p.operand()
+	if err != nil {
+		return Condition{}, err
+	}
+	if !p.peek().is("and") {
+		return first, nil
+	}
+	out := Condition{Junction: JunctionAnd, Operands: []Condition{first}, Line: first.Line}
+	for p.peek().is("and") {
+		p.next()
+		operand, err := p.operand()
+		if err != nil {
+			return Condition{}, err
+		}
+		out.Operands = append(out.Operands, operand)
+	}
+	return out, nil
+}
+
+// operand is a parenthesised group or a single comparison.
+func (p *parser) operand() (Condition, error) {
+	if p.peek().is("(") {
+		open := p.next()
+		inner, err := p.orExpr()
+		if err != nil {
+			return Condition{}, err
+		}
+		if _, err := p.expect(")"); err != nil {
+			return Condition{}, err
+		}
+		// The group is kept as written rather than collapsed, so the formatter
+		// can print back what the author grouped and a reader is not asked to
+		// re-derive the precedence.
+		inner.Line = open.line
+		return inner, nil
+	}
+	predicate, err := p.predicate()
+	if err != nil {
+		return Condition{}, err
+	}
+	return Condition{Predicate: &predicate, Line: predicate.Line}, nil
 }
 
 func (p *parser) predicate() (Predicate, error) {
