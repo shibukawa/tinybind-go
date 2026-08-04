@@ -20,6 +20,13 @@ time:
 key:
   datastore.Key: KeyValue, a full key including partition; useful for a reference to another entity
   reading: this is the nearest thing to a foreign key, and nothing enforces it
+  partition_was_missing_until_v1_1_6:
+    what: a stored key property went out carrying only its path, naming no project, database or namespace
+    measured_2026_08_04: reproduced against the pinned v1.1.5 by asserting the request shape in internal/firestorefixture, which is how the fixture's own Ref field turned out to be an instance of it
+    who_attaches_it: the client, since a datastore.Key deliberately carries only what identifies an entity; nothing below the client has a partition to attach
+    upstream: fixed in tinygodriver v1.1.6, which made the attachment recursive over the three value members that can contain a key
+    what_this_concept_got_right: it already said "a full key including partition". The claim was true of the design and false of the code beneath it, which is the failure mode a concept cannot catch on its own
+    guard_here: the fake server rejects any request carrying a keyValue with no partitionId, so the class cannot come back unnoticed on this side either
 geo:
   datastore.LatLng: GeoPoint
   no_analogue: DynamoDB has no geo type, so data:dynamodb-attribute-mapping has no row to compare

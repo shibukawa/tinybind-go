@@ -47,7 +47,12 @@ result_type_slot:
   reason: rule:firestorebind-driver-passthrough keeps the request count visible, so the author picks rather than a default
 body_clauses:
   where: property filters composed with and, using ==, !=, <, <=, >, >=, in and not in
-  and_only: Datastore composes filters with AND on the wire and offers no OR, so a declaration with or is a parse error naming the wire limitation rather than a silent expansion into several queries
+  and_only: a declaration with or is a parse error citing the wire, which was true when written and is not any more
+  or_is_now_available:
+    fact: tinygodriver v1.1.6 added datastore.Or, Prop and Query.Where, after this side asked whether the AND-only claim still held
+    state: not implemented here; the grammar still rejects or, so it is telling authors something false
+    shape_when_built: a where clause becomes a tree rather than a list, emitted as datastore.Where(datastore.Or(datastore.Prop(...), ...)); Query.Filter stays sugar for the flat AND case, so the common declaration generates the same code it does today
+    cost_to_watch: MaxDisjunctions is 30 after the filter is put in disjunctive normal form, so an Or nested inside an And multiplies; the driver leaves that to the service and this side should too
   ancestor: "ancestor {parent}", which is HAS_ANCESTOR on the key path rather than a property filter
   order: one or more properties, each ascending or descending
   limit and offset: constants or parameters; an offset reads and bills the entities it steps over, which the generated godoc says

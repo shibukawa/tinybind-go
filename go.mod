@@ -6,7 +6,7 @@ require golang.org/x/tools v0.48.0
 
 require (
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
-	github.com/shibukawa/tinygodriver v1.1.5
+	github.com/shibukawa/tinygodriver v1.1.6
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 )

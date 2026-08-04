@@ -17,7 +17,7 @@ reason_for_existing:
   reading: the obvious fallback exists and does not help, which the driver records, measured rather than assumed, in its own catalog
 release_status:
   introduced_in: tinygodriver v1.1.4, commit c5ee07d
-  bound_surface: v1.1.5, commits 1aa42bf and ff4c947, which added the exported limits, the index descriptors and the struct mapper; every API fact below was read from that tag
+  bound_surface: v1.1.6, which added OR filters, SUM and AVG, MutationSize, and made key partitioning recursive; every API fact below was read from a tag rather than from a working copy
   not_in: v1.1.3, which carries nosql/dynamodb only
   driver_own_catalog: the tag ships .knowledge concepts for the client, the value codec, the retry policy, the write preconditions, the emulator endpoint, and a DynamoDB comparison; read them there rather than restating them here
 reflection_path:
@@ -72,6 +72,8 @@ operations:
     RunReadOnly: "(ctx, fn func(*Tx) error, opts ...TxOption) error"
   keys:
     AllocateIDs: "(ctx, keys []Key) ([]Key, error)"
+  aggregation: [Count, Sum, Avg]
+  sizing: "MutationSize(m Mutation) (int, error)", a Client method because only the client knows the partition an Entity-level figure would omit
   admin: [Close, ProjectID, Endpoint, Namespace]
 mutations:
   constructors: [InsertOp, UpdateOp, UpsertOp, DeleteOp]
@@ -85,9 +87,18 @@ transactions:
   bound: the closure must be side-effect free outside the transaction, stated in godoc and not enforceable
   ErrTxClosed: using a Tx after its closure returned
 queries:
-  builder: "NewQuery(kind).Filter(prop, op, Value).Ancestor(key).Order(prop).OrderDesc(prop).Project(...).KeysOnly().DistinctOn(...).Limit(int32).Offset(int32).Start(Cursor).End(Cursor)"
+  builder: "NewQuery(kind).Where(Condition).Filter(prop, op, Value).Ancestor(key).Order(prop).OrderDesc(prop).Project(...).KeysOnly().DistinctOn(...).Limit(int32).Offset(int32).Start(Cursor).End(Cursor)"
   operators: [LessThan, LessThanOrEqual, GreaterThan, GreaterThanEqual, Equal, NotEqual, HasAncestor, In, NotIn]
-  composition: AND only; there is no OR on this wire
+  conditions:
+    types: "Condition, built with Prop(property, op, Value), And(...), Or(...) and AncestorOf(key)"
+    attaching: "Query.Where(Condition); Query.Filter and Query.Ancestor are sugar over it, so the flat AND case reads as it always did"
+    composition: repeated Where and Filter calls combine with AND, so an Or belongs inside one call rather than across two
+    changed_in_v1_1_6: this was AND-only, and the package said so, until this side asked whether the claim still held; it did not
+    MaxDisjunctions: 30 once the filter is put in disjunctive normal form, so an Or nested inside an And multiplies rather than adds; the driver exports the number and leaves the check to the service
+  aggregations:
+    Count: "(ctx, q, opts...) (int64, error)"
+    Sum and Avg: "(ctx, q, property, opts...) (Value, error)", returning a Value so the integer-versus-double distinction survives, and Avg answering null rather than zero when nothing matched
+    added_in_v1_1_6: on the argument that counting by paging can be keys-only and summing cannot
   Batch: "{Entities []Entity; EndCursor Cursor; More MoreResults; SkippedResults int32}", with HasMore()
   MoreResults: [NOT_FINISHED, MORE_RESULTS_AFTER_LIMIT, MORE_RESULTS_AFTER_CURSOR, NO_MORE_RESULTS]
   paging: one batch per call; EndCursor feeds Start, and nothing loops for the caller
@@ -163,8 +174,27 @@ upstream_requests:
     status: shipped, as the constants above, and on the DynamoDB side too as MaxBatchGet, MaxBatchWrite, MaxItemBytes and MaxRequestBytes
     question_answered: there is no per-commit mutation count to export, so chunking by size is not a workaround but the correct shape
   Mutate_options:
-    status: not taken; Mutate still takes no WriteOption at v1.1.5
+    status: not taken; Mutate still takes no WriteOption
     assessment: correct to skip, since Mutation.With covers it per mutation and the asymmetry costs a reader one lookup
+  round_three_2026_08_04:
+    int_wrap:
+      reported: datastore.Int admitted ~uint and converted through int64, so a uint above MaxInt64 stored a wrong number with no error, while the same value through IntString was correctly refused
+      status: fixed in v1.1.6 by dropping ~uint from the Integer constraint, which is what was suggested
+      effect_here: data:firestore-property-mapping still rejects uint, uint64 and uintptr at generation time; the driver no longer has a silent path, and this keeps the failure at the field rather than at the value
+    or_filters:
+      asked: whether the AND-only comment was still true, since the wire type carried an Op and we could not check the service
+      answer: it was not; v1.1.6 added Condition, Prop, And, Or and Query.Where, keeping Query.Filter as sugar over Where(Prop(...))
+      effect_here: requirement:firestore-typed-queries still parse-errors on or, citing a limitation that no longer exists, and the grammar can now express it
+    sum_and_avg:
+      argued: counting by paging can be keys-only and summing cannot, so the reasoning that included COUNT applies harder to SUM and AVG
+      status: added in v1.1.6, returning Value rather than a Go number so the integer-versus-double distinction survives, and Avg returning null rather than zero when nothing matched
+    mutation_size:
+      asked: a way to size a mutation without marshalling it twice
+      status: added as Client.MutationSize, a method on the client rather than on Entity because only the client knows the partition; better than what was asked for
+    key_partitioning:
+      reported: a key used directly as a filter value got a partition and the same key inside an array did not, which meant the code contradicted itself whichever way the service behaves
+      wider_than_reported: following it upstream found that every stored key property was also going out unpartitioned, which is the half that writes data and the half this side could not see
+      status: fixed in v1.1.6
   doc_drift:
     status: fixed for WithCredentialsFile, WithPropertyMask, RunReadOnly and the Tx method list
     new_drift_v1_1_5: the driver's own value concept still carries a NOT IMPLEMENTED marker on the struct mapper, added in 1aa42bf and left standing when ff4c947 implemented it two commits later; the code is authoritative, and this is worth sending back

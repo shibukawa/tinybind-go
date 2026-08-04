@@ -3,7 +3,9 @@
 package firestorefixture_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,8 +161,32 @@ func (f *fakeDatastore) serve(w http.ResponseWriter, r *http.Request) {
 	f.calls[rpc]++
 	f.mu.Unlock()
 
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		f.fail(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	// Every key on the wire carries the partition that says which project,
+	// database and namespace it belongs to. A Key inside a program carries only
+	// the path, so the partition is attached at encode time, and a keyValue that
+	// arrives without one was built by a path that skipped that step.
+	//
+	// This is asserted here rather than in one test because it is a property of
+	// every request: the driver shipped with it holding at exactly one nesting
+	// level, and a stored reference went out naming no project for as long as
+	// that lasted. Checking the shape of the request catches the class wherever
+	// it comes back.
+	//
+	// wireKey declares partitionId first, so a keyValue whose object opens with
+	// "path" is exactly one that never got a partition.
+	if bytes.Contains(raw, []byte(`"keyValue":{"path"`)) {
+		f.fail(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"a keyValue reached the wire with no partitionId: "+string(raw))
+		return
+	}
+
 	var body map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		f.fail(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 		return
 	}
