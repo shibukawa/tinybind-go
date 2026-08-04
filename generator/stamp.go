@@ -272,6 +272,7 @@ func hashPackageInputs(digest hash.Hash, dir string, options Options, skip map[s
 		templatePattern(options.HTMLTemplatePattern, DefaultHTMLTemplatePattern),
 		templatePattern(options.SQLTemplatePattern, DefaultSQLTemplatePattern),
 		templatePattern(options.DynamoTemplatePattern, DefaultDynamoTemplatePattern),
+		templatePattern(options.FirestoreTemplatePattern, DefaultFirestoreTemplatePattern),
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {

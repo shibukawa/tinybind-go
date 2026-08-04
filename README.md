@@ -4,7 +4,7 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [reloadable components](docs/httpbind_reloadable_componet.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [reloadable components](docs/httpbind_reloadable_componet.md)
 
 Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md).
 
@@ -116,10 +116,12 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
 | `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
+| `firestorebind/` | Firestore Datastore-mode entity runtime over `tinygodriver/nosql/datastore`; does not import `net/http` or `database/sql` |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |
 | `templates/htmlbind/` | Typed, context-safe HTML template compiler |
 | `templates/sqlbind/` | Typed, parameterized SQL template compiler |
+| `templates/firestorebind/` | Typed Firestore access-pattern declarations (`.tb.firestore`) |
 | `cmd/tinybind-gen` | CLI: binders + OpenAPI + templates from a package dir |
 | `examples/demo` | End-to-end sample app |
 | `internal/*` | Test fixtures |

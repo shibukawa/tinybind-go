@@ -6,8 +6,9 @@ title: firestorebind Runtime Package And Its Name
 Add a Firestore Datastore binding runtime as its own package named after the product rather than after the driver package, and never let the driver import tinybind-go.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04; runtime in firestorebind/, generator mode in generator/firestorebind*.go, fixture in internal/firestorefixture
 extends: decision:runtime-package-boundaries
 package:
   name: firestorebind
@@ -21,7 +22,8 @@ name_choice:
   tag_follows_the_package: the tag is firestore, not datastore, so a reader who found the package by name finds the tag by the same word, per rule:firestore-tag-options
 owns:
   - api:firestorebind-operations
-  - the codec interfaces EntityEncoder, EntityDecoder and Keyer
+  - the codec interfaces EntityEncoder, EntityDecoder, Keyer, Kinder and Versioner
+  - Kinder and Versioner were not in the first draft: a kind has to be reachable from a value for a key builder to use it, and a version has to be reachable for a write to become conditional, and an interface assertion is not a call the generator can discover
   - the Context client and namespace resolution of decision:firestore-context-client-api
   - the typed transaction wrapper of decision:firestore-transaction-scope
   - decode field errors, reusing the jsonbind FieldError shape where it fits, as dynamobind does

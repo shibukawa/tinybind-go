@@ -29,7 +29,10 @@ const (
 	ArtifactConfigBind   ArtifactKind = "configbind"
 	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
 	ArtifactDynamoQuery  ArtifactKind = "dynamo_query"
-	ArtifactOpenAPI      ArtifactKind = "openapi"
+
+	ArtifactFirestoreEntity ArtifactKind = "firestore_entity"
+	ArtifactFirestoreQuery  ArtifactKind = "firestore_query"
+	ArtifactOpenAPI         ArtifactKind = "openapi"
 	// ArtifactStylesheet is the component CSS extracted from one template.
 	ArtifactStylesheet ArtifactKind = "stylesheet"
 	// ArtifactScript is the component JavaScript extracted from one template.
@@ -143,6 +146,22 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, fmt.Errorf("generate dynamobind queries: %w", err)
 	}
 	artifacts = append(artifacts, queries...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entities, err := runner.firestoreEntityArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate firestorebind: %w", err)
+	}
+	artifacts = append(artifacts, entities...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	firestoreQueries, err := runner.firestoreQueryArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate firestorebind queries: %w", err)
+	}
+	artifacts = append(artifacts, firestoreQueries...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -26,6 +26,12 @@ const (
 	// its own operation rather than two patterns for one function.
 	OperationItemEncodeDecode CallOperation = "item_encode_decode"
 	OperationItemKeyDecode    CallOperation = "item_key_decode"
+	// The Firestore entity operations. They are separate from the DynamoDB item
+	// ones rather than shared, because the two runtimes emit different methods
+	// onto the same struct and a call has to say which.
+	OperationEntityEncode     CallOperation = "entity_encode"
+	OperationEntityDecode     CallOperation = "entity_decode"
+	OperationEntityKey        CallOperation = "entity_key"
 	OperationConfigBind       CallOperation = "config_bind"
 	OperationConfigSubCommand CallOperation = "config_subcommand"
 	OperationRouteRegister    CallOperation = "route_register"
@@ -189,6 +195,21 @@ func ItemKeyDecodeCall(target CallTarget, options ...CallPatternOption) CallPatt
 	return Call(OperationItemKeyDecode, target, options...)
 }
 
+// EntityEncodeCall declares a Firestore entity writer wrapper.
+func EntityEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationEntityEncode, target, options...)
+}
+
+// EntityDecodeCall declares a Firestore entity reader wrapper.
+func EntityDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationEntityDecode, target, options...)
+}
+
+// EntityKeyCall declares a wrapper that needs only a type's key.
+func EntityKeyCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationEntityKey, target, options...)
+}
+
 // ConfigBindCall declares a configbind registration wrapper.
 func ConfigBindCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationConfigBind, target, options...)
@@ -348,7 +369,8 @@ func supportedCallOperation(operation CallOperation) bool {
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
-		OperationItemEncodeDecode, OperationItemKeyDecode:
+		OperationItemEncodeDecode, OperationItemKeyDecode,
+		OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
 		return true
 	default:
 		return false
@@ -374,6 +396,8 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,
 		OperationItemEncodeDecode, OperationItemKeyDecode:
 		return []string{"item"}, nil
+	case OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
+		return []string{"entity"}, nil
 	case OperationConfigBind:
 		return []string{"config"}, []string{"prefix"}
 	case OperationConfigSubCommand:

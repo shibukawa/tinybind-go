@@ -37,7 +37,8 @@ func runFormat(_ context.Context, args []string, streams CommandIO, options Opti
 	htmlPattern := flags.String("html-template-pattern", options.HTMLTemplatePattern, "base-name glob for HTML templates")
 	sqlPattern := flags.String("sql-template-pattern", options.SQLTemplatePattern, "base-name glob for SQL templates")
 	dynamoPattern := flags.String("dynamo-template-pattern", options.DynamoTemplatePattern, "base-name glob for DynamoDB declarations")
-	as := flags.String("as", "", "language of a source read from stdin: html, sql, or dynamo")
+	firestorePattern := flags.String("firestore-template-pattern", options.FirestoreTemplatePattern, "base-name glob for Firestore declarations")
+	as := flags.String("as", "", "language of a source read from stdin: html, sql, dynamo, or firestore")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -48,6 +49,7 @@ func runFormat(_ context.Context, args []string, streams CommandIO, options Opti
 		HTMLPattern:        *htmlPattern,
 		SQLPattern:         *sqlPattern,
 		DynamoPattern:      *dynamoPattern,
+		FirestorePattern:   *firestorePattern,
 	}
 
 	if *as != "" {

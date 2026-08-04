@@ -6,8 +6,9 @@ title: firestorebind Product Goals
 Generate Firestore Datastore entity codecs and key builders from one Go struct declaration, so no call site builds a datastore.Value or names a property string.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, all four stages below
 source: user request 2026-08-03, after system:tinygodriver-firestore shipped in tinygodriver v1.1.4
 target: system:tinygodriver-firestore, at v1.1.5
 shape_source: requirement:dynamobind-product-goals, whose staged plan is reused; what does not transfer is concept:dynamobind-firestorebind-mapping
@@ -36,7 +37,7 @@ decisions:
   tag_spelling: firestore, per rule:firestore-tag-options
   naming_split: the driver package is datastore and the binding is firestorebind; the product name is the more distinctive of the two, and "datastore" alone says nothing about which datastore
   schema_artifact: none by default, per decision:firestore-no-schema-artifact
-  write_result: Store and Remove stay error-only, matching api:dynamobind-operations
+  write_result: Store, Insert and their batch forms return the stored key, because an incomplete key comes back completed; Update and Remove stay error-only. This is one place the DynamoDB shape does not carry over, since a PutItem has no key to give back
   transactions: bound, unlike dynamobind, per decision:firestore-transaction-scope
   optimistic_locking: a version tag maps onto the driver's own WithBaseVersion precondition rather than onto a generated condition expression
 in_scope:
@@ -60,12 +61,20 @@ acceptance:
 target_state:
   property: no application source names a property, a kind, or a client; every name lives in a tag, a declaration, a Context set once, or generated code
   test: grepping the application for a property name returns nothing, and for a kind name nothing at all, since a kind is intrinsic to the type in a way a table name is not
+  reached:
+    - the entity path, where the codec, the key builder and the kind all come from the tags
+    - the read path of a declared query, whose properties, ordering and filter values are all generated and checked
+    - the kind of every operation, which no signature carries
+    - the client and the namespace, which no entry takes, per decision:firestore-context-client-api
+  not_reached:
+    - a query built with the driver's own builder, which stays the escape hatch and names properties as strings
+    - the composite index a declared query may need, unless the author declares it
   stages:
-    1_entity_codec: requirement:firestorebind-generated-entity-codec; the codec, the key builder and the kind
-    2_declared_queries: requirement:firestore-typed-queries; one named function per access pattern
-    3_transactions: decision:firestore-transaction-scope; a typed closure over the driver's own
-    4_index_descriptors: decision:firestore-no-schema-artifact, once the driver names a descriptor type
-  reading: stage 1 closes the item path; until stage 2 lands a query still names properties as strings, which is the quiet failure requirement:firestore-typed-queries exists to make loud
+    1_entity_codec: done; requirement:firestorebind-generated-entity-codec, with the codec, the key builder, the kind and the version accessor
+    2_declared_queries: done; requirement:firestore-typed-queries generates one named function per access pattern, closing the read path. A declaration names no kind either, since the result type carries it
+    3_transactions: done; decision:firestore-transaction-scope, a typed closure over the driver's own, plus the three levels of conditional write
+    4_index_descriptors: done as an opt-in clause; decision:firestore-no-schema-artifact emits a datastore.Index from an index clause the author writes. Deriving which query needs one stays declined
+  reading: the property holds for anyone reading and writing by key or by a declared access pattern, which is most callers. What is left outside is a query built with the driver's own builder, which stays the escape hatch and stays unchecked
 what_is_easier_than_dynamodb:
   no_single_table_question: a kind belongs to a type by construction, so decision:dynamo-single-table-scope has no counterpart to decline
   no_reserved_words: a filter names a property directly, so there is no expression-attribute-name aliasing to generate

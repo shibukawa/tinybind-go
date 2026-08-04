@@ -1,0 +1,72 @@
+// Access patterns for Reading and Task. Every property here is checked against
+// the firestore tags on the Go type, so a renamed tag fails generation rather
+// than returning an empty batch.
+//
+// No statement names a kind. The result type names the Go type, and that type's
+// generated Kind method is the kind, so a declaration cannot disagree with the
+// codec about what it is querying.
+
+export statement ReadingsBySensor(sensor: SensorID): firestore.many<Reading> {
+  where sensor == {sensor}
+}
+
+export statement ReadingsSince(from: time.Time, size: int): firestore.batch<Reading> {
+  where at > {from}
+  order at desc
+  limit {size}
+}
+
+export statement ReadingsUnder(parent: datastore.Key): firestore.many<Reading> {
+  ancestor {parent}
+  order at
+}
+
+export statement ReadingsForAnySensor(sensors: []SensorID): firestore.batch<Reading> {
+  where sensor in {sensors}
+}
+
+export statement ActiveReadingCount(active: bool): firestore.count<Reading> {
+  where active == {active}
+}
+
+export statement TaskKeys(title: string): firestore.keys<Task> {
+  where title == {title}
+  limit 100
+}
+
+// A composite index is declared rather than derived: the rule for when one is
+// required is subtle, and a derivation that is quietly wrong names an index that
+// does not fix the query.
+export statement WarmReadingsBySensor(sensor: SensorID, from: time.Time): firestore.many<Reading> {
+  where sensor == {sensor} and at > {from}
+  order at desc
+  index sensor, at desc
+}
+
+// A projection reads less: only the named properties come back, and everything
+// else on the value is its zero value. It is bandwidth, not a different type.
+export statement ReadingTimes(sensor: SensorID): firestore.batch<Reading> {
+  where sensor == {sensor}
+  select at
+  index sensor, at
+}
+
+// A cursor is how a caller resumes, which an offset cannot do without paying
+// for every entity it steps over.
+export statement ReadingsFrom(cursor: datastore.Cursor, size: int): firestore.batch<Reading> {
+  order at
+  start {cursor}
+  limit {size}
+}
+
+// Datastore composes with OR as well as AND since tinygodriver v1.1.6. and binds
+// tighter than or, and parentheses group, so a declaration says what it means
+// without being restructured.
+export statement HotOrNamed(sensor: SensorID, note: string, from: time.Time): firestore.batch<Reading> {
+  where (sensor == {sensor} or note == {note}) and at > {from}
+  index sensor, at
+}
+
+export statement AnySensorOrNote(sensors: []SensorID, note: string): firestore.many<Reading> {
+  where sensor in {sensors} or note == {note}
+}

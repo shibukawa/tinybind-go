@@ -6,8 +6,9 @@ title: Transactions Are Bound, Because Here They Are The Only Conditional Path
 firestorebind wraps RunInTransaction with typed reads and writes, reversing the call requirement:dynamobind-product-goals made for DynamoDB; the closure still re-runs, and nothing hides that.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, in firestorebind/tx.go and the version handling of firestorebind/entity.go
 why_the_answer_flips:
   dynamodb: the driver declares no TransactWriteItems, so there was nothing to bind, per system:tinygodriver-dynamodb transaction_note
   datastore: RunInTransaction is in the driver, and it is the only way to express a read-modify-write, since the wire has no condition expression and property transformations are excluded
@@ -21,9 +22,12 @@ three_levels_of_conditional_write:
   level_2_version:
     what: a version tag, per rule:firestore-tag-options
     behaviour: the decoder fills the field from Entity.Version, and a write carrying a non-zero version sends datastore.WithBaseVersion
+    how_the_runtime_sees_it: the generated EntityVersion method satisfies firestorebind.Versioner, which Store and Update assert for; a type without the tag implements nothing and writes unconditionally
+    which_verbs: Store and Update, and their transaction forms. Insert takes none, because it already fails if the key exists and a precondition on an entity that must not exist yet says nothing
+    caller_supplied_option: a caller's own WithBaseVersion is overridden by the tag's, since the two cannot both be right and the tag's is the one the decoder filled
     no_bump: the server assigns the next version, so nothing is incremented here and the returning-form question requirement:dynamo-optimistic-locking left open does not arise
     conflict: the driver answers ErrFailedPrecondition, which reaches the caller unchanged per rule:firestorebind-driver-passthrough
-    no_expression_collision: baseVersion is a mutation field rather than a condition expression, so a caller's own option and a version tag do not compete for one slot; the interaction_with_conditions problem of requirement:dynamo-optimistic-locking is absent by construction
+    no_expression_collision: baseVersion is a mutation field rather than a condition expression, so the tag takes nothing away from a caller who also wants a filter or an ancestor; what requirement:dynamo-optimistic-locking had to forbid was a generated condition consuming the one ConditionExpression a caller might also need, and there is no such slot here
     zero_version: a value never read has version zero and sends no precondition, so a first write is an ordinary Store; a caller wanting insert-only uses the verb
   level_3_transaction:
     what: read inside, decide in Go, commit
@@ -33,7 +37,8 @@ typed_transaction:
   entry: "func Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error"
   read_only: "func RunReadOnly(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error"
   tx_type: a firestorebind.Tx wrapping *datastore.Tx, so a typed read inside a transaction is the same generic shape as outside
-  reads: "Load[T](tx, key)", "LoadAll[T](tx, keys)", and a declared query taking a tx
+  reads: LoadTx, LoadAllTx, QueryPageTx and CountTx, each taking the tx after the ctx
+  why_a_suffix_rather_than_an_overload: Go methods cannot take type parameters, so a typed read cannot be a method on Tx, and a package-level Load taking a tx would collide with the one that does not. The suffix is what the language leaves; an earlier draft wrote these as Load[T](tx, key), which does not compile
   writes: "tx.Store(v)", "tx.Insert(v)", "tx.Update(v)", "tx.Remove(v)"; queued and returning nothing, matching the driver
   why_not_reuse_the_top_level_functions: a transactional read must go through the transaction handle, and a Context-carried handle would make one call site mean two different things; the tx is an argument, per decision:firestore-context-client-api
   client: still from the Context; the transaction adds a handle, not a client
@@ -47,8 +52,18 @@ what_stays_out:
   cross_type_helpers: a transaction spans types, so there is no single-type generic that covers one; the Tx methods are per-value and the composition is the caller's
   generated_transaction_bodies: a transaction is application logic, not an access pattern; requirement:firestore-typed-queries declares reads, not read-modify-write sequences
   a_retry_wrapper_of_our_own: the driver already restarts on ABORTED, and a second loop multiplies the deliveries its own documentation bounds
+declared_queries_get_a_twin:
+  decided: 2026-08-04, once requirement:firestore-typed-queries was built and the question could be answered against real signatures
+  what: a declaration emits <Name>Tx beside <Name>, taking the tx after the ctx
+  rejected_alternative:
+    what: one function taking an interface both a Context-resolved client and a Tx satisfy
+    why_not: that interface is client-shaped, so it would put a parameter on every call site to serve the transactional minority, which is exactly the property decision:firestore-context-client-api exists to keep
+  which_shapes: batch, count and keys, matching what the driver's own Tx offers
+  not_the_iterator: a range inside a transaction issues an unbounded number of round trips inside something that has to commit; a caller who wants every entity inside one pages explicitly with the batch form
+  not_usage_directed: emitted from the declaration, for the reason the key builder is - before the twin exists there is nothing to discover, so a rule that waited for a use would mean it never existed to be used
+  one_builder: both forms build the query through one emitter, so they cannot drift apart
+  visibility: the twin follows the declaration's own, since an unexported statement has no caller outside the package to reach either form
 open:
-  tx_in_declared_queries: whether a declared query emits a second form taking a *Tx, or one form taking an interface both satisfy; decided when requirement:firestore-typed-queries is built
   single_use: the driver folds begin into the first call where the shape allows; nothing here needs to know, unless a measurement later says the wrapper defeats it
 related:
   - api:firestorebind-operations

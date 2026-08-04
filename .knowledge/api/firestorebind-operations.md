@@ -6,8 +6,9 @@ title: firestorebind Operations
 Typed wrappers over the driver entity calls: the caller passes and receives application types, and every driver result the wrapper cannot carry stays reachable.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04, in firestorebind/
 package: github.com/shibukawa/tinybind-go/firestorebind
 shape_source: api:dynamobind-operations, with the arguments the key model removes
 constraints:
@@ -18,6 +19,7 @@ constraints:
 single:
   Load: "func Load[T any, PT interface{*T; EntityDecoder}](ctx, key datastore.Key, opts ...datastore.ReadOption) (T, error)"
   Store: "func Store[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) (datastore.Key, error)"
+  version_precondition: Store and Update append datastore.WithBaseVersion when the value implements Versioner and reports a non-zero version, per decision:firestore-transaction-scope
   Insert: "func Insert[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) (datastore.Key, error)"
   Update: "func Update[T EntityEncoder](ctx, v T, opts ...datastore.WriteOption) error"
   Remove: "func Remove[T Keyer](ctx, v T, opts ...datastore.WriteOption) error"
@@ -41,6 +43,13 @@ iterated:
   cost_disclosure: the godoc states that one range can issue many requests, and that a kind-only query walks every entity of the kind
   discards: SkippedResults and the final EndCursor; a caller who needs to resume or to diagnose an offset uses QueryPage
   no_scan: a kind-only Query is what Scan would have been, so there is no second entry point
+keys_only:
+  QueryKeysPage: "func QueryKeysPage(ctx, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error)"
+  QueryKeysPageTx: "func QueryKeysPageTx(ctx, tx *Tx, q *datastore.Query) (KeyPage, error)"
+  KeyPage: "type KeyPage struct { Keys []datastore.Key; EndCursor datastore.Cursor; More datastore.MoreResults; SkippedResults int32 }"
+  ungenericized: nothing is decoded, so there is no type to infer
+  does_not_set_keys_only: the query must already carry KeysOnly; a wrapper that set it would return keys where the caller's query said entities
+  used_by: the keys result shape of requirement:firestore-typed-queries, which sets it in generated code
 count:
   Count: "func Count(ctx, q *datastore.Query, opts ...datastore.ReadOption) (int64, error)"
   ungenericized: a count returns no entities, so there is nothing to decode and no type parameter to infer
@@ -48,8 +57,10 @@ count:
 batch:
   MaxLookupKeys: not redeclared here; the driver exports it and rule:firestorebind-driver-passthrough forbids a parallel constant that could drift from it
   LoadAll: "func LoadAll[T any, PT ...](ctx, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing []datastore.Key, deferred []datastore.Key, err error)"
-  StoreAll: "func StoreAll[T EntityEncoder](ctx, vs []T) ([]datastore.Key, error)"
-  RemoveAll: "func RemoveAll[T Keyer](ctx, vs []T) error"
+  StoreAll: "func StoreAll[T EntityEncoder](ctx, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error)"
+  InsertAll: "func InsertAll[T EntityEncoder](ctx, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error)"
+  RemoveAll: "func RemoveAll[T Keyer](ctx, vs []T, opts ...datastore.WriteOption) error"
+  not_a_transaction: chunking means a large batch commits in pieces, so a failure leaves the earlier pieces written; the godoc says so and points at Run for all-or-nothing
   three_results_from_a_lookup: found, missing and deferred are three different facts, and collapsing missing into an absent value would lose the difference between "not stored" and "not read yet"
   deferred: returned, never looped, matching how the driver treats them and what rule:firestorebind-driver-passthrough requires
   chunking:
@@ -71,10 +82,12 @@ errors:
   type: "firestorebind.Error{Property, Expected, Got, Message}", built by TypeError for a wrong kind and ValueError for a value the field cannot hold
   finding_it: firestorebind.AsError walks the chain by type assertion, as jsonbind.AsError does, because errors.As needs reflection
 untyped_query_escape_hatch:
-  status: the query is built with the driver's own builder, so a property name is a string until requirement:firestore-typed-queries lands
-  unchecked: a renamed property still compiles and returns an empty batch, which is the quiet failure that requirement makes loud
+  status: the escape hatch, now that requirement:firestore-typed-queries generates the declared form and covers every datastore.Query method
+  what_it_is_still_for: a query whose shape is decided at run time, rather than one the declaration grammar cannot express
+  unchecked: a query built with the driver's own builder names properties as strings, so a renamed tag still compiles and returns an empty batch
 deferred:
   - a batch-level iterator yielding Page[T]
+  - a keys-only iterator; QueryKeysPage is one request, and nothing has needed the paging form
   - a typed query builder; the declaration of requirement:firestore-typed-queries is the answer, not a fluent API
   - AllocateIDs, until a caller needs a key before the write
 related:

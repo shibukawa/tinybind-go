@@ -6,8 +6,9 @@ title: There Is No Table Definition To Emit
 Kinds are implicit and composite indexes are an admin concern, so nothing is generated in place of decision:dynamobind-table-definition; the gap is recorded rather than filled with a YAML file.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04; the index clause is in templates/firestorebind/query.go and generator/firestorequery_emit.go
 what_disappears:
   table_definition: no CreateTable exists, and a kind comes into being on first write, so there is no schema call to feed
   billing_mode_and_capacity: Datastore has no provisioned throughput, so the fields decision:dynamobind-table-definition leaves zero have no counterpart
@@ -43,8 +44,9 @@ declined:
       incomplete_by_construction: a query written against the escape hatch rather than a declaration contributes no entry, so the generated file would be authoritative and wrong
     what_replaces_it: MarshalIndexYAML over the emitted descriptors, called by whoever owns the file, which puts the merge where the ownership is
 documentation_duty:
-  what: the guide must say that a declared query can compile and fail on its first run for want of an index, and that nothing in the toolchain will warn first
-  why: the DynamoDB reader arrives expecting a generated table definition to have covered the schema, and here there is none to cover it; the index clause is opt-in, so an author who writes no clause gets no protection and should know that
+  what: the guide must say that a declared query can compile and fail on its first run for want of an index
+  what_the_toolchain_does_say: a godoc line on the generated function, where the shape commonly needs one and none is declared. It says "may" and names no index, which is the difference between a hint and the derivation declined above
+  why: the DynamoDB reader arrives expecting a generated table definition to have covered the schema, and here there is none to cover it; the index clause is opt-in, so an author who writes no clause gets a hint at most
   where: beside requirement:firestore-typed-queries, not buried in a limitations list
 what_this_makes_easier:
   no_one_table_per_type_assumption: decision:dynamo-single-table-scope exists because a table definition and a typed decode both assumed one type owned one table; with no definition emitted, only the decode assumes anything, and a kind is per-type anyway

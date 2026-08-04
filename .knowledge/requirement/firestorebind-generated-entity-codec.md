@@ -6,8 +6,14 @@ title: Generated Firestore Entity Codec
 For each tagged type, emit an entity encoder, an entity decoder, a kind accessor, and a key builder into the user package, with compile-time assertions that they satisfy the runtime interfaces.
 
 ```yaml
-status: proposed
+status: implemented
 proposed: 2026-08-03
+implemented: 2026-08-04
+built:
+  analysis: generator/firestorebind.go and generator/firestorebind_types.go
+  emitter: generator/firestorebind_emit.go and generator/firestorebind_decode.go
+  wiring: generator/firestorebind_generate.go, writing firestorebind_gen.go
+  fixture: internal/firestorefixture
 relation_to_the_driver_mapper: system:tinygodriver-firestore gained MarshalEntity in v1.1.5, reading the datastore tag; this codec reads firestore and is the intended path, and a struct carrying both is a generation error per rule:firestore-tag-options
 input:
   directive: "go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir ."
@@ -17,6 +23,8 @@ output_per_type:
   - "func (r *Reading) DecodeEntity(e datastore.Entity) error"
   - "func (r Reading) Kind() string"
   - "func (r Reading) EntityKey() datastore.Key"; only when an identifier tag is present
+  - "func (r Reading) EntityVersion() int64"; only when a version tag is present
+  version_is_not_usage_directed: the runtime asks for it by interface assertion, which is not a call the generator can discover, so the tag alone emits it
   no_table_definition: there is nothing to emit; kinds are implicit, per decision:firestore-no-schema-artifact
 assertions:
   - "var _ firestorebind.EntityEncoder = Reading{}"
