@@ -406,7 +406,7 @@ objects, and a string array. The page is a five-row user list.
 | JSON encode | 579 ns · 144 B · 1 alloc | **272 ns · 0 B · 0 allocs** |
 | `Bind` + `Write` (request reused) | 850 ns · 1584 B · 17 allocs | **584 ns · 1021 B · 16 allocs** |
 | `Bind` + `Write` (incl. request construction) | 1695 ns · 7445 B · 31 allocs | **1422 ns · 6883 B · 30 allocs** |
-| HTML render (`html/template` vs `htmlbind`) | 7346 ns · 2705 B · 107 allocs | **1685 ns · 1408 B · 61 allocs** |
+| HTML render (`html/template` vs `htmlbind`) | 7346 ns · 2705 B · 107 allocs | **930 ns · 464 B · 4 allocs** |
 
 The JSON comparisons are against `encoding/json`; the handler row against a
 hand-written `net/http` handler doing the same decode, path, and header reads;
@@ -416,6 +416,9 @@ Encoding allocates nothing: generated encoders append into a pooled buffer, so
 a response costs no garbage at all. Decoding's 15 allocations are the 13 strings
 and slices that end up in the result, plus the body buffer and its reader —
 there is nothing left to remove without changing what the caller gets back.
+The HTML render's four allocations are per render rather than per row — the
+bound fragment, the options, the renderer, and its conversion buffer — so a
+longer page costs the same four.
 
 ### Binary size
 

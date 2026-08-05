@@ -15,7 +15,9 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Op is one instruction of a render plan. P is the parameter struct of the
@@ -346,6 +348,10 @@ type Renderer struct {
 	// boundary gives each delivery its own, so the previous delivery's nested
 	// boundaries are cancelled before their placeholders are reused.
 	boundaryCtx context.Context
+	// scratch is reused for the string-to-bytes conversion Write needs when the
+	// writer has no WriteString. Each renderer owns its own, because boundary
+	// subtrees render in their own goroutines.
+	scratch []byte
 }
 
 // nextBoundaryID allocates the next placeholder identifier in this subtree's
@@ -443,8 +449,89 @@ func (r *Renderer) Write(value string) error {
 	if r.collect != nil {
 		r.collect.write(value)
 	}
-	_, err := io.WriteString(r.w, value)
+	if sw, ok := r.w.(io.StringWriter); ok {
+		_, err := sw.WriteString(value)
+		return err
+	}
+	// A writer without WriteString — a compressing middleware's, for one —
+	// would otherwise cost one []byte copy per instruction, so the conversion
+	// goes through a buffer this render keeps.
+	r.scratch = append(r.scratch[:0], value...)
+	_, err := r.w.Write(r.scratch)
 	return err
+}
+
+// WriteEscaped emits value under Escape's rules, writing clean runs and
+// entities separately so a value that needs escaping never builds an
+// intermediate string.
+func (r *Renderer) WriteEscaped(value string) error {
+	if !strings.ContainsAny(value, `&<>"'`) {
+		return r.Write(value)
+	}
+	start := 0
+	for i, c := range value {
+		var entity string
+		switch c {
+		case '&':
+			entity = "&amp;"
+		case '<':
+			entity = "&lt;"
+		case '>':
+			entity = "&gt;"
+		case '"':
+			entity = "&#34;"
+		case '\'':
+			entity = "&#39;"
+		case utf8.RuneError:
+			// Escape's rune loop turns each invalid byte into the replacement
+			// character. A genuine U+FFFD decodes to its own three bytes and
+			// passes through inside the clean run.
+			if _, width := utf8.DecodeRuneInString(value[i:]); width != 1 {
+				continue
+			}
+			entity = "�"
+		default:
+			continue
+		}
+		if start < i {
+			if err := r.Write(value[start:i]); err != nil {
+				return err
+			}
+		}
+		if err := r.Write(entity); err != nil {
+			return err
+		}
+		start = i + 1
+	}
+	if start < len(value) {
+		return r.Write(value[start:])
+	}
+	return nil
+}
+
+// writeAttr emits one attribute from its precomputed ` name="` prefix and its
+// already escaped value, in pieces, so a per-render value costs no
+// concatenation.
+func (r *Renderer) writeAttr(prefix, value string) error {
+	if err := r.Write(prefix); err != nil {
+		return err
+	}
+	if err := r.Write(value); err != nil {
+		return err
+	}
+	return r.Write(`"`)
+}
+
+// writeAttrEscaped is writeAttr for a value still carrying its raw characters,
+// which is what the URL instructions hold after the scheme check.
+func (r *Renderer) writeAttrEscaped(prefix, value string) error {
+	if err := r.Write(prefix); err != nil {
+		return err
+	}
+	if err := r.WriteEscaped(value); err != nil {
+		return err
+	}
+	return r.Write(`"`)
 }
 
 // MergedHead returns the head contributions collected for this render.

@@ -26,7 +26,7 @@ func (Builder[P]) Text(value func(P) string) Op[P] { return textOp[P]{value: val
 
 type textOp[P any] struct{ value func(P) string }
 
-func (o textOp[P]) Exec(r *Renderer, params P) error { return r.Write(Escape(o.value(params))) }
+func (o textOp[P]) Exec(r *Renderer, params P) error { return r.WriteEscaped(o.value(params)) }
 
 // Raw writes a value that the template already marked trusted for its context.
 func (Builder[P]) Raw(value func(P) string) Op[P] { return rawOp[P]{value: value} }
@@ -56,7 +56,7 @@ type textCtxOp[P any] struct {
 }
 
 func (o textCtxOp[P]) Exec(r *Renderer, params P) error {
-	return r.Write(Escape(o.value(r.boundaryContext(), params)))
+	return r.WriteEscaped(o.value(r.boundaryContext(), params))
 }
 
 // RawCtx is Raw for a value that needs the render context.
@@ -76,13 +76,18 @@ func (o rawCtxOp[P]) Exec(r *Renderer, params P) error {
 // mixed value concatenates author literals with escaped expressions and only
 // the expressions may be escaped. present reports whether an optional value
 // exists; an absent value omits the whole attribute.
+//
+// The attribute instructions all precompute their ` name="` prefix here, where
+// the plan is built once, so a render concatenates nothing.
 func (Builder[P]) Attr(name string, value func(P) (string, bool)) Op[P] {
-	return attrOp[P]{name: name, value: value}
+	return attrOp[P]{prefix: attrPrefix(name), value: value}
 }
 
+func attrPrefix(name string) string { return " " + name + `="` }
+
 type attrOp[P any] struct {
-	name  string
-	value func(P) (string, bool)
+	prefix string
+	value  func(P) (string, bool)
 }
 
 func (o attrOp[P]) Exec(r *Renderer, params P) error {
@@ -90,7 +95,7 @@ func (o attrOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + value + `"`)
+	return r.writeAttr(o.prefix, value)
 }
 
 // URLAttr writes an attribute a browser resolves as a URL, applying this
@@ -104,12 +109,12 @@ func (o attrOp[P]) Exec(r *Renderer, params P) error {
 // value returns the assembled attribute text unescaped, because the scheme has
 // to be read before the ampersands and quotes are encoded.
 func (Builder[P]) URLAttr(name string, value func(P) (string, bool)) Op[P] {
-	return urlAttrOp[P]{name: name, value: value}
+	return urlAttrOp[P]{prefix: attrPrefix(name), value: value}
 }
 
 type urlAttrOp[P any] struct {
-	name  string
-	value func(P) (string, bool)
+	prefix string
+	value  func(P) (string, bool)
 }
 
 func (o urlAttrOp[P]) Exec(r *Renderer, params P) error {
@@ -117,17 +122,17 @@ func (o urlAttrOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + Escape(r.opts.safeURL(value)) + `"`)
+	return r.writeAttrEscaped(o.prefix, r.opts.safeURL(value))
 }
 
 // URLAttrCtx is URLAttr for a value that needs the render context.
 func (Builder[P]) URLAttrCtx(name string, value func(context.Context, P) (string, bool)) Op[P] {
-	return urlAttrCtxOp[P]{name: name, value: value}
+	return urlAttrCtxOp[P]{prefix: attrPrefix(name), value: value}
 }
 
 type urlAttrCtxOp[P any] struct {
-	name  string
-	value func(context.Context, P) (string, bool)
+	prefix string
+	value  func(context.Context, P) (string, bool)
 }
 
 func (o urlAttrCtxOp[P]) Exec(r *Renderer, params P) error {
@@ -135,7 +140,7 @@ func (o urlAttrCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + Escape(r.opts.safeURL(value)) + `"`)
+	return r.writeAttrEscaped(o.prefix, r.opts.safeURL(value))
 }
 
 // URLListAttr writes an attribute holding several URLs, applying the scheme
@@ -146,13 +151,13 @@ func (o urlAttrCtxOp[P]) Exec(r *Renderer, params P) error {
 // because these are lists of alternatives: refusing the whole attribute would
 // turn one hostile candidate into a missing image.
 func (Builder[P]) URLListAttr(name, shape string, value func(P) (string, bool)) Op[P] {
-	return urlListAttrOp[P]{name: name, shape: shape, value: value}
+	return urlListAttrOp[P]{prefix: attrPrefix(name), shape: shape, value: value}
 }
 
 type urlListAttrOp[P any] struct {
-	name  string
-	shape string
-	value func(P) (string, bool)
+	prefix string
+	shape  string
+	value  func(P) (string, bool)
 }
 
 func (o urlListAttrOp[P]) Exec(r *Renderer, params P) error {
@@ -160,18 +165,18 @@ func (o urlListAttrOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + Escape(safeURLList(r.opts, o.shape, value)) + `"`)
+	return r.writeAttrEscaped(o.prefix, safeURLList(r.opts, o.shape, value))
 }
 
 // URLListAttrCtx is URLListAttr for a value that needs the render context.
 func (Builder[P]) URLListAttrCtx(name, shape string, value func(context.Context, P) (string, bool)) Op[P] {
-	return urlListAttrCtxOp[P]{name: name, shape: shape, value: value}
+	return urlListAttrCtxOp[P]{prefix: attrPrefix(name), shape: shape, value: value}
 }
 
 type urlListAttrCtxOp[P any] struct {
-	name  string
-	shape string
-	value func(context.Context, P) (string, bool)
+	prefix string
+	shape  string
+	value  func(context.Context, P) (string, bool)
 }
 
 func (o urlListAttrCtxOp[P]) Exec(r *Renderer, params P) error {
@@ -179,7 +184,7 @@ func (o urlListAttrCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + Escape(safeURLList(r.opts, o.shape, value)) + `"`)
+	return r.writeAttrEscaped(o.prefix, safeURLList(r.opts, o.shape, value))
 }
 
 // URLListSrcset and URLListSpace name the two list grammars URLListAttr reads.
@@ -199,12 +204,12 @@ func safeURLList(opts *renderOptions, shape, value string) string {
 
 // AttrCtx is Attr for a value that needs the render context.
 func (Builder[P]) AttrCtx(name string, value func(context.Context, P) (string, bool)) Op[P] {
-	return attrCtxOp[P]{name: name, value: value}
+	return attrCtxOp[P]{prefix: attrPrefix(name), value: value}
 }
 
 type attrCtxOp[P any] struct {
-	name  string
-	value func(context.Context, P) (string, bool)
+	prefix string
+	value  func(context.Context, P) (string, bool)
 }
 
 func (o attrCtxOp[P]) Exec(r *Renderer, params P) error {
@@ -212,17 +217,17 @@ func (o attrCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !present {
 		return nil
 	}
-	return r.Write(" " + o.name + `="` + value + `"`)
+	return r.writeAttr(o.prefix, value)
 }
 
 // BoolAttr writes a bare attribute name when the value is true and omits it
 // otherwise.
 func (Builder[P]) BoolAttr(name string, value func(P) bool) Op[P] {
-	return boolAttrOp[P]{name: name, value: value}
+	return boolAttrOp[P]{text: " " + name, value: value}
 }
 
 type boolAttrOp[P any] struct {
-	name  string
+	text  string
 	value func(P) bool
 }
 
@@ -230,16 +235,16 @@ func (o boolAttrOp[P]) Exec(r *Renderer, params P) error {
 	if !o.value(params) {
 		return nil
 	}
-	return r.Write(" " + o.name)
+	return r.Write(o.text)
 }
 
 // BoolAttrCtx is BoolAttr for a value that needs the render context.
 func (Builder[P]) BoolAttrCtx(name string, value func(context.Context, P) bool) Op[P] {
-	return boolAttrCtxOp[P]{name: name, value: value}
+	return boolAttrCtxOp[P]{text: " " + name, value: value}
 }
 
 type boolAttrCtxOp[P any] struct {
-	name  string
+	text  string
 	value func(context.Context, P) bool
 }
 
@@ -247,7 +252,7 @@ func (o boolAttrCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !o.value(r.boundaryContext(), params) {
 		return nil
 	}
-	return r.Write(" " + o.name)
+	return r.Write(o.text)
 }
 
 // BoundaryAttr writes the instance attribute of the boundary this component
