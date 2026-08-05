@@ -65,10 +65,18 @@ type PageFunc struct {
 	File string
 	// Line is the line of the func Page declaration, zero when absent.
 	Line int
-	// Params and Results are populated at RungTypedPage only. Results excludes
-	// the trailing error.
+	// Params and Results are populated at RungTypedPage only. Params excludes a
+	// leading context.Context and Results excludes the trailing error.
 	Params  []Value
 	Results []Value
+	// TakesContext records that the declaration opened with a context.Context.
+	//
+	// It is trimmed out of Params rather than counted in them, so "Params are
+	// the URL inputs, in route order" stays true and neither the route-order
+	// check nor the generated decoder has to carry an offset. A context is not
+	// a URL input: it arrives from the request rather than from the address,
+	// which is why it cannot be spelled as one.
+	TakesContext bool
 }
 
 // scalarTypes are the parameter types a generated decoder can bind from a URL.
@@ -144,6 +152,14 @@ func InspectLogic(path string) (*PageFunc, error) {
 		}
 	}
 	fn.Rung = RungTypedPage
+	// A leading context.Context is taken off the input list, after the shape
+	// check above so a near-miss still reports the signature as written. Only
+	// the first position counts: a context anywhere else keeps the ordinary
+	// not-a-URL-value error, which is the right answer there.
+	if takesLeadingContext(file, params) {
+		fn.TakesContext = true
+		params = params[1:]
+	}
 	fn.Params = params
 	fn.Results = results[:len(results)-1]
 	return fn, nil
@@ -254,6 +270,23 @@ func isHandlerSignature(file *ast.File, params, results []Value) bool {
 		return false
 	}
 	return params[0].Type == httpName+".ResponseWriter" && params[1].Type == "*"+httpName+".Request"
+}
+
+// takesLeadingContext reports whether a typed entry point opens with a
+// context.Context. Like isHandlerSignature it resolves the import name from the
+// file, because the check runs before the package compiles.
+//
+// A file that does not import context cannot be declaring one, so the missing
+// import is enough to answer no.
+func takesLeadingContext(file *ast.File, params []Value) bool {
+	if len(params) == 0 {
+		return false
+	}
+	contextName, ok := importName(file, "context")
+	if !ok {
+		return false
+	}
+	return params[0].Type == contextName+".Context"
 }
 
 // importName returns the identifier a file uses for an imported package,

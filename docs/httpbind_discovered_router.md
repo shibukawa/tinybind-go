@@ -69,6 +69,48 @@ One thing does change. At the typed rung the component's parameter list becomes
 `Load`'s return list, and generation checks it: a mismatch in count, order, or
 type fails, naming both lists.
 
+## Reaching the request
+
+Most of what a page needs is in the URL. Some of it is not. A database pool, an
+authenticated session, a request-scoped tracer — these arrive on the request
+context, put there by whatever ran before the handler, and no parameter list
+built out of path segments can express them.
+
+Two shapes can reach that context, and both opt in the same way: by declaring
+the parameter in Go. Nothing in the template changes.
+
+A typed `Load` may open with one:
+
+```go
+func Load(ctx context.Context, id string) (User, error)
+```
+
+The context is not a URL input, so it is not counted as one. It has to come
+first, which is Go's own convention, and everything after it stays a bindable
+scalar in route order. A `context.Context` anywhere else is still the error it
+always was, because at that position it really is being offered as a URL value.
+
+An `external`'s implementation may open with one too:
+
+```text
+external CurrentReader(): string
+```
+
+```go
+func CurrentReader(ctx context.Context) string { ... }
+```
+
+That one renders inline, so the value never travels through the page's
+parameters at all — which is what you want for a CSRF token or a nonce, where
+adding a parameter to every page that needs it is the actual cost. The
+declaration says nothing about a context either way; the Go signature decides,
+function by function, and an implementation that takes none is called exactly as
+before.
+
+What neither shape gets is the request itself. `*http.Request` in a typed `Load`
+would pull the transport into a signature whose whole point is that it has none.
+If you need the request, you need the handler rung, and that is what it is for.
+
 ## Segment notation, and why it is not `[id]`
 
 A trailing underscore marks a dynamic segment; two mark a catch-all.

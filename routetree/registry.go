@@ -324,9 +324,14 @@ func pageBinding(route Route, analysis Analysis) (fields []ComposerArg, callArgs
 		}
 	}
 
-	args := make([]string, len(analysis.Page.Params))
-	for i, param := range analysis.Page.Params {
-		args[i] = "route." + ExportedName(param.Name)
+	args := make([]string, 0, len(analysis.Page.Params)+1)
+	// The context comes first because it is not one of the decoded inputs; the
+	// generated handler holds the request, so the call site reads it from there.
+	if analysis.Page.TakesContext {
+		args = append(args, "r.Context()")
+	}
+	for _, param := range analysis.Page.Params {
+		args = append(args, "route."+ExportedName(param.Name))
 	}
 	names := make([]string, 0, len(component.Inputs)+1)
 	for _, input := range component.Inputs {

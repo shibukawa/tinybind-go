@@ -64,6 +64,7 @@ parameter_rule:
   names: the parameter name supplies the path segment name at rung 1 and the query key at both rungs
   types: scalars that the generated decoder can bind; a struct or other complex type is a generation error
   reason: one rule covers both rungs, so moving from rung 1 to rung 2 does not change how inputs are spelled
+  context_parameter: requirement:typed-page-context-parameter proposes a leading context.Context at rung 2, excluded from this list because it is not a URL input; it answers the open question this decision carried from 2026-07-27
 component_parameters:
   rung_1: the component parameter list is the input list, because there is no function between the request and the render
   rung_2: the component parameter list is the function's return list, because the function is what produces what the page renders
@@ -81,7 +82,6 @@ rejected:
     why: the method prefix costs every name something to buy an extension the tree no longer needs
     recorded_because: it is the natural form to return to if non-GET page routes are ever added
 open_questions:
-  - whether rung 2 may also accept a leading context.Context before the path parameters
   - whether a layout has the same ladder or only rungs 1 and 2
   - how optional query parameters are spelled, given that a Go parameter is always present
 ```

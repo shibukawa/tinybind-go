@@ -1,0 +1,6 @@
+external CurrentReader(): string
+
+export component Page(latest: string): html {
+  <h1>archive for {CurrentReader()}</h1>
+  <p>latest: {latest}</p>
+}

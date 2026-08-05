@@ -100,6 +100,31 @@ func (c RenderCall) Chain() string {
 	return c.Wrappers
 }
 
+// RenderOptions is what the default render block passes: the caller's options,
+// followed by the request's context when a request is in scope.
+//
+// The context is what a synchronous external declaring one receives. A render
+// given none falls back to background, so without this a page could name such an
+// external, compile, and read a value belonging to no request — a silent wrong
+// answer rather than the build error the missing option would otherwise be.
+//
+// It goes last because the caller's options are installed once for the whole mux
+// while this one is per request, so the specific value wins over the static one.
+//
+// The caller's slice is copied rather than appended in place, because every
+// handler closure shares it and two requests appending at once would write the
+// same backing array slot.
+func (c RenderCall) RenderOptions() string {
+	if c.Request == "" {
+		return c.Options
+	}
+	withContext := c.Symbols.RuntimeAlias + ".WithContext(" + c.Request + ".Context())"
+	if c.Options == "" {
+		return "[]" + c.Symbols.RuntimeAlias + ".Option{" + withContext + "}"
+	}
+	return "append(" + c.Options + "[:len(" + c.Options + "):len(" + c.Options + ")], " + withContext + ")"
+}
+
 // ComposerModel is the data the composer template renders.
 type ComposerModel struct {
 	Header     string

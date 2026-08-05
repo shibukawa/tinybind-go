@@ -15,6 +15,7 @@ import (
 
 	"github.com/shibukawa/tinybind-go/generator"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages"
+	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
 	"github.com/shibukawa/tinybind-go/routetree"
 )
 
@@ -249,8 +250,8 @@ func TestRouteTableDescribesTheTree(t *testing.T) {
 	for _, info := range pages.Routes {
 		byPath[info.Path] = routetreeInfo{Pattern: info.Pattern, Dir: info.Dir, Params: info.Params}
 	}
-	if len(byPath) != 3 {
-		t.Fatalf("Routes = %+v, want three entries", pages.Routes)
+	if len(byPath) != 4 {
+		t.Fatalf("Routes = %+v, want four entries", pages.Routes)
 	}
 	users, ok := byPath["/users/{id}"]
 	if !ok {
@@ -393,5 +394,46 @@ func TestActionEndpointIsDeterministic(t *testing.T) {
 func TestDiscoveryDefaultsToPages(t *testing.T) {
 	if routetree.DefaultRootDir != "pages" {
 		t.Errorf("DefaultRootDir = %q, want pages", routetree.DefaultRootDir)
+	}
+}
+
+// TestRequestContextReachesBothShapesOfAPage covers the one input that is not in
+// the URL. The reader is put on the request context the way middleware would put
+// an authenticated session or a database pool there, and the page reads it twice:
+// through a synchronous external called from the template, and through the typed
+// entry point's leading context.
+//
+// Neither shape needs the handler rung, which is what this proves.
+func TestRequestContextReachesBothShapesOfAPage(t *testing.T) {
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/archive", nil)
+	pages.NewServeMux().ServeHTTP(rec, request.WithContext(archive.WithReader(request.Context(), "alice")))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	// The external renders inline, so its value never passes through the page's
+	// parameters.
+	if !strings.Contains(body, "archive for alice") {
+		t.Errorf("a sync external did not see the request context: %s", body)
+	}
+	// The typed entry point returns what the component renders, and its
+	// results are checked against the component's parameters. The apostrophe is
+	// escaped because a page value is text, not markup.
+	if !strings.Contains(body, "latest: alice&#39;s latest memo") {
+		t.Errorf("the typed entry point did not see the request context: %s", body)
+	}
+}
+
+// Without the value the same page still serves, because the context always
+// exists; what it carries is the application's business.
+func TestAPageReadingTheContextServesWithoutTheValue(t *testing.T) {
+	rec := get(t, pages.NewServeMux(), "/archive")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "archive for guest") {
+		t.Errorf("body = %s", rec.Body)
 	}
 }

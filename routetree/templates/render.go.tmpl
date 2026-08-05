@@ -7,9 +7,10 @@ scope arrives by name, and the result is an expression of type error, so the
 caller still decides what a failure does.
 */ -}}
 {{- define "render" -}}
+{{- $options := .RenderOptions -}}
 {{- if .Wrappers -}}
-{{ .Symbols.RuntimeAlias }}.RenderChain({{ .Writer }}, {{ .Wrappers }}, {{ .Leaf }}{{ with .Options }}, {{ . }}...{{ end }})
+{{ .Symbols.RuntimeAlias }}.RenderChain({{ .Writer }}, {{ .Wrappers }}, {{ .Leaf }}{{ with $options }}, {{ . }}...{{ end }})
 {{- else -}}
-{{ .Symbols.RuntimeAlias }}.Render({{ .Writer }}, {{ .Leaf }}{{ with .Options }}, {{ . }}...{{ end }})
+{{ .Symbols.RuntimeAlias }}.Render({{ .Writer }}, {{ .Leaf }}{{ with $options }}, {{ . }}...{{ end }})
 {{- end -}}
 {{- end }}

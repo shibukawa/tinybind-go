@@ -122,7 +122,10 @@ func TestRegistryWrapsLayouts(t *testing.T) {
 	mustContain(t, source,
 		"wrappers := []htmlbind.Wrapper{",
 		"BindLayout(LayoutParams{",
-		"htmlbind.RenderChain(w, wrappers, about.Page(params), options...)",
+		// The request's context goes last, so it wins over anything the caller
+		// installed once for the whole mux, and the caller's slice is copied
+		// rather than appended in place because every handler shares it.
+		"htmlbind.RenderChain(w, wrappers, about.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...)",
 	)
 }
 

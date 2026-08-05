@@ -311,3 +311,87 @@ func Load(wrong string, filter Filter) (User, error) { return User{}, nil }
 		t.Fatalf("errs = %v, want the name and the type problem", errs)
 	}
 }
+
+// TestInspectLogicTrimsALeadingContext covers the one input a typed entry point
+// may declare that is not a URL value: it arrives from the request rather than
+// from the address, so it is taken off Params instead of being bound.
+func TestInspectLogicTrimsALeadingContext(t *testing.T) {
+	fn := inspect(t, `package id_
+
+import "context"
+
+func Load(ctx context.Context, id string) (User, error) { return User{}, nil }
+`)
+	if fn.Rung != RungTypedPage {
+		t.Fatalf("Rung = %v, want %v", fn.Rung, RungTypedPage)
+	}
+	if !fn.TakesContext {
+		t.Error("TakesContext = false, want true")
+	}
+	if len(fn.Params) != 1 || fn.Params[0].Name != "id" {
+		t.Errorf("Params = %+v, want the context trimmed and id left", fn.Params)
+	}
+}
+
+func TestInspectLogicTrimsALeadingContextWithAliasedImport(t *testing.T) {
+	fn := inspect(t, `package id_
+
+import goctx "context"
+
+func Load(ctx goctx.Context) (User, error) { return User{}, nil }
+`)
+	if !fn.TakesContext {
+		t.Error("TakesContext = false, want true")
+	}
+	if len(fn.Params) != 0 {
+		t.Errorf("Params = %+v, want none", fn.Params)
+	}
+}
+
+// A page whose whole input is the request context is the shape that could not be
+// written before: no dynamic segment, no query, and nothing to bind from a URL.
+func TestValidateAcceptsAContextOnlyEntryPoint(t *testing.T) {
+	fn := inspect(t, `package archive
+
+import "context"
+
+func Load(ctx context.Context) (User, error) { return User{}, nil }
+`)
+	component := []Value{{Name: "user", Type: "User"}}
+	if errs := Validate(routeWithParams("/archive"), fn, component); len(errs) != 0 {
+		t.Fatalf("Validate = %v, want none", errs)
+	}
+}
+
+// The trim is the first position only, so the URL-binding rule and its
+// diagnostic are unchanged everywhere else.
+func TestValidateRejectsANonLeadingContext(t *testing.T) {
+	fn := inspect(t, `package id_
+
+import "context"
+
+func Load(id string, ctx context.Context) (User, error) { return User{}, nil }
+`)
+	if fn.TakesContext {
+		t.Error("TakesContext = true, want false for a trailing context")
+	}
+	errs := Validate(routeWithParams("/users/{id}", "id"), fn, nil)
+	if len(errs) == 0 {
+		t.Fatal("a trailing context was accepted, want the URL-binding rejection")
+	}
+	if !strings.Contains(errs[0].Error(), "context.Context") {
+		t.Errorf("error = %v, want it to name the type it rejected", errs[0])
+	}
+}
+
+// A file that does not import context cannot be declaring one, so the parameter
+// stays an ordinary input and is rejected as one.
+func TestInspectLogicIgnoresAContextWithoutTheImport(t *testing.T) {
+	fn := inspect(t, `package id_
+
+func Load(ctx context.Context) (User, error) { return User{}, nil }
+`)
+	if fn.TakesContext {
+		t.Error("TakesContext = true, want false without the import")
+	}
+}
