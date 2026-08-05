@@ -533,11 +533,13 @@ func TestSupersededDeliveryCannotLandOnAReusedPlaceholder(t *testing.T) {
 	// would otherwise settle into the replacement's placeholder. The earlier
 	// delivery's work is cancelled, so it never reports.
 	release := make(chan struct{})
-	var started atomic.Int32
 	inner := func(value string) (string, error) {
-		if started.Add(1) == 1 {
+		if value == "1" {
 			// The first delivery's nested boundary is still working when the
-			// second delivery replaces it.
+			// second delivery replaces it. Selecting by value matters: the two
+			// nested boundaries run in their own goroutines, so which one calls
+			// inner first is the scheduler's choice, and blocking the second
+			// delivery's would block the delivery that is allowed to settle.
 			<-release
 			return "stale", nil
 		}
