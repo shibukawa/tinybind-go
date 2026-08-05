@@ -39,6 +39,7 @@ this_module:
     value: the only ask that reverses a position this catalog recorded, and the only one needing a decision rather than an implementation
     order: last, and gated on that decision
 pin:
+  status: done 2026-08-06, and past what this block planned: go.mod says v1.1.9, which carries the commit envelope as well as the fold. The three fixture tests below were corrected as anticipated
   driver: v1.1.7, from the v1.1.6 in go.mod
   what_it_buys: the fold and the doc fixes, neither of which needs a source change here
   what_it_does_not_buy: MutationSize, which has been available since v1.1.6 and is unused, per requirement:firestore-mutation-sizing
@@ -53,6 +54,7 @@ pin:
     what_replaces_the_proxy: the transaction is now visible where it actually happens - readOptions.newTransaction on the first read, and the handle or singleUseTransaction on the commit
     the_third_is_the_interesting_one: it asserts a property worth keeping, and only its evidence changed; the fake server has the request bodies to assert against directly
     nothing_else_moved: go build and go test over the whole module at v1.1.7 report these three and nothing else; the pin was reverted after measuring, so go.mod still says v1.1.6
+    how_it_was_corrected: the fake now reads readOptions.newTransaction on lookup and runQuery, returns the handle in the reply as the service does, and counts singleUseTransaction on commit. fakeDatastore.transactionStarts sums the three ways one can begin, so the tests assert that a transaction happened rather than that one RPC was sent, and TestTransactionReadModifyWrite additionally asserts beginTransaction is not sent at all - the saving itself, which no test held before
 framework_owns:
   namespace_teardown: there is no API that deletes a namespace, so a test run's teardown is a keys-only query per kind and a batch delete; this module supplies both halves and owns neither the sweep nor the isolation policy
   ttl_policy_application: gcloud firestore fields ttls update stays deployment tooling, per the consumer's own decision and system:tinygodriver-firestore ttl

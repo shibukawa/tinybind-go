@@ -43,9 +43,21 @@ type fakeDatastore struct {
 	// commitSizes records every commit's mutation count, so a test can see how
 	// a batch was chunked.
 	commitSizes []int
+	// commitBytes records every commit's request body length, which is the
+	// figure the chunking is supposed to keep under the request limit. Counting
+	// mutations cannot show that: the whole point of the envelope is that the
+	// body is larger than the mutations in it.
+	commitBytes []int
 	// baseVersion is the precondition on the most recent write mutation, empty
 	// when none was sent.
 	baseVersion string
+	// inlineTxStarts counts the reads that opened a transaction through
+	// readOptions.newTransaction, and singleUseCommits the commits that opened
+	// one through singleUseTransaction. As of tinygodriver v1.1.7 these are how
+	// a transaction begins; beginTransaction is no longer sent, so counting that
+	// RPC no longer says whether anything ran transactionally.
+	inlineTxStarts   int
+	singleUseCommits int
 	// kind and keysOnly are what the most recent query asked for, which is how
 	// a test sees that a declaration reached the wire as written.
 	kind     string
@@ -185,6 +197,30 @@ func (f *fakeDatastore) countOf(rpc string) int {
 	return f.calls[rpc]
 }
 
+// transactionStarts is how many transactions were opened, however they were
+// opened: explicitly, by a read that asked for a new one, or by a commit that
+// carried its own.
+func (f *fakeDatastore) transactionStarts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls["beginTransaction"] + f.inlineTxStarts + f.singleUseCommits
+}
+
+// startsTransaction reports whether readOptions asked for a new transaction,
+// and records it. The reply then has to carry the handle back, because that is
+// the only place the caller can learn it.
+func (f *fakeDatastore) startsTransaction(body map[string]json.RawMessage) bool {
+	var options struct {
+		NewTransaction json.RawMessage `json:"newTransaction"`
+	}
+	_ = json.Unmarshal(body["readOptions"], &options)
+	if options.NewTransaction == nil {
+		return false
+	}
+	f.inlineTxStarts++
+	return true
+}
+
 func (f *fakeDatastore) serve(w http.ResponseWriter, r *http.Request) {
 	rpc := r.URL.Path[strings.LastIndex(r.URL.Path, ":")+1:]
 	f.mu.Lock()
@@ -225,6 +261,9 @@ func (f *fakeDatastore) serve(w http.ResponseWriter, r *http.Request) {
 	case "lookup":
 		f.lookup(w, body)
 	case "commit":
+		f.mu.Lock()
+		f.commitBytes = append(f.commitBytes, len(raw))
+		f.mu.Unlock()
 		f.commit(w, body)
 	case "runQuery":
 		f.runQuery(w, body)
@@ -255,7 +294,11 @@ func (f *fakeDatastore) lookup(w http.ResponseWriter, body map[string]json.RawMe
 			missing = append(missing, map[string]any{"entity": map[string]any{"key": raw}, "version": "0"})
 		}
 	}
-	writeJSON(w, map[string]any{"found": found, "missing": missing})
+	reply := map[string]any{"found": found, "missing": missing}
+	if f.startsTransaction(body) {
+		reply["transaction"] = "tx-handle"
+	}
+	writeJSON(w, reply)
 }
 
 func (f *fakeDatastore) commit(w http.ResponseWriter, body map[string]json.RawMessage) {
@@ -264,6 +307,11 @@ func (f *fakeDatastore) commit(w http.ResponseWriter, body map[string]json.RawMe
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// A commit that carries its own transaction is one the closure never read
+	// in: there was no read to fold the begin into, so the commit does it.
+	if body["singleUseTransaction"] != nil {
+		f.singleUseCommits++
+	}
 	f.lastCommitSize = len(mutations)
 	f.commitSizes = append(f.commitSizes, len(mutations))
 	if f.abortCommits > 0 {
@@ -389,11 +437,15 @@ func (f *fakeDatastore) runQuery(w http.ResponseWriter, body map[string]json.Raw
 	if end < len(all) {
 		more = "NOT_FINISHED"
 	}
-	writeJSON(w, map[string]any{"batch": map[string]any{
+	reply := map[string]any{"batch": map[string]any{
 		"entityResults": results,
 		"endCursor":     cursorAt(end),
 		"moreResults":   more,
-	}})
+	}}
+	if f.startsTransaction(body) {
+		reply["transaction"] = "tx-handle"
+	}
+	writeJSON(w, reply)
 }
 
 func cursorAt(i int) string {
