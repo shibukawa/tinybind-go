@@ -199,6 +199,83 @@ func TestStoreAllCommitsInOneRequestWhenItFits(t *testing.T) {
 	}
 }
 
+// A batch too large for one request is split, and the split is measured against
+// the bytes that actually go out rather than against the mutations alone.
+//
+// The envelope the request wraps around its mutations is the reason those two
+// differ, and getting it wrong is not symmetric: too small overruns the limit,
+// too large silently spends budget that was available. Both ends are asserted,
+// because only one of them fails loudly on its own.
+func TestStoreAllChunksAgainstTheRequestLimit(t *testing.T) {
+	ctx, fake := withFake(t)
+	// Twelve entities of about a megabyte each: more than one request holds, and
+	// few enough that the split points are easy to reason about. Body is the
+	// unindexed property, so the size goes on the wire without going in an index.
+	readings := make([]firestorefixture.Reading, 0, 12)
+	for i := range 12 {
+		r := sample()
+		r.ID = firestorefixture.SensorID(string(rune('a' + i)))
+		r.Body = strings.Repeat("x", 1<<20)
+		readings = append(readings, r)
+	}
+
+	keys, err := firestorefixture.StoreReadings(ctx, readings)
+	if err != nil {
+		t.Fatalf("StoreReadings: %v", err)
+	}
+	if len(keys) != len(readings) {
+		t.Errorf("keys: got %d, want %d; a chunk boundary dropped entities", len(keys), len(readings))
+	}
+
+	fake.mu.Lock()
+	bytesPer := slices.Clone(fake.commitBytes)
+	sizes := slices.Clone(fake.commitSizes)
+	fake.mu.Unlock()
+
+	if len(bytesPer) < 2 {
+		t.Fatalf("commits: got %d, want more than one; twelve megabytes do not fit one request", len(bytesPer))
+	}
+	if total := sum(sizes); total != len(readings) {
+		t.Errorf("mutations committed: got %d, want %d", total, len(readings))
+	}
+	for i, n := range bytesPer {
+		if n > datastore.MaxRequestBytes {
+			t.Errorf("commit %d sent %d bytes, over the %d limit", i, n, datastore.MaxRequestBytes)
+		}
+	}
+	// Every commit but the last is within one more mutation of the limit: the
+	// only reason to stop filling one is that the next did not fit. Room left
+	// over beyond that is budget thrown away, and that failure does not announce
+	// itself - the writes all succeed, in more requests than they needed.
+	//
+	// This is asserted with no allowance because the driver measures the
+	// envelope rather than reserving for it. A local estimate could not be held
+	// to this: the slack it kept back would show up here as exactly the unused
+	// room the assertion forbids.
+	perEntity := 0
+	for i, n := range sizes {
+		// Amortised, so it includes each mutation's share of the envelope and is
+		// therefore never an underestimate of what one more would have cost.
+		if n > 0 {
+			perEntity = max(perEntity, bytesPer[i]/n)
+		}
+	}
+	for i, n := range bytesPer[:len(bytesPer)-1] {
+		if unused := datastore.MaxRequestBytes - n; unused > perEntity {
+			t.Errorf("commit %d sent %d bytes and left %d unused, more than the %d one more entity needs",
+				i, n, unused, perEntity)
+		}
+	}
+}
+
+func sum(ns []int) int {
+	total := 0
+	for _, n := range ns {
+		total += n
+	}
+	return total
+}
+
 // A read-modify-write is what a transaction is for, since nothing on this wire
 // evaluates a predicate over a property.
 func TestTransactionReadModifyWrite(t *testing.T) {
@@ -211,8 +288,13 @@ func TestTransactionReadModifyWrite(t *testing.T) {
 	if err := firestorefixture.RenameInTransaction(ctx, task.EntityKey(), "after"); err != nil {
 		t.Fatalf("RenameInTransaction: %v", err)
 	}
-	if got := fake.countOf("beginTransaction"); got != 1 {
-		t.Errorf("beginTransaction count: got %d, want 1", got)
+	// One transaction, and no round trip spent opening it: the driver folds the
+	// begin into the read that needs it, as of tinygodriver v1.1.7.
+	if got := fake.transactionStarts(); got != 1 {
+		t.Errorf("transactions started: got %d, want 1", got)
+	}
+	if got := fake.countOf("beginTransaction"); got != 0 {
+		t.Errorf("beginTransaction count: got %d, want 0; the begin rides the first read", got)
 	}
 
 	var got firestorefixture.Task
@@ -245,8 +327,8 @@ func TestTransactionRestartsOnAbort(t *testing.T) {
 	if err := firestorefixture.RenameInTransaction(ctx, task.EntityKey(), "after"); err != nil {
 		t.Fatalf("RenameInTransaction: %v", err)
 	}
-	if got := fake.countOf("beginTransaction"); got != 2 {
-		t.Errorf("beginTransaction count: got %d, want 2; the closure re-runs, so the reads run again", got)
+	if got := fake.transactionStarts(); got != 2 {
+		t.Errorf("transactions started: got %d, want 2; the closure re-runs, so the reads run again", got)
 	}
 	if got := fake.countOf("commit"); got != 3 {
 		// One insert, one aborted commit, one that succeeded.
@@ -517,7 +599,7 @@ func TestDeclaredQueryTransactionTwin(t *testing.T) {
 	if len(got.Keys) != 1 || got.Keys[0].Path[0].ID != 2 {
 		t.Errorf("keys: got %v", got.Keys)
 	}
-	if fake.countOf("beginTransaction") != 1 {
+	if fake.transactionStarts() != 1 {
 		t.Errorf("the twin did not run inside a transaction")
 	}
 	if !fake.lastKeysOnly() {
