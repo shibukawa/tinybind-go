@@ -1,0 +1,12 @@
+package benchfixture
+
+type Row {
+  name: string
+  email: string
+  active: bool
+}
+
+export component UserPage(title: string, rows: Row[]): html {
+<!DOCTYPE html>
+<html lang="en"><head><title>{title}</title></head><body><h1>{title}</h1><ul>{for row, i in rows}<li data-index={i}><span class="name">{row.name}</span><span class="email">{row.email}</span>{if row.active}<em>active</em>{/if}</li>{/for}</ul></body></html>
+}

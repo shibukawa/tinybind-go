@@ -1,18 +1,17 @@
 package httpbind_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
 func TestRestJSONAny_ExcludesAndDecodesNested(t *testing.T) {
-	body := map[string]json.RawMessage{
-		"name":  json.RawMessage(`"Ada"`),
-		"role":  json.RawMessage(`"admin"`),
-		"meta":  json.RawMessage(`{"source":"import"}`),
-		"count": json.RawMessage(`2`),
+	body, err := jsonbind.ParseObject([]byte(
+		`{"name":"Ada","role":"admin","meta":{"source":"import"},"count":2}`))
+	if err != nil {
+		t.Fatal(err)
 	}
 	got, err := httpbind.RestJSONAny(body, []string{"name", "email"})
 	if err != nil {
@@ -34,14 +33,18 @@ func TestRestJSONAny_ExcludesAndDecodesNested(t *testing.T) {
 	}
 }
 
-func TestRestJSONRaw_Copy(t *testing.T) {
-	body := map[string]json.RawMessage{
-		"name": json.RawMessage(`"x"`),
-		"k":    json.RawMessage(`{"a":1}`),
+func TestRestJSONNames_ExcludesDeclared(t *testing.T) {
+	body, err := jsonbind.ParseObject([]byte(`{"name":"x","k":{"a":1}}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := httpbind.RestJSONRaw(body, []string{"name"})
-	if len(got) != 1 || string(got["k"]) != `{"a":1}` {
-		t.Fatalf("%#v", got)
+	got := httpbind.RestJSONNames(body, []string{"name"})
+	if len(got) != 1 || got[0] != "k" {
+		t.Fatalf("rest names: %#v", got)
+	}
+	raw, ok := body.Get("k")
+	if !ok || string(raw) != `{"a":1}` {
+		t.Fatalf("raw value: %q ok=%v", raw, ok)
 	}
 }
 

@@ -241,96 +241,101 @@ func isRequestTooLarge(err error) bool {
 	return false
 }
 
-// RawJSONMap decodes a JSON object RawMessage into a map of raw fields.
-func RawJSONMap(raw json.RawMessage) (map[string]json.RawMessage, error) {
+// RawJSONMap splits a JSON object value into its raw fields.
+func RawJSONMap(raw []byte) (*jsonbind.Object, error) {
 	return jsonbind.RawJSONMap(raw)
 }
 
-// BytesJSONMap decodes a full JSON document (bytes) as an object map.
-func BytesJSONMap(data []byte) (map[string]json.RawMessage, error) {
+// BytesJSONMap splits a full JSON object document into its raw fields.
+func BytesJSONMap(data []byte) (*jsonbind.Object, error) {
 	return jsonbind.BytesJSONMap(data)
 }
 
-// RawJSONArray decodes a JSON array RawMessage into element raw values.
-func RawJSONArray(raw json.RawMessage) ([]json.RawMessage, error) {
+// RawJSONArray splits a JSON array into its raw element values.
+func RawJSONArray(raw []byte) ([][]byte, error) {
 	return jsonbind.RawJSONArray(raw)
 }
 
 // DecodeJSONMapStringString decodes a JSON object with string values.
-func DecodeJSONMapStringString(raw json.RawMessage) (map[string]string, error) {
+func DecodeJSONMapStringString(raw []byte) (map[string]string, error) {
 	return jsonbind.DecodeJSONMapStringString(raw)
 }
 
 // DecodeJSONStringSlice decodes a JSON array of strings.
-func DecodeJSONStringSlice(raw json.RawMessage) ([]string, error) {
+func DecodeJSONStringSlice(raw []byte) ([]string, error) {
 	return jsonbind.DecodeJSONStringSlice(raw)
 }
 
 // DecodeJSONIntSlice decodes a JSON array of ints.
-func DecodeJSONIntSlice(raw json.RawMessage) ([]int, error) {
+func DecodeJSONIntSlice(raw []byte) ([]int, error) {
 	return jsonbind.DecodeJSONIntSlice(raw)
 }
 
 // DecodeJSONInt64Slice decodes a JSON array of int64.
-func DecodeJSONInt64Slice(raw json.RawMessage) ([]int64, error) {
+func DecodeJSONInt64Slice(raw []byte) ([]int64, error) {
 	return jsonbind.DecodeJSONInt64Slice(raw)
 }
 
 // DecodeJSONBoolSlice decodes a JSON array of bools.
-func DecodeJSONBoolSlice(raw json.RawMessage) ([]bool, error) {
+func DecodeJSONBoolSlice(raw []byte) ([]bool, error) {
 	return jsonbind.DecodeJSONBoolSlice(raw)
 }
 
 // DecodeJSONFloat64Slice decodes a JSON array of float64.
-func DecodeJSONFloat64Slice(raw json.RawMessage) ([]float64, error) {
+func DecodeJSONFloat64Slice(raw []byte) ([]float64, error) {
 	return jsonbind.DecodeJSONFloat64Slice(raw)
 }
 
-// ReadJSONMap decodes a JSON object body into a map of raw messages.
-// Used by generated binders so they can pick named fields without reflect on T.
-// Non-object JSON (arrays, scalars) fails with 400 — required when payload:"*" rest maps are used.
-func ReadJSONMap(r *http.Request) (map[string]json.RawMessage, error) {
+// ReadJSONObject splits a JSON object body into its raw fields.
+//
+// Generated binders need random access by name, because a field may also come
+// from the query string or a form and the tag decides which source wins. The
+// returned Object holds subslices of the body, so this costs one pass and one
+// slice rather than a map plus a copy of every member.
+//
+// Non-object JSON (arrays, scalars, null) fails with 400 — required when
+// payload:"*" rest maps are used.
+func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
 	if r.Body == nil {
-		return map[string]json.RawMessage{}, nil
+		return jsonbind.EmptyObject(), nil
 	}
 	defer r.Body.Close()
 	limit := MaxJSONBodyBytes()
 	if r.ContentLength > limit {
 		return nil, PayloadTooLarge(Problem{Code: "payload_too_large", Message: "JSON body too large"}, errJSONBodyTooLarge)
 	}
-	data, err := readJSONBytes(r.Body, limit)
+	data, err := jsonbind.ReadLimitHint(r.Body, limit, r.ContentLength)
 	if err != nil {
-		if err == errJSONBodyTooLarge {
+		if err == errJSONBodyTooLarge || err == jsonbind.ErrBodyTooLarge {
 			return nil, PayloadTooLarge(Problem{Code: "payload_too_large", Message: "JSON body too large"}, err)
 		}
 		return nil, BadRequest(Problem{Code: "body_read", Message: "failed to read body"}, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return map[string]json.RawMessage{}, nil
+		return jsonbind.EmptyObject(), nil
 	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
+	obj, err := jsonbind.ParseObject(data)
+	if err != nil {
+		if je, ok := jsonbind.AsError(err); ok && je.Message == "JSON value must be an object" {
+			return nil, BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, err)
+		}
 		return nil, BadRequest(Problem{Code: "json_parse", Message: "invalid JSON body"}, err)
 	}
-	// encoding/json decodes JSON null into a nil map. Null (and non-objects)
-	// must not be treated as an empty object — payload:"*" rest binding and
-	// object-shaped models require a real JSON object (or empty body).
-	if m == nil {
-		return nil, BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, nil)
-	}
-	return m, nil
+	return obj, nil
 }
 
 // RestJSONAny builds map[string]any from leftover JSON object keys not in exclude.
 // Nested JSON values are decoded into any (objects/arrays/numbers/bools/strings/null).
 // Prefer non-nil empty map when nothing remains.
-func RestJSONAny(jsonBody map[string]json.RawMessage, exclude []string) (map[string]any, error) {
+func RestJSONAny(jsonBody *jsonbind.Object, exclude []string) (map[string]any, error) {
 	return jsonbind.RestJSONAny(jsonBody, exclude)
 }
 
-// RestJSONRaw builds map[string]json.RawMessage from leftover JSON object keys not in exclude.
-func RestJSONRaw(jsonBody map[string]json.RawMessage, exclude []string) map[string]json.RawMessage {
-	return jsonbind.RestJSONRaw(jsonBody, exclude)
+// RestJSONNames lists leftover JSON object keys not in exclude, so generated
+// code can fill a map[string]json.RawMessage without this package converting
+// between map types.
+func RestJSONNames(jsonBody *jsonbind.Object, exclude []string) []string {
+	return jsonbind.RestJSONNames(jsonBody, exclude)
 }
 
 // RestFormAny builds map[string]any from leftover form keys not in exclude (string values).

@@ -13,43 +13,42 @@ func typeKey[T any]() reflect.Type {
 	return reflect.TypeFor[T]()
 }
 
-type binderFunc func(*http.Request) (any, error)
-type writerFunc func(http.ResponseWriter, *http.Request, any) error
-
+// The registries hold the generated function itself, not a closure that
+// launders T through `any`. A func value is pointer-shaped, so storing one in
+// an interface is free, while passing T through `any` would box (and copy) the
+// bound struct on every request.
 var (
-	binders sync.Map // reflect.Type -> binderFunc
-	writers sync.Map // reflect.Type -> writerFunc
+	binders sync.Map // reflect.Type -> func(*http.Request) (T, error)
+	writers sync.Map // reflect.Type -> func(http.ResponseWriter, *http.Request, T) error
 )
 
 // RegisterBind registers a generated binder for T.
 // Call from generated init(); field mapping lives entirely inside fn.
 func RegisterBind[T any](fn func(*http.Request) (T, error)) {
-	binders.Store(typeKey[T](), binderFunc(func(r *http.Request) (any, error) {
-		return fn(r)
-	}))
+	binders.Store(typeKey[T](), any(fn))
 }
 
 // RegisterWrite registers a generated writer for T.
 func RegisterWrite[T any](fn func(http.ResponseWriter, *http.Request, T) error) {
-	writers.Store(typeKey[T](), writerFunc(func(w http.ResponseWriter, r *http.Request, v any) error {
-		return fn(w, r, v.(T))
-	}))
+	writers.Store(typeKey[T](), any(fn))
 }
 
-func lookupBinder(t reflect.Type) (binderFunc, bool) {
-	v, ok := binders.Load(t)
+func lookupBinder[T any]() (func(*http.Request) (T, error), bool) {
+	v, ok := binders.Load(typeKey[T]())
 	if !ok {
 		return nil, false
 	}
-	return v.(binderFunc), true
+	fn, ok := v.(func(*http.Request) (T, error))
+	return fn, ok
 }
 
-func lookupWriter(t reflect.Type) (writerFunc, bool) {
-	v, ok := writers.Load(t)
+func lookupWriter[T any]() (func(http.ResponseWriter, *http.Request, T) error, bool) {
+	v, ok := writers.Load(typeKey[T]())
 	if !ok {
 		return nil, false
 	}
-	return v.(writerFunc), true
+	fn, ok := v.(func(http.ResponseWriter, *http.Request, T) error)
+	return fn, ok
 }
 
 func missingBinderError(t reflect.Type) error {

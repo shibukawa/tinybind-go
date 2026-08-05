@@ -290,6 +290,75 @@ go run ./examples/demo
 
 curl 例の詳細は [`examples/demo/README.md`](examples/demo/README.md) を参照してください。
 
+## ベンチマーク
+
+生成コードには駆動すべき reflection がなく、中間の `map[string]any` を組み立てる必要もありません。差はそこから出ています。計測環境は Apple M3・Go 1.26.5・`darwin/arm64`、10回計測の最良値です。
+
+各ペアの出力は一致します。JSON codec は差分ファザで `encoding/json` と突き合わせており、ハンドラとテンプレートのペアはベンチマークに並ぶテストで等価性を検証しています。再現は次のコマンドです。
+
+```bash
+go test ./internal/benchfixture -run xxx -bench . -benchmem
+```
+
+### スループット
+
+ドキュメントは 312 バイトの注文データで、ネストしたオブジェクト・オブジェクト3要素の配列・文字列配列を含みます。ページは5行のユーザー一覧です。
+
+| 経路 | 標準ライブラリ | 生成コード |
+|------|----------------|------------|
+| JSON decode（`io.Reader`） | 3447 ns · 1688 B · 30 allocs | **777 ns · 856 B · 15 allocs** |
+| JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 3287 ns · 888 B · 25 allocs | — |
+| JSON encode | 579 ns · 144 B · 1 alloc | **272 ns · 0 B · 0 allocs** |
+| `Bind` + `Write`（リクエスト再利用） | 850 ns · 1584 B · 17 allocs | **584 ns · 1021 B · 16 allocs** |
+| `Bind` + `Write`（リクエスト構築込み） | 1695 ns · 7445 B · 31 allocs | **1422 ns · 6883 B · 30 allocs** |
+| HTML レンダリング（`html/template` 対 `htmlbind`） | 7346 ns · 2705 B · 107 allocs | **1685 ns · 1408 B · 61 allocs** |
+
+JSON の各行は `encoding/json` との比較、ハンドラの行は同じ body decode・path・header 読み取りを手書きした `net/http` ハンドラとの比較、HTML の行は同じドキュメントを出力する `html/template` テンプレートとの比較です。
+
+エンコードのアロケーションはゼロです。生成エンコーダはプールしたバッファに append するので、レスポンス1本あたりのゴミが出ません。デコードの15回は、結果に残る文字列とスライス13個に body バッファとその reader を足した数で、呼び出し側が受け取る値を変えずに削れるものはもう残っていません。
+
+### バイナリサイズ
+
+同じ小さな JSON プログラムを2通りにビルドしたものです。片方は `encoding/json`、もう片方は生成された `jsonbind` codec を使います。`jsonbind` は `encoding/json` を一切 import しないため、reflection ベースの codec がバイナリに入りません。
+
+| ビルド | `encoding/json` | `jsonbind` | 削減 |
+|--------|-----------------|------------|------|
+| `go build` | 3,075,522 | **2,617,426** | −458 KB（−14.9%） |
+| `go build -ldflags="-s -w"` | 2,061,010 | **1,741,186** | −320 KB（−15.5%） |
+| `tinygo build -target wasi` | 1,345,144 | **867,687** | −477 KB（−35.5%） |
+| `tinygo build -target wasi -no-debug` | 496,869 | **252,388** | −244 KB（−49.2%） |
+
+strip すると差は縮むどころか効いてきます。デバッグ情報が落ちた後は、残りに占める reflection 機構の割合が上がるためです。strip した TinyGo wasm ビルドではバイナリの約半分がそれにあたります。
+
+### encoding/json/v2
+
+`encoding/json/v2` は Go 1.26 でもまだ `GOEXPERIMENT=jsonv2` の裏にあり、ライブラリから無条件に import することはできません。それでも計測したのは、「生成 codec は v2 を対象にすべきではないか」という当然の疑問があるからです。
+
+```bash
+GOEXPERIMENT=jsonv2 go test ./internal/benchfixture -run xxx -bench JSON -benchmem
+```
+
+| 経路 | v1・フラグなし | v1・フラグあり | v2 API | 生成コード |
+|------|----------------|----------------|--------|------------|
+| decode（`io.Reader`） | 3543 ns · 1688 B · 30 | 2536 ns · 1889 B · 18 | 1650 ns · 544 B · 11 | **799 ns · 856 B · 15** |
+| decode（バイト列が手元にある） | 3352 ns · 888 B · 25 | 1871 ns · 496 B · 10 | 1525 ns · 496 B · 10 | — |
+| encode | 587 ns · 144 B · 1 | 1330 ns · 1824 B · 11 | 943 ns · 288 B · 2 | **274 ns · 0 B · 0** |
+
+フラグを立てるだけで decode は実際に改善します。v1 API が v2 の上に再実装されているためです。ただし encode の行を見てください。2.3倍遅く、メモリは12倍になります。フラグはどちらに転んでもタダではありません。
+
+v2 のトークナイザ `jsontext` を対象にコード生成する案が本命候補でした。同じキー switch を `ReadToken` で駆動する形にすると、decoder を使い回した場合のアロケーションは13回 — `jsonbind.Parser` とちょうど同じ — になりますが、所要は 1320 ns です。codec のエントリポイントがそうせざるを得ないように呼び出しごとに decoder を作る場合は 1804 ns · 1600 B · 38 allocs になります。
+
+決め手はサイズです。同じ小さなプログラムで、experiment のコストは次のとおりです。
+
+| ビルド | フラグなし | フラグあり |
+|--------|------------|------------|
+| `go build` | 3,075,522 | 3,887,730（+26%） |
+| `go build -ldflags="-s -w"` | 2,061,010 | 2,598,722（+26%） |
+| `tinygo build -target wasi` | 1,345,144 | 2,217,774（+65%） |
+| `tinygo build -target wasi -no-debug` | 496,869 | 881,891（+78%） |
+
+experiment を有効にした strip 済み wasm ビルドは、同じプログラムを `jsonbind` で作った場合の3.5倍のサイズです。TinyGo を第一級ターゲットとするライブラリにとって、これは v2 を依存に取れないという結論を意味します。速度の列にも、build tag で第二の実装を抱えてまで取りにいく理由は見当たりません。
+
 ## TinyGo
 
 生成バインディングコードは TinyGo を第一級の対象とします。JSON runtime は `net/http` から独立しており、TinyGo の HTTP 標準ライブラリ経路が使えない js/wasm でも利用できます。
@@ -306,7 +375,8 @@ curl 例の詳細は [`examples/demo/README.md`](examples/demo/README.md) を参
 - `WriteError` は problem JSON を手組み（`encoding/json` と RawMessage の組み合わせの脆さを避ける）。
 - レジストリの `reflect.Type` は **型の識別キー**のみで、フィールド走査には使わない。
 - 生成される bind/write コードは `reflect` を import しない。
-- JSON-only 生成コードは `jsonbind` だけを import し、`tinygo build -target wasm` で検証する。
+- `jsonbind` は JSON の解析と出力を自前で行い `encoding/json` を import しない。JSON だけを扱うバイナリに reflect ベースの codec が載らないので、`tinygo build -target wasi` なら約3分の1、`-no-debug` 付きなら約半分が削れる。[ベンチマーク](#バイナリサイズ)を参照。
+- `GOEXPERIMENT=jsonv2` を付けてビルドしないこと。Go 1.26 でも `encoding/json/v2` は experiment の裏にあり、TinyGo では同じ wasi バイナリが約60%膨らむ。`jsonbind` はそもそも呼ばない。
 
 ### 既知の制限
 
