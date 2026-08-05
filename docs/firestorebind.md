@@ -525,8 +525,9 @@ hint at most.
 
 ## The client and the namespace come from the Context
 
-A client is a fact of one process. Nothing takes it as a parameter: install it
-once, and no call site and no generated signature carries it.
+A client is a fact of one process. By default nothing takes it as a parameter:
+install it once, and no call site and no generated signature carries it. That is
+the default, not the only form — see [Passing the client instead](#passing-the-client-instead).
 
 ```go
 ctx := firestorebind.WithClient(r.Context(), client)
@@ -585,6 +586,52 @@ once with the zero value and stops.
 
 A second project, a second database or a test client is a second Context rather
 than a second signature.
+
+## Passing the client instead
+
+The client and the namespace resolver together are a `Handle`. `WithClient`
+stores one in the Context; `NewHandle` builds the same value to pass directly.
+
+```go
+type Handle struct{ /* opaque */ }
+
+NewHandle(c *datastore.Client, options ...ClientOption) Handle
+WithHandle(ctx context.Context, h Handle) context.Context
+HandleFromContext(ctx context.Context) (Handle, error)
+
+func (h Handle) Client() *datastore.Client
+```
+
+Every runtime entry has a twin suffixed `On` that takes the `Handle`, including
+the key placement above:
+
+```go
+h := firestorebind.NewHandle(client, firestorebind.WithNamespace(tenantOf))
+
+reading, err := firestorebind.LoadOn[Reading](ctx, h, key)
+key, err := firestorebind.StoreOn(ctx, h, reading)
+err = firestorebind.RunOn(ctx, h, func(tx *firestorebind.Tx) error { ... })
+
+placed := firestorebind.KeyForOn(ctx, h, key)
+```
+
+The transactional entries inside a `Run` — `LoadTx`, `LoadAllTx`, `QueryPageTx`,
+`QueryKeysPageTx`, `CountTx` — take a `*Tx` that already carries the client and
+the tenancy. They look nothing up, so they have no twin and need none.
+
+The `On` forms hold the implementation and the Context forms delegate to them, so
+the two cannot drift. The `Context` is still the first argument in both: it
+carries the deadline, and the driver needs it. What the `On` form drops is the
+`ctx.Value` lookup, not the `Context`. `NamespaceResolver` still takes a
+`Context` in both forms, because a per-request tenant is read from one even when
+the client is not.
+
+The zero `Handle` is `ErrNoClient`, exactly as a Context carrying no client is,
+and `KeyForOn` returns the key untouched for it.
+
+There is no method form. Go does not allow type parameters on methods, and every
+entity entry is generic in the entity type, so `h.Load[Reading](...)` cannot
+exist.
 
 ## Runtime operations
 
@@ -850,6 +897,33 @@ options.FirestoreTemplatePattern = "*.query.firestore"
 |---------|--------|
 | `FeatureEntityCodec` | turns the whole Firestore mode off, queries included |
 | `FirestoreTemplatePattern` | the declaration glob; the default is `*.tb.firestore` |
+| `FirestoreParameterAPI` | generated queries take a leading `firestorebind.Handle` |
+| `FirestoreHandleResolver` | generated queries read the Handle from a function you name |
+
+The last two choose where a generated query gets its client, and behave exactly
+as their DynamoDB counterparts do — see
+[the dynamobind guide](dynamobind.md#generation) for the full account. In short:
+
+```go
+// FirestoreParameterAPI
+func BySensor(ctx context.Context, h firestorebind.Handle, sensor Sensor, opts ...datastore.ReadOption) iter.Seq2[Reading, error]
+
+// FirestoreHandleResolver: the signature is unchanged, the Handle comes from you
+options.FirestoreHandleResolver = &generator.SymbolPattern{
+	PackagePath: "example.com/app/pw",
+	Name:        "DatastoreHandle",
+}
+```
+
+```go
+func DatastoreHandle(ctx context.Context) (firestorebind.Handle, error)
+```
+
+Setting neither is the default and emits exactly what it emitted before they
+existed. The transactional twin of a declaration is unchanged in every mode,
+because it takes a `*Tx` that already carries the client.
+`-firestore-parameter-api` is the CLI flag for the first; the resolver is a
+Go-API setting only.
 
 `tinybind-gen fmt` formats `.tb.firestore` sources alongside the other three
 template languages, with `--firestore-template-pattern` and `-as firestore`.

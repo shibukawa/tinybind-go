@@ -115,7 +115,7 @@ func (g *Generator) generateDynamoQueries(load *packageLoad, outDir, outName str
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitDynamoQueries(pkg, plans)
+	src, err := EmitDynamoQueriesWithOptions(pkg, plans, g.dynamoQueryOptions())
 	if err != nil || len(src) == 0 {
 		return "", err
 	}
@@ -158,7 +158,7 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
 	for _, source := range order {
-		code, err := EmitDynamoQueries(pkg, grouped[source])
+		code, err := EmitDynamoQueriesWithOptions(pkg, grouped[source], g.dynamoQueryOptions())
 		if err != nil {
 			return nil, err
 		}
@@ -185,5 +185,13 @@ func (g *Generator) EmitDynamoQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitDynamoQueries(pkg, plans)
+	return EmitDynamoQueriesWithOptions(pkg, plans, g.dynamoQueryOptions())
+}
+
+// dynamoQueryOptions reads the client-supply mode out of the run's options.
+func (g *Generator) dynamoQueryOptions() DynamoQueryOptions {
+	return DynamoQueryOptions{
+		ParameterAPI:   g.Options.DynamoParameterAPI,
+		HandleResolver: g.Options.DynamoHandleResolver,
+	}
 }

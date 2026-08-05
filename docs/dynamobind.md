@@ -303,8 +303,9 @@ dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 
 ## The client comes from the Context
 
-A client is a fact of one process. Nothing takes it as a parameter: install it
-once, and no call site and no generated signature carries it.
+A client is a fact of one process. By default nothing takes it as a parameter:
+install it once, and no call site and no generated signature carries it. That is
+the default, not the only form — see [Passing the client instead](#passing-the-client-instead).
 
 ```go
 ctx := dynamobind.WithClient(r.Context(), client)
@@ -359,6 +360,57 @@ Context.
 
 Without a resolver the declared name is sent unchanged, so a deployment whose
 tables are named as declared writes nothing.
+
+## Passing the client instead
+
+The client and the table naming together are a `Handle`. `WithClient` stores one
+in the Context; `NewHandle` builds the same value to pass directly.
+
+```go
+type Handle struct{ /* opaque */ }
+
+NewHandle(c *dynamodb.Client, options ...ClientOption) Handle
+WithHandle(ctx context.Context, h Handle) context.Context
+HandleFromContext(ctx context.Context) (Handle, error)
+
+func (h Handle) Client() *dynamodb.Client
+func (h Handle) Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
+```
+
+Every runtime entry has a twin suffixed `On` that takes the `Handle`:
+
+```go
+h := dynamobind.NewHandle(client, dynamobind.WithTableNames(names))
+
+reading, err := dynamobind.LoadOn[Reading](ctx, h, "readings", key)
+err = dynamobind.StoreOn(ctx, h, "readings", reading)
+for reading, err := range dynamobind.QueryOn[Reading](ctx, h, "readings", cond) {
+}
+```
+
+The `On` forms hold the implementation and the Context forms delegate to them, so
+the two cannot drift. The `Context` is still the first argument in both: it
+carries the deadline, and the driver needs it. What the `On` form drops is the
+`ctx.Value` lookup, not the `Context`.
+
+The zero `Handle` is `ErrNoClient`, exactly as a Context carrying no client is.
+
+There is no method form. Go does not allow type parameters on methods, and every
+item entry is generic in the item type, so `h.Load[Reading](...)` cannot exist.
+
+Why you might want it:
+
+- a caller that already holds the client, so the lookup is pure overhead;
+- a size-critical binary. On TinyGo 0.41.1 targeting wasip1, a program that calls
+  neither `WithClient` nor a Context entry links none of the Context machinery,
+  measured at 39,189 bytes smaller;
+- a framework that keeps every value it manages in one struct, and resolves it
+  once per request rather than once per operation.
+
+A resolve at Context depth 20 costs about 24 ns and at depth 1 about 5.6 ns,
+against 2.1 ns for the `Handle`. Against a DynamoDB round trip none of that is
+visible: choose the form for the call-site property and the binary size, not for
+request latency.
 
 ## Runtime operations
 
@@ -495,8 +547,7 @@ Every generated file records the SHA-256 of its inputs, so a rerun whose sources
 `.tb.dynamo` files, `go.mod`, options and generator binary all hash to the
 recorded value exits without regenerating. `-force` regenerates regardless.
 
-There is one generated surface, so there is nothing to switch on. `-force`
-regenerates regardless of the hash; the remaining knobs live on
+`-force` regenerates regardless of the hash; the remaining knobs live on
 `generator.Options`:
 
 ```go
@@ -510,9 +561,51 @@ options.DynamoTemplatePattern = "*.query.dynamo"
 | `FeatureItemCodec` | turns the whole DynamoDB mode off, queries included |
 | `FeatureItemTable` | drops `<Type>Table` only; the codec and key builder stay |
 | `DynamoTemplatePattern` | the declaration glob; the default is `*.tb.dynamo` |
+| `DynamoParameterAPI` | generated queries take a leading `dynamobind.Handle` |
+| `DynamoHandleResolver` | generated queries read the Handle from a function you name |
 
-There is no CLI flag for these yet, unlike `-html-template-pattern` and
-`-sql-template-pattern`. Drive them through `generator.New` for now.
+The last two choose where a generated query gets its client. Setting neither is
+the default and emits exactly what it emitted before they existed.
+
+`DynamoParameterAPI` moves the `Handle` into the signature. The declared name is
+unchanged; only the signature is:
+
+```go
+// default
+func ReadingsSince(ctx context.Context, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
+
+// DynamoParameterAPI
+func ReadingsSince(ctx context.Context, h dynamobind.Handle, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
+```
+
+`DynamoHandleResolver` keeps the default signature and changes where the `Handle`
+comes from. It names a function of yours:
+
+```go
+options.DynamoHandleResolver = &generator.SymbolPattern{
+	PackagePath: "example.com/app/pw",
+	Name:        "DynamoHandle",
+}
+```
+
+```go
+func DynamoHandle(ctx context.Context) (dynamobind.Handle, error)
+```
+
+This is for a framework that already carries its own Context value. Rather than
+installing a second one with `WithClient`, keep everything you manage in one
+struct under one key and answer the `Handle` out of it — one lookup and one type
+assertion serve every generated call, however many values that struct holds.
+
+`DynamoParameterAPI` wins if both are set: a signature that already carries the
+`Handle` resolves nothing. A resolver naming no package, or a name that is not an
+exported identifier, fails generation rather than emitting a file that will not
+build.
+
+`-dynamo-parameter-api` is the CLI flag for the first. The resolver is a Go-API
+setting only, as `SQLExecutorResolver` is. The remaining settings have no CLI
+flag yet, unlike `-html-template-pattern` and `-sql-template-pattern`; drive them
+through `generator.New`.
 
 ## Generation errors
 

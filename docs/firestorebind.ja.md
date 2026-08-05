@@ -499,8 +499,9 @@ statement が export なら index も export されます。デプロイ手順�
 
 ## client と namespace は Context から来ます
 
-client は 1 プロセスの事実です。パラメータとして受け取るものはありません。一度入れておけば、
-呼び出し側にも生成されたシグネチャにも現れません。
+client は 1 プロセスの事実です。既定ではパラメータとして受け取るものはありません。一度
+入れておけば、呼び出し側にも生成されたシグネチャにも現れません。これは既定であって唯一の形
+ではありません。[client を引数で渡す](#client-を引数で渡す)を参照してください。
 
 ```go
 ctx := firestorebind.WithClient(r.Context(), client)
@@ -555,6 +556,51 @@ error を返す関数は返し、iterator はゼロ値とともに 1 度だけ y
 
 2 つ目のプロジェクト、2 つ目のデータベース、テスト用の client は、2 つ目のシグネチャでは
 なく 2 つ目の Context です。
+
+## client を引数で渡す
+
+client と namespace resolver を合わせたものが `Handle` です。`WithClient` はこれを Context に
+入れます。`NewHandle` は同じ値を直接渡すために作ります。
+
+```go
+type Handle struct{ /* 中身は非公開 */ }
+
+NewHandle(c *datastore.Client, options ...ClientOption) Handle
+WithHandle(ctx context.Context, h Handle) context.Context
+HandleFromContext(ctx context.Context) (Handle, error)
+
+func (h Handle) Client() *datastore.Client
+```
+
+ランタイムの入口にはそれぞれ `On` を付けた双子があり、`Handle` を引数に取ります。上の key の
+配置も同じです。
+
+```go
+h := firestorebind.NewHandle(client, firestorebind.WithNamespace(tenantOf))
+
+reading, err := firestorebind.LoadOn[Reading](ctx, h, key)
+key, err := firestorebind.StoreOn(ctx, h, reading)
+err = firestorebind.RunOn(ctx, h, func(tx *firestorebind.Tx) error { ... })
+
+placed := firestorebind.KeyForOn(ctx, h, key)
+```
+
+`Run` の内側の入口 — `LoadTx`、`LoadAllTx`、`QueryPageTx`、`QueryKeysPageTx`、`CountTx` — は
+client とテナントをすでに持っている `*Tx` を取ります。何も参照しないので、双子はありませんし
+必要もありません。
+
+実装を持っているのは `On` の側で、Context 版はそこへ委譲します。2 つがずれることはありません。
+
+**`Context` は両方とも第 1 引数のままです。** deadline を運ぶのは Context であり、driver が
+それを要求するからです。`On` 版が落とすのは `ctx.Value` の参照であって、`Context` では
+ありません。`NamespaceResolver` はどちらの形でも `Context` を取ります。client がそうでなくても、
+リクエストごとのテナントは Context から読むからです。
+
+zero 値の `Handle` は `ErrNoClient` です。client の無い Context とまったく同じ扱いで、
+`KeyForOn` は key をそのまま返します。
+
+メソッド形式はありません。Go はメソッドに型パラメータを許さず、entity 系の入口はすべて
+entity の型でジェネリックなので、`h.Load[Reading](...)` は存在しえません。
 
 ## ランタイム操作
 
@@ -810,6 +856,31 @@ options.FirestoreTemplatePattern = "*.query.firestore"
 |------|------|
 | `FeatureEntityCodec` | Firestore モード全体を止めます。クエリも含めて |
 | `FirestoreTemplatePattern` | 宣言の glob。既定は `*.tb.firestore` |
+| `FirestoreParameterAPI` | 生成されたクエリが先頭に `firestorebind.Handle` を取ります |
+| `FirestoreHandleResolver` | 生成されたクエリが、指定した関数から Handle を得ます |
+
+後半 2 つは、生成されたクエリがどこから client を得るかを選びます。DynamoDB 側とまったく
+同じ挙動なので、詳しくは [dynamobind のガイド](dynamobind.ja.md#生成)を参照してください。
+要点だけ:
+
+```go
+// FirestoreParameterAPI
+func BySensor(ctx context.Context, h firestorebind.Handle, sensor Sensor, opts ...datastore.ReadOption) iter.Seq2[Reading, error]
+
+// FirestoreHandleResolver: シグネチャは変わらず、Handle の出どころだけが変わります
+options.FirestoreHandleResolver = &generator.SymbolPattern{
+	PackagePath: "example.com/app/pw",
+	Name:        "DatastoreHandle",
+}
+```
+
+```go
+func DatastoreHandle(ctx context.Context) (firestorebind.Handle, error)
+```
+
+どちらも設定しないのが既定で、これらが存在しなかった頃とバイト単位で同じものを出力します。
+宣言の transaction 版はどのモードでも変わりません。client をすでに持っている `*Tx` を取る
+からです。前者の CLI flag は `-firestore-parameter-api` で、resolver は Go API 専用の設定です。
 
 `tinybind-gen fmt` は他の 3 つのテンプレート言語と並んで `.tb.firestore` を整形します。
 `--firestore-template-pattern` と `-as firestore` が使えます。整形は冪等で、コメントを

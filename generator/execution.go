@@ -52,6 +52,11 @@ type GenerateRequest struct {
 	// SQLContextOnlyAPI enables the context-only SQL API for this run. It can
 	// turn the option on, never off.
 	SQLContextOnlyAPI bool
+	// DynamoParameterAPI and FirestoreParameterAPI put the runtime Handle in
+	// each generated query's signature for this run. Like the SQL switches they
+	// can turn the option on, never off.
+	DynamoParameterAPI    bool
+	FirestoreParameterAPI bool
 }
 
 // GenerateResult records generated artifacts or check diagnostics.

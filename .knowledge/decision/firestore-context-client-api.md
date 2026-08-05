@@ -3,7 +3,7 @@ id: decision:firestore-context-client-api
 type: decision
 title: The Client And The Namespace Come From The Context
 ---
-Carry the Datastore client in the Context, give no entry of firestorebind a client parameter, and let the namespace be a Context fact rather than a tag or an argument.
+Carry the Datastore client in the Context by default, give no entry of firestorebind a client parameter unless requirement:firestore-parameter-api is generated, and let the namespace be a Context fact rather than a tag or an argument.
 
 ```yaml
 status: implemented
@@ -11,9 +11,12 @@ proposed: 2026-08-03
 implemented: 2026-08-04, in firestorebind/context.go
 follows: decision:dynamo-context-client-api, whose call-site property is the requirement being restated
 one_surface:
-  rule: there is no client-taking form, no suffixed variant and no generation option
+  rule: superseded 2026-08-05 by decision:nosql-client-supply-modes, as its dynamodb counterpart is; this is the default rather than the only form
+  was: there is no client-taking form, no suffixed variant and no generation option
   reason: the client is a deployment fact fixed for a process, so a parameter repeats at every call site what one setup line already said
+  reason_still_holds: it is why the Context form stays the default and what a run adding no option generates
   second_client: a second Context, not a second signature, which is what a test or a second project uses
+  parameter_form: requirement:firestore-parameter-api
 runtime:
   setter: "WithClient(ctx, *datastore.Client, ...ClientOption) context.Context"
   resolver: "ClientFromContext(ctx) (*datastore.Client, error)", which every entry of the package calls

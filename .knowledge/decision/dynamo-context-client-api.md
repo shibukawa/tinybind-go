@@ -3,7 +3,7 @@ id: decision:dynamo-context-client-api
 type: decision
 title: The Client Comes From The Context
 ---
-Carry the DynamoDB client in the Context, give no entry of dynamobind a client parameter, and map declared table names onto the deployment's with an optional resolver function.
+Carry the DynamoDB client in the Context by default, give no entry of dynamobind a client parameter unless requirement:dynamo-parameter-api is generated, and map declared table names onto the deployment's with an optional resolver function.
 
 ```yaml
 status: implemented
@@ -12,9 +12,12 @@ built:
   emitter: generator/dynamoquery_emit.go
   fixture: internal/dynamofixture
 one_surface:
-  rule: there is no client-taking form, no suffixed variant and no generation option
+  rule: superseded 2026-08-05 by decision:nosql-client-supply-modes; this is the default rather than the only form
+  was: there is no client-taking form, no suffixed variant and no generation option
   reason: the client is a deployment fact fixed for a process, so a parameter repeats at every call site what one setup line already said
+  reason_still_holds: it is why the Context form stays the default and what a run adding no option generates
   second_client: a second Context, not a second signature, which is what a test or a second region uses
+  what_reopened_it: the rule priced the call-site property against a parameter and never against the ctx.Value lookup, per requirement:framework-context-bundle
 table_names:
   default: the declared name is sent unchanged, so a deployment named as declared configures nothing
   resolver: "WithTableNames(func(ctx context.Context, declared string) string) ClientOption", optional
@@ -47,6 +50,9 @@ no_framework_resolver:
   what: no generation option selects a resolver, unlike decision:sql-context-executor-api
   why: resolution moved into the runtime entries, so there is no generated call site to redirect; a framework installs its own client and prefix with WithClient instead
   later: a per-deployment name mapping stays possible as a ClientOption, which is additive
+  revisited: 2026-08-05 by requirement:framework-context-bundle, which proposes DynamoTableResolver
+  what_survives: the observation, which is exact for the item entries and bounds the option to generated call sites
+  what_changed: the declared queries of requirement:dynamo-typed-queries are generated call sites, so "there is no generated call site to redirect" was true of the runtime and never of them; the entries the option cannot reach are covered by requirement:dynamo-parameter-api instead
 related:
   - requirement:dynamo-typed-queries
   - api:dynamobind-operations

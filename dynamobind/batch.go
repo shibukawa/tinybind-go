@@ -26,11 +26,23 @@ const (
 // unprocessed back to StoreAll is the retry, and it belongs in caller code
 // where a backoff can live.
 func StoreAll[T ItemEncoder](ctx context.Context, table string, vs []T) ([]T, error) {
+	if len(vs) == 0 {
+		return nil, nil
+	}
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return StoreAllOn(ctx, h, table, vs)
+}
+
+// StoreAllOn is StoreAll taking its Handle as an argument.
+func StoreAllOn[T ItemEncoder](ctx context.Context, h Handle, table string, vs []T) ([]T, error) {
 	var unprocessed []T
 	if len(vs) == 0 {
 		return nil, nil
 	}
-	c, name, err := TableFromContext(ctx, table)
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +97,21 @@ func LoadAll[T any, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
+	if len(keys) == 0 {
+		return nil, nil, nil
+	}
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return LoadAllOn[T, PT](ctx, h, table, keys, opts...)
+}
+
+// LoadAllOn is LoadAll taking its Handle as an argument.
+func LoadAllOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
 	var (
 		items       []T
 		unprocessed []dynamodb.Key
@@ -92,7 +119,7 @@ func LoadAll[T any, PT interface {
 	if len(keys) == 0 {
 		return nil, nil, nil
 	}
-	c, name, err := TableFromContext(ctx, table)
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return nil, nil, err
 	}

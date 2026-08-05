@@ -36,7 +36,17 @@ type Tx struct {
 // No retry loop is added here. The driver's own restart budget applies, and
 // datastore.WithTxRetries configures it.
 func Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RunOn(ctx, h, fn, opts...)
+}
+
+// RunOn is Run taking its Handle as an argument. The entries inside the closure
+// take the *Tx, which already carries the tenancy, so they have no second form.
+func RunOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return err
 	}
@@ -51,7 +61,16 @@ func Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) er
 // re-runs. Use it when several reads have to agree with each other and nothing
 // is being changed.
 func RunReadOnly(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RunReadOnlyOn(ctx, h, fn, opts...)
+}
+
+// RunReadOnlyOn is RunReadOnly taking its Handle as an argument.
+func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return err
 	}

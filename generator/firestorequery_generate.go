@@ -115,7 +115,7 @@ func (g *Generator) generateFirestoreQueries(load *packageLoad, outDir, outName 
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitFirestoreQueries(pkg, plans)
+	src, err := EmitFirestoreQueriesWithOptions(pkg, plans, g.firestoreQueryOptions())
 	if err != nil || len(src) == 0 {
 		return "", err
 	}
@@ -146,7 +146,15 @@ func (g *Generator) EmitFirestoreQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitFirestoreQueries(pkg, plans)
+	return EmitFirestoreQueriesWithOptions(pkg, plans, g.firestoreQueryOptions())
+}
+
+// firestoreQueryOptions reads the client-supply mode out of the run's options.
+func (g *Generator) firestoreQueryOptions() FirestoreQueryOptions {
+	return FirestoreQueryOptions{
+		ParameterAPI:   g.Options.FirestoreParameterAPI,
+		HandleResolver: g.Options.FirestoreHandleResolver,
+	}
 }
 
 // firestoreQueryArtifacts emits one artifact per declaration source, so a
@@ -169,7 +177,7 @@ func (g *Generator) firestoreQueryArtifacts(load *packageLoad) ([]Artifact, erro
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
 	for _, source := range order {
-		code, err := EmitFirestoreQueries(pkg, grouped[source])
+		code, err := EmitFirestoreQueriesWithOptions(pkg, grouped[source], g.firestoreQueryOptions())
 		if err != nil {
 			return nil, err
 		}

@@ -292,8 +292,9 @@ dynamobind.Query[Event](ctx, "events", "#n0 = :s",
 
 ## client は Context から来ます
 
-client は process ごとに固定される事実です。どこも引数に取りません。一度入れておけば、
-呼び出し側にも生成されたシグネチャにも現れません。
+client は process ごとに固定される事実です。既定ではどこも引数に取りません。一度入れて
+おけば、呼び出し側にも生成されたシグネチャにも現れません。これは既定であって唯一の形では
+ありません。[client を引数で渡す](#client-を引数で渡す)を参照してください。
 
 ```go
 ctx := dynamobind.WithClient(r.Context(), client)
@@ -344,6 +345,56 @@ Context を取るのは、写像が process だけでなく request にも依存
 
 resolver を入れなければ宣言した名前がそのまま送られるので、宣言どおりの名前を使っている
 deployment は何も書きません。
+
+## client を引数で渡す
+
+client とテーブル名の写像を合わせたものが `Handle` です。`WithClient` はこれを Context に
+入れます。`NewHandle` は同じ値を直接渡すために作ります。
+
+```go
+type Handle struct{ /* 中身は非公開 */ }
+
+NewHandle(c *dynamodb.Client, options ...ClientOption) Handle
+WithHandle(ctx context.Context, h Handle) context.Context
+HandleFromContext(ctx context.Context) (Handle, error)
+
+func (h Handle) Client() *dynamodb.Client
+func (h Handle) Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
+```
+
+ランタイムの入口にはそれぞれ `On` を付けた双子があり、`Handle` を引数に取ります。
+
+```go
+h := dynamobind.NewHandle(client, dynamobind.WithTableNames(names))
+
+reading, err := dynamobind.LoadOn[Reading](ctx, h, "readings", key)
+err = dynamobind.StoreOn(ctx, h, "readings", reading)
+for reading, err := range dynamobind.QueryOn[Reading](ctx, h, "readings", cond) {
+}
+```
+
+実装を持っているのは `On` の側で、Context 版はそこへ委譲します。2 つがずれることはありません。
+
+**`Context` は両方とも第 1 引数のままです。** deadline を運ぶのは Context であり、driver が
+それを要求するからです。`On` 版が落とすのは `ctx.Value` の参照であって、`Context` では
+ありません。
+
+zero 値の `Handle` は `ErrNoClient` です。client の無い Context とまったく同じ扱いです。
+
+メソッド形式はありません。Go はメソッドに型パラメータを許さず、item 系の入口はすべて item
+の型でジェネリックなので、`h.Load[Reading](...)` は存在しえません。
+
+引数版が向いている場面:
+
+- すでに client を持っている呼び出し側。参照はそのぶん無駄になります
+- サイズが効くバイナリ。TinyGo 0.41.1 / wasip1 で、`WithClient` も Context 版の入口も呼ばない
+  プログラムは Context 周りの機構を一切リンクせず、実測で 39,189 バイト小さくなりました
+- フレームワークが管理する値を 1 つの構造体にまとめていて、操作ごとではなく request ごとに
+  1 回だけ解決したい場合
+
+Context の深さ 20 での解決が約 24 ns、深さ 1 で約 5.6 ns、`Handle` が約 2.1 ns です。DynamoDB
+への往復に対してはどれも見えません。**選ぶ基準は呼び出し側の書き味とバイナリサイズであって、
+request のレイテンシではありません。**
 
 ## ランタイム操作
 
@@ -472,8 +523,7 @@ method なので、呼ばれなければ linker が落とします。
 generator binary のすべてが記録値と一致する再実行は、再生成せずに終了します。`-force` は
 無条件に再生成します。
 
-生成される面は 1 つなので、切り替える対象はありません。`-force` は hash に関わらず
-再生成します。残りの調整は `generator.Options` にあります。
+`-force` は hash に関わらず再生成します。残りの調整は `generator.Options` にあります。
 
 ```go
 options := generator.DefaultOptions()
@@ -486,9 +536,49 @@ options.DynamoTemplatePattern = "*.query.dynamo"
 | `FeatureItemCodec` | DynamoDB mode 全体を止めます。クエリも含みます |
 | `FeatureItemTable` | `<Type>Table` だけを止めます。codec と key builder は残ります |
 | `DynamoTemplatePattern` | 宣言 file の glob。既定は `*.tb.dynamo` |
+| `DynamoParameterAPI` | 生成されたクエリが先頭に `dynamobind.Handle` を取ります |
+| `DynamoHandleResolver` | 生成されたクエリが、指定した関数から Handle を得ます |
 
-`-html-template-pattern` や `-sql-template-pattern` と違い、これらに対応する CLI flag は
-まだありません。当面は `generator.New` 経由で指定してください。
+後半 2 つは、生成されたクエリがどこから client を得るかを選びます。どちらも設定しないのが
+既定で、これらが存在しなかった頃とバイト単位で同じものを出力します。
+
+`DynamoParameterAPI` は `Handle` をシグネチャへ移します。宣言した名前は変わりません。
+変わるのはシグネチャだけです。
+
+```go
+// 既定
+func ReadingsSince(ctx context.Context, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
+
+// DynamoParameterAPI
+func ReadingsSince(ctx context.Context, h dynamobind.Handle, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]
+```
+
+`DynamoHandleResolver` はシグネチャを既定のまま保ち、`Handle` の出どころだけを変えます。
+あなたの関数を名指しします。
+
+```go
+options.DynamoHandleResolver = &generator.SymbolPattern{
+	PackagePath: "example.com/app/pw",
+	Name:        "DynamoHandle",
+}
+```
+
+```go
+func DynamoHandle(ctx context.Context) (dynamobind.Handle, error)
+```
+
+これは、すでに自前の Context 値を持っているフレームワーク向けです。`WithClient` で 2 つ目の
+値を入れるかわりに、管理する値を 1 つの構造体に 1 つのキーでまとめ、そこから `Handle` を
+答えます。**その構造体がいくつ値を持っていても、生成されたどの呼び出しも 1 回の参照と 1 回の
+型アサーションで済みます。**
+
+両方を設定した場合は `DynamoParameterAPI` が勝ちます。すでに `Handle` を持っている
+シグネチャは何も解決しないからです。package path の無い resolver や、エクスポートされた
+識別子でない名前は、ビルドできないファイルを吐くのではなく生成時に失敗します。
+
+前者の CLI flag は `-dynamo-parameter-api` です。resolver は `SQLExecutorResolver` と同じく
+Go API 専用の設定です。残りの設定は `-html-template-pattern` や `-sql-template-pattern` と
+違って対応する CLI flag がまだないので、当面は `generator.New` 経由で指定してください。
 
 ## 生成エラー
 
