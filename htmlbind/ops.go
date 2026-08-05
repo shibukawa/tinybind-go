@@ -668,8 +668,13 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 		firstDelivery = coordinator.opts.timeout
 	}
 	coordinator.startStream(func(ctx context.Context, emit func(Content) bool) error {
+		// The scope is deliberately not stopped when the subscription ends. A
+		// delivery's nested boundaries are cancelled because the next delivery
+		// supersedes them, and the final delivery has no next: it is the content
+		// on screen, so a boundary nested in it must still settle, or its
+		// placeholder keeps a fallback nothing will ever replace. The context it
+		// holds is released when the render's own context ends.
 		delivery := &deliveryScope{}
-		defer delivery.stop()
 		return o.pump(ctx, params, firstDelivery, r.reportError, func(scope S, deliveryErr error) deliveryResult {
 			var buffer bytes.Buffer
 			// The subtree renders into its own buffer, so a subscription never
