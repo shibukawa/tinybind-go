@@ -29,6 +29,7 @@ func firestoreSource(body, calls string) string {
 
 import (
 	"context"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/firestorebind"
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
@@ -38,6 +39,7 @@ import (
 
 var _ = context.Background
 var _ = datastore.String
+var _ = time.Now
 
 func use(ctx context.Context) {
 ` + calls + `
@@ -213,9 +215,33 @@ func TestFirestoreGenerationErrors(t *testing.T) {
 			want: "noindex on a field that is not stored",
 		},
 		{
+			// A TTL policy expires by reading a stored timestamp, so a policy
+			// pointed at anything else expires nothing.
+			name: "ttl on a non-timestamp",
+			body: "type Reading struct {\n\tID string `firestore:\"-,name\"`\n\tExp int64 `firestore:\"exp,ttl\"`\n}",
+			want: "ttl needs a time.Time field",
+		},
+		{
+			// Naming a property that is never written describes a policy that
+			// can never fire, which is the noindex contradiction again.
+			name: "ttl on an unstored field",
+			body: "type Reading struct {\n\tID string `firestore:\"-,name\"`\n\tExp time.Time `firestore:\"-,ttl\"`\n}",
+			want: "ttl on a field that is not stored",
+		},
+		{
+			name: "two ttl fields",
+			body: "type Reading struct {\n\tID string `firestore:\"-,name\"`\n\tA time.Time `firestore:\"a,ttl\"`\n\tB time.Time `firestore:\"b,ttl\"`\n}",
+			want: "are both ttl",
+		},
+		{
 			name: "method collision",
 			body: "type Reading struct {\n\tID string `firestore:\"-,name\"`\n}\n\nfunc (r Reading) EncodeEntity() datastore.Entity { return datastore.Entity{} }",
 			want: "already declares EncodeEntity",
+		},
+		{
+			name: "expiry accessor collision",
+			body: "type Reading struct {\n\tID string `firestore:\"-,name\"`\n\tExp time.Time `firestore:\"exp,ttl\"`\n}\n\nfunc (r Reading) ExpiryProperty() (string, bool) { return \"\", false }",
+			want: "already declares ExpiryProperty",
 		},
 	}
 

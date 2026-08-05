@@ -2,16 +2,34 @@ package firestorebind
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
 )
 
-// mutationOverhead allows for what sizing cannot see: the partitionId a Client
-// adds to every key on the way out, and the JSON wrapping one mutation in a
-// commit request. It is deliberately generous, because overshooting the request
-// limit costs a failed commit and undershooting costs one extra round trip.
-const mutationOverhead = 512
+// mutationSeparator is the comma between two mutations in the request's JSON
+// array. It is a fact of the encoding rather than a service limit, which is why
+// it is counted here and not read from the driver.
+const mutationSeparator = 1
+
+// commitEnvelopeReserve is held back from datastore.MaxRequestBytes for what a
+// commit request wraps around its mutations: the mode, the databaseId, and an
+// optional transaction handle or singleUseTransaction block.
+//
+// datastore.Client.MutationSize measures one mutation and not the request, and
+// the driver publishes no figure for the difference. Measured against a stub
+// server, the wrapper is 42 bytes on a default client and 75 with an
+// eighteen-character database name, so this is roughly an order of magnitude of
+// room. It is held back once per commit rather than added per mutation, which
+// is what the constant it replaced got wrong: at 512 bytes each, a thousand
+// small entities lost half a megabyte of budget and an entity within 512 bytes
+// of the limit was refused locally although the service would have taken it.
+//
+// This is the one figure here that is still a guess. It is asked upstream, and
+// goes away when the driver names it.
+const commitEnvelopeReserve = 4096
+
+// commitBudget is the room one commit has for mutations.
+func commitBudget(limit int) int { return limit - commitEnvelopeReserve }
 
 // LoadAll reads many entities by key.
 //
@@ -61,8 +79,9 @@ func LoadAll[T any, PT interface {
 //
 // It chunks by encoded size rather than by count because Datastore publishes no
 // per-commit mutation limit: a commit is bounded by datastore.MaxRequestBytes,
-// and a count-based chunker would be a number this package made up. Sizing costs
-// one JSON marshal per entity, which is not the marshal the driver then does.
+// and a count-based chunker would be a number this package made up. Sizing is
+// the driver's own datastore.Client.MutationSize, which measures the mutation
+// as it will be sent, including the key's project, database and namespace.
 //
 // The returned keys are the stored ones, in the order the values were given, so
 // an insert whose key was incomplete comes back completed at the same index.
@@ -84,23 +103,52 @@ func InsertAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.W
 // RemoveAll deletes the entities identified by the keys of vs.
 //
 // Deleting a key that holds nothing succeeds, as it does on the wire, so a
-// caller cannot tell from the result which of them existed.
+// caller cannot tell from the result which of them existed. It is RemoveKeys
+// over the keys the values carry, and shares its chunking and its refusal of an
+// incomplete key.
 func RemoveAll[T Keyer](ctx context.Context, vs []T, opts ...datastore.WriteOption) error {
+	keys := make([]datastore.Key, 0, len(vs))
+	for _, v := range vs {
+		keys = append(keys, v.EntityKey())
+	}
+	return RemoveKeys(ctx, keys, opts...)
+}
+
+// RemoveKeys deletes the entities named by keys.
+//
+// It is the counterpart of QueryKeysPage, which hands back keys: find these
+// keys, then delete them is the shape of every cleanup, teardown and
+// administrative sweep, and RemoveAll cannot express it because it needs a bound
+// value to take the key from.
+//
+// Deleting a key that holds nothing succeeds, as it does on the wire, so the
+// result cannot say which of them existed. An incomplete key is refused before
+// anything is sent, since it names no entity to delete.
+//
+// A commit is not a transaction. Chunking means a large sweep commits in pieces,
+// and a failure leaves the earlier pieces deleted; use Run when the deletion has
+// to be all-or-nothing, subject to datastore.MaxTransactionBytes.
+func RemoveKeys(ctx context.Context, keys []datastore.Key, opts ...datastore.WriteOption) error {
 	c, ns, err := clientFor(ctx)
 	if err != nil {
 		return err
 	}
-	mutations := make([]datastore.Mutation, 0, len(vs))
-	sizes := make([]int, 0, len(vs))
-	for _, v := range vs {
-		key := applyNamespace(ctx, ns, v.EntityKey())
+	keys = applyNamespaceAll(ctx, ns, keys)
+	mutations := make([]datastore.Mutation, 0, len(keys))
+	sizes := make([]int, 0, len(keys))
+	for _, key := range keys {
 		if key.Incomplete() {
 			return KeyError("cannot remove an entity whose key is incomplete")
 		}
-		mutations = append(mutations, datastore.DeleteOp(key).With(opts...))
-		sizes = append(sizes, len(key.String())+mutationOverhead)
+		mutation := datastore.DeleteOp(key).With(opts...)
+		size, err := c.MutationSize(mutation)
+		if err != nil {
+			return ValueError("", "cannot size the deletion for chunking", err)
+		}
+		mutations = append(mutations, mutation)
+		sizes = append(sizes, size+mutationSeparator)
 	}
-	for chunk := range chunksBySize(mutations, sizes, datastore.MaxRequestBytes) {
+	for chunk := range chunksBySize(mutations, sizes, commitBudget(datastore.MaxRequestBytes)) {
 		if _, err := c.Mutate(ctx, chunk); err != nil {
 			return err
 		}
@@ -120,21 +168,26 @@ func mutateAll[T EntityEncoder](
 	}
 	mutations := make([]datastore.Mutation, 0, len(vs))
 	sizes := make([]int, 0, len(vs))
+	budget := commitBudget(datastore.MaxRequestBytes)
 	for _, v := range vs {
 		entity := withNamespace(ctx, ns, v.EncodeEntity())
-		encoded, err := json.Marshal(entity)
+		mutation := op(entity).With(opts...)
+		size, err := c.MutationSize(mutation)
 		if err != nil {
 			return nil, ValueError("", "cannot size the entity for chunking", err)
 		}
-		size := len(encoded) + mutationOverhead
+		// Measured against the limit itself rather than against the chunking
+		// budget: this check is "this entity can never be sent", and holding
+		// back the envelope reserve here would refuse one the service takes.
+		// Reserving for a wrapper is a batching concern, not an entity's.
 		if size > datastore.MaxRequestBytes {
 			return nil, ValueError("", "one entity is larger than a request", nil)
 		}
-		mutations = append(mutations, op(entity).With(opts...))
-		sizes = append(sizes, size)
+		mutations = append(mutations, mutation)
+		sizes = append(sizes, size+mutationSeparator)
 	}
 	keys := make([]datastore.Key, 0, len(vs))
-	for chunk := range chunksBySize(mutations, sizes, datastore.MaxRequestBytes) {
+	for chunk := range chunksBySize(mutations, sizes, budget) {
 		result, err := c.Mutate(ctx, chunk)
 		if err != nil {
 			return nil, err

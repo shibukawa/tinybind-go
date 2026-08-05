@@ -68,7 +68,8 @@ func WithClient(ctx context.Context, c *datastore.Client, options ...ClientOptio
 //
 // It is the escape hatch for reaching the driver directly, for an operation this
 // package does not wrap. Note that it applies no namespace: a key passed to the
-// driver through it is sent as built.
+// driver through it is sent as built. Pass keys through KeyFor or KeysFor first
+// to place them where every wrapped entry of this package would.
 func ClientFromContext(ctx context.Context) (*datastore.Client, error) {
 	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
 	if !ok || entry.client == nil {
@@ -85,6 +86,40 @@ func clientFor(ctx context.Context) (*datastore.Client, NamespaceResolver, error
 		return nil, nil, ErrNoClient
 	}
 	return entry.client, entry.namespace, nil
+}
+
+// KeyFor stamps the Context's namespace onto a key, the way every wrapped entry
+// of this package does before it sends one.
+//
+// It exists for the ClientFromContext escape hatch. A key reaching the driver
+// any other way is sent as built, which places it in the default namespace: for
+// a multi-tenant caller that is a data-placement bug no test running in the
+// default namespace can see, and for a test isolating itself in a namespace of
+// its own it is a teardown that deletes nothing and reports success.
+//
+// The key is returned unchanged when the Context carries no client, when no
+// WithNamespace resolver was installed, when the resolver answers the empty
+// string, and when the key already names a namespace. That last one is the
+// point: an explicitly placed key is not silently moved.
+//
+// There is no error to return, so there is none in the signature. A Context
+// with no client meets ErrNoClient at the operation, not here.
+func KeyFor(ctx context.Context, key datastore.Key) datastore.Key {
+	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
+	if !ok {
+		return key
+	}
+	return applyNamespace(ctx, entry.namespace, key)
+}
+
+// KeysFor is KeyFor over a slice. It allocates only when the resolver would
+// change something, which a caller looping over KeyFor cannot avoid.
+func KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key {
+	entry, ok := ctx.Value(clientContextKey{}).(clientEntry)
+	if !ok {
+		return keys
+	}
+	return applyNamespaceAll(ctx, entry.namespace, keys)
 }
 
 // applyNamespace stamps the resolved namespace onto a key. A key that already

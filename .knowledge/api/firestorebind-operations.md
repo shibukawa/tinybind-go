@@ -54,6 +54,13 @@ count:
   Count: "func Count(ctx, q *datastore.Query, opts ...datastore.ReadOption) (int64, error)"
   ungenericized: a count returns no entities, so there is nothing to decode and no type parameter to infer
   why_it_is_here_at_all: paging keys to count them costs a read per entity, so a wrapper that omitted it would push callers to the expensive thing
+aggregations_gap:
+  found: 2026-08-05, while correcting the exclusion list this catalog shared with the driver's README
+  fact: the driver has had Sum and Avg since v1.1.6, added on this catalog's own argument, and neither is wrapped here
+  it_was_never_decided: they were out of scope because the driver excluded them, and nothing re-read that line when it stopped being true
+  the_count_reasoning_applies_harder: counting by paging can at least be keys-only, and summing cannot, which is the argument that got them added upstream
+  what_a_wrapper_would_add: little; both return datastore.Value and decode into no type, so the case rests on not pushing a caller to a paging loop, exactly as Count's does
+  status: open, and not part of decision:firestore-framework-requests; no consumer has asked for it
 batch:
   MaxLookupKeys: not redeclared here; the driver exports it and rule:firestorebind-driver-passthrough forbids a parallel constant that could drift from it
   LoadAll: "func LoadAll[T any, PT ...](ctx, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing []datastore.Key, deferred []datastore.Key, err error)"
@@ -85,6 +92,22 @@ untyped_query_escape_hatch:
   status: the escape hatch, now that requirement:firestore-typed-queries generates the declared form and covers every datastore.Query method
   what_it_is_still_for: a query whose shape is decided at run time, rather than one the declaration grammar cannot express
   unchecked: a query built with the driver's own builder names properties as strings, so a renamed tag still compiles and returns an empty batch
+added_2026_08_05:
+  source: decision:firestore-framework-requests
+  RemoveKeys:
+    signature: "func RemoveKeys(ctx, keys []datastore.Key, opts ...datastore.WriteOption) error"
+    why: QueryKeysPage produced keys and nothing consumed them; per requirement:firestore-key-batch-delete
+    RemoveAll_now_delegates: it collects the keys its values carry and calls this, so there is one delete path and the two cannot drift
+  KeyFor:
+    signature: "func KeyFor(ctx, key datastore.Key) datastore.Key, and KeysFor over a slice"
+    why: the ClientFromContext escape hatch applies no namespace, and a caller had the warning with no way to act on it; per requirement:firestore-namespace-stamping
+    no_error: every branch has an answer, so a Context with no client returns the key unchanged rather than failing here
+  sizing:
+    what: datastore.Client.MutationSize replaced the local 512-byte constant, per requirement:firestore-mutation-sizing
+    effect_on_the_chunking_clause_above: it changes how a mutation is measured, not what it is measured against; the limits are still the driver's
+  ExpiryProperty:
+    what: a ttl tag option emits it, and firestorebind.Expirer names the shape; per requirement:firestore-expiry-property-declaration
+    not_an_operation: nothing here calls it, and nothing applies a TTL; it is a fact a deployment tool reads
 deferred:
   - a batch-level iterator yielding Page[T]
   - a keys-only iterator; QueryKeysPage is one request, and nothing has needed the paging form

@@ -91,3 +91,25 @@ type Versioner interface {
 type Kinder interface {
 	Kind() string
 }
+
+// Expirer reports which property a TTL policy for this kind should expire
+// entities by. Generated code implements it when the type carries a ttl tag, and
+// only then, so the assertion succeeding is itself the declaration.
+//
+// Nothing in this package or in the driver applies a TTL. Datastore mode has no
+// expiry on the wire: a policy is applied out of band, with
+//
+//	gcloud firestore fields ttls update <property> --collection-group=<kind>
+//
+// over an ordinary timestamp property. The tag changes nothing about how that
+// property is written. It exists so the deployment step can be told which
+// property to name, rather than that list being kept by hand beside the types
+// and drifting the next time one is renamed — a drift with no compile error and
+// no run-time error, just a policy pointed at a property that no longer exists
+// and records that never expire.
+//
+// The boolean is always true for a generated type, and is there so a caller
+// reaching this through the interface does not have to know that.
+type Expirer interface {
+	ExpiryProperty() (string, bool)
+}
