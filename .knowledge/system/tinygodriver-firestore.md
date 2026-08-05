@@ -17,7 +17,9 @@ reason_for_existing:
   reading: the obvious fallback exists and does not help, which the driver records, measured rather than assumed, in its own catalog
 release_status:
   introduced_in: tinygodriver v1.1.4, commit c5ee07d
-  bound_surface: v1.1.7, which folded beginTransaction away and fixed the README and the read-time bound; v1.1.6 before it added OR filters, SUM and AVG, MutationSize, and made key partitioning recursive. Every API fact below was read from a tag rather than from a working copy
+  bound_surface: v1.1.9, which go.mod requires; it names the commit envelope as CommitOverheadBytes, v1.1.7 folded beginTransaction away and fixed the README and the read-time bound, and v1.1.6 before that added OR filters, SUM and AVG, MutationSize, and made key partitioning recursive. Every API fact below was read from a tag rather than from a working copy
+  v1_1_7_and_v1_1_8_are_one_tree: the proxy serves both from commit b3ad16f, so v1.1.8 buys the v1.1.7 changes and nothing further; v1.1.9 is 17f792b and is where the envelope arrives
+  read_a_version_as_what_go_get_yields: not as what the driver's working copy holds under that name. See round_five.commit_envelope, where the two disagreed for a release
   not_in: v1.1.3, which carries nosql/dynamodb only
   driver_own_catalog: the tag ships .knowledge concepts for the client, the value codec, the retry policy, the write preconditions, the emulator endpoint, and a DynamoDB comparison; read them there rather than restating them here
 reflection_path:
@@ -232,11 +234,17 @@ upstream_requests:
       reported: WithReadTime published no staleness bound, so an INVALID_ARGUMENT on a reasonable-looking value was the only way to learn one
       filed_before_anything_depended_on_it: nothing downstream reaches for read times yet
       status: documented; see options.read_time_bound above
-  round_five_pending:
+  round_five:
     commit_envelope:
       ask: whether the bytes a commit request adds around its mutations are inside what MutationSize reports, or a figure the driver should name
       why: requirement:firestore-mutation-sizing drops a local 512-byte constant for the driver's measure, and the envelope is the only part that measure does not cover
       why_not_solved_here: rule:firestorebind-driver-passthrough forbids a local number, and a smaller local number is the same mistake
+      answered_in: v1.1.9, as Client.CommitOverheadBytes(n) and Tx.CommitOverheadBytes(n), measured by marshalling the real request struct rather than returned as a constant, so a field added to the wire shape is counted without the caller knowing. It counts the n-1 commas itself, so a caller adding a per-mutation separator counts them twice
+      adopted: 2026-08-06; firestorebind holds no envelope figure of its own, and the single-entity refusal is now CommitOverheadBytes(1)+size against the limit rather than size alone
+      the_release_it_took_two_tags_to_reach:
+        what_happened: the commit landed as 17f792b and the driver's working copy tagged it v1.1.8, but v1.1.8 had already been published from b3ad16f. Proxy versions are immutable, so go get returned a client without the method while the checkout showed one with it
+        resolved: re-published as v1.1.9, on the same commit
+        keep: check a version claim against the fetched module, not the checkout. The downstream framework filed this ask as already satisfied in v1.1.8, reading the driver's source, and it was satisfied in nothing fetchable. The reserve inside it is still the guess
   doc_drift:
     status: fixed for WithCredentialsFile, WithPropertyMask, RunReadOnly and the Tx method list
     new_drift_v1_1_5: the driver's own value concept still carries a NOT IMPLEMENTED marker on the struct mapper, added in 1aa42bf and left standing when ff4c947 implemented it two commits later; the code is authoritative, and this is worth sending back

@@ -45,15 +45,14 @@ closed_exception:
   why_it_stopped_being_allowed: the driver added Client.MutationSize at this module's own request, so the number both duplicated a measurement and drifted against an encoding one module away
   reading: a fudge factor is inside the spirit of this rule for the same reason a limit is - it has to track something this package does not own
   closed: 2026-08-05 by requirement:firestore-mutation-sizing
-what_two_constants_remain_and_why:
+no_byte_figure_remains:
   scope: the rule forbids a number that has to track something this package does not own, which is narrower than forbidding every literal
-  mutationSeparator: one byte, the comma between two elements of a JSON array; a property of the encoding rather than of Datastore, so there is nothing upstream that could change it
-  commitEnvelopeReserve: 4096, held back from datastore.MaxRequestBytes once per commit for the request wrapper Client.MutationSize does not measure
-  why_the_reserve_is_tolerable_where_512_was_not:
-    - it is subtracted once rather than added per mutation, so it does not scale with the batch
-    - it is never added to a single mutation, so it cannot refuse an entity the service would accept
-    - its comment carries the measurement it came from and says it goes away when the driver names the figure
-  it_is_still_a_guess: recorded as such, and asked upstream in system:tinygodriver-firestore round_five_pending rather than left to be discovered
+  state: firestorebind sizes a mutation with Client.MutationSize and the request around it with Client.CommitOverheadBytes, so it holds neither
+  the_two_that_used_to:
+    mutationSeparator: one byte, the comma between two JSON array elements. Defensible as a property of the encoding rather than of Datastore, but it was added per mutation and an array of n elements has n-1 commas, so it was also slightly wrong. CommitOverheadBytes counts them, per request
+    commitEnvelopeReserve: 4096, held back once per commit for the request wrapper MutationSize does not measure. Tolerable where 512 was not, because it was subtracted once rather than added per mutation and so did not scale with the batch, and was never added to a single mutation and so could not refuse an entity the service would accept
+    closed: 2026-08-06, when v1.1.9 named the envelope. Both were recorded as provisional and asked upstream rather than left to be discovered, which is what let them be swapped rather than found
+  what_a_provisional_number_owes_the_rule: say what it is standing in for, be shaped like the answer, and be asked upstream. See requirement:firestore-mutation-sizing as_built
 consistency:
   - strong is the driver's default and firestorebind does not change it
   - WithEventualConsistency stays a caller decision, since it trades correctness for cost and nothing here can weigh that

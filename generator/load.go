@@ -2,7 +2,10 @@ package generator
 
 import (
 	"fmt"
+	"go/ast"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,5 +78,61 @@ func loadPackage(dir string) (*packages.Package, error) {
 	if pkg.Types == nil || pkg.TypesInfo == nil {
 		return nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
 	}
+	if missing := unresolvedImports(pkg); len(missing) > 0 {
+		return nil, fmt.Errorf("cannot analyze %s: no package was found for %s, so no call site can be discovered; run go mod tidy",
+			abs, strings.Join(missing, ", "))
+	}
 	return pkg, nil
+}
+
+// unresolvedImports names the imports that a hand-written file asks for and
+// that resolved to no package.
+//
+// A type error is not one of these and must not be treated as one: a package
+// analyzed before its codec exists does not satisfy EntityEncoder yet, by
+// design, and refusing that would refuse every first run. go/packages reports
+// both as errors on the package, so the two are told apart here by whether the
+// import produced a package at all rather than by what the error says.
+//
+// It is checked because the failure is otherwise silent and misreads as a
+// missing feature. Discovery matches a call site through the resolved package
+// of its callee, so when a runtime import resolves to nothing every pattern
+// misses, and a phase that reads declarations from disk instead of from types
+// keeps working. The result is a codec with the half that needed no types and
+// nothing else, from a run that reported success.
+//
+// Generated files are not counted, for the same reason discovery does not read
+// them. A codec pass writes the first import of a runtime package into a
+// package that had none, so between that pass and the next the module can name
+// a dependency its go.mod does not yet require. No call site of the caller's
+// is behind that import, so there is nothing for the next pass to miss.
+func unresolvedImports(pkg *packages.Package) []string {
+	// An import that resolved carries its package name; one that did not is the
+	// empty name go/types reports as `invalid package name: ""`.
+	missing := map[string]bool{}
+	for path, imported := range pkg.Imports {
+		if imported == nil || imported.Name == "" {
+			missing[path] = true
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range pkg.Syntax {
+		if f == nil || ast.IsGenerated(f) {
+			continue
+		}
+		for _, spec := range f.Imports {
+			path, err := strconv.Unquote(spec.Path.Value)
+			if err != nil || !missing[path] || seen[path] {
+				continue
+			}
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

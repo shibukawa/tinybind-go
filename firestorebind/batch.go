@@ -6,30 +6,20 @@ import (
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
 )
 
-// mutationSeparator is the comma between two mutations in the request's JSON
-// array. It is a fact of the encoding rather than a service limit, which is why
-// it is counted here and not read from the driver.
-const mutationSeparator = 1
-
-// commitEnvelopeReserve is held back from datastore.MaxRequestBytes for what a
-// commit request wraps around its mutations: the mode, the databaseId, and an
-// optional transaction handle or singleUseTransaction block.
+// Nothing here estimates what a commit request wraps around its mutations. That
+// was a local reserve, held back from datastore.MaxRequestBytes and guessed at
+// roughly an order of magnitude of room because no released driver named the
+// figure; datastore.Client.CommitOverheadBytes names it as of tinygodriver
+// v1.1.9. It is measured by marshalling the request the client will actually
+// send, so a field added to the wire shape is counted without this package being
+// touched, which is the property a constant here could never have.
 //
-// datastore.Client.MutationSize measures one mutation and not the request, and
-// the driver publishes no figure for the difference. Measured against a stub
-// server, the wrapper is 42 bytes on a default client and 75 with an
-// eighteen-character database name, so this is roughly an order of magnitude of
-// room. It is held back once per commit rather than added per mutation, which
-// is what the constant it replaced got wrong: at 512 bytes each, a thousand
-// small entities lost half a megabyte of budget and an entity within 512 bytes
-// of the limit was refused locally although the service would have taken it.
+// It counts the commas between n mutations itself. That is why no per-mutation
+// separator is added below: doing both would count every comma twice.
 //
-// This is the one figure here that is still a guess. It is asked upstream, and
-// goes away when the driver names it.
-const commitEnvelopeReserve = 4096
-
-// commitBudget is the room one commit has for mutations.
-func commitBudget(limit int) int { return limit - commitEnvelopeReserve }
+// Both chunked paths are non-transactional, so the Client method is the right
+// one. A commit inside a transaction carries a handle or a singleUseTransaction
+// block as well, and Tx.CommitOverheadBytes is what would measure that.
 
 // LoadAll reads many entities by key.
 //
@@ -194,9 +184,9 @@ func RemoveKeysOn(ctx context.Context, h Handle, keys []datastore.Key, opts ...d
 			return ValueError("", "cannot size the deletion for chunking", err)
 		}
 		mutations = append(mutations, mutation)
-		sizes = append(sizes, size+mutationSeparator)
+		sizes = append(sizes, size)
 	}
-	for chunk := range chunksBySize(mutations, sizes, commitBudget(datastore.MaxRequestBytes)) {
+	for chunk := range chunksByCommitSize(mutations, sizes, c.CommitOverheadBytes, datastore.MaxRequestBytes) {
 		if _, err := c.Mutate(ctx, chunk); err != nil {
 			return err
 		}
@@ -217,7 +207,15 @@ func mutateAll[T EntityEncoder](
 	}
 	mutations := make([]datastore.Mutation, 0, len(vs))
 	sizes := make([]int, 0, len(vs))
-	budget := commitBudget(datastore.MaxRequestBytes)
+	// The smallest request that can carry one mutation is that mutation plus the
+	// envelope for a commit of one. The check below asks whether an entity can
+	// ever be sent, so it wants exactly that and nothing more.
+	//
+	// It used to be measured against datastore.MaxRequestBytes alone, because
+	// the envelope was a reserve big enough that including it would have refused
+	// entities the service takes - the observable bug of the constant before it.
+	// A measured figure has no such margin to protect against.
+	alone := c.CommitOverheadBytes(1)
 	for _, v := range vs {
 		entity := withNamespace(ctx, ns, v.EncodeEntity())
 		mutation := op(entity).With(opts...)
@@ -225,18 +223,14 @@ func mutateAll[T EntityEncoder](
 		if err != nil {
 			return nil, ValueError("", "cannot size the entity for chunking", err)
 		}
-		// Measured against the limit itself rather than against the chunking
-		// budget: this check is "this entity can never be sent", and holding
-		// back the envelope reserve here would refuse one the service takes.
-		// Reserving for a wrapper is a batching concern, not an entity's.
-		if size > datastore.MaxRequestBytes {
+		if alone+size > datastore.MaxRequestBytes {
 			return nil, ValueError("", "one entity is larger than a request", nil)
 		}
 		mutations = append(mutations, mutation)
-		sizes = append(sizes, size+mutationSeparator)
+		sizes = append(sizes, size)
 	}
 	keys := make([]datastore.Key, 0, len(vs))
-	for chunk := range chunksBySize(mutations, sizes, budget) {
+	for chunk := range chunksByCommitSize(mutations, sizes, c.CommitOverheadBytes, datastore.MaxRequestBytes) {
 		result, err := c.Mutate(ctx, chunk)
 		if err != nil {
 			return nil, err
@@ -267,14 +261,21 @@ func chunksOf[T any](items []T, n int) func(func([]T) bool) {
 	}
 }
 
-// chunksBySize yields consecutive runs whose summed sizes stay under limit. An
-// element at or over the limit on its own gets a chunk to itself; the caller has
-// already rejected the cases where that cannot work.
-func chunksBySize[T any](items []T, sizes []int, limit int) func(func([]T) bool) {
+// chunksByCommitSize yields consecutive runs that fit in one commit: the run's
+// mutation sizes plus the envelope a commit of that many wraps around them stay
+// within limit. An element that does not fit even on its own gets a chunk to
+// itself; the caller has already rejected the cases where that cannot work.
+//
+// The envelope is asked for per candidate length rather than subtracted once up
+// front, because it is not a constant: it grows with the commas between the
+// mutations, so the run's own length is part of it. That is also why overhead
+// takes a count, which lets this stay a running total instead of re-measuring
+// the whole chunk on every step.
+func chunksByCommitSize[T any](items []T, sizes []int, overhead func(n int) int, limit int) func(func([]T) bool) {
 	return func(yield func([]T) bool) {
 		start, total := 0, 0
 		for i := range items {
-			if i > start && total+sizes[i] > limit {
+			if i > start && overhead(i-start+1)+total+sizes[i] > limit {
 				if !yield(items[start:i]) {
 					return
 				}
