@@ -45,7 +45,11 @@ typed_transaction:
 what_is_not_hidden:
   closure_re_runs: ABORTED restarts the whole closure, and the godoc says so at the entry point rather than in a limitations list
   side_effects: a closure that writes a file or sends a message can do it several times; stated, not enforceable
-  round_trips: begin, then the reads, then commit; three at minimum, and the wrapper adds none
+  round_trips:
+    since_driver_v1_1_7: the reads, then commit; two at minimum, and the wrapper adds none
+    before: begin, then the reads, then commit; three at minimum
+    what_changed: the driver folded the begin into the first call that needs one, so a read-decide-commit costs 2 and a write-only closure costs 1
+    still_not_hidden: the count is stated rather than made to look like one call, since a transaction is several requests however few
   retry_budget: the driver's WithTxRetries, passed through; firestorebind adds no second loop, per rule:firestorebind-driver-passthrough
   queued_writes_are_not_sent_yet: tx.Store returns nothing because nothing happened; a caller who expects an error there is expecting the wrong shape, and the naming says so by returning none
 what_stays_out:
@@ -63,8 +67,14 @@ declared_queries_get_a_twin:
   not_usage_directed: emitted from the declaration, for the reason the key builder is - before the twin exists there is nothing to discover, so a rule that waited for a use would mean it never existed to be used
   one_builder: both forms build the query through one emitter, so they cannot drift apart
   visibility: the twin follows the declaration's own, since an unexported statement has no caller outside the package to reach either form
-open:
-  single_use: the driver folds begin into the first call where the shape allows; nothing here needs to know, unless a measurement later says the wrapper defeats it
+closed:
+  single_use:
+    was: the driver folds begin into the first call where the shape allows; nothing here needs to know, unless a measurement later says the wrapper defeats it
+    was_wrong_about_the_driver: it did not fold, and this entry described an intention as a behaviour; the binding half of the claim was true throughout
+    now: true as written, since tinygodriver v1.1.7, per system:tinygodriver-firestore round_four_2026_08_05
+    the_wrapper_does_not_defeat_it: firestorebind queues writes through the driver's own Tx and issues no request of its own, so a folded begin stays folded through every typed form
+    reading: no source here changed to gain it, which is what "nothing here needs to know" was betting on and is the half that held
+    where_it_did_not_hold: three fixture tests counted beginTransaction, one of them as its only evidence that a transaction had happened at all; a test is exactly the place that needs to know, per decision:firestore-framework-requests pin
 related:
   - api:firestorebind-operations
   - rule:firestore-tag-options

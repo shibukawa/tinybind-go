@@ -30,6 +30,7 @@ options:
   id: the field supplies the key's int64 id
   parent: the field supplies the ancestor path
   version: the field receives Entity.Version on decode and feeds a conditional write, per decision:firestore-transaction-scope
+  ttl: the property is what a TTL policy for this kind expires entities by; it emits ExpiryProperty and changes nothing on the write path, per requirement:firestore-expiry-property-declaration
   noindex: the property is excluded from indexes
   omitempty: the property is absent from the map when the field is the zero value
 identity_options:
@@ -46,9 +47,11 @@ unknown_option:
 generation_checks:
   - unsupported field type, per data:firestore-property-mapping
   - duplicate property name within one type
-  - more than one name, id, parent or version field
+  - more than one name, id, parent, version or ttl field
   - name on a non-string field, or id on a non-integer field
   - version on a non-int64 field
+  - ttl on a field that is not a timestamp, since a policy over anything else expires nothing
+  - ttl on a field that is not stored, which describes a policy that can never fire; the same contradiction as noindex on one
   - parent on a field that is neither datastore.Key nor a bound type
   - a parent chain reaching its own type
   - an identity option on a nested type, which has no key
@@ -64,7 +67,16 @@ what_has_no_counterpart_here:
   partitionkey_and_sortkey: replaced by the key path of decision:firestore-key-identity
   stringset_numberset_binaryset: Datastore has no set type
   unixtime: Datastore has a real timestamp type
-  ttl: confirmed upstream 2026-08-03 and recorded in system:tinygodriver-firestore; TTL is not expressible on this wire, but a field-level policy applied with gcloud over an ordinary timestamp property, so requirement:dynamo-ttl-attribute has nothing to mirror and no tag is needed to produce what a policy consumes
+  ttl:
+    applying: confirmed upstream 2026-08-03 and recorded in system:tinygodriver-firestore; TTL is not expressible on this wire, but a field-level policy applied with gcloud over an ordinary timestamp property, so requirement:dynamo-ttl-attribute has nothing to mirror
+    encoding: nothing to produce either; a policy consumes an ordinary timestamp, so no tag changes a byte on the write path
+    publishing: shipped 2026-08-05 as the ttl option above, per requirement:firestore-expiry-property-declaration; it names which property a policy targets and neither applies nor encodes anything
+    what_the_original_conclusion_weighed: declaring against applying; the case for a declaration that only publishes was not put until a consumer had to hand-maintain that list beside its types
+    so_this_clause_is_half_retired: the applying and encoding halves stand unchanged, and only the claim that no tag is needed was wrong
+  ttl_with_noindex:
+    question: whether a TTL policy needs the property indexed, which would make the pair a contradiction rather than a combination
+    status: unconfirmed, so nothing rejects it; the guide says to check the policy actually fires
+    why_not_guessed: a generation error on an unconfirmed rule refuses a working declaration, which is the failure mode decision:firestore-no-schema-artifact declines derivations for
   secondary_index: single-property indexes are automatic and composite ones are declared out of band, per decision:firestore-no-schema-artifact
 related:
   - requirement:firestorebind-generated-entity-codec

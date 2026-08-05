@@ -39,6 +39,21 @@ limits:
   - reason: a parallel constant is a copy, and a copy of a published number is what drifts when the service changes it; that was the argument for asking upstream to export them and it applies again one layer up
   - no literal limit appears in this package or in generated code; MaxLookupKeys, MaxRequestBytes and the rest are read from the driver
   - contrast: api:dynamobind-operations exported MaxBatchWrite and MaxBatchGet itself, which was right when the driver named neither and is now the thing to undo
+closed_exception:
+  what_it_was: firestorebind/batch.go declared mutationOverhead = 512 and added it to every sized mutation
+  why_it_had_been_allowed: it is a margin rather than a service limit, and when it was written the driver could not size a mutation with its partition attached
+  why_it_stopped_being_allowed: the driver added Client.MutationSize at this module's own request, so the number both duplicated a measurement and drifted against an encoding one module away
+  reading: a fudge factor is inside the spirit of this rule for the same reason a limit is - it has to track something this package does not own
+  closed: 2026-08-05 by requirement:firestore-mutation-sizing
+what_two_constants_remain_and_why:
+  scope: the rule forbids a number that has to track something this package does not own, which is narrower than forbidding every literal
+  mutationSeparator: one byte, the comma between two elements of a JSON array; a property of the encoding rather than of Datastore, so there is nothing upstream that could change it
+  commitEnvelopeReserve: 4096, held back from datastore.MaxRequestBytes once per commit for the request wrapper Client.MutationSize does not measure
+  why_the_reserve_is_tolerable_where_512_was_not:
+    - it is subtracted once rather than added per mutation, so it does not scale with the batch
+    - it is never added to a single mutation, so it cannot refuse an entity the service would accept
+    - its comment carries the measurement it came from and says it goes away when the driver names the figure
+  it_is_still_a_guess: recorded as such, and asked upstream in system:tinygodriver-firestore round_five_pending rather than left to be discovered
 consistency:
   - strong is the driver's default and firestorebind does not change it
   - WithEventualConsistency stays a caller decision, since it trades correctness for cost and nothing here can weigh that

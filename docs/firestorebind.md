@@ -124,6 +124,7 @@ identity option below claims it. Unexported fields are always skipped.
 | `id` | this `int64` field supplies the key's numeric id |
 | `parent` | this field supplies the ancestor path |
 | `version` | this `int64` field receives the entity version a read returned |
+| `ttl` | this `time.Time` property is what a TTL policy expires this kind by |
 | `noindex` | store the property but keep it out of every index |
 | `omitempty` | write no property at all when the field is its zero value |
 
@@ -143,6 +144,52 @@ storage, so excluding a long text field you never filter on is worth doing. But
 an excluded property is in *no* index, which means a query can never match on it
 — and generation enforces that, rejecting a declaration that filters, orders or
 projects on a `noindex` field.
+
+### `ttl` declares a property; it does not expire anything
+
+Datastore mode has no expiry on the wire. Nothing in this package, and nothing in
+the driver, can make an entity go away on a deadline. Expiry is a field-level
+policy applied out of band:
+
+```bash
+gcloud firestore fields ttls update expires_at --collection-group=Session
+```
+
+So what is the tag for? A policy has to name a property, and something has to
+tell the deployment step *which* property. Without the tag that list is kept by
+hand beside your types, and the day someone renames the property there is no
+compile error and no run-time error — just a policy pointed at a property that no
+longer exists, and records that quietly never expire.
+
+```go
+type Session struct {
+	Token     string    `firestore:"-,name"`
+	ExpiresAt time.Time `firestore:"expires_at,ttl"`
+}
+```
+
+The tag changes nothing about the write. `ExpiresAt` is encoded as an ordinary
+`timestampValue`, byte for byte what it would be without the option. What you get
+is one generated fact:
+
+```go
+func (v Session) ExpiryProperty() (string, bool) { return "expires_at", true }
+```
+
+satisfying `firestorebind.Expirer`, which is emitted only for a type that carries
+the tag — so the assertion succeeding is itself the declaration. A deployment tool
+walks your types, asks each one, and generates the `gcloud` calls from the same
+declaration the codec came from.
+
+At most one `ttl` field per type, and it must be a `time.Time`: a policy over
+anything else expires nothing. A `ttl` on a field that is not stored is a
+generation error for the same reason `noindex` on one is — it describes a policy
+that can never fire.
+
+One thing this does *not* yet answer: whether a TTL policy needs the property to
+stay indexed, which would make `ttl` with `noindex` a contradiction rather than a
+combination. It is not confirmed either way, so nothing here rejects it. If you
+are excluding your expiry property from indexes, check the policy actually fires.
 
 ## Property types
 
@@ -491,7 +538,26 @@ ClientFromContext(ctx context.Context) (*datastore.Client, error)
 ```
 
 `ClientFromContext` is the escape hatch, for reaching the driver directly for
-something this package does not wrap.
+something this package does not wrap. It hands back the client and nothing else
+— in particular it applies no namespace, so a key you pass through it is sent
+exactly as you built it. That is the escape hatch's one sharp edge, and it is a
+quiet one: a key with no namespace lands in the default namespace, succeeds, and
+looks right. `KeyFor` places a key the way every wrapped entry above places one.
+
+```go
+KeyFor(ctx context.Context, key datastore.Key) datastore.Key
+KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key
+```
+
+```go
+client, _ := firestorebind.ClientFromContext(ctx)
+entity, err := client.Get(ctx, firestorebind.KeyFor(ctx, key))
+```
+
+A key that already names a namespace keeps it, so an explicitly placed key is
+never moved. With no client, no resolver, or a resolver returning the empty
+string, the key comes back untouched — there is no error to return, so there is
+none in the signature.
 
 `dynamobind` needs a table-name resolver here, because a declared table name and
 a deployed one differ. This package needs none: a kind is intrinsic to the type,
@@ -538,6 +604,7 @@ LoadAll[T](ctx, keys, opts...) (values []T, missing, deferred []datastore.Key, e
 StoreAll[T](ctx, vs, opts...) ([]datastore.Key, error)
 InsertAll[T](ctx, vs, opts...) ([]datastore.Key, error)
 RemoveAll[T](ctx, vs, opts...) error
+RemoveKeys(ctx, keys, opts...) error
 ```
 
 None of these names a kind. Identity is complete in the key, so there is nothing
@@ -690,12 +757,29 @@ in the server's reply order, not the order of your keys.
 `StoreAll` chunks by encoded size against `datastore.MaxRequestBytes`, not by
 count. That is not an implementation shortcut: Google documents no per-commit
 mutation limit, a commit is bounded in bytes, and a count-based chunker would be
-a number this package made up. Sizing costs one JSON marshal per entity, which is
-not the marshal the driver then does.
+a number this package made up. Sizing is `datastore.Client.MutationSize`, which
+measures the mutation as it will be sent — including the key with its project,
+database and namespace attached, which only the client knows.
 
 No service limit is written down here. `MaxLookupKeys`, `MaxRequestBytes` and the
 rest are the driver's constants, because a copied limit is what drifts when the
 service changes it.
+
+`RemoveKeys` deletes by key rather than by value:
+
+```go
+err := firestorebind.RemoveKeys(ctx, keys)
+```
+
+It is the counterpart of `QueryKeysPage`. Find these keys, then delete them is the
+shape of every cleanup, teardown and administrative sweep, and `RemoveAll` cannot
+express it because it needs a bound value to take the key from. `RemoveAll` is now
+`RemoveKeys` over the keys its values carry, so the two cannot drift. Deleting a
+key that holds nothing succeeds, as it does on the wire; an incomplete key is
+refused before anything is sent.
+
+A namespace teardown is the case that needs this most, because there is no API
+that deletes a namespace: page a keys-only query per kind, then sweep.
 
 A chunked batch is **not** a transaction. A large write commits in pieces, and a
 failure leaves the earlier pieces written. Use `Run` when the batch has to be
@@ -784,17 +868,18 @@ Tag and type checks:
 - an unknown `firestore` tag option
 - a `datastore` tag on a field with no `firestore` tag
 - two fields mapping to one property name
-- more than one `name`, `id`, `parent` or `version` field, or both a `name` and an `id`
-- `name` on a non-string field, `id` or `version` on a non-`int64` field, `parent`
-  on a field that is neither `datastore.Key` nor a bound type
+- more than one `name`, `id`, `parent`, `version` or `ttl` field, or both a `name` and an `id`
+- `name` on a non-string field, `id` or `version` on a non-`int64` field, `ttl` on
+  a non-`time.Time` field, `parent` on a field that is neither `datastore.Key` nor
+  a bound type
 - a parent chain that reaches its own type
 - an identity option on a nested type, which has no key
-- `noindex` on a field that is not stored as a property
+- `noindex` or `ttl` on a field that is not stored as a property
 - a Go type with no property form: a map, a `uint`/`uint64`/`uintptr`, a slice of
   slices, a channel, a function, an interface
 - a nested struct declared in another package
 - a type that already declares `EncodeEntity`, `DecodeEntity`, `EntityKey`,
-  `Kind` or `EntityVersion` by hand
+  `Kind`, `EntityVersion` or `ExpiryProperty` by hand
 
 Query checks:
 
@@ -839,12 +924,13 @@ them and none of this package is linked.
   the write.
 - **A kind override.** The kind is the Go type name. A `kind=` option remains the
   shape if one is ever wanted; nothing has needed it.
-- **TTL.** Not expressible on this wire in Datastore mode. Expiry is a
-  field-level policy applied out of band with
-  `gcloud firestore fields ttls update`, over an ordinary timestamp property —
-  so an expiring entity needs no tag, and a plain `time.Time` field is the whole
-  story. This is the one place Datastore is simpler than DynamoDB, where
-  `dynamobind`'s `ttl` tag waits on `UpdateTimeToLive` in the driver.
+- **Applying a TTL.** Expiry is not expressible on this wire in Datastore mode.
+  The `ttl` tag declares which property a policy targets and emits
+  `ExpiryProperty`; applying the policy stays `gcloud firestore fields ttls
+  update`, run by whoever owns your deployment. Nothing here calls it, and
+  nothing here can tell you whether it has been applied. Contrast `dynamobind`,
+  where the `ttl` tag waits on `UpdateTimeToLive` in the driver — there the
+  *declaration* is blocked on an apply; here only the apply is out of scope.
 - **Watch, listeners and property transformations.** The driver excludes them.
   Transformations are excluded deliberately: server-side increment and
   array-append reintroduce exactly the non-idempotent-retry hazard the driver's

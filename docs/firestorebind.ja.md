@@ -123,6 +123,7 @@ firestore:"<プロパティ名>[,<オプション>...]"
 | `id` | この `int64` フィールドが key の数値 id になる |
 | `parent` | このフィールドが祖先パスを供給する |
 | `version` | この `int64` フィールドが、読み取り時の entity version を受け取る |
+| `ttl` | この `time.Time` プロパティが、この kind の TTL ポリシーの対象になる |
 | `noindex` | プロパティとして保存するが、どの index にも入れない |
 | `omitempty` | フィールドがゼロ値のとき、プロパティ自体を書かない |
 
@@ -141,6 +142,47 @@ index されます。index は書き込みスループットとストレージ�
 長いテキストを外すのは効きます。ただし外れたプロパティは *どの* index にも無いので、
 クエリがそれにマッチすることは二度とありません。生成はそこを強制します。`noindex` の
 フィールドを filter、order、projection に書いた宣言は落ちます。
+
+### `ttl` はプロパティを宣言するだけで、何も失効させません
+
+Datastore モードのワイヤに expiry はありません。このパッケージにも driver にも、
+エンティティを期限で消す手段はない。失効は帯域外で適用するフィールドレベルのポリシーです。
+
+```bash
+gcloud firestore fields ttls update expires_at --collection-group=Session
+```
+
+ではこの tag は何のためか。ポリシーはプロパティを名指す必要があり、*どの* プロパティかを
+デプロイ手順に伝える何かが要ります。tag がなければその一覧は型の隣で手管理になり、誰かが
+プロパティを改名した日にコンパイルエラーも実行時エラーも出ません — 出るのは、もう存在しない
+プロパティを指したポリシーと、静かに一生失効しないレコードだけです。
+
+```go
+type Session struct {
+	Token     string    `firestore:"-,name"`
+	ExpiresAt time.Time `firestore:"expires_at,ttl"`
+}
+```
+
+tag は書き込みを一切変えません。`ExpiresAt` は普通の `timestampValue` として、
+オプションが無い場合と 1 バイト違わず符号化されます。得られるのは生成された事実 1 つです。
+
+```go
+func (v Session) ExpiryProperty() (string, bool) { return "expires_at", true }
+```
+
+これは `firestorebind.Expirer` を満たします。tag を持つ型にだけ生成されるので、
+アサーションが通ること自体が宣言になります。デプロイ用のツールが型を走査して各々に尋ね、
+codec と同じ宣言から `gcloud` の呼び出しを組み立てられます。
+
+`ttl` は 1 つの型に高々 1 つ、かつ `time.Time` に限ります。それ以外を対象にしたポリシーは
+何も失効させないからです。保存されないフィールドへの `ttl` は、`noindex` と同じ理由で
+生成エラーです — 決して発火しえないポリシーを記述しているので。
+
+ひとつ未解決があります。TTL ポリシーがプロパティの index を必要とするかどうかで、必要なら
+`ttl` と `noindex` の併用は組み合わせではなく矛盾になります。どちらとも確認できていないので、
+現状は何も拒否していません。失効プロパティを index から外している場合は、ポリシーが実際に
+発火しているか確認してください。
 
 ## プロパティの型
 
@@ -470,7 +512,24 @@ ClientFromContext(ctx context.Context) (*datastore.Client, error)
 ```
 
 `ClientFromContext` は逃げ道で、このパッケージが包んでいない操作のために driver へ直接
-届くためのものです。
+届くためのものです。返すのは client だけで、namespace は適用しません。つまりここを通した
+key は組み立てたまま送られます。これが逃げ道の唯一の鋭い角で、しかも静かです — namespace の
+無い key は既定 namespace に着地し、成功し、正しく見えます。`KeyFor` は、上のラップされた
+入口が置くのと同じように key を置きます。
+
+```go
+KeyFor(ctx context.Context, key datastore.Key) datastore.Key
+KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key
+```
+
+```go
+client, _ := firestorebind.ClientFromContext(ctx)
+entity, err := client.Get(ctx, firestorebind.KeyFor(ctx, key))
+```
+
+すでに namespace を名乗っている key はそれを保ちます。明示的に置かれた key が黙って
+動かされることはありません。client が無い、resolver が無い、resolver が空文字を返す —
+どの場合も key はそのまま返ります。返すべき error が無いので、シグネチャにもありません。
 
 `dynamobind` はここに table 名の resolver を必要とします。宣言した table 名とデプロイされた
 table 名が違うからです。このパッケージには要りません。kind は型に内在していて、デプロイが
@@ -515,6 +574,7 @@ LoadAll[T](ctx, keys, opts...) (values []T, missing, deferred []datastore.Key, e
 StoreAll[T](ctx, vs, opts...) ([]datastore.Key, error)
 InsertAll[T](ctx, vs, opts...) ([]datastore.Key, error)
 RemoveAll[T](ctx, vs, opts...) error
+RemoveKeys(ctx, keys, opts...) error
 ```
 
 どれも kind を取りません。identity は key で完結しているので、シグネチャが運ぶものが
@@ -660,11 +720,27 @@ key はサーバが今回読まないことにしたもので、再試行する�
 `StoreAll` は件数ではなく、エンコード後のサイズを `datastore.MaxRequestBytes` に対して
 見て分割します。これは実装上の手抜きではありません。Google は commit あたりの mutation
 件数の上限を文書化しておらず、commit の境界はバイト数で、件数でのチャンク分割はこの
-パッケージが作った数字になってしまいます。サイズ算出は entity ごとに JSON marshal 1 回分の
-コストで、これは driver がその後に行う marshal とは別です。
+パッケージが作った数字になってしまいます。サイズ算出は `datastore.Client.MutationSize` で、
+送られる姿そのままの mutation を測ります — key に付く project、database、namespace を
+含めて。それを知っているのは client だけです。
 
 サービスの上限値はここに 1 つも書かれていません。`MaxLookupKeys`、`MaxRequestBytes` ほかは
 driver の定数です。写した上限値こそが、サービスが変わったときにずれるものだからです。
+
+`RemoveKeys` は値ではなく key で削除します。
+
+```go
+err := firestorebind.RemoveKeys(ctx, keys)
+```
+
+`QueryKeysPage` の対になるものです。「この key 群を見つけて、消す」はあらゆる後片付け、
+teardown、管理用の一掃の形ですが、`RemoveAll` は key を取り出すための束縛済みの値を必要と
+するので、それを表現できません。`RemoveAll` は今や自分の値が持つ key に対する `RemoveKeys`
+なので、2 つがずれることはありません。何も保持していない key の削除はワイヤ上と同じく成功し、
+不完全な key は何かが送られる前に拒否されます。
+
+これを最も必要とするのは namespace の teardown です。namespace を削除する API が存在しない
+ので、kind ごとに keys-only クエリをページングしてから一掃することになります。
 
 分割された batch は transaction **ではありません**。大きな書き込みは複数回に分けて commit
 され、失敗すると手前の分は書かれたまま残ります。全部か無かにしたいなら `Run` を使ってく
@@ -750,16 +826,18 @@ tag と型の検査:
 - 未知の `firestore` tag オプション
 - `firestore` tag のないフィールドに付いた `datastore` tag
 - 2 つのフィールドが 1 つのプロパティ名に対応する
-- `name`、`id`、`parent`、`version` が 2 つ以上、あるいは `name` と `id` の併用
+- `name`、`id`、`parent`、`version`、`ttl` が 2 つ以上、あるいは `name` と `id` の併用
 - string でないフィールドの `name`、`int64` でないフィールドの `id` / `version`、
-  `datastore.Key` でも束縛された型でもないフィールドの `parent`
+  `time.Time` でないフィールドの `ttl`、`datastore.Key` でも束縛された型でもない
+  フィールドの `parent`
 - 自分自身の型に到達する parent の連鎖
 - key を持たないネスト型への identity オプション
-- プロパティとして保存されないフィールドへの `noindex`
+- プロパティとして保存されないフィールドへの `noindex` または `ttl`
 - プロパティの形を持たない Go の型: map、`uint` / `uint64` / `uintptr`、スライスのスライス、
   channel、関数、interface
 - 別パッケージで宣言されたネスト構造体
-- `EncodeEntity`、`DecodeEntity`、`EntityKey`、`Kind`、`EntityVersion` を手で宣言済みの型
+- `EncodeEntity`、`DecodeEntity`、`EntityKey`、`Kind`、`EntityVersion`、
+  `ExpiryProperty` を手で宣言済みの型
 
 クエリの検査:
 
@@ -799,11 +877,12 @@ tag と型の検査:
   ものを使ってください。
 - **kind の上書き。** kind は Go の型名です。`kind=` オプションは、もし要るようになった
   ときの形として残していますが、必要としたものがありません。
-- **TTL。** Datastore mode のこのワイヤ上では表現できません。expiry は
-  `gcloud firestore fields ttls update` で別途適用する、通常の timestamp プロパティに対する
-  フィールドレベルのポリシーです。だから期限付き entity に tag は要らず、ただの
-  `time.Time` フィールドがすべてです。ここは Datastore のほうが DynamoDB より単純な唯一の
-  場所で、`dynamobind` の `ttl` tag は driver の `UpdateTimeToLive` を待っています。
+- **TTL の適用。** expiry は Datastore mode のこのワイヤ上では表現できません。`ttl` tag が
+  宣言するのはポリシーの対象プロパティで、`ExpiryProperty` を生成するところまでです。
+  ポリシーの適用は `gcloud firestore fields ttls update` のまま、デプロイを持っている側の
+  仕事です。ここからは呼びませんし、適用済みかどうかを知る手段もありません。`dynamobind`
+  と対照的です — あちらの `ttl` tag は driver の `UpdateTimeToLive` を待っていて、*宣言*
+  そのものが適用に阻まれています。こちらで範囲外なのは適用だけです。
 - **watch、listener、property transformation。** driver が除外しています。transformation の
   除外は意図的です。サーバ側の増分と配列追加は、driver の retry ポリシーが避けるために
   作られている「再送が冪等でない」危険をそのまま呼び戻します。このパッケージが書き込みを

@@ -17,7 +17,7 @@ reason_for_existing:
   reading: the obvious fallback exists and does not help, which the driver records, measured rather than assumed, in its own catalog
 release_status:
   introduced_in: tinygodriver v1.1.4, commit c5ee07d
-  bound_surface: v1.1.6, which added OR filters, SUM and AVG, MutationSize, and made key partitioning recursive; every API fact below was read from a tag rather than from a working copy
+  bound_surface: v1.1.7, which folded beginTransaction away and fixed the README and the read-time bound; v1.1.6 before it added OR filters, SUM and AVG, MutationSize, and made key partitioning recursive. Every API fact below was read from a tag rather than from a working copy
   not_in: v1.1.3, which carries nosql/dynamodb only
   driver_own_catalog: the tag ships .knowledge concepts for the client, the value codec, the retry policy, the write preconditions, the emulator endpoint, and a DynamoDB comparison; read them there rather than restating them here
 reflection_path:
@@ -83,6 +83,13 @@ transactions:
   Tx_reads: [Get, GetMulti, Run, Count], each taking a ctx and no options
   Tx_writes: [Put, Insert, Update, Delete, Mutate], queued and returning nothing, sent with the commit
   happy_path: a closure returning an error writes nothing, so no rollback is needed; a panic or an expired context rolls back
+  no_explicit_begin:
+    since: v1.1.7
+    how: a Tx starts empty, the first read carries readOptions.newTransaction and the reply carries the handle everything after it uses; a commit with no read at all carries singleUseTransaction
+    why_it_is_a_fold_and_not_a_guess: the client does not bet on the closure's shape, it starts the transaction inside a read it was going to send anyway
+    measured: one read then commit costs 2 round trips where it cost 3, N reads then commit N+1 where it cost N+2, a write-only closure 1 where it cost 3, and a closure that neither read nor wrote 0 where it cost 2
+    wider_than_asked: the ask scoped itself to one read plus one commit; every shape improved, and the write-only row is the larger proportional saving
+    rollback: fires only when a handle exists, since a closure that never started one has nothing to release
   restart: ABORTED re-runs the whole closure, budgeted by WithTxRetries
   bound: the closure must be side-effect free outside the transaction, stated in godoc and not enforceable
   ErrTxClosed: using a Tx after its closure returned
@@ -108,6 +115,13 @@ queries:
 options:
   client: [WithEndpoint, WithDatabase, WithNamespace, WithCredentials, WithTokenSource, WithTimeout, WithHTTPClient, WithMaxIdleConns, WithRetry]
   read: [WithEventualConsistency, WithReadTime]
+  read_time_bound:
+    stated_since: v1.1.7; before it the option published no bound at all, so the only way to learn one was to be refused
+    windows: any microsecond-granularity instant within the past hour, and from one hour to seven days back only whole-minute timestamps, only with point-in-time recovery enabled
+    caller_duty: truncate a read older than an hour; the option formats RFC3339Nano and does not truncate, since that would change the instant asked for and the boundary between the windows moves while the request is in flight
+    failure: the service answers "read_time is too old", naming the age when the precision was what was wrong
+    no_local_check: the client cannot see whether PITR is enabled or what earliestVersionTime is, so a range check would refuse reads that work; the same position MaxDisjunctions takes
+    effect_here: nothing in firestorebind reaches for it yet, and a store that does passes the duty to its own caller per rule:firestorebind-driver-passthrough
   write: [WithBaseVersion, WithUpdateTime]
   transaction: [WithTxRetries]
   typing: ReadOption, WriteOption and TxOption are separate interfaces, so a consistency option on a write is a compile error
@@ -158,9 +172,14 @@ composite_indexes:
 ttl:
   answer_2026_08_03: TTL is not expressible on this wire in Datastore mode
   what_it_is_instead: a field-level policy applied out of band, with gcloud firestore fields ttls update over an ordinary timestamp property
-  consequence: an expiring entity needs nothing from this package or from firestorebind; a plain timestamp property is the whole story, per rule:firestore-tag-options
+  consequence: an expiring entity needs nothing from this package or from firestorebind to expire; a plain timestamp property is the whole story, per rule:firestore-tag-options
+  what_this_does_not_settle: which property a deployment points its policy at, which is a fact someone has to publish rather than apply; requirement:firestore-expiry-property-declaration reopens that half only
   contrast: system:tinygodriver-dynamodb is blocked the other way, where UpdateTimeToLive is absent and requirement:dynamo-ttl-attribute waits on it
-excluded_by_the_driver: [GQL, ReserveIds, SUM and AVG aggregation, the admin API, watch and listeners, property transformations, auto-pagination, explain options]
+excluded_by_the_driver: [GQL, ReserveIds, the admin API, watch and listeners, property transformations, auto-pagination, explain options]
+exclusion_list_drift:
+  what: this list named SUM and AVG until 2026-08-05, two days after v1.1.6 shipped them and with their arrival recorded under queries.aggregations in this same concept
+  same_fault_the_driver_had: its README carried the identical contradiction, reported as the consumer's second ask and fixed in v1.1.7 with a test that fails when the not-in-scope list names anything exported
+  reading: a list of absences is the part of prose a machine can check, and neither side was checking it; the driver now is
 property_transformations_note:
   what: server-side increment and array-append, which exist on the wire inside commit
   why_excluded: they are the non-idempotent-retry hazard the retry policy is built to avoid
@@ -196,6 +215,28 @@ upstream_requests:
       reported: a key used directly as a filter value got a partition and the same key inside an array did not, which meant the code contradicted itself whichever way the service behaves
       wider_than_reported: following it upstream found that every stored key property was also going out unpartitioned, which is the half that writes data and the half this side could not see
       status: fixed in v1.1.6
+  round_four_2026_08_05:
+    filed_by: the downstream framework rather than this catalog, against v1.1.6; three of its seven asks were the driver's, per decision:firestore-framework-requests
+    answered_in: v1.1.7, all three
+    single_use_transaction:
+      reported: wireCommitRequest.SingleUseTransaction was declared and never assigned, and wireReadOptions carried no newTransaction at all, so the read half was not expressible; runOneTransaction therefore always began explicitly
+      why_it_was_the_first_ask: with no condition expression on the wire, every predicate over a stored value is a transaction, so the extra round trip was paid per conditional write rather than occasionally
+      status: shipped; see transactions.no_explicit_begin above
+      landed_wider_than_filed: the ask assumed only one-read-plus-one-commit could fold, and the implementation removed the begin from every shape
+    readme_contradiction:
+      reported: the not-in-scope list still excluded SUM and AVG about two hundred lines below the section documenting both, so a consumer reading the list would write a paging loop to sum a property the service will sum
+      also_reported: SkippedResults, DistinctOn, Project and RunReadOnly were implemented and unmentioned
+      status: fixed, and now guarded by a test that fails when the not-in-scope list names anything the package exports
+      same_fault_here: see exclusion_list_drift below, which this catalog carried simultaneously
+    read_time_bound:
+      reported: WithReadTime published no staleness bound, so an INVALID_ARGUMENT on a reasonable-looking value was the only way to learn one
+      filed_before_anything_depended_on_it: nothing downstream reaches for read times yet
+      status: documented; see options.read_time_bound above
+  round_five_pending:
+    commit_envelope:
+      ask: whether the bytes a commit request adds around its mutations are inside what MutationSize reports, or a figure the driver should name
+      why: requirement:firestore-mutation-sizing drops a local 512-byte constant for the driver's measure, and the envelope is the only part that measure does not cover
+      why_not_solved_here: rule:firestorebind-driver-passthrough forbids a local number, and a smaller local number is the same mistake
   doc_drift:
     status: fixed for WithCredentialsFile, WithPropertyMask, RunReadOnly and the Tx method list
     new_drift_v1_1_5: the driver's own value concept still carries a NOT IMPLEMENTED marker on the struct mapper, added in 1aa42bf and left standing when ff4c947 implemented it two commits later; the code is authoritative, and this is worth sending back
@@ -209,4 +250,6 @@ related:
   - decision:firestore-transaction-scope
   - system:tinygodriver-dynamodb
   - concept:dynamobind-firestorebind-mapping
+  - decision:firestore-framework-requests
+  - requirement:firestore-mutation-sizing
 ```

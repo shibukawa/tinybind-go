@@ -116,10 +116,14 @@ func (e *firestoreEmitter) entity(entity FirestoreEntityPlan) error {
 	if _, ok := entity.Version(); ok {
 		fmt.Fprintf(&e.body, "var _ firestorebind.Versioner = %s{}\n", entity.Name)
 	}
+	if _, ok := entity.Expiry(); ok {
+		fmt.Fprintf(&e.body, "var _ firestorebind.Expirer = %s{}\n", entity.Name)
+	}
 	fmt.Fprintf(&e.body, "var _ firestorebind.Kinder = %s{}\n\n", entity.Name)
 
 	e.kind(entity, receiver)
 	e.entityVersion(entity, receiver)
+	e.expiryProperty(entity, receiver)
 	if emitKey {
 		if err := e.entityKey(entity, receiver); err != nil {
 			return err
@@ -156,6 +160,26 @@ func (e *firestoreEmitter) entityVersion(entity FirestoreEntityPlan, receiver st
 	fmt.Fprintf(&e.body, "// EntityVersion is the version %s was read at. A non-zero version makes a\n", entity.Name)
 	e.body.WriteString("// later Store or Update conditional on the stored entity still being at it.\n")
 	fmt.Fprintf(&e.body, "func (%s %s) EntityVersion() int64 { return int64(%s.%s) }\n\n", receiver, entity.Name, receiver, version.Name)
+}
+
+// expiryProperty emits the property a TTL policy is meant to expire this kind
+// by. It writes nothing into the codec: the property is encoded as an ordinary
+// timestamp, exactly as it would be without the tag. What this produces is one
+// fact a deployment step can read, so the property name lives beside the field
+// it describes rather than in a hand-kept list.
+//
+// Like the version accessor, it is emitted from the tag rather than from a
+// discovered call, because the caller is a tool outside the package.
+func (e *firestoreEmitter) expiryProperty(entity FirestoreEntityPlan, receiver string) {
+	expiry, ok := entity.Expiry()
+	if !ok {
+		return
+	}
+	fmt.Fprintf(&e.body, "// ExpiryProperty is the property a TTL policy for kind %s should expire\n", entity.Kind)
+	e.body.WriteString("// entities by. Nothing here applies one: Datastore mode has no expiry on the\n")
+	e.body.WriteString("// wire, so a policy is applied out of band with gcloud over this property.\n")
+	fmt.Fprintf(&e.body, "func (%s %s) ExpiryProperty() (string, bool) { return %s, true }\n\n",
+		receiver, entity.Name, strconv.Quote(expiry.Property))
 }
 
 func (e *firestoreEmitter) entityKey(entity FirestoreEntityPlan, receiver string) error {

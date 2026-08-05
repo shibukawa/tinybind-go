@@ -551,3 +551,169 @@ func TestDeclaredOrQuerySendsADisjunction(t *testing.T) {
 		t.Errorf("the outer AND is missing: ops were %v", got)
 	}
 }
+
+// RemoveKeys is the counterpart of a keys-only query: it deletes what one hands
+// back, which RemoveAll cannot do because it needs a value to take the key from.
+func TestRemoveKeysDeletesWhatAKeysOnlyQueryReturns(t *testing.T) {
+	ctx, _ := withFake(t)
+	for _, id := range []string{"a", "b", "c"} {
+		r := sample()
+		r.ID = firestorefixture.SensorID(id)
+		if _, err := firestorefixture.StoreReading(ctx, r); err != nil {
+			t.Fatalf("store %s: %v", id, err)
+		}
+	}
+
+	// A teardown pages, because a keys-only query is one batch per request and
+	// nothing loops for the caller.
+	var keys []datastore.Key
+	query := datastore.NewQuery("Reading").KeysOnly()
+	for {
+		page, err := firestorebind.QueryKeysPage(ctx, query)
+		if err != nil {
+			t.Fatalf("QueryKeysPage: %v", err)
+		}
+		keys = append(keys, page.Keys...)
+		if !page.HasMore() {
+			break
+		}
+		query = query.Start(page.EndCursor)
+	}
+	if len(keys) != 3 {
+		t.Fatalf("keys-only query returned %d keys, want 3", len(keys))
+	}
+
+	if err := firestorefixture.SweepKeys(ctx, keys); err != nil {
+		t.Fatalf("SweepKeys: %v", err)
+	}
+
+	n, err := firestorebind.Count(ctx, datastore.NewQuery("Reading"))
+	if err != nil {
+		t.Fatalf("count after sweep: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("the sweep left %d entities behind", n)
+	}
+}
+
+// Deleting a key that holds nothing succeeds on the wire, so it succeeds here,
+// and an empty slice sends no request at all.
+func TestRemoveKeysToleratesAbsentAndEmpty(t *testing.T) {
+	ctx, fake := withFake(t)
+	if err := firestorefixture.SweepKeys(ctx, nil); err != nil {
+		t.Fatalf("empty sweep: %v", err)
+	}
+	if got := fake.countOf("commit"); got != 0 {
+		t.Errorf("an empty sweep sent %d commits, want 0", got)
+	}
+	if err := firestorefixture.SweepKeys(ctx, []datastore.Key{datastore.NameKey("Reading", "never-stored")}); err != nil {
+		t.Errorf("deleting an absent key: %v", err)
+	}
+}
+
+// An incomplete key names no entity, so it is refused before anything is sent
+// rather than deleting whatever the server would have picked.
+func TestRemoveKeysRefusesAnIncompleteKey(t *testing.T) {
+	ctx, fake := withFake(t)
+	err := firestorefixture.SweepKeys(ctx, []datastore.Key{datastore.IncompleteKey("Reading")})
+	if err == nil {
+		t.Fatal("an incomplete key was accepted")
+	}
+	if got := fake.countOf("commit"); got != 0 {
+		t.Errorf("the refusal still sent %d commits", got)
+	}
+}
+
+// KeyFor is what the ClientFromContext escape hatch needs: a key placed the way
+// every wrapped entry places one. Without it a caller writes to the default
+// namespace and cannot tell.
+func TestKeyForPlacesKeysLikeTheWrappedEntries(t *testing.T) {
+	client, _ := newFakeDatastore(t)
+	ctx := firestorebind.WithClient(t.Context(), client,
+		firestorebind.WithNamespace(func(context.Context) string { return "tenant-a" }))
+
+	r := sample()
+	if _, err := firestorefixture.StoreReading(ctx, r); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// The escape hatch: the driver directly, with the key placed by KeyFor.
+	raw, err := firestorebind.ClientFromContext(ctx)
+	if err != nil {
+		t.Fatalf("ClientFromContext: %v", err)
+	}
+	if _, err := raw.Get(t.Context(), firestorebind.KeyFor(ctx, r.EntityKey())); err != nil {
+		t.Errorf("a key placed by KeyFor did not find what Store wrote: %v", err)
+	}
+
+	// The same key unplaced is the bug this exists to prevent: it reads the
+	// default namespace, finds nothing, and nothing about that looks wrong.
+	if _, err := raw.Get(t.Context(), r.EntityKey()); !errors.Is(err, datastore.ErrNoSuchEntity) {
+		t.Errorf("an unplaced key should have missed, got %v", err)
+	}
+}
+
+// Every branch that has no namespace to apply returns the key untouched, and a
+// key that already names one is not moved.
+func TestKeyForLeavesAKeyAloneWhenItShould(t *testing.T) {
+	key := datastore.NameKey("Reading", "r")
+	placed := key.WithNamespace("explicit")
+
+	if got := firestorebind.KeyFor(t.Context(), key); got.Namespace != "" {
+		t.Errorf("no client in context: got namespace %q", got.Namespace)
+	}
+
+	client, _ := newFakeDatastore(t)
+	noResolver := firestorebind.WithClient(t.Context(), client)
+	if got := firestorebind.KeyFor(noResolver, key); got.Namespace != "" {
+		t.Errorf("no resolver: got namespace %q", got.Namespace)
+	}
+
+	empty := firestorebind.WithClient(t.Context(), client,
+		firestorebind.WithNamespace(func(context.Context) string { return "" }))
+	if got := firestorebind.KeyFor(empty, key); got.Namespace != "" {
+		t.Errorf("empty resolved namespace: got %q", got.Namespace)
+	}
+
+	tenant := firestorebind.WithClient(t.Context(), client,
+		firestorebind.WithNamespace(func(context.Context) string { return "tenant-a" }))
+	if got := firestorebind.KeyFor(tenant, placed); got.Namespace != "explicit" {
+		t.Errorf("an explicitly placed key was moved to %q", got.Namespace)
+	}
+
+	keys := firestorebind.KeysFor(tenant, []datastore.Key{key, placed})
+	if keys[0].Namespace != "tenant-a" || keys[1].Namespace != "explicit" {
+		t.Errorf("KeysFor: got %q and %q", keys[0].Namespace, keys[1].Namespace)
+	}
+}
+
+// The ttl tag declares which property a policy targets and changes nothing about
+// how that property is written.
+func TestExpiryPropertyIsDeclaredAndChangesNoBytes(t *testing.T) {
+	ctx, fake := withFake(t)
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	s := firestorefixture.Session{Token: "abc", Subject: "user-1", ExpiresAt: expires}
+
+	var expirer firestorebind.Expirer = s
+	property, ok := expirer.ExpiryProperty()
+	if !ok || property != "expires_at" {
+		t.Errorf("ExpiryProperty: got %q, %v", property, ok)
+	}
+
+	if _, err := firestorefixture.StoreSession(ctx, s); err != nil {
+		t.Fatalf("StoreSession: %v", err)
+	}
+	// The property is on the wire as an ordinary timestamp. Nothing about the
+	// write says "ttl", because Datastore mode has no expiry on the wire.
+	sessions := fake.matching("Session")
+	if len(sessions) != 1 {
+		t.Fatalf("the fake holds %d sessions, want 1", len(sessions))
+	}
+	stored := string(sessions[0])
+	if !strings.Contains(stored, "expires_at") || !strings.Contains(stored, "timestampValue") {
+		t.Errorf("expires_at is not an ordinary timestamp property: %s", stored)
+	}
+	if strings.Contains(stored, "ttl") {
+		t.Errorf("the tag leaked onto the write path: %s", stored)
+	}
+}

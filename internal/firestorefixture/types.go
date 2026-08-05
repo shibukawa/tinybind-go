@@ -58,6 +58,16 @@ type Task struct {
 	Title  string `firestore:"title"`
 }
 
+// Session carries an expiry property. The ttl option changes nothing about how
+// ExpiresAt is written — it is an ordinary timestamp property — and produces one
+// generated fact: this kind's TTL policy targets "expires_at". Applying that
+// policy stays a deployment step, since Datastore mode has no expiry on the wire.
+type Session struct {
+	Token     string    `firestore:"-,name"`
+	Subject   string    `firestore:"subject"`
+	ExpiresAt time.Time `firestore:"expires_at,ttl"`
+}
+
 // LoadReading is a decode-side use: T appears only in the result, so the AST
 // carries it even before any codec exists.
 func LoadReading(ctx context.Context, key datastore.Key) (Reading, error) {
@@ -92,6 +102,18 @@ func StoreReadings(ctx context.Context, rs []Reading) ([]datastore.Key, error) {
 // LoadReadings exercises the key-chunked batch read and its three results.
 func LoadReadings(ctx context.Context, keys []datastore.Key) ([]Reading, []datastore.Key, []datastore.Key, error) {
 	return firestorebind.LoadAll[Reading](ctx, keys)
+}
+
+// StoreSession is the encode-side use that directs the Session codec, and the
+// only reason the ttl declaration reaches generated code.
+func StoreSession(ctx context.Context, s Session) (datastore.Key, error) {
+	return firestorebind.Store(ctx, s)
+}
+
+// SweepKeys deletes by key rather than by value, which is the shape a keys-only
+// query hands back and the shape a namespace teardown needs.
+func SweepKeys(ctx context.Context, keys []datastore.Key) error {
+	return firestorebind.RemoveKeys(ctx, keys)
 }
 
 // RenameInTransaction is a read-modify-write, which is the only thing a

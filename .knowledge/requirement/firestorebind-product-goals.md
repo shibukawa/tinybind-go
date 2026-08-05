@@ -47,7 +47,8 @@ in_scope:
   - a typed transaction wrapper, per decision:firestore-transaction-scope
 out_of_scope:
   - the client itself; it stays in system:tinygodriver-firestore
-  - what the driver excludes: GQL, ReserveIds, SUM and AVG, the admin API, watch, property transformations
+  - what the driver excludes: GQL, ReserveIds, the admin API, watch, property transformations
+  - "SUM and AVG: unbound here, but no longer because the driver excludes them. They shipped in tinygodriver v1.1.6 and stayed on this list for two days, per system:tinygodriver-firestore exclusion_list_drift; whether to wrap them is now an open question rather than an inherited absence, per api:firestorebind-operations aggregations_gap"
   - Firestore native mode, which is a different API with a different client; this binds Datastore mode only
   - composite index management, per decision:firestore-no-schema-artifact
   - an ORM

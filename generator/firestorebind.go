@@ -83,8 +83,9 @@ type FirestoreType struct {
 type FirestoreFieldPlan struct {
 	Name     string
 	Property string
-	// Role is "", "name", "id", "parent" or "version". A field with a role
-	// other than "" and "version" carries identity rather than a property.
+	// Role is "", "name", "id", "parent", "version" or "ttl". A field with a
+	// role other than "", "version" and "ttl" carries identity rather than a
+	// property; a ttl field is an ordinary property that a policy also reads.
 	Role      string
 	OmitEmpty bool
 	NoIndex   bool
@@ -116,6 +117,11 @@ func (p FirestoreEntityPlan) Parent() (FirestoreFieldPlan, bool) { return p.role
 
 // Version returns the field that receives Entity.Version.
 func (p FirestoreEntityPlan) Version() (FirestoreFieldPlan, bool) { return p.roleField("version") }
+
+// Expiry returns the field a TTL policy is meant to expire this kind by. It
+// changes nothing about how the property is written; it is declared so a
+// deployment can be told which property to point a policy at.
+func (p FirestoreEntityPlan) Expiry() (FirestoreFieldPlan, bool) { return p.roleField("ttl") }
 
 func (p FirestoreEntityPlan) roleField(role string) (FirestoreFieldPlan, bool) {
 	for _, f := range p.Fields {
@@ -407,7 +413,7 @@ func (c *firestoreCollector) plan(name string, st *types.Struct, named *types.Na
 			continue
 		}
 		switch plan.Role {
-		case "name", "id", "parent", "version":
+		case "name", "id", "parent", "version", "ttl":
 			if other, dup := roles[plan.Role]; dup {
 				return entity, fmt.Errorf("firestorebind: %s: fields %s and %s are both %s", name, other, plan.Name, plan.Role)
 			}
@@ -455,7 +461,7 @@ func (c *firestoreCollector) field(typeName string, field *types.Var, raw string
 			plan.OmitEmpty = true
 		case "noindex":
 			plan.NoIndex = true
-		case "name", "id", "parent", "version":
+		case "name", "id", "parent", "version", "ttl":
 			plan.Role = option
 		default:
 			return plan, fmt.Errorf("firestorebind: %s.%s: unknown %s tag option %q", typeName, field.Name(), firestoreTag, option)
@@ -480,6 +486,11 @@ func (c *firestoreCollector) field(typeName string, field *types.Var, raw string
 	}
 	if plan.NoIndex && !plan.Stored {
 		return plan, fmt.Errorf("firestorebind: %s.%s: noindex on a field that is not stored as a property", typeName, field.Name())
+	}
+	// A TTL policy expires entities by reading a stored property, so naming one
+	// that is never written describes a policy that can never fire.
+	if plan.Role == "ttl" && !plan.Stored {
+		return plan, fmt.Errorf("firestorebind: %s.%s: ttl on a field that is not stored as a property", typeName, field.Name())
 	}
 	resolved, err := c.resolve(field.Type(), typeName, field.Name())
 	if err != nil {
@@ -512,6 +523,10 @@ func checkFirestoreRole(typeName, fieldName, role string, t FirestoreType) error
 		if t.Kind != FirestoreInt || (t.Bits != 64 && t.Bits != 0) {
 			return fail("an int64 field")
 		}
+	case "ttl":
+		if t.Kind != FirestoreTime {
+			return fail("a time.Time field")
+		}
 	case "parent":
 		if t.Kind != FirestoreKeyRef && t.Kind != FirestoreStruct {
 			return fail("a datastore.Key field or another bound type")
@@ -524,7 +539,7 @@ func checkFirestoreRole(typeName, fieldName, role string, t FirestoreType) error
 // the codec emits, by hand. A method the last generation run wrote does not
 // count: it is about to be replaced.
 func (c *firestoreCollector) checkMethodCollision(named *types.Named, entity FirestoreEntityPlan) error {
-	emitted := map[string]bool{"EncodeEntity": true, "DecodeEntity": true, "EntityKey": true, "Kind": true, "EntityVersion": true}
+	emitted := map[string]bool{"EncodeEntity": true, "DecodeEntity": true, "EntityKey": true, "Kind": true, "EntityVersion": true, "ExpiryProperty": true}
 	for i := range named.NumMethods() {
 		method := named.Method(i)
 		if !emitted[method.Name()] || c.wasGenerated(method.Pos()) {
