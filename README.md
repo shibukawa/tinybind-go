@@ -434,6 +434,47 @@ Stripping makes the gap matter more, not less: once debug information is gone,
 the reflection machinery is a larger share of what is left. On a stripped TinyGo
 wasm build it is about half the binary.
 
+### encoding/json/v2
+
+`encoding/json/v2` is still behind `GOEXPERIMENT=jsonv2` on Go 1.26, so a
+library cannot import it unconditionally. It was measured anyway, because the
+obvious question is whether generated codecs should target it instead.
+
+```bash
+GOEXPERIMENT=jsonv2 go test ./internal/benchfixture -run xxx -bench JSON -benchmem
+```
+
+| Path | v1, flag off | v1, flag on | v2 API | Generated |
+|------|--------------|-------------|--------|-----------|
+| decode (`io.Reader`) | 3543 ns · 1688 B · 30 | 2536 ns · 1889 B · 18 | 1650 ns · 544 B · 11 | **799 ns · 856 B · 15** |
+| decode (bytes in hand) | 3352 ns · 888 B · 25 | 1871 ns · 496 B · 10 | 1525 ns · 496 B · 10 | — |
+| encode | 587 ns · 144 B · 1 | 1330 ns · 1824 B · 11 | 943 ns · 288 B · 2 | **274 ns · 0 B · 0** |
+
+Turning the flag on and changing nothing else is a real improvement for
+decoding, because the v1 API is reimplemented over v2 — but watch the encode
+row, which gets 2.3× slower and allocates 12× more. The flag is not free either
+way.
+
+Generating onto `jsontext`, the v2 tokenizer, was the interesting option: the
+same key-switch shape driven by `ReadToken` lands on 13 allocations with a
+reused decoder — exactly what `jsonbind.Parser` allocates — but takes 1320 ns to
+do it, and 1804 ns · 1600 B · 38 allocs when the decoder is constructed per
+call, as a codec entry point would have to.
+
+Size settles it. On the same small program, the experiment costs:
+
+| Build | Flag off | Flag on |
+|-------|----------|---------|
+| `go build` | 3,075,522 | 3,887,730 (+26%) |
+| `go build -ldflags="-s -w"` | 2,061,010 | 2,598,722 (+26%) |
+| `tinygo build -target wasi` | 1,345,144 | 2,217,774 (+65%) |
+| `tinygo build -target wasi -no-debug` | 496,869 | 881,891 (+78%) |
+
+A stripped wasm build with the experiment on is 3.5× the size of the same
+program on `jsonbind`. For a library whose first-class target is TinyGo, that
+rules v2 out as a dependency, and nothing in the speed columns argues for
+carrying a second implementation behind a build tag to get it.
+
 ## TinyGo
 
 TinyGo is a first-class target for generated binding code. The JSON runtime is

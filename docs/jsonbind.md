@@ -141,7 +141,10 @@ structs. Three consequences are worth knowing before you diff output against
 
 String escaping, number formatting, and the `null` handling for absent slices
 and maps all match `encoding/json` byte for byte, including the HTML escaping of
-`<`, `>` and `&` that makes output safe to embed in a page.
+`<`, `>` and `&` that makes output safe to embed in a page. The one exception is
+invalid UTF-8, which is written as the `\ufffd` escape: that is what the default
+encoder produces, while `encoding/json` under `GOEXPERIMENT=jsonv2` writes the
+replacement character raw. Both decode to the same string.
 
 ## Retaining unknown fields
 

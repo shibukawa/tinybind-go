@@ -284,7 +284,7 @@ func TestAppend_MatchesEncodingJSON(t *testing.T) {
 	for _, s := range []string{
 		"", "plain", `quote" backslash\ slash/`,
 		"控制\x00\x01\x1f", "tab\tnl\ncr\rbs\bff\f",
-		"html <b>&amp;</b>", "unicode é日😀", "invalid \x80 utf8",
+		"html <b>&amp;</b>", "unicode é日😀",
 		"js separators   ",
 	} {
 		want, err := json.Marshal(s)
@@ -294,6 +294,12 @@ func TestAppend_MatchesEncodingJSON(t *testing.T) {
 		if got := AppendString(nil, s); string(got) != string(want) {
 			t.Fatalf("AppendString(%q):\n got %s\nwant %s", s, got, want)
 		}
+	}
+	// Invalid UTF-8 is pinned rather than compared: both spellings decode to
+	// U+FFFD, and which one encoding/json writes depends on GOEXPERIMENT=jsonv2.
+	// jsonbind writes the escape, which is what the default v1 encoder produces.
+	if got, want := string(AppendString(nil, "invalid \x80 utf8")), `"invalid \ufffd utf8"`; got != want {
+		t.Fatalf("AppendString on invalid UTF-8:\n got %s\nwant %s", got, want)
 	}
 	for _, f := range []float64{
 		0, 1, -1, 0.5, 1e20, 1e21, 1e-6, 1e-7, 1.0000000000000002,
