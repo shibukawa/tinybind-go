@@ -10,7 +10,7 @@ import (
 // Dispatch uses a registry of generated binders; field mapping does not use reflect.
 func Bind[T any](r *http.Request) (T, error) {
 	var zero T
-	fn, ok := lookupBinder(typeKey[T]())
+	fn, ok := lookupBinder[T]()
 	if !ok {
 		return zero, missingBinderError(typeKey[T]())
 	}
@@ -18,7 +18,7 @@ func Bind[T any](r *http.Request) (T, error) {
 	if err != nil {
 		return zero, mapJSONError(err)
 	}
-	return out.(T), nil
+	return out, nil
 }
 
 func mapJSONError(err error) error {

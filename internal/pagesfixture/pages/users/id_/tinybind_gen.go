@@ -3,7 +3,6 @@
 package id_
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/shibukawa/tinybind-go"
@@ -15,29 +14,54 @@ func init() {
 }
 
 func decodeRenameRequestBytes(data []byte) (RenameRequest, error) {
-	return decodeRenameRequestJSON(json.RawMessage(data))
-}
-
-func decodeRenameRequestJSON(raw json.RawMessage) (RenameRequest, error) {
-	var out RenameRequest
-	m, err := jsonbind.RawJSONMap(raw)
+	if jsonbind.IsBlank(data) {
+		var out RenameRequest
+		return out, nil
+	}
+	p := jsonbind.NewParser(data)
+	out, err := decodeRenameRequestJSON(p)
 	if err != nil {
 		return out, err
 	}
-	if raw, ok := m["name"]; ok {
-		v, err := jsonbind.DecodeJSONString(raw)
-		if err != nil {
-			return out, jsonbind.FieldError("name", "invalid string", err)
-		}
-		out.Name = v
+	if err := p.End(); err != nil {
+		return out, err
 	}
 	return out, nil
+}
+
+func decodeRenameRequestJSON(p *jsonbind.Parser) (RenameRequest, error) {
+	var out RenameRequest
+	null, err := p.ObjectStart()
+	if err != nil || null {
+		return out, err
+	}
+	for n := 0; ; n++ {
+		key, ok, err := p.ObjectKey(n)
+		if err != nil {
+			return out, err
+		}
+		if !ok {
+			return out, nil
+		}
+		switch string(key) {
+		case "name":
+			v, err := p.String()
+			if err != nil {
+				return out, jsonbind.FieldError("name", "invalid string", err)
+			}
+			out.Name = v
+		default:
+			if err := p.SkipValue(); err != nil {
+				return out, err
+			}
+		}
+	}
 }
 
 func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 	var out RenameRequest
 	var presentName bool
-	var jsonBody map[string]json.RawMessage
+	var jsonBody *jsonbind.Object
 	var formBody map[string]string
 	var bodyRead bool
 	readBody := func() error {
@@ -46,7 +70,7 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 		}
 		bodyRead = true
 		if httpbind.IsJSONRequest(r) {
-			m, err := httpbind.ReadJSONMap(r)
+			m, err := httpbind.ReadJSONObject(r)
 			if err != nil {
 				return err
 			}
@@ -78,7 +102,7 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 		if err := readBody(); err != nil {
 			return out, err
 		}
-		if raw, ok := jsonBody["name"]; ok {
+		if raw, ok := jsonBody.Get("name"); ok {
 			presentName = true
 			v, err := jsonbind.DecodeJSONString(raw)
 			if err != nil {

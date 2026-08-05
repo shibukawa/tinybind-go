@@ -380,6 +380,60 @@ go run ./examples/demo
 
 See [`examples/demo/README.md`](examples/demo/README.md) for full curl recipes.
 
+## Benchmarks
+
+Generated code has no reflection to drive and no intermediate `map[string]any`
+to build, which is where the difference comes from. Measured on an Apple M3,
+Go 1.26.5, `darwin/arm64`, best of 10 runs.
+
+Each pair produces the same output: the JSON codecs are checked against
+`encoding/json` by differential fuzzing, and the handler and template pairs are
+asserted equivalent by the tests sitting beside the benchmarks. Reproduce with:
+
+```bash
+go test ./internal/benchfixture -run xxx -bench . -benchmem
+```
+
+### Throughput
+
+The document is a 312-byte order with a nested object, a three-element array of
+objects, and a string array. The page is a five-row user list.
+
+| Path | Standard library | Generated |
+|------|------------------|-----------|
+| JSON decode (`io.Reader`) | 3447 ns · 1688 B · 30 allocs | **777 ns · 856 B · 15 allocs** |
+| JSON decode (`json.Unmarshal`, bytes in hand) | 3287 ns · 888 B · 25 allocs | — |
+| JSON encode | 579 ns · 144 B · 1 alloc | **272 ns · 0 B · 0 allocs** |
+| `Bind` + `Write` (request reused) | 850 ns · 1584 B · 17 allocs | **584 ns · 1021 B · 16 allocs** |
+| `Bind` + `Write` (incl. request construction) | 1695 ns · 7445 B · 31 allocs | **1422 ns · 6883 B · 30 allocs** |
+| HTML render (`html/template` vs `htmlbind`) | 7346 ns · 2705 B · 107 allocs | **1685 ns · 1408 B · 61 allocs** |
+
+The JSON comparisons are against `encoding/json`; the handler row against a
+hand-written `net/http` handler doing the same decode, path, and header reads;
+the HTML row against an `html/template` template rendering the same document.
+
+Encoding allocates nothing: generated encoders append into a pooled buffer, so
+a response costs no garbage at all. Decoding's 15 allocations are the 13 strings
+and slices that end up in the result, plus the body buffer and its reader —
+there is nothing left to remove without changing what the caller gets back.
+
+### Binary size
+
+The same small JSON program built two ways, once over `encoding/json` and once
+over generated `jsonbind` codecs. `jsonbind` does not import `encoding/json` at
+all, so the reflection-based codec never enters the binary.
+
+| Build | `encoding/json` | `jsonbind` | Saved |
+|-------|-----------------|------------|-------|
+| `go build` | 3,075,522 | **2,617,426** | −458 KB (−14.9%) |
+| `go build -ldflags="-s -w"` | 2,061,010 | **1,741,186** | −320 KB (−15.5%) |
+| `tinygo build -target wasi` | 1,345,144 | **867,687** | −477 KB (−35.5%) |
+| `tinygo build -target wasi -no-debug` | 496,869 | **252,388** | −244 KB (−49.2%) |
+
+Stripping makes the gap matter more, not less: once debug information is gone,
+the reflection machinery is a larger share of what is left. On a stripped TinyGo
+wasm build it is about half the binary.
+
 ## TinyGo
 
 TinyGo is a first-class target for generated binding code. The JSON runtime is
@@ -398,7 +452,8 @@ Verified with **TinyGo 0.41.1 + Go 1.26.x**.
 - `WriteError` hand-builds problem JSON (avoids fragile nested `encoding/json` + RawMessage interactions).
 - Registry uses `reflect.Type` only as a **type identity key**, not for field walking.
 - Generated bind/write code does not import `reflect`.
-- JSON-only generated code imports `jsonbind` only; the test matrix builds it with `tinygo build -target wasm`.
+- `jsonbind` parses and writes JSON itself and does not import `encoding/json`, so a JSON-only binary carries no reflection-based codec — around a third of a `tinygo build -target wasi` binary, and about half of a `-no-debug` one. See [Benchmarks](#binary-size).
+- Do not build with `GOEXPERIMENT=jsonv2`. `encoding/json/v2` is still behind the experiment on Go 1.26, and on TinyGo it grows the same wasi binary by about 60% while `jsonbind` never calls it.
 
 ### Known limitations
 

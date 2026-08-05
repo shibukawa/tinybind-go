@@ -121,6 +121,28 @@ Without an explicit wire name, a field becomes lower camel case. `DecodeJSON` ig
 
 One habit carried over from `encoding/json` needs unlearning here. The generated codec reads only the name portion of a `json` tag: `omitempty` has no effect, and `json:"-"` excludes nothing. Design models on the assumption that every declared field is written out.
 
+## How the wire bytes differ from encoding/json
+
+The codec reads a document in a single forward pass and writes one by appending
+to a buffer, so it never builds an intermediate map and never reflects over your
+structs. Three consequences are worth knowing before you diff output against
+`encoding/json`:
+
+- **Members come out in struct field order**, not sorted by name. Map-typed
+  fields and `payload:"*"` rest maps are still sorted, because there is no
+  declaration order to follow. Everything else follows the struct.
+- **Field names match exactly.** `encoding/json` falls back to a
+  case-insensitive match, so it binds `{"userId": …}` to a field named `userid`.
+  This codec does not, which is also the direction `encoding/json/v2` took.
+- **A duplicate name is decoded, not discarded.** `encoding/json` keeps the last
+  occurrence and never looks at the earlier ones, so a wrongly typed duplicate
+  passes silently. Here every occurrence is decoded as it arrives, and a bad one
+  reports a field error.
+
+String escaping, number formatting, and the `null` handling for absent slices
+and maps all match `encoding/json` byte for byte, including the HTML escaping of
+`<`, `>` and `&` that makes output safe to embed in a page.
+
 ## Retaining unknown fields
 
 Use `payload:"*"` to collect properties that were not explicitly declared:

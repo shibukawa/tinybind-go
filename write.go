@@ -1,6 +1,7 @@
 package httpbind
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 // Write serializes a typed response value to the HTTP response via a registered writer.
 // Status is always 200 OK; use WriteStatus for other success codes.
 func Write[T any](w http.ResponseWriter, r *http.Request, value T) error {
-	fn, ok := lookupWriter(typeKey[T]())
+	fn, ok := lookupWriter[T]()
 	if !ok {
 		return missingWriterError(typeKey[T]())
 	}
@@ -114,4 +115,44 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
+}
+
+// WriteJSONBytes writes an already-encoded document. Generated writers build
+// the body into a pooled buffer and hand it over here, so the response path
+// never reflects over the value and never allocates an intermediate map.
+func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		_, err := w.Write(newline)
+		return err
+	}
+	_, err := w.Write(data)
+	return err
+}
+
+var newline = []byte("\n")
+
+// AppendFileJSON appends an uploaded file the way encoding/json rendered it
+// before generated encoders stopped going through reflection: exported fields
+// in declaration order, with the content base64-encoded.
+func AppendFileJSON(dst []byte, f File) []byte {
+	dst = append(dst, `{"Filename":`...)
+	dst = jsonbind.AppendString(dst, f.Filename)
+	dst = append(dst, `,"ContentType":`...)
+	dst = jsonbind.AppendString(dst, f.ContentType)
+	dst = append(dst, `,"Size":`...)
+	dst = jsonbind.AppendInt(dst, f.Size)
+	dst = append(dst, `,"Content":`...)
+	if f.Content == nil {
+		dst = append(dst, "null"...)
+	} else {
+		dst = append(dst, '"')
+		dst = base64.StdEncoding.AppendEncode(dst, f.Content)
+		dst = append(dst, '"')
+	}
+	return append(dst, '}')
 }
