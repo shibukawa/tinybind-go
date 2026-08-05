@@ -660,16 +660,41 @@ func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
 			return nil
 		}
 	}
-	value, optional, err := e.attributeValueCode(attribute, p.scope)
+	// A URL-bearing attribute is assembled unescaped and handed to the op, which
+	// applies the render's scheme policy and escapes the result. The escaping
+	// cannot stay in this closure, because the policy is a render option and the
+	// closure receives only the parameters.
+	listShape, isList := isURLListAttribute(attribute.Name)
+	urlBearing := isURLAttribute(attribute.Name) || isList
+	value, optional, err := e.attributeValueCode(attribute, p.scope, urlBearing)
 	if err != nil {
 		return err
 	}
 	p.flush()
 	withContext := e.attributeUsesRenderContext(attribute)
-	p.op(fmt.Sprintf("%s(%s, func(%s) (string, bool) { %s })",
-		ctxOp("Attr", withContext), strconv.Quote(attribute.Name),
-		closureParams(p.scope.goType, withContext), optional(value)))
+	switch {
+	case isList:
+		p.op(fmt.Sprintf("%s(%s, htmlbind.URLList%s, func(%s) (string, bool) { %s })",
+			ctxOp("URLListAttr", withContext), strconv.Quote(attribute.Name),
+			listShapeConst(listShape),
+			closureParams(p.scope.goType, withContext), optional(value)))
+	case urlBearing:
+		p.op(fmt.Sprintf("%s(%s, func(%s) (string, bool) { %s })",
+			ctxOp("URLAttr", withContext), strconv.Quote(attribute.Name),
+			closureParams(p.scope.goType, withContext), optional(value)))
+	default:
+		p.op(fmt.Sprintf("%s(%s, func(%s) (string, bool) { %s })",
+			ctxOp("Attr", withContext), strconv.Quote(attribute.Name),
+			closureParams(p.scope.goType, withContext), optional(value)))
+	}
 	return nil
+}
+
+func listShapeConst(shape string) string {
+	if shape == "srcset" {
+		return "Srcset"
+	}
+	return "Space"
 }
 
 // emitServerAction replaces the reserved attribute with the one carrying the
@@ -707,9 +732,21 @@ var attributeValueEscaper = strings.NewReplacer(
 
 func escapeAttributeValue(value string) string { return attributeValueEscaper.Replace(value) }
 
-// attributeValueCode builds the escaped attribute value and the body that
-// reports whether it is present.
-func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope) (string, func(string) string, error) {
+// attributeValueCode builds the attribute value and the body that reports
+// whether it is present.
+//
+// raw leaves the value unescaped for the caller to escape after inspecting it,
+// which is what a URL-bearing attribute needs: the scheme has to be read before
+// the ampersands and quotes are encoded, and a static prefix concatenated ahead
+// of an expression is part of the URL the browser resolves rather than text
+// around it.
+func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, raw bool) (string, func(string) string, error) {
+	escaped := func(code string) string {
+		if raw {
+			return code
+		}
+		return "htmlbind.Escape(" + code + ")"
+	}
 	if len(attribute.Value) == 1 && attribute.Value[0].Expression != nil {
 		expr := attribute.Value[0].Expression
 		t := e.c.exprTypes[expr]
@@ -718,12 +755,12 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope) (s
 			return "", nil, err
 		}
 		if t.optional {
-			value := "htmlbind.Escape(" + valueString("*("+code+")", t.required()) + ")"
+			value := escaped(valueString("*("+code+")", t.required()))
 			return value, func(v string) string {
 				return "if " + code + " == nil { return \"\", false }; return " + v + ", true"
 			}, nil
 		}
-		return "htmlbind.Escape(" + valueString(code, t) + ")", func(v string) string {
+		return escaped(valueString(code, t)), func(v string) string {
 			return "return " + v + ", true"
 		}, nil
 	}
@@ -741,7 +778,7 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope) (s
 		if err != nil {
 			return "", nil, err
 		}
-		parts = append(parts, "htmlbind.Escape("+valueString(code, e.c.exprTypes[part.Expression])+")")
+		parts = append(parts, escaped(valueString(code, e.c.exprTypes[part.Expression])))
 	}
 	if len(parts) == 0 {
 		parts = append(parts, `""`)

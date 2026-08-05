@@ -448,7 +448,7 @@ export component LinkView(link: Link): html {
 }
 ```
 
-Go 側では `url.URL` を渡します。
+Go 側では `url.URL` を渡します。描画時には値のスキームも検査されるので、パースを通った `javascript:` URL であっても属性には届きません。属性の名簿、許可されるスキーム、その設定方法は [htmlbind_security.ja.md](htmlbind_security.ja.md) にあります。
 
 ## 空白の扱い
 
@@ -544,10 +544,12 @@ export component Document(
 | --- | --- | --- |
 | `RawHTML(string)` | HTML の子要素位置 | 信頼済み HTML を無加工で出す |
 | `RawCSS(string)` | `<style>` 内 | 信頼済み CSS を無加工で出す |
-| `RawJavaScript(string)` | `<script>` 内 | 信頼済み JavaScript を無加工で出す |
+| `RawJavaScript(string)` | `<script>` 内、および `on*` イベントハンドラ属性 | 信頼済み JavaScript を無加工で出す |
 | `JsonForScript(value)` | `<script>` 内 | 型付きデータを script 用に安全な JSON へ変換 |
 
 `Raw*` は sanitizer ではありません。外部入力をそのまま渡さず、アプリケーションが信頼できる固定値または事前に安全性を保証した値に限定してください。データを JavaScript へ渡す用途では `RawJavaScript` ではなく `JsonForScript` を使います。
+
+イベントハンドラ属性は JavaScript の文脈なので `trusted_javascript` しか受け付けません。`onclick={message}` に `string` を渡すと生成が失敗します。振る舞いを付けるなら `server-action` を推奨します。[htmlbind_security.ja.md](htmlbind_security.ja.md) を参照してください。
 
 ### `<script>` と `<style>` の中の波括弧
 
