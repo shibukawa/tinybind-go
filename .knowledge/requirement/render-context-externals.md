@@ -23,6 +23,7 @@ already_half_built:
   applied_where: await bindings only, where the emitter prepends ctx; the ordinary expression path emits a bare call
   meaning: the discovery half arrived with requirement:async-external-functions optional_context, so only the sync call path is missing
   syntactic: the check stays on the parsed parameter list, because it runs before the package compiles
+  qualifier: the context import name is resolved from the file rather than matched literally, corrected 2026-08-05; an aliased import now opts in, and a package aliased to the name context no longer opts in by accident
 shape:
   template: unchanged, exactly as for the async form; `external CSRFField(): html` says nothing about the context
   go: func Name(ctx context.Context, args...) Result
@@ -70,6 +71,17 @@ as_built:
   rejected_position: an await binding over a caller-supplied value, whose unset check lowers to Require and runs before anything is written; naming a context-taking external there is a generation error
   import: the context import is decided from the typed expressions, because imports are written before any plan is emitted
   measured: every existing generator fixture and golden file regenerated unchanged, so the unused-is-free rule holds as stated
+caller_scope:
+  discovered: downstream framework request-context report 2026-08-05
+  rule: the detection reaches the compiler through GenerateOptions.ContextExternals, so this requirement holds only where the caller fills it
+  holds: a templates package, on both paths the generator compiles a template through
+  missing: a route package, because routetree compileTemplate never filled the field; requirement:route-package-context-externals closed it 2026-08-05
+  render_option: filling the field is only half of it, because the render context also has to be the request's; that half is recorded with the fix
+  async_gate:
+    asked: whether takesRenderContext excluding an async external is deliberate
+    answer: yes; it gates the synchronous expression path only, and the await binding path reads the map directly and does prepend the context
+    reason: an async external may be called only in an await binding, so the sync path has no legal async call site to serve
+    not_the_reported_cause: the report's async reproduction failed for the missing caller above rather than for this condition
 open_questions:
   - whether every expression position gains a ctx-carrying op variant, or generation restricts a context-taking sync external to the positions that have one
   - whether a sync external should be allowed an error result once it can observe cancellation, or stay total as requirement:async-external-functions splits it

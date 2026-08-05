@@ -28,6 +28,7 @@ input_rule:
     reason: position carries the mapping, so no per-parameter annotation is needed
   query_tail: every remaining parameter is a query parameter, keyed by its own name
   optional_query: requirement:optional-query-parameter spells one as a pointer, closing the question of how an always-present Go parameter expresses an absent value
+  context_parameter: requirement:typed-page-context-parameter proposes a leading context.Context at rung 2, excluded from this list because it is not a URL input; it answers the open question this requirement carried from 2026-07-27
   types:
     allowed: scalars the generated decoder can bind, per requirement:typed-html-route-parameters
     rejected: a struct or other complex type is a generation error, because a page input is a URL value and a URL carries no object
@@ -108,7 +109,6 @@ acceptance:
   - moving a page from rung 1 to rung 2 changes no template parameter spelling
   - a route package compiles and tests on its own with go test ./...
 open_questions:
-  - whether a typed Page may take a leading context.Context before the path parameters
   - whether a layout has the same ladder or only the first two rungs
   - whether the generator can scaffold a rung 2 file from a rung 1 template
 ```

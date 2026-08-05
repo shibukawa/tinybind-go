@@ -16,6 +16,7 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 
 	cbcg "github.com/shibukawa/tinybind-go/configbind/codegen"
+	"github.com/shibukawa/tinybind-go/internal/contextscan"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
@@ -230,7 +231,7 @@ func (g *Generator) templateArtifacts(dir string) ([]Artifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	withContext, err := contextExternals(dir)
+	withContext, err := contextscan.Externals(dir)
 	if err != nil {
 		return nil, err
 	}

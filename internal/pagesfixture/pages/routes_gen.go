@@ -8,6 +8,7 @@ import (
 	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/about"
+	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/users/id_"
 )
 
@@ -28,7 +29,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, Page(params), options...); err != nil {
+			if err := htmlbind.RenderChain(w, wrappers, Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
 				httpbind.WriteError(w, r, err)
 			}
 		})
@@ -47,7 +48,30 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, about.Page(params), options...); err != nil {
+			if err := htmlbind.RenderChain(w, wrappers, about.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
+				httpbind.WriteError(w, r, err)
+			}
+		})
+	mux.HandleFunc("GET /archive",
+		func(w http.ResponseWriter, r *http.Request) {
+			route, err := archive.DecodeRoute(r)
+			if err != nil {
+				httpbind.WriteError(w, r, err)
+				return
+			}
+			_ = route // a route with no dynamic segment and no query input reads nothing
+			pageLatest, err := archive.Load(r.Context())
+			if err != nil {
+				httpbind.WriteError(w, r, err)
+				return
+			}
+			params := archive.PageParams{
+				Latest: pageLatest,
+			}
+			wrappers := []htmlbind.Wrapper{
+				BindLayout(LayoutParams{}),
+			}
+			if err := htmlbind.RenderChain(w, wrappers, archive.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
 				httpbind.WriteError(w, r, err)
 			}
 		})
@@ -70,7 +94,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, id_.Page(params), options...); err != nil {
+			if err := htmlbind.RenderChain(w, wrappers, id_.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
 				httpbind.WriteError(w, r, err)
 			}
 		})
@@ -92,6 +116,7 @@ func NewServeMux(options ...htmlbind.Option) *http.ServeMux {
 var Routes = []RouteInfo{
 	{Pattern: "GET /{$}", Path: "/", Dir: "", Params: nil},
 	{Pattern: "GET /about", Path: "/about", Dir: "about", Params: nil},
+	{Pattern: "GET /archive", Path: "/archive", Dir: "archive", Params: nil},
 	{Pattern: "GET /users/{id}", Path: "/users/{id}", Dir: "users/id_", Params: []string{"id"}},
 }
 

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shibukawa/tinybind-go/internal/contextscan"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 	templatesql "github.com/shibukawa/tinybind-go/templates/sqlbind"
 )
@@ -142,7 +143,7 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (template
 	if err != nil {
 		return templateOutputs{}, err
 	}
-	withContext, err := contextExternals(dir)
+	withContext, err := contextscan.Externals(dir)
 	if err != nil {
 		return templateOutputs{}, err
 	}
@@ -439,64 +440,6 @@ func packageName(dir string) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-// contextExternals names the package-level functions in dir whose first
-// parameter is a context.Context.
-//
-// An external is an ordinary Go function, so the template declaration says
-// nothing about a context. Reading the implementation lets a function that needs
-// one receive it without a second declaration form: write the parameter and it
-// is passed, leave it out and the function is called plainly.
-//
-// An async external gets the boundary's context, which is what lets a call that
-// can abort observe cancellation. A synchronous one gets the render context at
-// the position it occupies, which is what lets a value belonging to the request
-// — a CSRF token, a nonce — render inline without travelling through the
-// parameter struct of every page that needs it.
-//
-// Detection is syntactic on purpose. It runs before the package compiles, so a
-// file that does not parse is skipped rather than failing generation; a call
-// shape that then does not match is an ordinary Go compile error at the
-// generated call site.
-func contextExternals(dir string) (map[string]bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	found := map[string]bool{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, entry.Name()), nil, parser.SkipObjectResolution)
-		if err != nil {
-			continue
-		}
-		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			// A method cannot be an external, so a receiver rules it out.
-			if !ok || function.Recv != nil || function.Name == nil {
-				continue
-			}
-			if takesLeadingContext(function.Type) {
-				found[function.Name.Name] = true
-			}
-		}
-	}
-	return found, nil
-}
-
-func takesLeadingContext(signature *ast.FuncType) bool {
-	if signature.Params == nil || len(signature.Params.List) == 0 {
-		return false
-	}
-	selector, ok := signature.Params.List[0].Type.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != "Context" {
-		return false
-	}
-	pkg, ok := selector.X.(*ast.Ident)
-	return ok && pkg.Name == "context"
 }
 
 func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
