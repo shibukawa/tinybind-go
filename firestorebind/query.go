@@ -39,7 +39,19 @@ func QueryPage[T any, PT interface {
 	*T
 	EntityDecoder
 }](ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
-	c, _, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	return QueryPageOn[T, PT](ctx, h, q, opts...)
+}
+
+// QueryPageOn is QueryPage taking its Handle as an argument.
+func QueryPageOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
+	c, _, err := h.resolve()
 	if err != nil {
 		return Page[T]{}, err
 	}
@@ -66,9 +78,26 @@ func Query[T any, PT interface {
 	EntityDecoder
 }](ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
+		h, err := HandleFromContext(ctx)
+		if err != nil {
+			var zero T
+			yield(zero, err)
+			return
+		}
+		QueryOn[T, PT](ctx, h, q, opts...)(yield)
+	}
+}
+
+// QueryOn is Query taking its Handle as an argument. The Handle is resolved once
+// for the whole range rather than once per batch.
+func QueryOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
 		next := q
 		for {
-			page, err := QueryPage[T, PT](ctx, next, opts...)
+			page, err := QueryPageOn[T, PT](ctx, h, next, opts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -115,7 +144,16 @@ func (p KeyPage) HasMore() bool {
 // because a query that silently returned keys where the caller expected
 // entities would be the surprise this package avoids.
 func QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
-	c, _, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return KeyPage{}, err
+	}
+	return QueryKeysPageOn(ctx, h, q, opts...)
+}
+
+// QueryKeysPageOn is QueryKeysPage taking its Handle as an argument.
+func QueryKeysPageOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
+	c, _, err := h.resolve()
 	if err != nil {
 		return KeyPage{}, err
 	}
@@ -153,7 +191,16 @@ func keysFromBatch(batch *datastore.Batch) (KeyPage, error) {
 // exists because counting by paging through keys costs a read per entity, and a
 // wrapper that omitted it would push callers toward the expensive thing.
 func Count(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
-	c, _, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return CountOn(ctx, h, q, opts...)
+}
+
+// CountOn is Count taking its Handle as an argument.
+func CountOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
+	c, _, err := h.resolve()
 	if err != nil {
 		return 0, err
 	}

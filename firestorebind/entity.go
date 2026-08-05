@@ -6,6 +6,18 @@ import (
 	"github.com/shibukawa/tinygodriver/nosql/datastore"
 )
 
+// Every entry here comes in two forms. The plain one resolves its Handle from
+// the Context and is the default. The one suffixed On takes the Handle as an
+// argument, for a caller that already holds one and wants no lookup on the
+// operation path.
+//
+// The On form holds the implementation and the Context form delegates to it, so
+// the two cannot drift and a program calling neither WithClient nor a Context
+// form links none of the Context machinery.
+//
+// The transactional entries take a *Tx, which already carries the tenancy, so
+// they have no second form and need none.
+
 // Load reads one entity by key and decodes it into T.
 //
 // A key that matches nothing keeps the driver's datastore.ErrNoSuchEntity rather
@@ -17,8 +29,21 @@ func Load[T any, PT interface {
 	*T
 	EntityDecoder
 }](ctx context.Context, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		var out T
+		return out, err
+	}
+	return LoadOn[T, PT](ctx, h, key, opts...)
+}
+
+// LoadOn is Load taking its Handle as an argument.
+func LoadOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
 	var out T
-	c, ns, err := clientFor(ctx)
+	c, ns, err := h.resolve()
 	if err != nil {
 		return out, err
 	}
@@ -42,7 +67,16 @@ func Load[T any, PT interface {
 // caller storing a new entity assigns the result back rather than expecting v to
 // have been mutated, since v was passed by value.
 func Store[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
-	return writeOne(ctx, v, withBaseVersion(v, opts), (*datastore.Client).Put)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return datastore.Key{}, err
+	}
+	return StoreOn(ctx, h, v, opts...)
+}
+
+// StoreOn is Store taking its Handle as an argument.
+func StoreOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
+	return writeOne(ctx, h, v, withBaseVersion(v, opts), (*datastore.Client).Put)
 }
 
 // Insert writes v and fails if its key already exists.
@@ -51,7 +85,16 @@ func Store[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOpt
 // a condition this package composes: the driver sends an insert mutation, and a
 // collision is datastore.ErrAlreadyExists.
 func Insert[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
-	return writeOne(ctx, v, opts, (*datastore.Client).Insert)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return datastore.Key{}, err
+	}
+	return InsertOn(ctx, h, v, opts...)
+}
+
+// InsertOn is Insert taking its Handle as an argument.
+func InsertOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
+	return writeOne(ctx, h, v, opts, (*datastore.Client).Insert)
 }
 
 // Update writes v and fails if its key does not exist.
@@ -59,7 +102,16 @@ func Insert[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOp
 // This is put-if-present. It replaces the whole entity: Datastore has no partial
 // update, so every property of the stored entity comes from v.
 func Update[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOption) error {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return UpdateOn(ctx, h, v, opts...)
+}
+
+// UpdateOn is Update taking its Handle as an argument.
+func UpdateOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) error {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return err
 	}
@@ -68,7 +120,16 @@ func Update[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOp
 
 // Remove deletes the entity identified by v's key. Only the key of v is read.
 func Remove[T Keyer](ctx context.Context, v T, opts ...datastore.WriteOption) error {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RemoveOn(ctx, h, v, opts...)
+}
+
+// RemoveOn is Remove taking its Handle as an argument.
+func RemoveOn[T Keyer](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) error {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return err
 	}
@@ -79,15 +140,16 @@ func Remove[T Keyer](ctx context.Context, v T, opts ...datastore.WriteOption) er
 	return c.Delete(ctx, key, opts...)
 }
 
-// writeOne is the shared body of Store and Insert, which differ only in the
+// writeOne is the shared body of StoreOn and InsertOn, which differ only in the
 // driver method they send.
 func writeOne[T EntityEncoder](
 	ctx context.Context,
+	h Handle,
 	v T,
 	opts []datastore.WriteOption,
 	send func(*datastore.Client, context.Context, datastore.Entity, ...datastore.WriteOption) (datastore.Key, error),
 ) (datastore.Key, error) {
-	c, ns, err := clientFor(ctx)
+	c, ns, err := h.resolve()
 	if err != nil {
 		return datastore.Key{}, err
 	}

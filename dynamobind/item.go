@@ -6,6 +6,15 @@ import (
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
 
+// Every entry here comes in two forms. The plain one resolves its Handle from
+// the Context and is the default. The one suffixed On takes the Handle as an
+// argument, for a caller that already holds one and wants no lookup on the
+// operation path.
+//
+// The On form holds the implementation and the Context form delegates to it, so
+// the two cannot drift and a program calling neither WithClient nor a Context
+// form links none of the Context machinery.
+
 // Load reads one item by key and decodes it into T.
 //
 // A key that matches nothing keeps the driver's dynamodb.ErrItemNotFound rather
@@ -14,8 +23,21 @@ func Load[T any, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error) {
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		var out T
+		return out, err
+	}
+	return LoadOn[T, PT](ctx, h, table, key, opts...)
+}
+
+// LoadOn is Load taking its Handle as an argument.
+func LoadOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error) {
 	var out T
-	c, name, err := TableFromContext(ctx, table)
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return out, err
 	}
@@ -34,7 +56,16 @@ func Load[T any, PT interface {
 // It is PutItem, not a partial update: every attribute of the stored item comes
 // from v. Use Update for a partial change.
 func Store[T ItemEncoder](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) error {
-	c, name, err := TableFromContext(ctx, table)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return StoreOn(ctx, h, table, v, opts...)
+}
+
+// StoreOn is Store taking its Handle as an argument.
+func StoreOn[T ItemEncoder](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) error {
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return err
 	}
@@ -51,8 +82,21 @@ func StoreReturning[T ItemEncoder, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		var old T
+		return old, false, err
+	}
+	return StoreReturningOn[T, PT](ctx, h, table, v, opts...)
+}
+
+// StoreReturningOn is StoreReturning taking its Handle as an argument.
+func StoreReturningOn[T ItemEncoder, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
 	var old T
-	c, name, err := TableFromContext(ctx, table)
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return old, false, err
 	}
@@ -71,7 +115,16 @@ func StoreReturning[T ItemEncoder, PT interface {
 
 // Remove deletes the item identified by v's key. Only the key of v is read.
 func Remove[T Keyer](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) error {
-	c, name, err := TableFromContext(ctx, table)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RemoveOn(ctx, h, table, v, opts...)
+}
+
+// RemoveOn is Remove taking its Handle as an argument.
+func RemoveOn[T Keyer](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) error {
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return err
 	}
@@ -86,8 +139,21 @@ func RemoveReturning[T Keyer, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		var old T
+		return old, false, err
+	}
+	return RemoveReturningOn[T, PT](ctx, h, table, v, opts...)
+}
+
+// RemoveReturningOn is RemoveReturning taking its Handle as an argument.
+func RemoveReturningOn[T Keyer, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
 	var old T
-	c, name, err := TableFromContext(ctx, table)
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return old, false, err
 	}
@@ -114,7 +180,16 @@ func RemoveReturning[T Keyer, PT interface {
 //	err := dynamobind.Update(ctx, "readings", key, "SET celsius = :c",
 //		dynamodb.WithExpressionValues(map[string]dynamodb.AttributeValue{":c": dynamodb.N(21.5)}))
 func Update[T Keyer](ctx context.Context, table string, v T, update string, opts ...dynamodb.WriteOption) error {
-	c, name, err := TableFromContext(ctx, table)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return UpdateOn(ctx, h, table, v, update, opts...)
+}
+
+// UpdateOn is Update taking its Handle as an argument.
+func UpdateOn[T Keyer](ctx context.Context, h Handle, table string, v T, update string, opts ...dynamodb.WriteOption) error {
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return err
 	}

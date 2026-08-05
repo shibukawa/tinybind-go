@@ -31,7 +31,19 @@ func QueryPage[T any, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
-	c, name, err := TableFromContext(ctx, table)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	return QueryPageOn[T, PT](ctx, h, table, keyCond, opts...)
+}
+
+// QueryPageOn is QueryPage taking its Handle as an argument.
+func QueryPageOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return Page[T]{}, err
 	}
@@ -47,7 +59,19 @@ func ScanPage[T any, PT interface {
 	*T
 	ItemDecoder
 }](ctx context.Context, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
-	c, name, err := TableFromContext(ctx, table)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return Page[T]{}, err
+	}
+	return ScanPageOn[T, PT](ctx, h, table, opts...)
+}
+
+// ScanPageOn is ScanPage taking its Handle as an argument.
+func ScanPageOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
+	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return Page[T]{}, err
 	}
@@ -72,6 +96,23 @@ func Query[T any, PT interface {
 	ItemDecoder
 }](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
+		h, err := HandleFromContext(ctx)
+		if err != nil {
+			var zero T
+			yield(zero, err)
+			return
+		}
+		QueryOn[T, PT](ctx, h, table, keyCond, opts...)(yield)
+	}
+}
+
+// QueryOn is Query taking its Handle as an argument. The Handle is resolved once
+// for the whole range rather than once per page.
+func QueryOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		first := true
 		for first || len(start) > 0 {
@@ -80,7 +121,7 @@ func Query[T any, PT interface {
 			if len(start) > 0 {
 				pageOpts = append(append([]dynamodb.QueryOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
 			}
-			page, err := QueryPage[T, PT](ctx, table, keyCond, pageOpts...)
+			page, err := QueryPageOn[T, PT](ctx, h, table, keyCond, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -105,6 +146,23 @@ func Scan[T any, PT interface {
 	ItemDecoder
 }](ctx context.Context, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
+		h, err := HandleFromContext(ctx)
+		if err != nil {
+			var zero T
+			yield(zero, err)
+			return
+		}
+		ScanOn[T, PT](ctx, h, table, opts...)(yield)
+	}
+}
+
+// ScanOn is Scan taking its Handle as an argument. The Handle is resolved once
+// for the whole range rather than once per page.
+func ScanOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		first := true
 		for first || len(start) > 0 {
@@ -113,7 +171,7 @@ func Scan[T any, PT interface {
 			if len(start) > 0 {
 				pageOpts = append(append([]dynamodb.ScanOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
 			}
-			page, err := ScanPage[T, PT](ctx, table, pageOpts...)
+			page, err := ScanPageOn[T, PT](ctx, h, table, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)

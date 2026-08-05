@@ -33,6 +33,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlDialect := flags.String("sql-dialect", options.SQLDialect, "target database for SQL templates: postgresql, mysql, or sqlite (required when SQL templates exist)")
 	sqlContextAPI := flags.Bool("sql-context-api", false, "generate Context-resolved SQL template wrappers")
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
+	dynamoParameterAPI := flags.Bool("dynamo-parameter-api", false, "give generated DynamoDB queries a dynamobind.Handle parameter instead of resolving one from the Context")
+	firestoreParameterAPI := flags.Bool("firestore-parameter-api", false, "give generated Firestore queries a firestorebind.Handle parameter instead of resolving one from the Context")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
@@ -66,7 +68,8 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		PublicURLBase:       *publicURLBase,
 		SQLDialect:          *sqlDialect,
 		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
-		SQLContextOnlyAPI: *sqlContextOnlyAPI,
+		SQLContextOnlyAPI:  *sqlContextOnlyAPI,
+		DynamoParameterAPI: *dynamoParameterAPI, FirestoreParameterAPI: *firestoreParameterAPI,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)

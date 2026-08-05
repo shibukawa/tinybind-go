@@ -96,6 +96,27 @@ type Options struct {
 	// SQLExecutorResolver selects a framework-specific Context resolver and
 	// implies SQLContextAPI. Nil uses sqlbind.SQLExecutorFromContext.
 	SQLExecutorResolver *SymbolPattern
+	// DynamoParameterAPI gives every generated DynamoDB query a leading
+	// dynamobind.Handle parameter instead of resolving one from the Context.
+	// The declared name is unchanged; only the signature moves. False keeps the
+	// Context form, which is the default and what every existing run generates.
+	DynamoParameterAPI bool
+	// DynamoHandleResolver selects a framework function that answers a
+	// dynamobind.Handle for one Context, so generated code reads the
+	// framework's own Context value instead of the one dynamobind installs.
+	// It is how a framework carrying every value it manages in one struct
+	// serves generated queries with a single lookup.
+	//
+	// The signature is func(context.Context) (dynamobind.Handle, error). Nil
+	// uses dynamobind's own Context key. DynamoParameterAPI takes precedence:
+	// a signature that already carries the Handle resolves nothing.
+	DynamoHandleResolver *SymbolPattern
+	// FirestoreParameterAPI is DynamoParameterAPI for Firestore queries,
+	// giving each a leading firestorebind.Handle parameter.
+	FirestoreParameterAPI bool
+	// FirestoreHandleResolver is DynamoHandleResolver for Firestore queries.
+	// The signature is func(context.Context) (firestorebind.Handle, error).
+	FirestoreHandleResolver *SymbolPattern
 	// DataAttributePrefix names the data attributes generated HTML uses for
 	// partial update boundaries. Empty uses the standard prefix. A project
 	// overriding it must use a browser runtime built for the same prefix,

@@ -8,17 +8,12 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/dynamobind"
-	"github.com/shibukawa/tinygodriver/cloud/aws"
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
 
 func testClient(t *testing.T) *dynamodb.Client {
 	t.Helper()
-	client, err := dynamodb.New(
-		dynamodb.WithEndpoint("http://127.0.0.1:1"),
-		dynamodb.WithRegion("ap-northeast-1"),
-		dynamodb.WithCredentials(aws.Credentials{AccessKeyID: "id", SecretAccessKey: "secret"}),
-	)
+	client, err := newTestClient()
 	if err != nil {
 		t.Fatalf("client: %v", err)
 	}

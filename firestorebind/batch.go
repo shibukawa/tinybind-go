@@ -47,7 +47,19 @@ func LoadAll[T any, PT interface {
 	*T
 	EntityDecoder
 }](ctx context.Context, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing, deferred []datastore.Key, err error) {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return LoadAllOn[T, PT](ctx, h, keys, opts...)
+}
+
+// LoadAllOn is LoadAll taking its Handle as an argument.
+func LoadAllOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing, deferred []datastore.Key, err error) {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -91,13 +103,31 @@ func LoadAll[T any, PT interface {
 // failed but not which entities within it. Use Run when the batch has to be
 // all-or-nothing, subject to datastore.MaxTransactionBytes.
 func StoreAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
-	return mutateAll(ctx, vs, opts, datastore.UpsertOp)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return StoreAllOn(ctx, h, vs, opts...)
+}
+
+// StoreAllOn is StoreAll taking its Handle as an argument.
+func StoreAllOn[T EntityEncoder](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
+	return mutateAll(ctx, h, vs, opts, datastore.UpsertOp)
 }
 
 // InsertAll inserts many entities. Each fails independently with
 // datastore.ErrAlreadyExists if its key exists; see StoreAll on chunking.
 func InsertAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
-	return mutateAll(ctx, vs, opts, datastore.InsertOp)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return InsertAllOn(ctx, h, vs, opts...)
+}
+
+// InsertAllOn is InsertAll taking its Handle as an argument.
+func InsertAllOn[T EntityEncoder](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
+	return mutateAll(ctx, h, vs, opts, datastore.InsertOp)
 }
 
 // RemoveAll deletes the entities identified by the keys of vs.
@@ -107,11 +137,20 @@ func InsertAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.W
 // over the keys the values carry, and shares its chunking and its refusal of an
 // incomplete key.
 func RemoveAll[T Keyer](ctx context.Context, vs []T, opts ...datastore.WriteOption) error {
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RemoveAllOn(ctx, h, vs, opts...)
+}
+
+// RemoveAllOn is RemoveAll taking its Handle as an argument.
+func RemoveAllOn[T Keyer](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) error {
 	keys := make([]datastore.Key, 0, len(vs))
 	for _, v := range vs {
 		keys = append(keys, v.EntityKey())
 	}
-	return RemoveKeys(ctx, keys, opts...)
+	return RemoveKeysOn(ctx, h, keys, opts...)
 }
 
 // RemoveKeys deletes the entities named by keys.
@@ -129,7 +168,16 @@ func RemoveAll[T Keyer](ctx context.Context, vs []T, opts ...datastore.WriteOpti
 // and a failure leaves the earlier pieces deleted; use Run when the deletion has
 // to be all-or-nothing, subject to datastore.MaxTransactionBytes.
 func RemoveKeys(ctx context.Context, keys []datastore.Key, opts ...datastore.WriteOption) error {
-	c, ns, err := clientFor(ctx)
+	h, err := HandleFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return RemoveKeysOn(ctx, h, keys, opts...)
+}
+
+// RemoveKeysOn is RemoveKeys taking its Handle as an argument.
+func RemoveKeysOn(ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.WriteOption) error {
+	c, ns, err := h.resolve()
 	if err != nil {
 		return err
 	}
@@ -158,11 +206,12 @@ func RemoveKeys(ctx context.Context, keys []datastore.Key, opts ...datastore.Wri
 
 func mutateAll[T EntityEncoder](
 	ctx context.Context,
+	h Handle,
 	vs []T,
 	opts []datastore.WriteOption,
 	op func(datastore.Entity) datastore.Mutation,
 ) ([]datastore.Key, error) {
-	c, ns, err := clientFor(ctx)
+	c, ns, err := h.resolve()
 	if err != nil {
 		return nil, err
 	}
