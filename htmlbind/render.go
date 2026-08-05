@@ -133,6 +133,14 @@ type renderOptions struct {
 	csrf         string
 	csrfSupplied bool
 	csrfOmitted  bool
+	// urlSchemes and dataURLMediaTypes hold the scheme policy a URL-bearing
+	// attribute renders under. The paired booleans separate an unset option
+	// from one deliberately set to nothing, because permitting no scheme at all
+	// is a legitimate policy and must not read as "use the defaults".
+	urlSchemes           []string
+	urlSchemesSet        bool
+	dataURLMediaTypes    []string
+	dataURLMediaTypesSet bool
 }
 
 // DefaultBoundaryPrefix names the placeholder element a progressive render

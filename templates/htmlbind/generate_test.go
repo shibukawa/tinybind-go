@@ -110,6 +110,17 @@ func TestGenerateDiagnostics(t *testing.T) {
 		{"shorthand reaching analysis", `component Bad(): html {<script>const o = {name};</script>}`, "inside <script> content"},
 		{"tight call block reaching analysis", `component Bad(): html {<script>if(x){render()}</script>}`, "inside <script> content"},
 		{"typed insertion keeps its hint", `component Bad(value: string): html {<script>{value}</script>}`, "insert a value with RawJavaScript or JsonForScript"},
+		// The URL roster reaches past the five names it started with; each of
+		// these is an attribute a browser resolves as a URL.
+		{"url type on cite", `component Bad(value: string): html {<blockquote cite={value}>x</blockquote>}`, "requires url"},
+		{"url type on object data", `component Bad(value: string): html {<object data={value}></object>}`, "requires url"},
+		{"url type on xlink href", `component Bad(value: string): html {<svg><a xlink:href={value}>x</a></svg>}`, "requires url"},
+		{"url type on background", `component Bad(value: string): html {<table background={value}></table>}`, "requires url"},
+		// An event handler is a JavaScript context, so the plain string that
+		// used to pass here is now the thing being refused.
+		{"event handler string", `component Bad(value: string): html {<button onclick={value}>x</button>}`, "html:event requires trusted_javascript"},
+		{"event handler names the way out", `component Bad(value: string): html {<button onclick={value}>x</button>}`, "RawJavaScript"},
+		{"event handler url is still not code", `component Bad(value: url): html {<button onmouseover={value}>x</button>}`, "html:event requires trusted_javascript"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

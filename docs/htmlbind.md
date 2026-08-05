@@ -518,7 +518,7 @@ export component LinkView(link: Link): html {
 }
 ```
 
-The Go caller supplies a `url.URL`.
+The Go caller supplies a `url.URL`. At render time the value's scheme is filtered as well, so a `javascript:` URL that parsed successfully still does not reach the attribute. See [htmlbind_security.md](htmlbind_security.md) for the attribute roster, the permitted schemes, and how to configure them.
 
 ## Whitespace
 
@@ -616,10 +616,12 @@ export component Document(
 | --- | --- | --- |
 | `RawHTML(string)` | HTML child position | Emit trusted HTML unchanged |
 | `RawCSS(string)` | Inside `<style>` | Emit trusted CSS unchanged |
-| `RawJavaScript(string)` | Inside `<script>` | Emit trusted JavaScript unchanged |
+| `RawJavaScript(string)` | Inside `<script>`, and in an `on*` event handler attribute | Emit trusted JavaScript unchanged |
 | `JsonForScript(value)` | Inside `<script>` | Convert typed data to script-safe JSON |
 
 `Raw*` is not a sanitizer. Never pass arbitrary external input; restrict it to fixed or previously validated trusted content. Use `JsonForScript`, not `RawJavaScript`, when passing data to JavaScript.
+
+An event handler attribute is a JavaScript context and accepts only `trusted_javascript`, so `onclick={message}` with a `string` fails generation. Prefer `server-action`; see [htmlbind_security.md](htmlbind_security.md).
 
 ### Braces inside `<script>` and `<style>`
 

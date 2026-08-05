@@ -69,7 +69,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 			return htmlbind.Escape(*(p.User.Nickname)), true
 		}),
 		planProfileOps.Static("> <a"),
-		planProfileOps.Attr("href", func(p ProfileParams) (string, bool) { return htmlbind.Escape(p.User.ProfileURL.String()), true }),
+		planProfileOps.URLAttr("href", func(p ProfileParams) (string, bool) { return p.User.ProfileURL.String(), true }),
 		planProfileOps.Static(">"),
 		planProfileOps.Text(func(p ProfileParams) string { return p.User.Name }),
 		planProfileOps.Static("</a> "),
