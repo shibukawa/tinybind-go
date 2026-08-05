@@ -1115,7 +1115,11 @@ func (c *compiler) analyzeAttribute(element string, attribute Attribute, scope m
 		if mixed && t.optional {
 			return c.error(part.Pos, "optional expression must be the entire attribute value")
 		}
-		if err := c.validateInsertion("html:attribute", t, part.Pos); err != nil {
+		context := "html:attribute"
+		if isEventAttribute(attribute.Name) {
+			context = "html:event"
+		}
+		if err := c.validateInsertion(context, t, part.Pos); err != nil {
 			return err
 		}
 	}
@@ -1304,6 +1308,14 @@ func (c *compiler) validateInsertion(context string, t valueType, pos Position) 
 	case "html:attribute":
 		if base == kindTrustedHTML || base == kindTrustedCSS || base == kindTrustedJS || base == kindScriptJSON || base == kindRecord || base == kindArray || base == kindHTML || base == kindError {
 			return c.error(pos, "cannot insert "+t.String()+" into html:attribute")
+		}
+	case "html:event":
+		// An event handler's value is compiled as JavaScript, so the same rule
+		// html:script carries applies here. script_json does not carry over: a
+		// handler body is code, and embedded data has no meaning in it.
+		if base != kindTrustedJS {
+			return c.error(pos, "html:event requires trusted_javascript; wrap the value in RawJavaScript to state that it is code, or attach the behavior with "+
+				ServerActionAttr+" instead")
 		}
 	case "html:script":
 		if base != kindTrustedJS && base != kindScriptJSON {
@@ -1649,12 +1661,67 @@ func (c *compiler) comparable(t valueType, visiting map[string]bool) bool {
 	}
 	return false
 }
+// isURLAttribute reports whether a browser resolves this attribute's value as a
+// URL. Membership decides two things at once: the analysis below requires a url
+// expression here, and the emitter routes the value through the runtime's
+// scheme policy instead of through plain text escaping.
+//
+// The roster is what it is because a name missing from it is not merely
+// unchecked — it falls back to the ordinary text path, which accepts any string
+// and escapes it for the wrong context. See rule:url-bearing-attributes.
 func isURLAttribute(name string) bool {
 	switch name {
-	case "href", "src", "action", "formaction", "poster":
+	// Navigation and loading, the positions where a hostile scheme executes.
+	case "href", "src", "action", "formaction", "poster", "data", "xlink:href":
+		return true
+	// Resolved but not navigated. They earn their place by taking the url type
+	// rather than by the scheme test, which a legitimate destination passes.
+	case "cite", "background", "longdesc", "manifest":
+		return true
+	// Obsolete plugin loading. The mechanism is gone from browsers; membership
+	// costs nothing and removes the question.
+	case "classid", "codebase", "archive", "profile":
 		return true
 	}
 	return false
+}
+
+// isURLListAttribute reports whether the attribute holds several URLs, and in
+// which grammar. srcset separates candidates with commas and lets each carry a
+// descriptor; ping separates plain URLs with whitespace.
+//
+// These are analyzed as ordinary text rather than as a url expression, because
+// neither grammar is expressible as one url.URL. The emitter still routes them
+// through the scheme policy, per entry.
+func isURLListAttribute(name string) (shape string, ok bool) {
+	switch name {
+	case "srcset", "imagesrcset":
+		return "srcset", true
+	case "ping":
+		return "space", true
+	}
+	return "", false
+}
+
+// isEventAttribute reports whether the attribute is an event handler, whose
+// value a browser compiles as JavaScript.
+//
+// The match is the on prefix followed by ASCII lowercase letters rather than a
+// roster of known handler names, because a roster goes stale as browsers add
+// handlers and the safe reading of an unrecognized on-name is that it is one. A
+// hyphenated name such as on-click is not a handler content attribute and
+// belongs to a custom element, so it does not match. See
+// rule:event-attribute-context.
+func isEventAttribute(name string) bool {
+	if len(name) < 3 || name[0] != 'o' || name[1] != 'n' {
+		return false
+	}
+	for i := 2; i < len(name); i++ {
+		if name[i] < 'a' || name[i] > 'z' {
+			return false
+		}
+	}
+	return true
 }
 func findField(record *TypeDecl, name string) (Field, bool) {
 	if record == nil {

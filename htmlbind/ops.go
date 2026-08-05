@@ -93,6 +93,110 @@ func (o attrOp[P]) Exec(r *Renderer, params P) error {
 	return r.Write(" " + o.name + `="` + value + `"`)
 }
 
+// URLAttr writes an attribute a browser resolves as a URL, applying this
+// render's scheme policy before escaping the value.
+//
+// It exists rather than a wider Escape because the policy is a render option
+// and an Attr value function receives only the parameters, never the renderer.
+// Exec does receive it, so the check lives here — the same reason AttrCtx
+// reaches the boundary context from Exec instead of from its closure.
+//
+// value returns the assembled attribute text unescaped, because the scheme has
+// to be read before the ampersands and quotes are encoded.
+func (Builder[P]) URLAttr(name string, value func(P) (string, bool)) Op[P] {
+	return urlAttrOp[P]{name: name, value: value}
+}
+
+type urlAttrOp[P any] struct {
+	name  string
+	value func(P) (string, bool)
+}
+
+func (o urlAttrOp[P]) Exec(r *Renderer, params P) error {
+	value, present := o.value(params)
+	if !present {
+		return nil
+	}
+	return r.Write(" " + o.name + `="` + Escape(r.opts.safeURL(value)) + `"`)
+}
+
+// URLAttrCtx is URLAttr for a value that needs the render context.
+func (Builder[P]) URLAttrCtx(name string, value func(context.Context, P) (string, bool)) Op[P] {
+	return urlAttrCtxOp[P]{name: name, value: value}
+}
+
+type urlAttrCtxOp[P any] struct {
+	name  string
+	value func(context.Context, P) (string, bool)
+}
+
+func (o urlAttrCtxOp[P]) Exec(r *Renderer, params P) error {
+	value, present := o.value(r.boundaryContext(), params)
+	if !present {
+		return nil
+	}
+	return r.Write(" " + o.name + `="` + Escape(r.opts.safeURL(value)) + `"`)
+}
+
+// URLListAttr writes an attribute holding several URLs, applying the scheme
+// policy to each one and keeping the rest when one is refused.
+//
+// srcset names the comma-separated form whose entries carry a descriptor, and
+// ping the whitespace-separated form. Dropping only the refused entry matters
+// because these are lists of alternatives: refusing the whole attribute would
+// turn one hostile candidate into a missing image.
+func (Builder[P]) URLListAttr(name, shape string, value func(P) (string, bool)) Op[P] {
+	return urlListAttrOp[P]{name: name, shape: shape, value: value}
+}
+
+type urlListAttrOp[P any] struct {
+	name  string
+	shape string
+	value func(P) (string, bool)
+}
+
+func (o urlListAttrOp[P]) Exec(r *Renderer, params P) error {
+	value, present := o.value(params)
+	if !present {
+		return nil
+	}
+	return r.Write(" " + o.name + `="` + Escape(safeURLList(r.opts, o.shape, value)) + `"`)
+}
+
+// URLListAttrCtx is URLListAttr for a value that needs the render context.
+func (Builder[P]) URLListAttrCtx(name, shape string, value func(context.Context, P) (string, bool)) Op[P] {
+	return urlListAttrCtxOp[P]{name: name, shape: shape, value: value}
+}
+
+type urlListAttrCtxOp[P any] struct {
+	name  string
+	shape string
+	value func(context.Context, P) (string, bool)
+}
+
+func (o urlListAttrCtxOp[P]) Exec(r *Renderer, params P) error {
+	value, present := o.value(r.boundaryContext(), params)
+	if !present {
+		return nil
+	}
+	return r.Write(" " + o.name + `="` + Escape(safeURLList(r.opts, o.shape, value)) + `"`)
+}
+
+// URLListSrcset and URLListSpace name the two list grammars URLListAttr reads.
+// They travel as strings because they appear in generated source, where a
+// named constant reads better than a bare true or false.
+const (
+	URLListSrcset = "srcset"
+	URLListSpace  = "space"
+)
+
+func safeURLList(opts *renderOptions, shape, value string) string {
+	if shape == URLListSrcset {
+		return opts.safeSrcsetURLs(value)
+	}
+	return opts.safeSpaceURLs(value)
+}
+
 // AttrCtx is Attr for a value that needs the render context.
 func (Builder[P]) AttrCtx(name string, value func(context.Context, P) (string, bool)) Op[P] {
 	return attrCtxOp[P]{name: name, value: value}
