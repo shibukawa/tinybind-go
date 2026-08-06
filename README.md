@@ -424,18 +424,27 @@ longer page costs the same four.
 
 The same small JSON program built two ways, once over `encoding/json` and once
 over generated `jsonbind` codecs. `jsonbind` does not import `encoding/json` at
-all, so the reflection-based codec never enters the binary.
+all, so the reflection-based codec never enters the binary. Built with Go
+1.26.5 and TinyGo 0.41.1; the native rows are `darwin/arm64`.
 
 | Build | `encoding/json` | `jsonbind` | Saved |
 |-------|-----------------|------------|-------|
-| `go build` | 3,075,522 | **2,617,426** | −458 KB (−14.9%) |
-| `go build -ldflags="-s -w"` | 2,061,010 | **1,741,186** | −320 KB (−15.5%) |
-| `tinygo build -target wasi` | 1,345,144 | **867,687** | −477 KB (−35.5%) |
-| `tinygo build -target wasi -no-debug` | 496,869 | **252,388** | −244 KB (−49.2%) |
+| `go build` | 3,075,666 | **2,565,106** | −511 KB (−16.6%) |
+| `go build -ldflags="-s -w"` | 2,061,138 | **1,708,034** | −353 KB (−17.1%) |
+| `tinygo build` (native) | 474,256 | **293,632** | −181 KB (−38.1%) |
+| `tinygo build` (native) + `strip` | 287,856 | **187,968** | −100 KB (−34.7%) |
+| `tinygo build -target wasi` | 1,264,464 | **738,966** | −525 KB (−41.6%) |
+| `tinygo build -target wasi -no-debug` | 488,762 | **222,564** | −266 KB (−54.5%) |
 
 Stripping makes the gap matter more, not less: once debug information is gone,
 the reflection machinery is a larger share of what is left. On a stripped TinyGo
 wasm build it is about half the binary.
+
+The wasm and native rows strip differently because the debug information lives
+in different places. A wasm binary embeds its DWARF, which is what `-no-debug`
+removes; a Mach-O binary never carries it (macOS keeps DWARF in a separate
+dSYM), so `-no-debug` changes nothing there and `strip`, which drops the symbol
+table, is the flag's native equivalent.
 
 ### encoding/json/v2
 
@@ -496,7 +505,7 @@ Verified with **TinyGo 0.41.1 + Go 1.26.x**.
 - `WriteError` hand-builds problem JSON (avoids fragile nested `encoding/json` + RawMessage interactions).
 - Registry uses `reflect.Type` only as a **type identity key**, not for field walking.
 - Generated bind/write code does not import `reflect`.
-- `jsonbind` parses and writes JSON itself and does not import `encoding/json`, so a JSON-only binary carries no reflection-based codec — around a third of a `tinygo build -target wasi` binary, and about half of a `-no-debug` one. See [Benchmarks](#binary-size).
+- `jsonbind` parses and writes JSON itself and does not import `encoding/json`, so a JSON-only binary carries no reflection-based codec — around 40% of a `tinygo build -target wasi` binary, and about half of a `-no-debug` one. See [Benchmarks](#binary-size).
 - Do not build with `GOEXPERIMENT=jsonv2`. `encoding/json/v2` is still behind the experiment on Go 1.26, and on TinyGo it grows the same wasi binary by about 60% while `jsonbind` never calls it.
 
 ### Known limitations
