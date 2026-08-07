@@ -186,7 +186,7 @@ func emitScanRows(b *bytes.Buffer, root TypePlan, types map[string]TypePlan) err
 	if err != nil {
 		return fmt.Errorf("%s: %w", root.Name, err)
 	}
-	fmt.Fprintf(b, "func scan%sRows(rows *sql.Rows) ([]%s, error) {\n", root.Name, root.Name)
+	fmt.Fprintf(b, "func scan%sRows(rows sqlbind.Rows) ([]%s, error) {\n", root.Name, root.Name)
 	fmt.Fprintf(b, "\tout := []%s{}\n\trootIndexes := map[string]int{}\n", root.Name)
 	if err := emitSQLIndexDecls(b, root, types, root.Name, "\t"); err != nil {
 		return err

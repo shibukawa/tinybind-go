@@ -461,6 +461,45 @@ if _, err := DeleteUser(ctx, tx, 99); err != nil {
 return tx.Commit()
 ```
 
+## database/sql 以外の executor
+
+生成された行返し statement は、executor の裏側が `database/sql` であることを要求しません。生成コードは cursor を `sqlbind.Query` 経由で取得します。`sqlbind.Query` は optional interface の `RowsQuerier` を優先し(`io.Copy` が `io.ReaderFrom` を優先するのと同じパターンです)、なければ `Querier.QueryContext` にフォールバックします。`*sql.DB`、`*sql.Conn`、`*sql.Tx` はフォールバック側で今までどおり動きます。
+
+```go
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+	Columns() ([]string, error)
+}
+
+type RowsQuerier interface {
+	QueryRows(ctx context.Context, query string, args ...any) (Rows, error)
+}
+```
+
+`Querier` 自体は具象型 `*sql.Rows` を返し続けます。標準の handle がそう返す以上、Go の interface 充足は厳密一致なので、戻り値を interface に変えると `*sql.DB` が `Querier` を満たさなくなるためです。`*sql.Rows` を構築できない backend は `sqlbind.UnimplementedQuerier` を埋め込んで `Querier` を満たし、本来の経路として `QueryRows` を実装します。pgxpool の adapter は 1 画面程度で書けます:
+
+```go
+type PGXExecutor struct {
+	sqlbind.UnimplementedQuerier
+	Pool *pgxpool.Pool
+}
+
+func (e PGXExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	tag, err := e.Pool.Exec(ctx, query, args...)
+	return pgxResult{tag}, err
+}
+
+func (e PGXExecutor) QueryRows(ctx context.Context, query string, args ...any) (sqlbind.Rows, error) {
+	rows, err := e.Pool.Query(ctx, query, args...)
+	return pgxRows{rows}, err // Close を error 返しに wrap し、Columns を FieldDescriptions から作る
+}
+```
+
+この adapter は `SQLExecutor` を満たすので、`WithSQLExecutor` と Context API でもそのまま使えます。`ForEach`、`ScanRows[T]`、`RegisterScanRows` は `sqlbind.Rows` を受け取るため、JOIN 結果の親子 scan も custom cursor の上で動きます。この seam 以前に生成されたコードは `QueryContext` を直接呼ぶため、`UnimplementedQuerier` 埋め込みの executor に対しては明確なエラーを返します。一度再生成すれば `sqlbind.Query` 経由になります。
+
 ## Context から executor を解決する API
 
 transaction を framework middleware が持つようになると、executor を毎回引数で引き回す書き方は成り立たなくなります。その場合は、生成時に Context API を有効にします。

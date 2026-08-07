@@ -6,8 +6,8 @@ title: sqlbind.ScanRows
 Map flat joined database/sql rows into grouped typed object trees through generated scanners.
 
 ```yaml
-signature: "func ScanRows[T any](rows *sql.Rows) ([]T, error)"
-input: database/sql column names and row values
+signature: "func ScanRows[T any](rows sqlbind.Rows) ([]T, error)"
+input: column names and row values from any requirement:sql-driver-agnostic-rows source
 output: roots in first-seen key order with nested slice children
 dispatch: generated scanner registry for T
 mapping:

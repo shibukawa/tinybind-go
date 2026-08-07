@@ -1,7 +1,6 @@
 package sqlbind
 
 import (
-	"database/sql"
 	"fmt"
 	"strconv"
 )
@@ -10,9 +9,9 @@ import (
 type Row map[string]any
 
 // ForEach scans rows without retaining the full result.
-func ForEach(rows *sql.Rows, fn func(Row) error) error {
+func ForEach(rows Rows, fn func(Row) error) error {
 	if rows == nil {
-		return fmt.Errorf("sqlbind: nil sql.Rows")
+		return fmt.Errorf("sqlbind: nil Rows")
 	}
 	cols, err := rows.Columns()
 	if err != nil {

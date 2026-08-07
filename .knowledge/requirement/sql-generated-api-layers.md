@@ -30,12 +30,12 @@ context_only_surface:
 executor_interfaces:
   source: declared once in the module per decision:generated-runtime-in-module; never emitted into a generated file
   sql.exec: sqlbind.Execer, ExecContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
-  row_outputs: sqlbind.Querier, QueryContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx
+  row_outputs: sqlbind.Querier, QueryContext-compatible; accepts sql.DB, sql.Conn, and sql.Tx, and custom backends through the RowsQuerier upgrade of requirement:sql-driver-agnostic-rows
 execution:
   sql.exec: ExecContext; return affected-row-capable result
-  sql.one<T>: QueryContext; reject zero or multiple rows
-  sql.optional<T>: QueryContext; accept zero or one and reject multiple rows
-  sql.many<T>: QueryContext; lazily scan as iter.Seq2<T, error>; close rows on completion or early stop
+  sql.one<T>: sqlbind.Query per requirement:sql-driver-agnostic-rows; reject zero or multiple rows
+  sql.optional<T>: sqlbind.Query; accept zero or one and reject multiple rows
+  sql.many<T>: sqlbind.Query; lazily scan as iter.Seq2<T, error>; close rows on completion or early stop
 query_row_rule: QueryRowContext is insufficient for multiple-row detection; use only when at-most-one is statically proven and the contract remains enforced
 benefits:
   - low-level deterministic tests without a database
