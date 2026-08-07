@@ -399,7 +399,7 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 		zero = "nil"
 	}
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
-	e.b.WriteString("\trows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)\n")
+	fmt.Fprintf(&e.b, "\trows, err := %s(ctx, db, statement.SQL, statement.Args...)\n", runtime("Query"))
 	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n\tdefer rows.Close()\n", zero)
 	fmt.Fprintf(&e.b, "\tif !rows.Next() { if err := rows.Err(); err != nil { return %s, err }; ", zero)
 	if info.cardinality == "one" {
@@ -429,7 +429,7 @@ func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, re
 	fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
 	fmt.Fprintf(&e.b, "\t\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
 	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
-	e.b.WriteString("\t\trows, err := db.QueryContext(ctx, statement.SQL, statement.Args...)\n")
+	fmt.Fprintf(&e.b, "\t\trows, err := %s(ctx, db, statement.SQL, statement.Args...)\n", runtime("Query"))
 	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n\t\tdefer rows.Close()\n", result)
 	fmt.Fprintf(&e.b, "\t\tfor rows.Next() {\n\t\t\tvar result %s\n", result)
 	fmt.Fprintf(&e.b, "\t\t\tif err := rows.Scan(%s); err != nil { yield(%s{}, err); return }\n", e.scanArgs(info.result, "result"), result)

@@ -3,10 +3,8 @@
 // Package sqlbind provides generated, reflection-free database/sql row mapping.
 package sqlbind
 
-import "database/sql"
-
 // ScanRows maps joined SQL rows into a grouped object tree using generated code.
-func ScanRows[T any](rows *sql.Rows) ([]T, error) {
+func ScanRows[T any](rows Rows) ([]T, error) {
 	var zero []T
 	fn, ok := lookupScanner(typeKey[T]())
 	if !ok {

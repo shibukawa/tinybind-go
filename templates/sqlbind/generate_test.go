@@ -189,6 +189,63 @@ func TestRelations(t *testing.T) {
 	runGenerated(t, generated, runtimeTest)
 }
 
+// TestGeneratedStatementsRunOnRowsQuerier proves the executor seam is
+// driver-agnostic: an executor backed by nothing from database/sql — a stand-in
+// for a pgxpool adapter — serves generated one, optional, and many statements
+// through RowsQuerier, and the generated body closes its cursor.
+func TestGeneratedStatementsRunOnRowsQuerier(t *testing.T) {
+	source := []byte(`package queries
+type User { id: int, name: string }
+export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement MaybeUser(id: int): sql.optional<User> {SELECT id, name FROM users WHERE id = {id}}
+export statement ListUsers(): sql.many<User> {SELECT id, name FROM users}`)
+	generated, err := sqlbind.Generate("pool.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeTest := []byte(`package queries
+import (
+    "context"
+    "testing"
+    rootsql "github.com/shibukawa/tinybind-go/sqlbind"
+)
+type poolRows struct{ at int; data []User; closed bool }
+func (r *poolRows) Next() bool { return r.at < len(r.data) }
+func (r *poolRows) Scan(dest ...any) error {
+    *(dest[0].(*int)) = r.data[r.at].Id
+    *(dest[1].(*string)) = r.data[r.at].Name
+    r.at++
+    return nil
+}
+func (r *poolRows) Err() error { return nil }
+func (r *poolRows) Close() error { r.closed = true; return nil }
+func (r *poolRows) Columns() ([]string, error) { return []string{"id", "name"}, nil }
+type poolExecutor struct {
+    rootsql.UnimplementedQuerier
+    rows *poolRows
+}
+func (p poolExecutor) QueryRows(context.Context, string, ...any) (rootsql.Rows, error) { return p.rows, nil }
+func TestRowsQuerierExecutor(t *testing.T) {
+    rows := &poolRows{data: []User{{Id: 1, Name: "Ada"}}}
+    user, err := GetUser(context.Background(), poolExecutor{rows: rows}, 1)
+    if err != nil { t.Fatal(err) }
+    if user.Id != 1 || user.Name != "Ada" { t.Fatalf("user = %#v", user) }
+    if !rows.closed { t.Fatal("one left the cursor open") }
+    rows = &poolRows{}
+    if maybe, err := MaybeUser(context.Background(), poolExecutor{rows: rows}, 2); err != nil || maybe != nil { t.Fatalf("optional = %#v, %v", maybe, err) }
+    rows = &poolRows{data: []User{{Id: 1, Name: "Ada"}, {Id: 2, Name: "Grace"}}}
+    count := 0
+    for user, err := range ListUsers(context.Background(), poolExecutor{rows: rows}) {
+        if err != nil { t.Fatal(err) }
+        count++
+        if user.Id != count { t.Fatalf("user = %#v", user) }
+    }
+    if count != 2 { t.Fatalf("rows = %d", count) }
+    if !rows.closed { t.Fatal("many left the cursor open") }
+}`)
+	runGenerated(t, generated, runtimeTest)
+}
+
 func TestGenerateContextAPI(t *testing.T) {
 	source := []byte(`package queries
 type User { id: int, name: string }

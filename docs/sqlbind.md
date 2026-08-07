@@ -461,6 +461,45 @@ if _, err := DeleteUser(ctx, tx, 99); err != nil {
 return tx.Commit()
 ```
 
+## Executors outside database/sql
+
+A generated row-returning statement does not require `database/sql` behind its executor. The generated body obtains its cursor through `sqlbind.Query`, which prefers the optional `RowsQuerier` interface — the same pattern by which `io.Copy` prefers `io.ReaderFrom` — and falls back to `Querier.QueryContext` for `*sql.DB`, `*sql.Conn`, and `*sql.Tx`:
+
+```go
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close() error
+	Columns() ([]string, error)
+}
+
+type RowsQuerier interface {
+	QueryRows(ctx context.Context, query string, args ...any) (Rows, error)
+}
+```
+
+`Querier` itself must keep returning the concrete `*sql.Rows`, because that is what the standard handles return and Go interface satisfaction is exact; a backend that cannot construct a `*sql.Rows` embeds `sqlbind.UnimplementedQuerier` to satisfy `Querier` and implements `QueryRows` for the real path. A pgxpool adapter is about a screenful:
+
+```go
+type PGXExecutor struct {
+	sqlbind.UnimplementedQuerier
+	Pool *pgxpool.Pool
+}
+
+func (e PGXExecutor) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	tag, err := e.Pool.Exec(ctx, query, args...)
+	return pgxResult{tag}, err
+}
+
+func (e PGXExecutor) QueryRows(ctx context.Context, query string, args ...any) (sqlbind.Rows, error) {
+	rows, err := e.Pool.Query(ctx, query, args...)
+	return pgxRows{rows}, err // wraps Close to return error, Columns over FieldDescriptions
+}
+```
+
+Such an adapter satisfies `SQLExecutor`, so it also works with `WithSQLExecutor` and the Context APIs. `ForEach`, `ScanRows[T]`, and `RegisterScanRows` take `sqlbind.Rows`, so grouped JOIN scanning works over a custom cursor too. Generated code emitted before this seam existed calls `QueryContext` directly and reports a clear error against an embedded `UnimplementedQuerier`; regenerate it once to route through `sqlbind.Query`.
+
 ## Resolving an executor from Context
 
 Threading an executor through every call stops working once framework middleware owns the transaction. For that case, enable Context APIs during generation:
