@@ -196,6 +196,8 @@ A hole whose id **also carries an operation** in this response is filled from it
 
 Keep what the list keeps, moving what moved; drop what it omits; fill what arrives as its own operation. This is how a list says a row was appended without re-sending the list.
 
+**Dispatch on `kind`, not on whether `html` is present.** A `children` record carries none, and every stream path in this package got that wrong once.
+
 **`seq` + `values`** — the same fragment, split. Walk the tree consuming one value per hole, one per conditional (which branch), one per loop (how many times), one per component call (boundary or inline). Concatenate and parse once.
 
 **Escaping never leaves this module.** Values arrive already escaped, exactly as they would have been written into HTML. You concatenate and parse; you apply no escaper and judge no value. The URL scheme allowlist in particular stays here.

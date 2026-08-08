@@ -161,7 +161,7 @@ func TestProducerDrivesTheStream(t *testing.T) {
 	if !stream.Sent("c1") {
 		t.Fatal("a written instance must be reported as sent")
 	}
-	stream.Unchanged("c2", "f2")
+	stream.Unchanged("c2", "f2", "")
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
 	}

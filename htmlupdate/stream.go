@@ -42,6 +42,10 @@ type record struct {
 	// is filled from it; one that does not is retained from the DOM the client
 	// already has, which is what keeps the state inside it.
 	Boundaries []string `json:"boundaries,omitempty"`
+	// Children digests the nested boundary ids of the instance this record
+	// names, so a client rebuilding its manifest from a stream returns both
+	// halves on its next request rather than making every list look reordered.
+	Children string `json:"children,omitempty"`
 	// Seq and Values are the fragment split into its static and varying halves,
 	// sent in place of HTML to a client that walks sequences.
 	Seq    string   `json:"seq,omitempty"`
@@ -173,6 +177,20 @@ func (s *DeltaStream) Replace(instanceID, html, frame string, boundaries ...stri
 	})
 }
 
+// Children writes a boundary whose own markup is unchanged and whose nested
+// boundaries are now these, in this order.
+//
+// It carries no markup, which is the point: appending one row to a list costs
+// the list of ids rather than the list of holes. A client keeps what the list
+// keeps, moving what moved, drops what it omits, and fills what arrives as its
+// own operation in the same response.
+func (s *DeltaStream) Children(instanceID, frame, childrenValidator string, boundaries ...string) {
+	s.writer.write(record{
+		Record: recordOp, Kind: delta.OpChildren, ID: instanceID,
+		Frame: frame, Children: childrenValidator, Boundaries: boundaries,
+	})
+}
+
 // ReplaceValues is Replace for a client that walks sequences: the fragment
 // travels as the address of its static half and the values that fill it, so the
 // statics cost one response per client rather than one per render.
@@ -185,8 +203,8 @@ func (s *DeltaStream) ReplaceValues(instanceID, sequence string, values []string
 
 // Unchanged restates a boundary's validator without markup, so the client can
 // rebuild its whole manifest from what it received.
-func (s *DeltaStream) Unchanged(instanceID, frame string) {
-	s.writer.write(record{Record: recordOp, ID: instanceID, Frame: frame})
+func (s *DeltaStream) Unchanged(instanceID, frame, childrenValidator string) {
+	s.writer.write(record{Record: recordOp, ID: instanceID, Frame: frame, Children: childrenValidator})
 }
 
 // Settled writes an await boundary that finished after the initial pass.
@@ -325,20 +343,31 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 		switch {
 		case item.Completion != nil:
 			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
-		case item.Operation != nil && item.Operation.HTML != "":
+		case item.Operation == nil:
+			// Nothing to write.
+		case item.Operation.Kind == delta.OpChildren:
+			// A children operation carries no markup by design, so it has to be
+			// recognised by its kind. Deciding by whether markup is present put
+			// it in the unchanged shape on a navigation — leaving an appended row
+			// with nowhere to go — and dropped it entirely on the live path,
+			// where an unchanged boundary is deliberately silent.
+			stream.Children(item.Operation.InstanceID, item.Frame, item.Children,
+				item.Operation.Boundaries...)
+		case item.Operation.Kind == delta.OpReplace:
 			if sequences && item.Operation.Sequence != "" {
 				stream.ReplaceValues(item.Operation.InstanceID, item.Operation.Sequence,
 					item.Operation.Values, item.Frame, item.Operation.Boundaries...)
 			} else {
-				stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame, item.Operation.Boundaries...)
+				stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame,
+					item.Operation.Boundaries...)
 			}
-		case item.Operation != nil && live:
+		case live:
 			// A live client already holds this boundary from the document render,
 			// and its manifest is not rebuilt from a delivery stream. Restating a
 			// validator it is not going to replace buys nothing, so an unchanged
 			// boundary costs no record here.
-		case item.Operation != nil:
-			stream.Unchanged(item.Operation.InstanceID, item.Frame)
+		default:
+			stream.Unchanged(item.Operation.InstanceID, item.Frame, item.Children)
 		}
 	}
 	// A cancelled context ends the sequence silently, and on the live path that
@@ -383,17 +412,27 @@ func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers [
 		stream.ExpectLive()
 	}
 	frames := map[string]string{}
+	childValidators := map[string]string{}
 	for _, instance := range diff.Manifest.Instances {
 		frames[instance.ID] = instance.FrameValidator
+		childValidators[instance.ID] = instance.ChildrenValidator
 	}
 	for _, operation := range diff.Operations {
+		// By kind, not by whether markup happens to be present: writing a
+		// children operation as a replace would have emptied the region rather
+		// than reordering it, since a children operation carries no markup.
+		if operation.Kind == delta.OpChildren {
+			stream.Children(operation.InstanceID, frames[operation.InstanceID],
+				childValidators[operation.InstanceID], operation.Boundaries...)
+			continue
+		}
 		stream.Replace(operation.InstanceID, operation.HTML, frames[operation.InstanceID], operation.Boundaries...)
 	}
 	for _, instance := range diff.Manifest.Instances {
 		if stream.Sent(instance.ID) {
 			continue
 		}
-		stream.Unchanged(instance.ID, instance.FrameValidator)
+		stream.Unchanged(instance.ID, instance.FrameValidator, instance.ChildrenValidator)
 	}
 	return stream.Close()
 }
