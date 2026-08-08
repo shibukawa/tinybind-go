@@ -32,7 +32,19 @@ as_built:
     - TestFirstDeltaReturnsEveryBoundary, rewritten from asserting whole-subtree containment to asserting a fragment per boundary
   not_built_here:
     - slot spans, and therefore the static sequences, their content addresses, and their fetch
-    - the JSON redraw body, so a redraw still writes a bare fragment and still cannot carry its new validator
+  redraw_json_body: shipped 2026-08-08; requirement:component-redraw-endpoint json_body carries it, and the validator gap it was opened for is closed
+slot_spans_are_the_remaining_work:
+  status: specified and not built, 2026-08-08
+  why_it_is_emitter_work_after_all:
+    earlier_reading: this concept recorded that span recording needs no emitter change, only a renderer recording ranges
+    true_of: producing the spans
+    not_true_of: producing the sequence they interleave with, which has to be generation-time data for the reasons in a_sequence_must_be_data_independent
+    so: the reporter's original judgement that the work touches the emitter rather than only the runtime was right, and this concept's cheaper reading covered half of it
+  what_it_still_buys_after_the_rest_shipped:
+    measured_events: 'editing one row costs 76 bytes and appending one costs 365, so the frequent live events are already answered'
+    what_is_left: a cold load, where the whole page travels, and a parent whose own markup changed, which re-sends its list of holes at 7,240 bytes for a hundred rows
+    estimate: roughly fourfold on a cold page and eightfold on that parent, which is where the reporter's original threefold measurement lives
+  scope: a generated sequence table per component, a runtime recording branch choices and iteration counts beside the slot values, a client walking the tree, and a render mode serving a sequence by address
 structural_operations:
   shipped: 2026-08-08, immediately after the decomposition, because measuring it showed the decomposition alone missed the case it was built for
   measured_first:
@@ -112,12 +124,26 @@ static_sequence_delivery:
     avoided: the request-size cost decision:manifest-state-ownership already carries for validators, doubled for a second per-instance list
     caller_policy: a fresh navigation may send assembled and omit the layout the outgoing page shared; a same-page re-render may send spans and trim further; both are the caller's to tune
     no_waterfall_moves: the property that a first paint waits for nothing is now the caller's to hold, by choosing assembled for a cold client, rather than the module's to guarantee
+  a_sequence_must_be_data_independent:
+    found: 2026-08-08, while starting the implementation
+    the_shortcut_that_fails: emitting the statics flat, as the render happened to produce them, with a digest of those bytes as the address
+    why_it_fails: a flat sequence depends on which branches ran and how many times a loop repeated, so the server cannot reproduce one from its address; a fetch endpoint would have to have stored every sequence it ever emitted, which is the server-side per-document state decision:manifest-state-ownership refuses
+    consequence: the sequence must be a generation-time artifact, which is what makes it fetchable, permanently cacheable, and public
+    reading: fetchability is not an optimisation layered on the encoding; it is what decides the encoding
+  a_sequence_is_a_tree_not_a_list:
+    resolves: how a data-independent sequence covers a conditional and a loop without enumerating paths
+    rejected: one address per instruction path, which is exponential in the conditionals a component holds
+    chosen: one address per component, whose sequence is a tree of static text, slots, conditional nodes, and repeat nodes
+    where_the_path_goes: into the values rather than into the identity — which branch ran and how many times a loop repeated travel with the data, and the client walks the tree with the same choices the server made
+    consequence: a five-row list and a six-row list share one address, which is what the earlier flat reading could not give them
   sequence_identity:
-    proposed: the plan fingerprint plus a selector for the instruction path taken, rather than a digest of the statics
+    decided: the plan fingerprint, one per component, since the tree above removes the need for a path selector
+    superseded_proposal: the plan fingerprint plus a selector for the instruction path taken, rather than a digest of the statics
     why_not_a_digest: the statics depend on which branches ran, so a digest would be computed per render, and decision:cache-key-derivation states this module hashes nothing in the runtime
     properties_kept: stable across renders taking the same path, changed by a template edit through the plan fingerprint, and cheap because the renderer already knows which branch it took
     accepted_waste: two paths whose statics happen to be identical get two addresses, which costs a client one redundant sequence and nothing in correctness
     not_a_leak: a path selector reveals which branch ran, and the client receives that branch's span values in the same response, so it learns nothing more
+    no_runtime_hashing: an identity computed at generation time also settles the tension with decision:cache-key-derivation, which states this module hashes nothing at request time
   a_sequence_is_not_a_flat_list:
     finding: a fragment containing a for loop has statics of the form prefix, body repeated, suffix, and the repetition count is data
     consequence_if_flat: a five-row list and a six-row list would produce different addresses, which defeats the sharing the sequence exists for
