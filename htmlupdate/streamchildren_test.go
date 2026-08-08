@@ -1,0 +1,205 @@
+package htmlupdate_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
+	"github.com/shibukawa/tinybind-go/htmlupdate"
+)
+
+// A children operation says a region's own markup is unchanged and its nested
+// boundaries are now these, in this order. It is how a list says a row was
+// appended without re-sending the list, and it carries no markup at all — which
+// is what every stream path got wrong, because each decided what to write by
+// looking at the markup instead of at the kind.
+
+type listParams struct {
+	ID   string
+	Rows []rowParams
+}
+
+type rowParams struct {
+	ID   string
+	Text string
+}
+
+var (
+	listOps = htmlbind.Builder[listParams]{}
+	rowOps  = htmlbind.Builder[rowParams]{}
+)
+
+var rowPlan = &htmlbind.Plan[rowParams]{
+	Boundary: &htmlbind.Boundary[rowParams]{
+		ComponentID: "Row@v1", Attr: "data-tb-id",
+		Instance: func(p rowParams) string { return p.ID },
+		Input:    func(p rowParams) string { return delta.CanonString(p.Text) },
+	},
+	Ops: []htmlbind.Op[rowParams]{
+		rowOps.Static("<li"), rowOps.BoundaryAttr(), rowOps.Static(">"),
+		rowOps.Text(func(p rowParams) string { return p.Text }),
+		rowOps.Static("</li>"),
+	},
+}
+
+var listPlan = &htmlbind.Plan[listParams]{
+	Boundary: &htmlbind.Boundary[listParams]{
+		ComponentID: "List@v1", Attr: "data-tb-id",
+		Instance: func(p listParams) string { return p.ID },
+		Input:    func(listParams) string { return "" },
+	},
+	Ops: []htmlbind.Op[listParams]{
+		listOps.Static("<ul"), listOps.BoundaryAttr(), listOps.Static(">"),
+		htmlbind.For(
+			func(p listParams) []rowParams { return p.Rows },
+			func(_ listParams, item rowParams, _ int) rowParams { return item },
+			[]htmlbind.Op[rowParams]{
+				rowOps.Component(func(p rowParams) htmlbind.Fragment { return htmlbind.Bind(rowPlan, p) }),
+			}),
+		listOps.Static("</ul>"),
+	},
+}
+
+func rowsUpTo(n int) []rowParams {
+	rows := make([]rowParams, n)
+	for i := range rows {
+		rows[i] = rowParams{ID: "row-" + strconv.Itoa(i), Text: "line " + strconv.Itoa(i)}
+	}
+	return rows
+}
+
+// streamRecord is one line of the record stream.
+type streamRecord struct {
+	Record     string   `json:"r"`
+	Kind       string   `json:"kind"`
+	ID         string   `json:"id"`
+	HTML       string   `json:"html"`
+	Boundaries []string `json:"boundaries"`
+	Frame      string   `json:"frame"`
+	Children   string   `json:"children"`
+}
+
+func childRecords(t *testing.T, body string) []streamRecord {
+	t.Helper()
+	var records []streamRecord
+	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+		if line == "" {
+			continue
+		}
+		var record streamRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("record %q is not JSON: %v", line, err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func findRecord(records []streamRecord, id string) (streamRecord, bool) {
+	for _, record := range records {
+		if record.Record == "op" && record.ID == id {
+			return record, true
+		}
+	}
+	return streamRecord{}, false
+}
+
+// listRequest renders three rows, then four, and returns the second response's
+// records. Appending is the ordinary event on a live list.
+//
+// Both requests go through the entry under test, and the second returns what the
+// first reported — which is what a client does, and the only way the validators
+// are the ones this server computed. Building the known manifest another way
+// seeds its digests differently and makes everything look changed.
+func listRequest(t *testing.T, mode string, serve func(http.ResponseWriter, *http.Request, listParams) error) []streamRecord {
+	t.Helper()
+	ask := func(known delta.Manifest, rows int) []streamRecord {
+		request := httptest.NewRequest(http.MethodGet, "/feed", nil)
+		request.Header.Set("X-Tinybind-Render", mode)
+		request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+		if len(known.Instances) > 0 {
+			request.Header.Set("X-Tinybind-Manifest", htmlupdate.EncodeManifest(known))
+		}
+		recorder := httptest.NewRecorder()
+		if err := serve(recorder, request, listParams{ID: "the-list", Rows: rowsUpTo(rows)}); err != nil {
+			t.Fatal(err)
+		}
+		return childRecords(t, recorder.Body.String())
+	}
+	var known delta.Manifest
+	for _, record := range ask(delta.Manifest{}, 3) {
+		if record.Record == "op" {
+			known.Instances = append(known.Instances, delta.Instance{
+				ID: record.ID, FrameValidator: record.Frame, ChildrenValidator: record.Children,
+			})
+		}
+	}
+	return ask(known, 4)
+}
+
+// The reported defect: on the streamed navigation path the list's record arrived
+// in the unchanged shape, so nothing said where the new row goes and a client
+// could only fall back to a full reload.
+func TestStreamedNavigationCarriesTheChildrenOperation(t *testing.T) {
+	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
+		return options.RenderStreamAsync(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+	})
+	list, ok := findRecord(records, "the-list")
+	if !ok {
+		t.Fatalf("the list said nothing: %+v", records)
+	}
+	if list.Kind != delta.OpChildren {
+		t.Fatalf("list record kind = %q, want %q: %+v", list.Kind, delta.OpChildren, list)
+	}
+	if strings.Join(list.Boundaries, ",") != "row-0,row-1,row-2,row-3" {
+		t.Fatalf("boundaries = %v", list.Boundaries)
+	}
+	if list.HTML != "" {
+		t.Fatalf("a children operation carries markup: %q", list.HTML)
+	}
+	if _, sent := findRecord(records, "row-3"); !sent {
+		t.Fatalf("the new row was not sent: %+v", records)
+	}
+}
+
+// Worse than the reported face: on the live path the record fell into the branch
+// that drops an unchanged boundary, so an appended row never appeared at all.
+func TestLiveDeliveryCarriesTheChildrenOperation(t *testing.T) {
+	records := listRequest(t, "live", func(w http.ResponseWriter, r *http.Request, p listParams) error {
+		return options.RenderLiveStream(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+	})
+	list, ok := findRecord(records, "the-list")
+	if !ok {
+		t.Fatalf("the list said nothing, so the appended row has nowhere to go: %+v", records)
+	}
+	if list.Kind != delta.OpChildren {
+		t.Fatalf("list record kind = %q, want %q", list.Kind, delta.OpChildren)
+	}
+	if strings.Join(list.Boundaries, ",") != "row-0,row-1,row-2,row-3" {
+		t.Fatalf("boundaries = %v", list.Boundaries)
+	}
+}
+
+// Worse still: the buffered-render streamed-write path wrote every operation as a
+// replace, so a children operation became a replace with no markup — which empties
+// the region rather than reordering it.
+func TestStreamedRenderDoesNotEmptyTheList(t *testing.T) {
+	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
+		return options.RenderStream(w, r, nil, htmlbind.Bind(listPlan, p))
+	})
+	list, ok := findRecord(records, "the-list")
+	if !ok {
+		t.Fatalf("the list said nothing: %+v", records)
+	}
+	if list.Kind == delta.OpReplace && list.HTML == "" {
+		t.Fatalf("the list was replaced with nothing, which empties it: %+v", list)
+	}
+	if list.Kind != delta.OpChildren {
+		t.Fatalf("list record kind = %q, want %q", list.Kind, delta.OpChildren)
+	}
+}

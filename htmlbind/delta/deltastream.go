@@ -21,6 +21,10 @@ type DeltaRecord struct {
 	Operation *Operation
 	// Frame is the validator of the boundary Operation names.
 	Frame string
+	// Children digests that boundary's nested boundary ids, in order. Without it
+	// a client rebuilding its manifest from a stream holds only half of what the
+	// next request is compared against, and every list looks reordered.
+	Children string
 	// Completion is an await boundary that settled, addressed by the
 	// placeholder written during the initial pass rather than by an instance id.
 	Completion *htmlbind.Content
@@ -46,14 +50,17 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 		rendered := func() bool {
 			manifest := collect.manifest
 			frames := map[string]string{}
+			children := map[string]string{}
 			for _, instance := range manifest.Instances {
 				frames[instance.ID] = instance.FrameValidator
+				children[instance.ID] = instance.ChildrenValidator
 			}
 			sent := map[string]bool{}
 			for _, operation := range operations(manifest, known, collect.contents, collect.children, collect.sequences, collect.values) {
 				op := operation
 				sent[op.InstanceID] = true
-				if !yield(DeltaRecord{Operation: &op, Frame: frames[op.InstanceID]}, nil) {
+				record := DeltaRecord{Operation: &op, Frame: frames[op.InstanceID], Children: children[op.InstanceID]}
+				if !yield(record, nil) {
 					return false
 				}
 			}
@@ -62,7 +69,11 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 					continue
 				}
 				op := Operation{InstanceID: instance.ID}
-				if !yield(DeltaRecord{Operation: &op, Frame: instance.FrameValidator}, nil) {
+				record := DeltaRecord{
+					Operation: &op, Frame: instance.FrameValidator,
+					Children: instance.ChildrenValidator,
+				}
+				if !yield(record, nil) {
 					return false
 				}
 			}

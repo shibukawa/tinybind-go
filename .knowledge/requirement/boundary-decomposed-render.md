@@ -85,6 +85,18 @@ structural_operations:
     found_by: the existing disappearing-boundary test, which failed against the looser rule
   manifest_grew: 'an entry is now id:frame:children:parent rather than id:frame, adding roughly thirty bytes per instance; the parent is what lets a removal be attributed at all'
   verified: TestAnAppendedRowCostsItsOwnFragmentAndAnIDList, TestARemovedRowIsAnIDListToo, TestAReorderedListSendsOnlyTheOrder, TestAChangedParentIsStillReplaced, and the unchanged disappearing-boundary fallback
+  never_reached_the_streams:
+    reported: downstream framework defect report 2026-08-09, reproduced against the streamed navigation path with three rows
+    cause: every stream site decided what to write by asking whether markup was present, and a children operation carries none by design
+    three_faces_one_cause:
+      streamed_navigation: fell into the unchanged shape, so nothing said where the appended row went and a client could only reload — the reported one, and the mildest
+      live_delivery: fell into the branch that deliberately says nothing for an unchanged boundary, so the record was dropped and the row never appeared
+      streamed_render: written as a replace carrying no markup, which empties the region rather than reordering it — silently destructive, and the worst
+    reporter_found: the first; the other two came from reading the same branch on the other two paths
+    fix: dispatch on Operation.Kind, and a DeltaStream.Children writer, which did not exist
+    fourth_gap_found_with_it: an op record carried the frame validator and not the children one, so a client rebuilding its manifest from a stream returned half of what the next request compares against and every list looked reordered
+    verified: TestStreamedNavigationCarriesTheChildrenOperation, TestLiveDeliveryCarriesTheChildrenOperation, TestStreamedRenderDoesNotEmptyTheList
+    reading: the buffered path copied Kind because it copies the operation; the streamed paths reconstructed one from its parts, and a reconstruction is where a new kind goes missing
 source:
   - owner scoping decision 2026-08-08
   - downstream framework partial transfer report 2026-08-08
