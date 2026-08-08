@@ -84,7 +84,14 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 	if decl == nil {
 		return member
 	}
-	id := "c" + strconv.Itoa(index)
+	// A boundary that names its own instance keeps that name wherever it
+	// renders. Only a component with no name of its own is numbered by its chain
+	// position, which is the case the numbering exists for: a layout is the same
+	// member of the same chain whatever its parameters say.
+	id := decl.instance
+	if id == "" {
+		id = "c" + strconv.Itoa(index)
+	}
 	return Fragment{
 		head:     member.head,
 		hasAwait: member.hasAwait,

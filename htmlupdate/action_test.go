@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -20,10 +21,20 @@ type badgeParams struct {
 
 var badgeOps = htmlbind.Builder[badgeParams]{}
 
+// The boundary is what generation emits for a reloadable component: it names its
+// own instance from the declared id, so it is an update boundary wherever it
+// renders and a delta can compare the region a redraw can replace.
 var badgePlan = &htmlbind.Plan[badgeParams]{
+	Boundary: &htmlbind.Boundary[badgeParams]{
+		ComponentID: "Badge@v1",
+		Attr:        "data-tb-id",
+		Instance:    func(p badgeParams) string { return p.ID },
+		Input:       func(p badgeParams) string { return delta.CanonInt(p.Count) },
+	},
 	Ops: []htmlbind.Op[badgeParams]{
 		badgeOps.Static("<span"),
 		badgeOps.Attr("id", func(p badgeParams) (string, bool) { return htmlbind.Escape(p.ID), true }),
+		badgeOps.BoundaryAttr(),
 		badgeOps.Static(">"),
 		badgeOps.Text(func(p badgeParams) string { return strconv.Itoa(p.Count) }),
 		badgeOps.Static("</span>"),
@@ -36,6 +47,7 @@ var badgePlan = &htmlbind.Plan[badgeParams]{
 var styledPlan = &htmlbind.Plan[badgeParams]{
 	Head:        []string{`<link rel="stylesheet" href="/badge.css">`},
 	HeadSources: []string{"Badge"},
+	Boundary:    badgePlan.Boundary,
 	Ops:         badgePlan.Ops,
 }
 

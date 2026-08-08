@@ -7,7 +7,9 @@
 >
 > Measured on a hundred-row message panel, against a full render of 15,328 bytes: editing one row costs 76, appending one costs 365, and changing the panel's own markup costs 7,240 — the last being what slot spans would compress, since almost all of it is the list of holes.
 >
-> **Not built:** slot spans, and therefore the static sequences, their content addresses, and their fetch; and the JSON redraw body. Everything below describing those is design you can build against, not behaviour you can call.
+> **Also shipped:** the redraw body is now that same shape — `ops`, `head`, and `manifest` — so one client applies every update path, the head has left its header, and a redraw returns the validator it used to leave stale.
+>
+> **Not built:** slot spans, and therefore the static sequences, their content addresses, and their fetch. Everything below describing those is design you can build against, not behaviour you can call.
 
 ## The shape in one paragraph
 

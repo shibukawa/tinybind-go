@@ -57,6 +57,7 @@ also_an_update_boundary:
   one_direction: a boundary does not become reloadable; publishing an endpoint stays the deliberate act this concept describes
   also_a_structured_unit: requirement:structured-render-output unit_set includes it, which is why the identity it already carries is doing three jobs rather than one
 json_body_2026_08_08:
+  shipped: 2026-08-08
   decided: the response body becomes the JSON shape the action path already writes, and the head moves into it
   shape: 'ops with one replace naming the instance, plus head; identical to what WriteUpdateStatus builds for one region'
   not_an_envelope_added: it is the removal of the one update path without one; the navigation delta and the action response both carry this shape already
@@ -71,6 +72,14 @@ json_body_2026_08_08:
     - the requirement:fragment-response-head asymmetry, which disappears rather than being patched a second time
   gains: a content type that differs from the page's, so a Vary-ignoring proxy substitution becomes visible instead of silent, which htmlupdate already relies on for the delta
   cache_policy_does_not_converge: the body shape joins the action path and the cache policy does not; requirement:redraw-cache-policy keeps private, no-cache and an ETag, while an action response stays no-store
+  as_built:
+    body: 'ops, head, and manifest; the decomposition comes from RenderDelta against an empty known manifest, so the region and every nested boundary travel as their own fragments with holes between them'
+    etag_covers_the_whole_body: a component that changed only its head contribution no longer answers 304 with the old one
+    head_is_the_published_one: Reloadable.Head rather than the render's merged head, which is what that field documents and what Registry.RequiredHead aggregates
+    removed: the head response header, encodeHead, its base64 of JSON, DefaultMaxHeadBytes, and the registration refusal that existed only because a proxy could drop an oversized header
+    found_while_building:
+      instance_check: 'a redraw must answer at the id the request named, and a hand-assembled Reloadable whose fragment declares no boundary would have produced a response with no operations in it; Fragment.InstanceID is compared before rendering and the mismatch is a loud failure'
+      named_instance_wins_over_position: a boundary naming its own instance now keeps that name as a chain member too, which is what makes a redraw of a single component address the author id rather than a positional one
 no_live:
   rule: a redraw carries no live boundary; it is a client-triggered re-render of one registered component and nothing in it subscribes
   settled: 2026-08-08 by the owner, narrowing an earlier reading that had a redraw originate a subscription
@@ -85,6 +94,7 @@ no_manifest:
     now: requirement:partial-update-boundaries makes it one, so after a redraw the client holds a validator for markup the redraw replaced
     consequence: the next navigation delta compares against the stale validator, judges the region changed, and sends it again — discarding the DOM the redraw just installed along with its focus and form state
     fix: the response carries the instance's new validator, which is a field the shared body already has
+  closed: 2026-08-08 with the JSON body; the manifest entry travels, so the interim client obligation to drop the entry is no longer needed
   reason: the client names the target and supplies the inputs, so there is nothing to compare or reconstruct
   contrast: requirement:component-delta-rendering still owns URL-driven page updates, where the server must discover what changed
 version_skew:

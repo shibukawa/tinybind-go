@@ -31,8 +31,14 @@ var formOps = htmlbind.Builder[formParams]{}
 // formPlan is what generation emits for an unsafe form: the CSRF field is the
 // first child, so an author writes nothing and cannot displace it.
 var formPlan = &htmlbind.Plan[formParams]{
+	Boundary: &htmlbind.Boundary[formParams]{
+		ComponentID: "Form@v1", Attr: "data-tb-id",
+		Instance: func(p formParams) string { return p.ID },
+		Input:    func(formParams) string { return "" },
+	},
 	Ops: []htmlbind.Op[formParams]{
 		formOps.Static(`<form method="post"`),
+		formOps.BoundaryAttr(),
 		formOps.Attr("id", func(p formParams) (string, bool) { return htmlbind.Escape(p.ID), true }),
 		formOps.Static(`>`),
 		formOps.CSRFField("_csrf"),
@@ -42,8 +48,14 @@ var formPlan = &htmlbind.Plan[formParams]{
 
 // linkPlan renders a URL the deployment's own scheme policy has to permit.
 var linkPlan = &htmlbind.Plan[formParams]{
+	Boundary: &htmlbind.Boundary[formParams]{
+		ComponentID: "Link@v1", Attr: "data-tb-id",
+		Instance: func(p formParams) string { return p.ID },
+		Input:    func(formParams) string { return "" },
+	},
 	Ops: []htmlbind.Op[formParams]{
 		formOps.Static(`<a`),
+		formOps.BoundaryAttr(),
 		formOps.Attr("id", func(p formParams) (string, bool) { return htmlbind.Escape(p.ID), true }),
 		formOps.URLAttr("href", func(p formParams) (string, bool) { return p.Link.String(), true }),
 		formOps.Static(`>open</a>`),
@@ -97,8 +109,8 @@ func TestRedrawRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 	if withToken.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", withToken.Code, withToken.Body.String())
 	}
-	if !strings.Contains(withToken.Body.String(), `name="_csrf" value="t0ken"`) {
-		t.Fatalf("body carries no token field: %s", withToken.Body.String())
+	if markup := redrawHTML(t, withToken.Result(), "signup"); !strings.Contains(markup, `name="_csrf" value="t0ken"`) {
+		t.Fatalf("fragment carries no token field: %s", markup)
 	}
 }
 
@@ -138,14 +150,14 @@ func TestRedrawAppliesTheConfiguredURLSchemes(t *testing.T) {
 
 	bare := httptest.NewRecorder()
 	options.Redraw(bare, request, registry)
-	if !strings.Contains(bare.Body.String(), "#tb-blocked-url") {
-		t.Fatalf("the default allowlist should still neutralise an unconfigured scheme: %s", bare.Body.String())
+	if markup := redrawHTML(t, bare.Result(), "deep"); !strings.Contains(markup, "#tb-blocked-url") {
+		t.Fatalf("the default allowlist should still neutralise an unconfigured scheme: %s", markup)
 	}
 
 	configured := httptest.NewRecorder()
 	options.Redraw(configured, request, registry, htmlbind.WithURLSchemes("http", "https", "myapp"))
-	if !strings.Contains(configured.Body.String(), `href="myapp://open/42"`) {
-		t.Fatalf("the configured scheme did not reach the redraw render: %s", configured.Body.String())
+	if markup := redrawHTML(t, configured.Result(), "deep"); !strings.Contains(markup, `href="myapp://open/42"`) {
+		t.Fatalf("the configured scheme did not reach the redraw render: %s", markup)
 	}
 }
 
@@ -190,12 +202,23 @@ func TestRedrawReachesTheCacheStore(t *testing.T) {
 // neither a context-taking external nor a shared store. It now runs under the
 // request's own context.
 func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
-	seen := make(chan bool, 1)
+	// A plain variable rather than a channel: the synchronous render runs on this
+	// goroutine, and a channel would turn a render that never reaches the op into
+	// a hang instead of a failure.
+	var ran, cancelled bool
 	plan := &htmlbind.Plan[formParams]{
+		Boundary: &htmlbind.Boundary[formParams]{
+			ComponentID: "Ctx@v1",
+			Attr:        "data-tb-id",
+			Instance:    func(p formParams) string { return p.ID },
+			Input:       func(formParams) string { return "" },
+		},
 		Ops: []htmlbind.Op[formParams]{
-			formOps.Static("<span>"),
+			formOps.Static("<span"),
+			formOps.BoundaryAttr(),
+			formOps.Static(">"),
 			formOps.TextCtx(func(ctx context.Context, _ formParams) string {
-				seen <- ctx.Err() != nil
+				ran, cancelled = true, ctx.Err() != nil
 				return "x"
 			}),
 			formOps.Static("</span>"),
@@ -213,7 +236,10 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 	cancel()
 	request := redrawRequest("Ctx@0001", "ctx-1", nil).WithContext(ctx)
 	options.Redraw(httptest.NewRecorder(), request, registry)
-	if !<-seen {
+	if !ran {
+		t.Fatal("the render never reached the context-taking op")
+	}
+	if !cancelled {
 		t.Fatal("the render did not see the request's cancellation")
 	}
 }

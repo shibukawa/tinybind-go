@@ -74,11 +74,10 @@ func render(t *testing.T, known delta.Manifest, p panel) delta.Delta {
 	return result
 }
 
-// panelID is what the chain leaf is numbered by. A chain member takes a
-// positional identity — it is the same member of the same chain whatever its
-// parameters say — while a component that names its own instance keeps the
-// author-written id, which is what the rows below assert.
-const panelID = "c0"
+// panelID is the panel's own name. A boundary naming its own instance keeps that
+// name wherever it renders, including as a chain member; only a component with
+// no name of its own is numbered by its chain position.
+const panelID = "panel"
 
 func find(ops []delta.Operation, id string) (delta.Operation, bool) {
 	for _, op := range ops {

@@ -1,7 +1,6 @@
 package htmlupdate_test
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -84,6 +83,30 @@ func redrawServerWith(t *testing.T, opts htmlupdate.Options) http.Handler {
 	})
 }
 
+// redrawBody decodes the response every update path now returns: the region's
+// own fragment, a hole where each nested boundary sits, the head it contributes,
+// and the manifest entry a redraw used to leave stale.
+func redrawBody(t *testing.T, response *http.Response) deltaBody {
+	t.Helper()
+	var body deltaBody
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode redraw: %v", err)
+	}
+	return body
+}
+
+// redrawHTML is the markup of the operation targeting instance.
+func redrawHTML(t *testing.T, response *http.Response, instance string) string {
+	t.Helper()
+	for _, operation := range redrawBody(t, response).Operations {
+		if operation.ID == instance {
+			return operation.HTML
+		}
+	}
+	t.Fatalf("no operation targets %q", instance)
+	return ""
+}
+
 func TestRedrawRendersOneComponent(t *testing.T) {
 	request := redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}})
 	recorder := httptest.NewRecorder()
@@ -92,7 +115,10 @@ func TestRedrawRendersOneComponent(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
-	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+	// The body is the shape every other update path returns, so one client
+	// applies them all. It was a bare fragment with its head in a header, which
+	// made the redraw the only response in this package with a form of its own.
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 		t.Fatalf("content type = %q", got)
 	}
 	// The content is usually per-user, so no shared cache may hold it. It is
@@ -101,11 +127,20 @@ func TestRedrawRendersOneComponent(t *testing.T) {
 	if got := response.Header.Get("Cache-Control"); got != htmlupdate.DefaultRedrawCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	body := read(t, response)
+	body := redrawBody(t, response)
+	if len(body.Operations) != 1 || body.Operations[0].ID != "card-1" {
+		t.Fatalf("want one operation naming the instance, got %+v", body.Operations)
+	}
 	// The replacement keeps the instance id, or the region stops being
 	// addressable after the first redraw.
-	if !strings.Contains(body, `id="card-1"`) || !strings.Contains(body, ">2<") {
-		t.Fatalf("unexpected markup %q", body)
+	if markup := body.Operations[0].HTML; !strings.Contains(markup, `id="card-1"`) || !strings.Contains(markup, ">2<") {
+		t.Fatalf("unexpected markup %q", markup)
+	}
+	// A reloadable component is an update boundary, so the client held a
+	// validator this replacement just made wrong. Returning the new one is what
+	// keeps the next navigation delta from re-sending a region already right.
+	if len(body.Manifest) != 1 || body.Manifest[0].ID != "card-1" || body.Manifest[0].Frame == "" {
+		t.Fatalf("a redraw must return the instance's new validator, got %+v", body.Manifest)
 	}
 }
 
@@ -339,36 +374,26 @@ func TestRedrawCarriesTheComponentHead(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
-	encoded := response.Header.Get("X-Tinybind-Head")
-	if encoded == "" {
-		t.Fatal("a component contributing head must say so")
+	// The head travels in the body now. It was packed as base64 of JSON in a
+	// header, and bounded at registration so a proxy could not drop it; a field
+	// in a body needs neither, and the redraw stops being the one response in
+	// this package with a shape of its own.
+	body := redrawBody(t, response)
+	if len(body.Head) != 1 || !strings.Contains(body.Head[0], "cards.style") {
+		t.Fatalf("a component contributing head must say so, got %+v", body.Head)
 	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatalf("head header is not decodable: %v", err)
-	}
-	var tags []string
-	if err := json.Unmarshal(raw, &tags); err != nil {
-		t.Fatalf("head header is not a tag list: %v", err)
-	}
-	if len(tags) != 1 || tags[0] != styledHead[0] {
-		t.Fatalf("head = %q, want the component's contribution", tags)
-	}
-	// The body stays the bare subtree: no envelope, so the endpoint is still
-	// what curl shows and a client parses what it already parsed.
-	body := recorder.Body.String()
-	if !strings.HasPrefix(strings.TrimSpace(body), "<span") {
-		t.Fatalf("body is not a bare fragment: %q", body)
+	if response.Header.Get("X-Tinybind-Head") != "" {
+		t.Fatal("the head header is gone; the body carries it")
 	}
 }
 
-// A component contributing no head produces the response it produced before the
-// field existed.
+// A component contributing nothing leaves the field out, so a project using no
+// component styles sees no head in its redraw responses at all.
 func TestRedrawWithoutHeadIsUnchanged(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	redrawServer(t).ServeHTTP(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}))
-	if got := recorder.Header().Get("X-Tinybind-Head"); got != "" {
-		t.Fatalf("head header = %q, want none", got)
+	options.Redraw(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
+	if strings.Contains(recorder.Body.String(), `"head"`) {
+		t.Fatalf("body carries an empty head field: %s", recorder.Body.String())
 	}
 }
 
@@ -400,28 +425,11 @@ func TestRegistryPublishesWhatARedrawRequires(t *testing.T) {
 	}
 }
 
-// An oversized head is a fact about the templates rather than about a request,
-// so it is discovered at startup instead of by a proxy dropping the header in
-// production.
-func TestOversizedHeadIsRefusedAtRegistration(t *testing.T) {
-	huge := make([]string, 0, 64)
-	for i := 0; i < 64; i++ {
-		huge = append(huge, `<link rel="stylesheet" href="/public/generated/`+strings.Repeat("x", 60)+strconv.Itoa(i)+`.css">`)
-	}
-	err := (&htmlupdate.Registry{}).Register(htmlupdate.Reloadable{
-		KindID: "Huge@000000",
-		Head:   huge,
-		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
-			return htmlbind.Fragment{}, nil
-		},
-	})
-	if err == nil {
-		t.Fatal("an oversized head must be refused while a caller can still act on it")
-	}
-	if !strings.Contains(err.Error(), "RequiredHead") {
-		t.Fatalf("the failure must name the way out, got %v", err)
-	}
-}
+// The head used to be bounded at registration, because it travelled in a header
+// and a proxy could drop an oversized one in production with nothing to look at.
+// It travels in the body now, so there is no bound and nothing to refuse.
+// Registry.RequiredHead is unaffected and is still what a deployment puts in its
+// document shell, which is the only way nothing is fetched mid-swap.
 
 // The token reaches this package by two channels because a browser has two: the
 // runtime sends a header on everything it fetches, and a form submitted without
@@ -529,14 +537,14 @@ func TestRedrawAnswersAtThePageURL(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
-	body := read(t, response)
-	if !strings.Contains(body, `id="card-1"`) {
-		t.Fatalf("want the instance's own subtree, got %q", body)
+	markup := redrawHTML(t, response, "card-1")
+	if !strings.Contains(markup, `id="card-1"`) {
+		t.Fatalf("want the instance's own subtree, got %q", markup)
 	}
-	// The bare subtree and nothing else: no page markup leaked in from the
-	// handler this redraw was answered inside.
-	if strings.Contains(body, "<!doctype") {
-		t.Fatalf("the page was rendered alongside the redraw: %q", body)
+	// The region's own fragment and nothing else: no page markup leaked in from
+	// the handler this redraw was answered inside.
+	if strings.Contains(markup, "<!doctype") {
+		t.Fatalf("the page was rendered alongside the redraw: %q", markup)
 	}
 }
 

@@ -39,6 +39,7 @@ sections:
     why: a reloadable component became an update boundary on 2026-08-08, so the client now holds a validator the page render produced and the redraw just made stale; comparing against it makes the next navigation delta re-send the region and replace DOM the redraw had already put right
     rule_it_applies: rule:delta-consistency-model document_validator invalidation, at instance scope rather than document scope
     until: requirement:component-redraw-endpoint json_body lets the redraw response carry the new validator, at which point the client stores it instead of dropping it
+    superseded: 2026-08-08; that body shipped, so a client stores the returned entry and this obligation is gone
   conditional_requests_belong_to_the_browser:
     obligation: a client never sets If-None-Match itself; it issues an ordinary fetch and lets the browser revalidate under the response's own cache policy
     why: the browser reconstructs the full 200 from its store, so head, live, and manifest always reach the client; a client-issued conditional gets a bare 304 and loses all three
