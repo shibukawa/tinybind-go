@@ -558,13 +558,13 @@ type deltaInstance struct {
 // It always sets Vary, because a cache that served a delta body to a document
 // request would hand a browser a page of JSON. The caller keeps every other
 // response concern, as elsewhere in this module.
-func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
+func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
 	w.Header().Add("Vary", o.renderHeader())
 	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
 	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeNavigation {
-		return renderDelta(w, r, o, negotiated, wrappers, leaf)
+		return renderDelta(w, r, o, negotiated, wrappers, leaf, options)
 	}
 	// This entry buffers, so it cannot hold a delivery stream open. A live
 	// request reaching it is answered with the document, which is the same
@@ -574,7 +574,7 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	// The document render collects so every boundary carries its instance
 	// attribute; without them a later delta could not find its targets.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
+	_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 	return err
 }
 
@@ -615,9 +615,9 @@ func (o Options) markLive(w http.ResponseWriter, wrappers []htmlbind.Wrapper, le
 	}
 }
 
-func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
+func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options []htmlbind.Option) error {
 	sequences := o.wantsSequences(r)
-	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
+	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...)
 	if err != nil {
 		// Nothing has been written yet, so the caller can still choose a status
 		// and serve an ordinary error page.

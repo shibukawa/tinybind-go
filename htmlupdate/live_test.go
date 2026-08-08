@@ -207,7 +207,7 @@ func TestLiveStreamCarriesDeliveriesWithoutRestatingTheManifest(t *testing.T) {
 func TestRetryTerminatorNamesAHealthyClose(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	stream := options.OpenLiveStream(recorder, nil)
-	stream.Replace("c1", `<main id="c1">now</main>`, "")
+	stream.Replace("c1", `<main id="c1">now</main>`, htmlupdate.ManifestEntry{Frame: ""})
 	if err := stream.Retry(2 * time.Second); err != nil {
 		t.Fatal(err)
 	}

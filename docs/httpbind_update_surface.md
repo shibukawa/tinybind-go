@@ -50,6 +50,12 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
+Every render entry takes the options — `Render`, `RenderStream`, `RenderStreamAsync`, `RenderLiveStream` — so pass them here too:
+
+```go
+err := update.Render(w, r, wrappers, leaf, renderOptions(r)...)
+```
+
 `Render` buffers. For a page with `await` boundaries, use `RenderStreamAsync` so a slow boundary delays only itself:
 
 ```go
@@ -227,6 +233,8 @@ An update that could not be produced answers `application/problem+json`:
 | `X-Tinybind-Sequences` | request | this client can walk a sequence tree |
 | `X-Tinybind-Sequence-Address` | request | which sequence to serve |
 | `X-Tinybind-Live` | response | this composition owns a live boundary; open a live request |
+
+Every operation record on a stream carries the whole manifest entry — `frame`, `children`, and `parent`. Store all three: `children` is what keeps a list from looking reordered on the request after next, and `parent` is what lets a removal be attributed to the boundary that reports the survivors instead of falling back to replacing the outermost one.
 
 The prefix is `Options.HeaderPrefix`. Everything composes from it, so renaming it needs no rebuilt runtime.
 

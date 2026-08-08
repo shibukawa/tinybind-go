@@ -97,6 +97,13 @@ structural_operations:
     fourth_gap_found_with_it: an op record carried the frame validator and not the children one, so a client rebuilding its manifest from a stream returned half of what the next request compares against and every list looked reordered
     verified: TestStreamedNavigationCarriesTheChildrenOperation, TestLiveDeliveryCarriesTheChildrenOperation, TestStreamedRenderDoesNotEmptyTheList
     reading: the buffered path copied Kind because it copies the operation; the streamed paths reconstructed one from its parts, and a reconstruction is where a new kind goes missing
+    then_the_same_shape_again:
+      reported: the same reporter, immediately after, on the field the first fix added
+      what: an op record carried the frame and the children digest and not the parent, where a manifest entry has all three
+      cost: disappeared reads the known parent, so a client rebuilt from a stream could not attribute a removal and fell back to replacing the outermost boundary — expensive in exactly the case a children operation exists to make cheap
+      fixed: every op record carries the whole entry, through a ManifestEntry value rather than a growing parameter list, so the next field added cannot be forgotten at one of four call sites
+      verified: TestStreamRecordsCarryTheWholeManifestEntry and TestAShrinkingListStaysAChildrenOperation
+      reading: three rounds of the same defect, each one field of a value that was being passed apart; the fix that holds is passing the value
 source:
   - owner scoping decision 2026-08-08
   - downstream framework partial transfer report 2026-08-08

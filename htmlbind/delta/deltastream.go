@@ -21,10 +21,17 @@ type DeltaRecord struct {
 	Operation *Operation
 	// Frame is the validator of the boundary Operation names.
 	Frame string
-	// Children digests that boundary's nested boundary ids, in order. Without it
-	// a client rebuilding its manifest from a stream holds only half of what the
-	// next request is compared against, and every list looks reordered.
+	// Children digests that boundary's nested boundary ids, in order, and Parent
+	// names the boundary enclosing it.
+	//
+	// A manifest entry has three fields beside its id, and a client rebuilding
+	// one from a stream must be able to return all three. Without Children every
+	// list looks reordered on the request after next; without Parent a removal
+	// cannot be attributed to the boundary that would report the survivors, so a
+	// shrinking list falls back to replacing the outermost boundary — expensive
+	// in exactly the case the children operation exists to make cheap.
 	Children string
+	Parent   string
 	// Completion is an await boundary that settled, addressed by the
 	// placeholder written during the initial pass rather than by an instance id.
 	Completion *htmlbind.Content
@@ -49,17 +56,19 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 		// inside a region the client has already installed.
 		rendered := func() bool {
 			manifest := collect.manifest
-			frames := map[string]string{}
-			children := map[string]string{}
+			entries := map[string]Instance{}
 			for _, instance := range manifest.Instances {
-				frames[instance.ID] = instance.FrameValidator
-				children[instance.ID] = instance.ChildrenValidator
+				entries[instance.ID] = instance
 			}
 			sent := map[string]bool{}
 			for _, operation := range operations(manifest, known, collect.contents, collect.children, collect.sequences, collect.values) {
 				op := operation
 				sent[op.InstanceID] = true
-				record := DeltaRecord{Operation: &op, Frame: frames[op.InstanceID], Children: children[op.InstanceID]}
+				entry := entries[op.InstanceID]
+				record := DeltaRecord{
+					Operation: &op, Frame: entry.FrameValidator,
+					Children: entry.ChildrenValidator, Parent: entry.ParentID,
+				}
 				if !yield(record, nil) {
 					return false
 				}
@@ -71,7 +80,7 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 				op := Operation{InstanceID: instance.ID}
 				record := DeltaRecord{
 					Operation: &op, Frame: instance.FrameValidator,
-					Children: instance.ChildrenValidator,
+					Children: instance.ChildrenValidator, Parent: instance.ParentID,
 				}
 				if !yield(record, nil) {
 					return false

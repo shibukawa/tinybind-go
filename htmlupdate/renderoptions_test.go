@@ -243,3 +243,38 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 		t.Fatal("the render did not see the request's cancellation")
 	}
 }
+
+// The primary page entry took no render options at all, so a page containing an
+// unsafe form could not render through it — the same failure the redraw and
+// action entries had, on the path every ordinary request reaches first. It was
+// missed on the earlier sweep because these entries render through the delta
+// package rather than by calling htmlbind directly.
+func TestEveryRenderEntryTakesRenderOptions(t *testing.T) {
+	page := htmlbind.Bind(formPlan, formParams{ID: "signup"})
+	entries := map[string]func(w http.ResponseWriter, r *http.Request, options ...htmlbind.Option) error{
+		"Render": func(w http.ResponseWriter, r *http.Request, o ...htmlbind.Option) error {
+			return options.Render(w, r, nil, page, o...)
+		},
+		"RenderStream": func(w http.ResponseWriter, r *http.Request, o ...htmlbind.Option) error {
+			return options.RenderStream(w, r, nil, page, o...)
+		},
+		"RenderStreamAsync": func(w http.ResponseWriter, r *http.Request, o ...htmlbind.Option) error {
+			return options.RenderStreamAsync(r.Context(), w, r, nil, page, o...)
+		},
+	}
+	for name, entry := range entries {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/signup", nil)
+			if err := entry(httptest.NewRecorder(), request); err == nil {
+				t.Fatal("a form with no token should not render")
+			}
+			recorder := httptest.NewRecorder()
+			if err := entry(recorder, request, htmlbind.WithCSRFToken("t0ken")); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(recorder.Body.String(), `value="t0ken"`) {
+				t.Fatalf("the token did not reach the render: %s", recorder.Body.String())
+			}
+		})
+	}
+}
