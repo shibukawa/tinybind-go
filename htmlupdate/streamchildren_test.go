@@ -82,6 +82,7 @@ type streamRecord struct {
 	Boundaries []string `json:"boundaries"`
 	Frame      string   `json:"frame"`
 	Children   string   `json:"children"`
+	Parent     string   `json:"parent"`
 }
 
 func childRecords(t *testing.T, body string) []streamRecord {
@@ -135,7 +136,8 @@ func listRequest(t *testing.T, mode string, serve func(http.ResponseWriter, *htt
 	for _, record := range ask(delta.Manifest{}, 3) {
 		if record.Record == "op" {
 			known.Instances = append(known.Instances, delta.Instance{
-				ID: record.ID, FrameValidator: record.Frame, ChildrenValidator: record.Children,
+				ID: record.ID, FrameValidator: record.Frame,
+				ChildrenValidator: record.Children, ParentID: record.Parent,
 			})
 		}
 	}
@@ -201,5 +203,68 @@ func TestStreamedRenderDoesNotEmptyTheList(t *testing.T) {
 	}
 	if list.Kind != delta.OpChildren {
 		t.Fatalf("list record kind = %q, want %q", list.Kind, delta.OpChildren)
+	}
+}
+
+// A manifest entry has three fields beside its id, and a client rebuilding one
+// from a stream must be able to return all three. The children digest arrived
+// first; without the parent, a removal cannot be attributed to the boundary that
+// would report the survivors, so a shrinking list falls back to replacing the
+// outermost boundary — expensive in exactly the case the children operation
+// exists to make cheap.
+func TestStreamRecordsCarryTheWholeManifestEntry(t *testing.T) {
+	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
+		return options.RenderStreamAsync(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+	})
+	row, ok := findRecord(records, "row-3")
+	if !ok {
+		t.Fatalf("the new row was not sent: %+v", records)
+	}
+	if row.Parent != "the-list" {
+		t.Fatalf("row record names parent %q, want the-list: %+v", row.Parent, row)
+	}
+	list, _ := findRecord(records, "the-list")
+	if list.Children == "" {
+		t.Fatalf("the list record carries no children validator: %+v", list)
+	}
+}
+
+// A shrinking list is what the parent field buys. Rebuilt from a stream, the
+// client's manifest attributes the removal to the list, so the response is the
+// list's new order rather than a replacement of the outermost boundary.
+func TestAShrinkingListStaysAChildrenOperation(t *testing.T) {
+	ask := func(known delta.Manifest, rows int) []streamRecord {
+		request := httptest.NewRequest(http.MethodGet, "/feed", nil)
+		request.Header.Set("X-Tinybind-Render", "navigation")
+		request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+		if len(known.Instances) > 0 {
+			request.Header.Set("X-Tinybind-Manifest", htmlupdate.EncodeManifest(known))
+		}
+		recorder := httptest.NewRecorder()
+		err := options.RenderStreamAsync(request.Context(), recorder, request, nil,
+			htmlbind.Bind(listPlan, listParams{ID: "the-list", Rows: rowsUpTo(rows)}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return childRecords(t, recorder.Body.String())
+	}
+	var known delta.Manifest
+	for _, record := range ask(delta.Manifest{}, 3) {
+		if record.Record == "op" {
+			known.Instances = append(known.Instances, delta.Instance{
+				ID: record.ID, FrameValidator: record.Frame,
+				ChildrenValidator: record.Children, ParentID: record.Parent,
+			})
+		}
+	}
+	list, ok := findRecord(ask(known, 2), "the-list")
+	if !ok {
+		t.Fatal("the list said nothing about the removal")
+	}
+	if list.Kind != delta.OpChildren {
+		t.Fatalf("a removal fell back to %q; the parent field is what keeps it a children operation", list.Kind)
+	}
+	if strings.Join(list.Boundaries, ",") != "row-0,row-1" {
+		t.Fatalf("boundaries = %v", list.Boundaries)
 	}
 }

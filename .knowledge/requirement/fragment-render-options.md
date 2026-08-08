@@ -20,6 +20,14 @@ as_built:
     - TestRedrawStillNeutralisesAHostileScheme, so nothing about this widens the allowlist
     - TestRedrawReachesTheCacheStore and TestRedrawRendersUnderTheRequestContext
   blast_radius: three test call sites and two documentation examples, both languages; go build, go vet, gofmt and the whole test suite are clean
+  the_sweep_was_incomplete:
+    found: downstream framework report 2026-08-09, which asked why Options.Render still took none
+    missed: Options.Render and Options.RenderStream, four sites passing renderOptions(nil)
+    why_the_first_sweep_missed_them: it grepped for htmlbind.Render and htmlbind.RenderChain, and these two render through delta.CollectChain and delta.RenderDelta instead
+    severity: the worst of the set, since Options.Render is the entry an ordinary page reaches first, so a page containing an unsafe form could not render at all
+    fixed: 2026-08-08; every entry takes the variadic and no renderOptions(nil) site remains
+    verified: TestEveryRenderEntryTakesRenderOptions, a subtest per entry asserting the bare render fails and the token reaches the markup
+    reading: sweeping by the call being made rather than by the surface being fixed leaves the sites that reach it through another package
   found_while_building:
     version_echo_reason_expired:
       what: decision:caller-owned-wire-versioning as_built says the action and redraw paths echo a bare mode name because they take no request
