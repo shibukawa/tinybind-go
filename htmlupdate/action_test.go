@@ -45,12 +45,12 @@ var styledPlan = &htmlbind.Plan[badgeParams]{
 // action response had never carried one.
 func TestActionResponseCarriesHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	err := options.WriteUpdate(recorder,
+	err := options.WriteUpdate(recorder, actionRequest(), []htmlupdate.Update{
 		htmlupdate.Replace("cart", htmlbind.Bind(styledPlan, badgeParams{ID: "cart", Count: 1})),
 		// A second region declaring the same sheet emits one tag, which is the
 		// htmlbind.MergeHead rule applied across the written set.
 		htmlupdate.Replace("mini", htmlbind.Bind(styledPlan, badgeParams{ID: "mini", Count: 1})),
-	)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +72,8 @@ func TestActionResponseCarriesHead(t *testing.T) {
 // component styles gets the response it got before.
 func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	if err := options.WriteUpdate(recorder,
-		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))); err != nil {
+	if err := options.WriteUpdate(recorder, actionRequest(), []htmlupdate.Update{
+		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(recorder.Body.String(), `"head"`) {
@@ -86,14 +86,20 @@ func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 func api(count int, status int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if options.WantsUpdate(r) {
-			_ = options.WriteUpdateStatus(w, status,
-				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count})))
+			_ = options.WriteUpdateStatus(w, r, status, []htmlupdate.Update{
+				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count}))})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 	})
+}
+
+// actionRequest is the request an action entry now takes. The two tests that
+// drive the writer directly have no handler around them, so they build one.
+func actionRequest() *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/cart/add", nil)
 }
 
 func post(t *testing.T, handler http.Handler, headers map[string]string) *http.Response {
@@ -128,9 +134,10 @@ func TestActionWithoutTheHeaderStaysOrdinary(t *testing.T) {
 // One round trip performs the action and returns the regions it changed.
 func TestActionReturnsTheChangedRegions(t *testing.T) {
 	response := post(t, api(3, http.StatusOK), actionHeader)
-	// The echo names the served mode and no version. WriteUpdate takes no
-	// request, so it has no client version to echo, and inventing one is what
-	// this package stopped doing.
+	// The echo names the served mode and no version. The action path could read
+	// the claimed version now that it takes the request, and deliberately does
+	// not: the version is the caller's field, and echoing it here would be a
+	// wire change this round did not ask for.
 	if got := response.Header.Get("X-Tinybind-Render"); got != "action" {
 		t.Fatalf("render header = %q", got)
 	}

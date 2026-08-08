@@ -19,7 +19,14 @@ fields:
       html_template: safe HTML fragment for insertions and replacements
       retained: descendant instance IDs whose existing DOM the client moves into holes in html_template
   directives: navigate, reload, or in-band error once the response has committed
+boundary_list:
+  added: 2026-08-08 by requirement:boundary-decomposed-render
+  what: one record per fragment naming the reloadable boundary ids inside it, declared for that fragment's scope
+  why: a hole with no fragment in the response has to read as a retain rather than as a truncation, and nothing else in the body distinguishes them
+  and: it separates the structure from the selection, so a caller may omit fragments without the response becoming ambiguous
+  static_marker: an entry may report that its boundary's subtree is entirely static, which is settled at generation time and keyed by the build identity rather than by a validator
 retain_holes:
+  now_the_ordinary_shape: 2026-08-08; a decomposed response carries placeholders at every nested boundary rather than only where an optimization applies
   purpose: replace a changed ancestor without resending or recreating unchanged descendant boundaries
   mechanism: the fragment carries an empty placeholder per retained instance; the client moves the live node in
   benefit: preserves rule:preserved-client-subtree state that wholesale ancestor replacement would destroy

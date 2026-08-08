@@ -1,6 +1,7 @@
 package htmlupdate
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -94,9 +95,69 @@ func (f Failure) Unwrap() error { return f.Err }
 
 // WriteFailure writes the response this package writes when no caller took
 // over. It is exported so a caller that only wants to observe a failure can log
-// it and delegate the response, rather than reimplementing four status codes.
+// it and delegate the response, rather than reimplementing five status codes.
+//
+// The body is RFC 9457 problem details, which is this module's documented error
+// format everywhere else; the update endpoints were the only paths writing
+// plain text. The media type is what tells the two apart on the wire:
+// application/json is an update to apply, including a non-2xx one, and
+// application/problem+json is a request that produced no update at all.
+//
+// The status still directs. A client's rule — any non-2xx falls back to an
+// ordinary navigation — is unchanged, so a client that cannot read the body
+// still lands correctly; the body adds diagnosis rather than direction.
 func WriteFailure(w http.ResponseWriter, failure Failure) {
-	http.Error(w, failure.Message, failure.Status)
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(failure.Status)
+	_, _ = w.Write(failure.problemJSON())
+}
+
+// problemBody is the RFC 9457 shape, matching what httpbind.WriteError emits so
+// one error format reaches a client whichever entry refused the request.
+type problemBody struct {
+	Type   string        `json:"type"`
+	Title  string        `json:"title"`
+	Status int           `json:"status"`
+	Detail string        `json:"detail"`
+	Code   string        `json:"code"`
+	Errors []problemItem `json:"errors,omitempty"`
+}
+
+type problemItem struct {
+	Field    string `json:"field"`
+	Location string `json:"location"`
+	Message  string `json:"message"`
+}
+
+func (f Failure) problemJSON() []byte {
+	body := problemBody{
+		Type:   "about:blank",
+		Title:  http.StatusText(f.Status),
+		Status: f.Status,
+		// Message is a constant this package chose, never anything the request
+		// supplied, so it needs no blanking at 5xx the way a wrapped cause would.
+		// Err stays out entirely: it may name internal detail and belongs in the
+		// caller's log through the failure value, not in a response.
+		Detail: f.Message,
+		// The kind is the fact a caller branches on, so it travels as the code
+		// rather than being left for someone to infer from the status.
+		Code: f.Kind.String(),
+	}
+	var refused *QueryError
+	if errors.As(f.Err, &refused) {
+		body.Errors = []problemItem{{
+			Field:    refused.Parameter,
+			Location: "query",
+			Message:  refused.Reason,
+		}}
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		// Every field is a string or an int, so this cannot happen; falling back
+		// to the status alone keeps a refusal a refusal if it ever does.
+		return []byte(`{"type":"about:blank","status":` + strconv.Itoa(f.Status) + `}`)
+	}
+	return encoded
 }
 
 // Validate reports every option this package cannot use, so a caller running a

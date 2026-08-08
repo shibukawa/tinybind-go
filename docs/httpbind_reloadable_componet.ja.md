@@ -264,6 +264,21 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
 
 `Redraw` は redraw でないリクエストに対して何も書かずに `false` を返すので、同じハンドラがそのままページを返します。別ビルドが描画したページからのリクエストもその一つです。ページ URL では、古い redraw への正しい答えはそのページであり、それはどのみちこれから描画するものなので、拒否してからリロードするのではなく1往復で済みます。
 
+`Redraw` とアクション系のエントリは `htmlbind.Option` を受け取ります。ページのレンダリングに渡しているものと同じものを渡してください。渡さないと、そのコンポーネントはページの中と、ページを置き換える応答とで別の描画になります。設定した URL スキーム allowlist が届かないのでアプリ自身のスキームがブロックマーカーに潰れ、キャッシュ付きコンポーネントは毎回本体を実行し、そして unsafe form を含むコンポーネントは**そもそも描画されません** — CSRF フィールドにトークンが必要で、レンダリングの失敗は 500 になります。
+
+```go
+render := []htmlbind.Option{
+    htmlbind.WithCSRFToken(session.CSRFToken(r)),
+    htmlbind.WithCache(store),
+    htmlbind.WithURLSchemes("http", "https", "myapp"),
+}
+if options.Redraw(w, r, registry, render...) {
+    return
+}
+```
+
+境界プレフィックスとビルド識別子は `Options` から供給されるので渡す必要がありません。リクエスト自身のコンテキストは渡したオプションより先に入るので、キャンセルされたリクエストは外部関数が始めた処理を止めます。
+
 ページ応答と redraw 応答が URL を共有することになるため、`Redraw` はどちらを返す場合でも render・build・kind・instance の各ヘッダに `Vary` を宣言します。kind と instance が無いと、1ページ上の2つの component の redraw が単一のキャッシュエントリになり、どちらにも他方のマークアップが返りうるからです。
 
 予約された redraw パスはもうありません。`RedrawHandler`、`RedrawPath`、`Mount` への登録は削除しました。宛先を利用者が選べないエンドポイントこそが欠陥だったのであり、2つ目のアドレッシングを生かしておくことは1つの契約に2つの形を公開することを意味するからです。
@@ -335,10 +350,10 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
         return
     }
     if options.WantsUpdate(r) {
-        _ = options.WriteUpdate(w,
+        _ = options.WriteUpdate(w, r, []htmlupdate.Update{
             htmlupdate.Replace("cart", CartBadge(CartBadgeParams{ID: "cart", Count: count})),
             htmlupdate.Replace("row-"+itemID, ItemRow(ItemRowParams{ID: "row-" + itemID, Item: item})),
-        )
+        }, htmlbind.WithCSRFToken(session.CSRFToken(r)))
         return
     }
     httpbind.Write(w, r, result) // そのエンドポイント本来の JSON

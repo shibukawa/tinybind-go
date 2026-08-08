@@ -51,6 +51,11 @@ representation:
 inlining:
   rule: a private component using no phase-dependent capability is expanded into its caller instead of getting its own plan
   phase_dependent: await boundary ownership, slot declaration, partial-update boundary, and component-output cache
+  phase_dependent_fifth:
+    added_by: requirement:structured-render-output, which makes a unit a component, so a component inlined into its caller stops being one
+    consequence: which components are units has to be decided rather than defaulted to all, because all of them would stop every private helper inlining and make the ordinary render path pay for the structured one
+    settled_2026_08_08: the unit set is an @cache component, a reloadable one, a component called as the root of a for body, and a chain member; the first two are already phase-dependent here, and the last two are derived over the call graph like Assets and Vary rather than declared
+    net_new_pins: the loop-top component alone, since the other three were already excluded from inlining or were never candidates
   preserved: requirement:head-merging contributions move to the caller contribution set; hoisting is generation time, so inlining does not lose them
   blocked: self-recursive or mutually recursive components keep their own plan
   diagnostics: inlined steps retain their original declaration positions
@@ -68,6 +73,12 @@ constraints_preserved:
   no_virtual_dom: nothing materializes a whole document; only head metadata is collected before streaming
   static_coalescing: adjacent static output stays merged in the plan, after requirement:static-whitespace-normalization has rewritten it
   streaming: body bytes leave as the coordinator walks, not after a build step
+second_consumer_asked_for:
+  what: requirement:structured-render-output, which wants the plan's static and dynamic steps yielded separately rather than concatenated by the coordinator
+  today: the coordinator is the only consumer, and execOps writes both kinds into one stream before a caller sees anything
+  what_the_plan_already_has: a For body and an If branch are each their own typed op list, so the shared-skeleton form that request needs is already the emitted shape
+  what_it_does_not_have: a per-component identity, and statics that align with element boundaries rather than ending mid-tag wherever an attribute op takes over
+  reading: the plan was built to serve one walker, and serving a second one is emitter work rather than a new field on this structure
 tradeoff:
   cost: one indirection per step versus straight-line generated writes
   gain: slots, async, cross-file reuse, and head merging share one execution model instead of four special cases

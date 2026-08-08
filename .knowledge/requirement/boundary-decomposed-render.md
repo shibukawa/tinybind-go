@@ -1,0 +1,144 @@
+---
+id: requirement:boundary-decomposed-render
+type: requirement
+title: Boundary Decomposed Render
+---
+Return one render as its per-boundary HTML fragments plus the boundary tree that describes them, so a caller chooses which fragments to transfer instead of receiving one assembled subtree.
+
+```yaml
+priority: should
+source:
+  - owner scoping decision 2026-08-08
+  - downstream framework partial transfer report 2026-08-08
+  - data:component-delta-response retain_holes
+review_gate: proposed
+position:
+  what_the_module_owes: HTML fragments, and the metadata that says how they compose
+  what_it_does_not: the wire format, the live transport, and which fragments are worth sending, all of which stay with the caller per decision:caller-owned-wire-versioning and decision:client-runtime-ownership
+  reading: the module decomposes; the caller selects
+shape:
+  records: an ordered list mixing two kinds
+  boundary_list: the reloadable boundary ids appearing inside one fragment, declared for that fragment's scope
+  fragment: one boundary's HTML with its id
+  holes: a fragment carries an empty placeholder element per nested boundary, carrying that boundary's id, so the parent is structurally complete without its children
+  nesting: a child fragment declares its own boundary list, so the tree is expressed by ordinary nesting rather than by a separate index
+  ordering: an ancestor precedes its descendants, which lets a client install a parent and fill each hole as its fragment arrives, matching requirement:streaming-delta-response structural_first
+the_list_is_not_redundant:
+  apparent: the ids are readable from the placeholders in the parent's HTML, so a separate list looks like duplication
+  two_kinds_of_hole:
+    retain: the client already holds that node and moves its live DOM in, preserving rule:preserved-client-subtree state
+    install: a fragment for it arrives in this response and replaces it
+  what_the_list_decides: a hole with no fragment is a retain rather than a truncation, which nothing else in the response can say
+  and_it_carries_the_selection: the list declares the complete structure while the fragments sent declare the selection, which is what lets a caller omit fragments without the response becoming ambiguous
+two_tiers:
+  decided: 2026-08-08 by the owner
+  boundary_holes:
+    members: reloadable, @cache, and chain members
+    buys: DOM retain and independent addressing
+    needs: one root element and an id, which reloadable and chain members already guarantee and which decision:cache-component-declaration gained for this
+  slot_spans:
+    what: every dynamic op's output inside one fragment — a value insertion, a conditional, an attribute — reported as its own span so the fragment's static parts separate from its variable ones
+    buys: transfer only; the client reassembles and reparses, so application is unchanged
+    needs: an ordinal position in op order for a slot, and nothing else — no element, no comment marker, and no id
+    the_sequence_itself: the static sequence a fragment's slots interleave with is identified by a content address, so an ordinal names a slot within a sequence and the address names the sequence
+  independence: the upper tier preserves state and the lower tier removes bytes, and neither depends on the other
+entry_shape:
+  decided: 2026-08-08, the decomposing entry yields records as an iterator sequence rather than collecting them
+  matches: the RenderAsync entry of api:render-html-chain, so the decomposed path has the same two-entry shape the byte path has
+  forced_by: a fragment may contain an await boundary, so the fragments of one render do not all exist at one moment
+  what_collecting_would_cost: requirement:suspense-html-streaming, since nothing could be sent until the slowest boundary settled
+static_sequence_delivery:
+  decided: 2026-08-08, fetched by content address rather than sent inline
+  unit: one sequence per fragment shape, not per delivery, per chunk, or per row; a list of five hundred rows shares the sequence a list of five uses
+  three_lifetimes:
+    per_template: the static sequence — public and immutable, valid until a template changes
+    per_request: the document or the decomposed response — private, one chunked response, ended by rule:stream-termination-marker
+    per_subscription: the live mode — private, chunked, open for the subscription's lifetime
+    argument: riding a static sequence on a request response makes it inherit that response's cache policy and lifetime, both of which are wrong for it
+  it_is_the_only_shareable_thing_here: a static sequence derives from the template rather than from a request, so it is the only response on this wire that can be public and cached at an edge; every other one is private
+  cache_policy: public and immutable, keyed by the sequence address, so a deploy invalidates by producing new addresses and no explicit invalidation exists
+  constraint: a sequence request is a render mode on a URL the caller chooses, never a path this package mounts; requirement:caller-addressed-redraw removed the last mounted registry route and adding one back would restore what it deleted
+  no_client_held_address_list:
+    decided: 2026-08-08 by the owner; a client never sends the sequence addresses it holds
+    why_it_is_unnecessary: the choice between an assembled fragment and its spans is a heuristic rather than a contract, because both branches are correct — spans a client cannot resolve cost it one fetch, and an assembled fragment where spans would have done costs a few bytes
+    what_the_server_already_knows: the returned data:component-update-manifest distinguishes a fresh navigation from a same-page re-render by which chain validators match, so new-versus-same is derived rather than declared
+    avoided: the request-size cost decision:manifest-state-ownership already carries for validators, doubled for a second per-instance list
+    caller_policy: a fresh navigation may send assembled and omit the layout the outgoing page shared; a same-page re-render may send spans and trim further; both are the caller's to tune
+    no_waterfall_moves: the property that a first paint waits for nothing is now the caller's to hold, by choosing assembled for a cold client, rather than the module's to guarantee
+  sequence_identity:
+    proposed: the plan fingerprint plus a selector for the instruction path taken, rather than a digest of the statics
+    why_not_a_digest: the statics depend on which branches ran, so a digest would be computed per render, and decision:cache-key-derivation states this module hashes nothing in the runtime
+    properties_kept: stable across renders taking the same path, changed by a template edit through the plan fingerprint, and cheap because the renderer already knows which branch it took
+    accepted_waste: two paths whose statics happen to be identical get two addresses, which costs a client one redundant sequence and nothing in correctness
+    not_a_leak: a path selector reveals which branch ran, and the client receives that branch's span values in the same response, so it learns nothing more
+  a_sequence_is_not_a_flat_list:
+    finding: a fragment containing a for loop has statics of the form prefix, body repeated, suffix, and the repetition count is data
+    consequence_if_flat: a five-row list and a six-row list would produce different addresses, which defeats the sharing the sequence exists for
+    shape: a sequence carries a repeat node referencing a sub-sequence, so a loop body is its own address and the spans group per iteration
+    why_the_reporter_had_this: their original sketch gave a row its own template identity with one value list per item, for exactly this reason
+    keys_not_needed: for transfer the groups travel in order, so decision:list-item-key is not involved; a key decides DOM pairing, which a reparse does not do
+slot_spans_are_cheap:
+  mechanism: a plan is an ordered op list and each op writes one contiguous range, so recording each non-static op's start and end makes the statics the gaps between them
+  identity: a slot is named by its position in op order, because a fixed op path cannot reorder or omit one
+  no_emitter_change: this is a renderer recording ranges, not an emitter restructuring what it emits; the earlier estimate that every attribute op had to grow a static frame applied to splitting for application, not for transfer
+  control_flow: an if or a for changes which ops run, so each distinct op path is its own static sequence, which is what a content address already keys
+the_reparse_dissolves_the_hard_parts:
+  reading: every difficulty recorded in requirement:structured-render-output came from splitting so a client could apply a value to the DOM; splitting only for transfer removes them
+  escaping: values travel already escaped, exactly as the module writes them today, because the client concatenates and reparses rather than assigning; a client needs no escaping knowledge at all and the requirement:url-attribute-scheme-safety check stays server-side by construction
+  optional_attribute: a slot is one whole attribute including its name and quotes, so an absent value is the empty string rather than a change of structure
+  boolean_attribute: the same, being either the attribute text or empty
+  mixed_attribute_value: one string, produced by the closure that already assembles it, so no double escaping arises
+  raw: unchanged, since the fragment is reparsed anyway
+  consequence: the reporter's original flat statics-and-dynamics sketch was right for transfer; the objection to it was an objection to splitting for application
+  what_it_does_not_give: the no-reparse property, so focus, selection, form state, media, and animations inside a fragment are still lost on replacement
+measurement_recovered:
+  correction: this concept first recorded that the reporter's threefold figure did not transfer, which was true of boundary decomposition alone and is false once slot spans are included
+  why: the reporter's projection assumed every value sent and the skeleton amortized to once per connection, which is exactly the slot-span shape
+  v1: send every slot value on every delivery and the static sequence once; omitting unchanged slots would need per-instance client state and a manifest for it, and the static parts dominate without it
+static_boundaries:
+  claim: a boundary whose whole subtree contains no dynamic op is knowable at generation time
+  how: the same call-graph walk that already computes HasAwaitBlock, HasLiveBlock, Assets, and Vary; Plan carries no such flag today
+  what_it_buys_over_a_validator:
+    validator: requires the client to have sent one and the server to digest the render, and omits only when they match
+    static: settled at build time, so it needs no digest and no client hint, and is keyed by the build identity alone
+  consequence: a static boundary is never transferred again under one build, on a same-page redraw or any other request
+  where_the_value_is: the larger the static subtree, the more the decomposition is worth, which is the owner's own reading of why this is the piece worth building
+not_a_new_mode:
+  decided: this is what the delta and redraw bodies become, not a fourth render mode
+  why: requirement:component-redraw-endpoint json_body already moves a redraw to the ops-and-head shape the navigation delta writes, and ops is already a list of kind, id, and html
+  what_is_added: the boundary list record, the retained placeholders data:component-delta-response already designs, and a static marker
+  what_it_avoids: a longer requirement:render-mode-negotiation table and one more branch in every caller
+what_it_does_not_reach:
+  application_half: a fragment is reassembled and reparsed, so focus, selection, form state, playing media, and animations inside it are still lost on replacement
+  the_reporter_s_ranking: the downstream named that half as the one a caller cannot approximate, so this answers the transfer half in full and defers the other
+  deferred_to: requirement:structured-render-output, which keeps its analysis and becomes a later stage of decision:dom-application-strategy
+what_it_retires_from_this_round:
+  - rule:dynamic-slot-kinds as an application contract, since a client assigns nothing; escaped values and a concatenation are all it handles
+  - client-side marker insertion and the post-parse addressing problem, since the client addresses no node
+  - the emitter changes for mixed attribute values, optional attributes, and per-attribute static frames, which the span recording makes unnecessary
+  kept_from_it: content-addressed static sequences and their fetch, which the slot-span tier needs in order to send the statics once
+  reading: what the full split costs is the ability to apply a value without reparsing; the transfer saving comes for far less
+constraints:
+  - a boundary renders exactly one root element, per decision:update-manifest-transport, which is what makes a placeholder expressible
+  - rule:template-context-safety is untouched, because every fragment is produced by the ordinary render path
+  - a caller that selects no fragments still receives a well-formed structure, since the boundary list stands alone
+acceptance:
+  - one render yields a fragment per boundary plus the tree that composes them
+  - a parent fragment carries a placeholder per nested boundary and is installable without them
+  - a hole with no fragment in the response is retained rather than emptied
+  - a boundary whose subtree is entirely static is identified without rendering it and omitted under an unchanged build
+  - a redraw and a navigation delta return the same decomposition, differing only in what each selected
+open_questions:
+  - whether the static flag is per boundary or per component, given a component may be a boundary in one composition and not in another
+  - whether a caller selecting fragments does so before or after they are rendered, since rendering is what a selection would avoid paying for
+  - whether the boundary list carries validators, or stays structure alone and leaves comparison to requirement:component-delta-rendering
+related:
+  - data:component-delta-response
+  - requirement:component-delta-rendering
+  - requirement:component-redraw-endpoint
+  - requirement:partial-update-boundaries
+  - requirement:structured-render-output
+  - decision:dom-application-strategy
+  - rule:preserved-client-subtree
+  - decision:partial-transfer-seams
+```

@@ -41,7 +41,21 @@ options:
 staging:
   1: whole replacement, plus rule:preserved-client-subtree islands and automatic focus, selection, and scroll restoration; delivered
   2: morphing on the replacement path, which removes the author marker for the common form case
+  2.5: boundary-decomposed transfer — requirement:boundary-decomposed-render, which returns a fragment per boundary plus the tree composing them, with a placeholder where each nested boundary sits
   3: static-dynamic split, which removes the heuristics entirely and shrinks payloads
+  where_2_5_sits:
+    added: 2026-08-08, by the owner scoping the partial-transfer round
+    changes: what is transferred, not how it is applied; each fragment is still installed by parsing, so stage 1's application cost is unchanged inside a boundary
+    reaches: retained descendants, which this concept's islands and stage 3 both wanted, and a statically-known boundary that is never transferred again under one build
+    does_not_reach: the no-reparse property, which is stage 3's whole point and the half the downstream ranked first
+  stage_three_server_half:
+    named: requirement:structured-render-output, asked for by the caller that would consume it, 2026-08-08
+    why_it_was_missing: this concept designed how a fragment is installed and named no module output to install from, so a reader concluded the split was undesigned rather than half-designed
+    kinds: rule:dynamic-slot-kinds, which is what keeps the escaping decisions on this side of the line
+    settled_2026_08_08: a unit is a component, a skeleton identity is a content address, and a unit is not an update boundary
+    loop_encoding_answered: this concept's open question about loop skeletons and their value sets resolves to one skeleton per row component and one value set per item, provided the row is written as a component call
+    first_delivery_answered: this concept's open question on how a skeleton is first delivered resolves to fetched by content address, per requirement:structured-render-output skeleton_delivery; a skeleton has a different lifetime and cache policy from the request that names it, and the assembled first delivery is what keeps the fetch off the critical path
+    first_build_answered: a client assembles the skeleton's string, inserts its own markers, and parses once, rather than constructing nodes; a post-parse address cannot be expressed by the server because the browser's parser decides the tree
   composability: each stage replaces the previous application mechanism; islands survive all three, because a third-party widget the server does not own cannot be patched by any of them
 form_controls: rule:form-state-reconciliation applies at every stage, because no application strategy can protect a control whose surrounding option set legitimately changed
 live_region_consequence:

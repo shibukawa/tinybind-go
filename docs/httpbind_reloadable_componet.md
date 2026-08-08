@@ -264,6 +264,21 @@ That placement is the point. Path protection is configured by path pattern, so a
 
 `Redraw` returns `false` with nothing written when the request is not a redraw, so the same handler serves the page. A request from a page another build rendered is one of those cases: at a page URL the right answer to a stale redraw is that page, which you are about to render anyway, so it costs one round trip rather than a refusal and then a reload.
 
+`Redraw` and the action entries take `htmlbind.Option`s, and you should pass the same ones your page render gets. Without them a component renders one way inside its page and another in the response that replaces it: a configured URL scheme allowlist does not arrive, so an application's own scheme neutralises to the blocked marker; a cached component runs its body every time; and a component holding an unsafe form **does not render at all**, because the CSRF field needs a token and a failed render is a 500.
+
+```go
+render := []htmlbind.Option{
+    htmlbind.WithCSRFToken(session.CSRFToken(r)),
+    htmlbind.WithCache(store),
+    htmlbind.WithURLSchemes("http", "https", "myapp"),
+}
+if options.Redraw(w, r, registry, render...) {
+    return
+}
+```
+
+The boundary prefix and the build identity are supplied from your `Options` and need no passing, and the request's own context goes in ahead of yours, so a cancelled request stops the work its externals started.
+
 Because the page response and the redraw response now share a URL, `Redraw` declares `Vary` on the render, build, kind, and instance headers whichever one it turns out to serve. Without the kind and instance there, two components redrawing on one page would be a single cache entry and either could be answered with the other's markup.
 
 There is no reserved redraw path any more. `RedrawHandler`, `RedrawPath`, and the `Mount` registration are gone: an endpoint whose address the caller cannot choose was the defect, and keeping a second addressing alive meant publishing two shapes in one contract.
@@ -335,10 +350,10 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
         return
     }
     if options.WantsUpdate(r) {
-        _ = options.WriteUpdate(w,
+        _ = options.WriteUpdate(w, r, []htmlupdate.Update{
             htmlupdate.Replace("cart", CartBadge(CartBadgeParams{ID: "cart", Count: count})),
             htmlupdate.Replace("row-"+itemID, ItemRow(ItemRowParams{ID: "row-" + itemID, Item: item})),
-        )
+        }, htmlbind.WithCSRFToken(session.CSRFToken(r)))
         return
     }
     httpbind.Write(w, r, result) // the endpoint's ordinary JSON

@@ -46,10 +46,26 @@ as_built:
   open_question_resolved: the ETag is computed by the module over the rendered bytes, which is free because the render is already buffered
   keyed: the tag is an HMAC under Options.Key, because a 304 confirms a guess and a redraw usually renders low-entropy per-user content; this is rule:update-validator-computation reasoning arriving at a second surface
   found_while_building: an unkeyed content digest would have made the endpoint a guess-confirmation oracle, which the module already refuses for frame validators and had no reason to accept here
+etag_after_the_json_body_2026_08_08:
+  covers_the_head: the digest is over the whole body, so a changed head contribution invalidates as a changed region does; decided by the owner, and it is what a head carried in the body means
+  what_a_304_stops_carrying: the head header was set before the conditional check, so a 304 delivered it; in the body a 304 delivers nothing at all
+  works_because: private, no-cache leaves the conditional request to the browser's own cache, which replays the stored 200 body
+  breaks_if: a client manages validators itself in storage or a service worker, where a 304 would confirm markup it no longer holds the head for
+  same_shape_for_every_body_field: the live marker and the manifest entry are equally invisible on a 304, so the reading has to be that a 304 means every part of the previous response is still current, not only its markup
+  settled: 2026-08-08, the browser's own cache owns the conditional request
+  consequence_that_dissolves_the_concern: the browser revalidates, receives the 304, and reconstructs the full 200 from its store, so a client fetch never observes a bodiless response and head, live, and manifest always arrive
+  the_one_obligation: a client must not set If-None-Match itself; doing so returns a bare 304 and loses every body field, which is the failure this section was written about
+  why_this_way: private, no-cache already puts the store in the browser, and a client managing validators would have to cache the head beside them to stay correct — a second cache to keep in step with the first
+  unchanged_never_means_correct: a revalidated response says the bytes are current, never that the screen is; see requirement:component-delta-rendering for the case that makes the difference visible
+the_render_side_is_a_separate_gap:
+  what: this concept gave the caller the response cache policy; the render itself still takes no htmlbind option, so a cached component redrawn alone renders uncached whatever this policy says
+  wider: requirement:fragment-render-options, which found that the redraw and action entries pass no render option at all, and that two of the absences fail rather than default
+  reading: the HTTP-level and the render-level caches were adjacent enough that closing one read as closing both
 related:
   - requirement:component-redraw-endpoint
   - requirement:render-mode-negotiation
   - requirement:component-output-cache
+  - requirement:fragment-render-options
 open_questions:
   - whether the same seam covers the delta and stream paths, whose no-store the reporter accepts
 ```

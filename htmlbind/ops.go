@@ -479,7 +479,7 @@ func (o componentOp[P]) Exec(r *Renderer, params P) error {
 	if !fragment.Present() {
 		return nil
 	}
-	return fragment.render(r)
+	return renderNested(r, fragment)
 }
 
 // ComponentCtx is Component for a binding that needs the render context.
@@ -496,7 +496,29 @@ func (o componentCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !fragment.Present() {
 		return nil
 	}
-	return fragment.render(r)
+	return renderNested(r, fragment)
+}
+
+// renderNested renders a called component, opening an update boundary around it
+// when the component declared one of its own.
+//
+// Only a component whose boundary names its own instance opens here, which in
+// practice means a reloadable one: an author writes its id at the call site, so
+// the region is addressable and a delta can compare it. A chain member's
+// boundary names no instance — its id comes from its chain position — so a
+// layout passed through a slot does not open twice, and an ordinary component
+// call still costs the manifest nothing.
+func renderNested(r *Renderer, fragment Fragment) error {
+	decl := fragment.boundary
+	if r.collect == nil || decl == nil || decl.instance == "" {
+		return fragment.render(r)
+	}
+	r.collect.Open(decl.instance, decl.componentID, decl.attr, decl.input())
+	if err := fragment.render(r); err != nil {
+		return err
+	}
+	r.collect.Close()
+	return nil
 }
 
 // Slot inserts a bound slot argument. When the argument is absent the fallback

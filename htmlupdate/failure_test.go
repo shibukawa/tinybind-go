@@ -141,16 +141,101 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	}
 }
 
-// A caller supplying no hook sees exactly the bytes this package wrote before
-// the hook existed.
-func TestFailureDefaultsAreUnchanged(t *testing.T) {
+// A caller supplying no hook gets this module's own error format. The update
+// endpoints were the only paths writing plain text, which left one project with
+// two error shapes depending on which entry refused the request.
+func TestFailureDefaultIsProblemDetails(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	redrawServer(t).ServeHTTP(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"nope"}}))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", recorder.Code)
 	}
-	if got := recorder.Body.String(); got != "invalid redraw arguments\n" {
-		t.Fatalf("body = %q", got)
+	// The media type is the discriminator: application/json is an update to
+	// apply, including a non-2xx one, and this is a request that produced none.
+	if got := recorder.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("content type = %q", got)
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+		Code   string `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", recorder.Body.String())
+	}
+	if body.Status != http.StatusBadRequest || body.Type != "about:blank" {
+		t.Fatalf("body = %+v", body)
+	}
+	// The kind travels as the code, because a stale page and a failed render are
+	// one status to a proxy and different events to whoever is on call.
+	if body.Code != "invalid_arguments" {
+		t.Fatalf("code = %q", body.Code)
+	}
+	if body.Detail != "invalid redraw arguments" {
+		t.Fatalf("detail = %q", body.Detail)
+	}
+}
+
+// A parameter the decoder refused is reported as a field-level error naming it,
+// rather than as one line of prose a caller would have to parse. The reason
+// never quotes the value, which is attacker-supplied.
+func TestFailureNamesTheRefusedParameter(t *testing.T) {
+	registry := &htmlupdate.Registry{}
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: "Typed@0001",
+		Render: func(_ *http.Request, id string, values url.Values) (htmlbind.Fragment, error) {
+			var page int
+			if err := htmlupdate.QueryInt(values, "page", &page); err != nil {
+				return htmlbind.Fragment{}, err
+			}
+			return htmlbind.Bind(badgePlan, badgeParams{ID: id, Count: page}), nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	options.Redraw(recorder, redrawRequest("Typed@0001", "t-1", url.Values{"page": {"nope"}}), registry)
+
+	var body struct {
+		Errors []struct {
+			Field    string `json:"field"`
+			Location string `json:"location"`
+			Message  string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", recorder.Body.String())
+	}
+	if len(body.Errors) != 1 {
+		t.Fatalf("errors = %+v, body = %s", body.Errors, recorder.Body.String())
+	}
+	got := body.Errors[0]
+	if got.Field != "page" || got.Location != "query" {
+		t.Fatalf("errors[0] = %+v", got)
+	}
+	if strings.Contains(recorder.Body.String(), "nope") {
+		t.Fatalf("the refused value was reflected back: %s", recorder.Body.String())
+	}
+}
+
+// The cause never reaches the response, whatever it says. It travels to the
+// caller on the Failure value instead, which is what the hook exists for.
+func TestFailureBodyOmitsTheCause(t *testing.T) {
+	registry := &htmlupdate.Registry{}
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: "Leaky@0001",
+		Render: func(*http.Request, string, url.Values) (htmlbind.Fragment, error) {
+			return htmlbind.Fragment{}, errors.New("dial tcp 10.0.0.5:5432: connection refused")
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	options.Redraw(recorder, redrawRequest("Leaky@0001", "l-1", nil), registry)
+	if strings.Contains(recorder.Body.String(), "10.0.0.5") {
+		t.Fatalf("the cause reached the response: %s", recorder.Body.String())
 	}
 }
 

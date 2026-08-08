@@ -25,8 +25,18 @@ decision:
 rationale:
   - a Go HTTP framework must scale horizontally without session affinity
   - restart, deploy, and multi-tab keep working, because a stale hint degrades to a complete document per rule:delta-consistency-model
-  - back and forward hold their own manifest in history state naturally
+  - back and forward hold their own manifest in history state naturally, but only under the qualification below
   - eviction and memory bounds stop being correctness problems
+a_manifest_describes_a_dom_not_a_url:
+  found: 2026-08-08, from the A to B and back to A case
+  the_claim_above: back and forward hold their own manifest in history state naturally
+  when_it_holds: only when the DOM is restored with the history entry, meaning a fresh document request or a back-forward cache restore
+  when_it_does_not: same-document navigation, where pushState and a delta changed the DOM and going back restores the entry's state without restoring its DOM
+  the_failure: returning to A restores A's manifest while the screen still shows B; the server renders A, compares against A's own validators, finds everything equal, and sends nothing, so B stays on screen
+  invariant: a manifest is valid only for the DOM it was produced against, and history state is keyed to a URL rather than to a DOM
+  correct_behavior: on a same-document history navigation the client sends the manifest describing what is currently on screen, or sends none and takes a complete render
+  not_in_the_staleness_list: rule:delta-consistency-model staleness names an interrupted stream, a failed mid-apply, an expired continuation, a rotated key, and a changed render version, and not this
+  wider_reading: an unchanged response never means a correct screen; the same distinction decides who owns the conditional request in requirement:redraw-cache-policy
 costs:
   request_size: a list page with many boundaries sends many validators
   key_management: continuation signing and rule:update-validator-computation keying need rotation, and rotation forces full renders

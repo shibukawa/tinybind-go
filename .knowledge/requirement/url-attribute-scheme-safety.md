@@ -91,6 +91,12 @@ adjacent_gaps_not_scoped:
   style_attribute:
     what: validateInsertion permits a plain string in style, and CSS gets HTML-text escaping
     severity: lower, since the CSS payloads that executed script are gone from current browsers
+one_acceptance_is_not_held:
+  which: the redraw decode path and the render path apply the same allowlist, so neither is a way around the other
+  measured_2026_08_08: the redraw and action entries call htmlbind.Render with no options, so a caller's WithURLSchemes never reaches them; an app scheme renders on the page and substitutes the blocked marker on the redraw of the same component
+  direction: the redraw is stricter, not looser, so nothing hostile renders and this is a correctness divergence rather than a hole
+  still_a_gap: an app whose own scheme is legitimate cannot redraw a component that renders it, and the two paths were meant to agree in both directions
+  fixed_by: requirement:fragment-render-options
 acceptance:
   - a url parameter holding javascript:alert(1) renders an inert attribute, in every attribute on the roster
   - the same value supplied to a redraw endpoint renders inert rather than executing

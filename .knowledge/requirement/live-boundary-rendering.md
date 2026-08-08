@@ -76,6 +76,16 @@ cache:
   reuse: requirement:component-output-cache applies per delivery, so two clients whose reconstructed inputs and delivery agree can share one rendered output
   keying: a delivery value participates in the input validator, so a cached entry is never reused across differing deliveries
   request_bound: a boundary carrying a requirement:awaitable-parameters handle is request-bound and therefore not cacheable, which is unchanged
+not_in_a_redraw:
+  settled: 2026-08-08; a reloadable component may not own a live boundary, and declaring one should fail at generation
+  reason: decision:live-transport-boundary reconstructs a subscription by executing the page, and a redrawn region's arguments came from the client, so page execution would subscribe against different arguments
+  silent_otherwise: the author gets a fallback that never updates, with no diagnostic, which is the failure mode decision:cache-component-declaration rejects await for
+  condition_is_already_computed: Plan.HasLiveBlock covers the call graph, and Fragment.HasLiveBlock exposes it
+  supersedes: the patch clause below, whose restart reading assumed a redraw could own the subscription it restarts
+navigation_is_where_live_arrives:
+  shipped: renderDelta sets the live field when the composition owns a live boundary, and markLive sets the response header on the document and delta paths alike
+  reason_in_code: a navigation can reach a route whose composition owns a live boundary while the client reused its document shell, so the body is the only place that can say so
+  client_side: requirement:update-wire-contract live_handoff_sequence owns what a client does with the marker
 parameter_interaction:
   patch: api:client-component-update redraws a live boundary with caller-supplied inputs per requirement:component-redraw-endpoint, restarting the subscription
   restart: the old source is cancelled before the new one starts, and the boundary's next render comes from the new source's first delivery

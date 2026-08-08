@@ -29,6 +29,40 @@ sections:
   action_response: the region list shape and the head field
   build_identity: what a mismatch means and what it falls back to, which decision:caller-owned-wire-versioning leaves as the only compatibility axis the module operates
   client_obligations: the marker trigger-source rule, apply-at-most-once, and falling back to ordinary navigation on every failure path
+  live_handoff_sequence:
+    missing: 2026-08-08; the document states the live marker and not what a client does with it across a navigation
+    sequence: abort the outgoing page's live request, apply the navigation operations, then open a new live request when the response marked live
+    why_ordered: rule:live-boundary-delivery navigation_ordering requires the abort before application, so a delivery for the outgoing page cannot land on the incoming one; opening before applying would subscribe against a composition not yet on screen
+    why_it_belongs_here: it is a three-step obligation no code states, which is the shape decision:client-runtime-ownership protocol_modes already names as the section a second implementation cannot infer
+  redraw_invalidates_its_own_validator:
+    obligation: after applying a redraw, a client drops its manifest entry for that instance
+    why: a reloadable component became an update boundary on 2026-08-08, so the client now holds a validator the page render produced and the redraw just made stale; comparing against it makes the next navigation delta re-send the region and replace DOM the redraw had already put right
+    rule_it_applies: rule:delta-consistency-model document_validator invalidation, at instance scope rather than document scope
+    until: requirement:component-redraw-endpoint json_body lets the redraw response carry the new validator, at which point the client stores it instead of dropping it
+  conditional_requests_belong_to_the_browser:
+    obligation: a client never sets If-None-Match itself; it issues an ordinary fetch and lets the browser revalidate under the response's own cache policy
+    why: the browser reconstructs the full 200 from its store, so head, live, and manifest always reach the client; a client-issued conditional gets a bare 304 and loses all three
+    settled: 2026-08-08, requirement:redraw-cache-policy etag_after_the_json_body carries the reasoning
+  history_navigation_sends_what_is_on_screen:
+    obligation: on a same-document history navigation the client sends the manifest describing the DOM currently displayed, not the one stored with the history entry it is moving to
+    failure_it_prevents: going from A to B and back to A restores A's manifest while the screen shows B, so every boundary compares equal and nothing is sent
+    invariant: a manifest describes a DOM, and history state is keyed to a URL; decision:manifest-state-ownership carries it
+    alternative: send no manifest and take a complete render, which is always safe
+  supersession_discipline:
+    missing: 2026-08-08; the document states no rule for a response that arrives after a newer one was applied
+    what_the_catalog_promised: rule:delta-consistency-model fencing, a navigation sequence and a per-instance revision, neither of which is on the wire
+    what_the_code_does_instead: removes each race at its source by aborting the superseded request, which works wherever the client owns both sides
+    what_the_document_must_say:
+      - a client aborts a pending redraw for an instance before issuing another for the same instance
+      - a client aborts every pending redraw before applying navigation operations, alongside the live request it already aborts
+      - a response whose request was aborted is never applied, even when its bytes already arrived, because the client owns its own apply queue
+    why_it_is_the_whole_fix: with the abort discipline complete, no ordering field is needed; without it stated, two implementations pick different halves and only one of them is safe
+    concrete_case_it_closes: a search box redrawing per keystroke, where the shorter query answers last and leaves the region showing its result under the longer query's input
+  live_marker_has_three_carriers:
+    what: the live response header from markLive, the live field renderDelta sets on a buffered delta, and ExpectLive on a stream
+    load_bearing: the header for a document response, which has no JSON body to carry it
+    redundant: the delta, which sets both
+    why_record_it: three mechanisms for one fact, and a reader who fixes one leaves the others; the document must say which a client reads
 mostly_assembly:
   reason: every section above is already recorded in this catalog or readable from one file
   so: the work is collecting it and making it normative rather than designing it

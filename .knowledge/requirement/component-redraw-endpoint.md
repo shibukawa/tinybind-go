@@ -50,8 +50,41 @@ response:
   as_built_conflict: redraw.go sets no-store, which forbids the conditional request above; requirement:redraw-cache-policy resolves it and moves the choice to the caller
   as_built_errors: the handler writes its four failures as plain text, so requirement:update-error-hook is what makes a redraw failure visible to the caller
   as_built_registration: Register panics rather than returning an error, per requirement:update-registration-diagnostics
+also_an_update_boundary:
+  decided: 2026-08-08, reloadable is the explicit activation requirement:partial-update-boundaries was going to spell as a new flag
+  what_it_adds: a manifest entry and participation in requirement:component-delta-rendering comparison, on top of the endpoint this concept already publishes
+  costs_nothing_in_diagnostics: this concept's requirements — exported, single rooted, not the shell — are a superset of what a boundary needs, so no reloadable component can fail to be a valid one
+  one_direction: a boundary does not become reloadable; publishing an endpoint stays the deliberate act this concept describes
+  also_a_structured_unit: requirement:structured-render-output unit_set includes it, which is why the identity it already carries is doing three jobs rather than one
+json_body_2026_08_08:
+  decided: the response body becomes the JSON shape the action path already writes, and the head moves into it
+  shape: 'ops with one replace naming the instance, plus head; identical to what WriteUpdateStatus builds for one region'
+  not_an_envelope_added: it is the removal of the one update path without one; the navigation delta and the action response both carry this shape already
+  only_consumer: a redraw needs three request headers, so a browser navigation gets the page instead, and private no-cache keeps it out of every shared cache; the update runtime is the only reader, which is what makes agreeing with it sufficient
+  curl_property_traded: the plain-fragment property this concept recorded is a developer convenience rather than a correctness one, and a redraw already requires three headers to provoke
+  json_is_the_browser_s_own_parser: one of the few formats with a native parser, which is the reason to prefer it over a bespoke framing
+  escaping_cost: JSON escapes the angle brackets, so assembled markup in a body costs roughly triple; accepted because the caller compresses and because requirement:structured-render-output moves markup out of the body entirely
+  lands_with: requirement:structured-render-output, not before, so the assembled-markup regression window never exists and docs/httpbind_update_wire_contract.md takes one migration rather than two
+  removes:
+    - the head response header, encodeHead, and its base64 of JSON
+    - DefaultMaxHeadBytes and the registration error telling an author to use Registry.RequiredHead instead, both of which exist only because the head travels in a header
+    - the requirement:fragment-response-head asymmetry, which disappears rather than being patched a second time
+  gains: a content type that differs from the page's, so a Vary-ignoring proxy substitution becomes visible instead of silent, which htmlupdate already relies on for the delta
+  cache_policy_does_not_converge: the body shape joins the action path and the cache policy does not; requirement:redraw-cache-policy keeps private, no-cache and an ETag, while an action response stays no-store
+no_live:
+  rule: a redraw carries no live boundary; it is a client-triggered re-render of one registered component and nothing in it subscribes
+  settled: 2026-08-08 by the owner, narrowing an earlier reading that had a redraw originate a subscription
+  why_the_earlier_reading_failed: decision:live-transport-boundary reconstructs a subscription by executing the page, and a redrawn region's arguments came from the client rather than from the page, so page execution would deliver content for different arguments
+  where_live_does_arrive: a navigation or a search, where the page did execute; renderDelta already sets the live field for exactly that case and the client opens its own connection
+  diagnostic_needed: declaring reloadable on a component owning a live boundary should fail at generation with the declaration position, or this rule is a convention rather than a fact; Plan.HasLiveBlock already computes the condition over the call graph
+  precedent: decision:cache-component-declaration await_rationale rejects the same shape for the same reason, that the alternative is silent — there, caching only the initial pass; here, a fallback that never updates
 no_manifest:
-  rule: a redraw needs no data:component-update-manifest, no validators, and no continuation
+  rule: a redraw response carries no continuation and reconstructs nothing, because the client names the target and supplies the inputs
+  validator_is_no_longer_exempt:
+    was_true_when: a reloadable component was not an update boundary
+    now: requirement:partial-update-boundaries makes it one, so after a redraw the client holds a validator for markup the redraw replaced
+    consequence: the next navigation delta compares against the stale validator, judges the region changed, and sends it again — discarding the DOM the redraw just installed along with its focus and form state
+    fix: the response carries the instance's new validator, which is a field the shared body already has
   reason: the client names the target and supplies the inputs, so there is nothing to compare or reconstruct
   contrast: requirement:component-delta-rendering still owns URL-driven page updates, where the server must discover what changed
 version_skew:
