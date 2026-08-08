@@ -22,7 +22,7 @@ func sequenceRequest(t *testing.T, address string) *http.Response {
 	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	request.Header.Set("X-Tinybind-Render", "sequence")
 	if address != "" {
-		request.Header.Set("X-Tinybind-Sequence", address)
+		request.Header.Set("X-Tinybind-Sequence-Address", address)
 	}
 	recorder := httptest.NewRecorder()
 	if !options.Sequence(recorder, request) {

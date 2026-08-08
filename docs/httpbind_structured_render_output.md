@@ -5,7 +5,7 @@
 **Against:** your change request of 2026-08-08, raised against v0.4.2
 **Status:** superseded, and kept as the record of the round rather than as a current design.
 
-> The verification in Part 1 stands and is what moved the priorities. The design in Part 2 does not: a later round of the same day scoped the work down to decomposing a render at its boundaries, with the split inside a dynamic region deferred. **Read [`httpbind_render_modes.md`](httpbind_render_modes.md) for what is actually being built.** The two differ on how a client applies a delivery — this document assembles values into the DOM, and the shipping design reassembles a fragment and reparses it.
+> The verification in Part 1 stands and is what moved the priorities. The design in Part 2 does not: a later round of the same day scoped the work down to decomposing a render at its boundaries, with the split inside a dynamic region deferred and then built the same day. **Read [`httpbind_update_surface.md`](httpbind_update_surface.md) for how to use what was built, and [`httpbind_render_modes.md`](httpbind_render_modes.md) for why it is shaped that way.** The two differ on how a client applies a delivery — this document assembles values into the DOM, and the shipping design reassembles a fragment and reparses it.
 
 ## Summary
 

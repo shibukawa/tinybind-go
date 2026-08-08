@@ -15,7 +15,12 @@ import (
 const modeSequence = "sequence"
 
 // sequenceAddressHeader names the address a sequence request asks for.
-func (o Options) sequenceAddressHeader() string { return o.prefix() + "-Sequence" }
+//
+// It spells out Address rather than sitting one letter from the capability
+// header beside it: a pair reading -Sequences and -Sequence is two headers a
+// reader tells apart by counting characters, which is the kind of naming that
+// produces a bug nobody can see in a diff.
+func (o Options) sequenceAddressHeader() string { return o.prefix() + "-Sequence-Address" }
 
 // DefaultSequenceCacheControl keeps a sequence forever. It is addressed by a
 // digest of its own content, so a deploy that changes a template produces a new

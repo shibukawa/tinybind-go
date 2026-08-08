@@ -1,15 +1,10 @@
 # Two render outputs: assembled HTML, and the update record sequence
 
-**Audience:** someone building a framework on `tinybind-go`.
-**Status:** partly built.
+**Audience:** someone building a framework on `tinybind-go`, who wants to know why the update surface is shaped this way.
 
-> **Shipped:** the boundary decomposition — a fragment per boundary, a hole where each nested boundary sits, and the `boundaries` list that separates a hole to fill from one to retain — plus the `children` operation, which says a boundary's own markup is unchanged and its nested boundaries are now these, in this order. It is what a navigation delta and a live delivery already write.
->
-> Measured on a hundred-row message panel, against a full render of 15,328 bytes: editing one row costs 76, appending one costs 365, and changing the panel's own markup costs 7,240 — the last being what slot spans would compress, since almost all of it is the list of holes.
->
-> **Also shipped:** the redraw body is now that same shape — `ops`, `head`, and `manifest` — so one client applies every update path, the head has left its header, and a redraw returns the validator it used to leave stale.
->
-> **Also shipped:** slot spans and the static sequences. Set the `-Sequences` request header and a fragment arrives as an address plus its values wherever that is smaller than its markup; ask `Options.Sequence` for the tree behind an address, public and immutable because a sequence derives from the template rather than from a request.
+**Status:** built. For how to call it, see [`httpbind_update_surface.md`](httpbind_update_surface.md); for the exact bytes, [`httpbind_update_wire_contract.md`](httpbind_update_wire_contract.md). This document is the reasoning behind both.
+
+> Measured on a hundred-row message panel, against a full render of 15,328 bytes: editing one row costs 76, appending one costs 365, and changing the panel's own markup costs 7,240 as markup — which travels as values instead where that is smaller, at about forty percent for a list taken whole.
 
 ## The shape in one paragraph
 
@@ -95,17 +90,17 @@ Nothing in the HTML distinguishes them. The list declares the complete structure
 | tier | what it is | what it buys | what it needs |
 | --- | --- | --- | --- |
 | boundary holes | `reloadable`, `@cache`, and chain members become their own fragments | DOM retain, independent addressing | one root element and an id |
-| slot spans | inside one fragment, every dynamic op's output is reported as its own span | transfer only | an ordinal position, nothing more |
+| slot spans | inside one fragment, the static text separates from the values | transfer only | a tree walk, no element and no id |
 
 The upper tier preserves browser-owned state across an update. The lower tier removes bytes. Neither depends on the other, and you can consume one without the other.
 
 ### Slot spans
 
-A compiled plan is an ordered instruction list, and each instruction writes one contiguous byte range. Recording each non-static instruction's start and end makes the static parts of a fragment the gaps between them. A slot is named by its position in instruction order — a fixed instruction path cannot reorder or omit one — so **no element, no comment marker, and no id is minted for a slot**.
+A compiled plan is an ordered instruction list, and each instruction writes one contiguous byte range. Bracketing each non-static instruction's output makes the static text between them separable. A slot is named by its position in the walk — nothing is reordered or omitted for a given path — so **no element, no comment marker, and no id is minted for a slot**.
 
 **A sequence is a tree, and there is one per component.** An `if` or a `for` changes which instructions run, but enumerating a sequence per path would be exponential in a component's conditionals, and assembling one from whatever a render happened to produce would make it unfetchable — the server cannot serve a sequence back from its address unless it can reproduce it, and a data-dependent one it could only reproduce by having stored it. So a sequence carries conditional nodes and repeat nodes, and which branch ran and how many times a loop repeated travel with the values. A five-row list and a six-row list share one address.
 
-The address is the plan fingerprint, computed at generation time — which is also why no request-time hashing is involved.
+The address is a digest of the tree, computed once per plan the first time it is asked for and never per request. It needs no generated table: a plan is already static data, so the derivation walks the instruction list and evaluates nothing.
 
 A slot is one whole unit of output, not a bare value. An optional attribute's slot is ` title="…"` or the empty string. A boolean attribute's is ` disabled` or empty. A `href` is the value after our scheme policy ran, or the neutralization marker. There is no case where you have to decide what a slot means.
 

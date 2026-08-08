@@ -164,6 +164,8 @@ if time.Since(opened) > lifetime {
 
 ヘッダ・レコード・ステータス・適合クライアントが守るべき規則を含む完全なワイヤ仕様は [更新ワイヤ契約](httpbind_update_wire_contract.md) にあります。自分でクライアントを書くならそちらを読んでください。
 
+render・redraw・action・sequence の各エントリの呼び方は [更新サーフェス](httpbind_update_surface.md) にまとめてあります。
+
 ## 差分の操作
 
 差分は**変更された最上位の境界だけ**を運びます。置換される境界の子孫はその置換 HTML に既に含まれているので、重ねて送れば存在しないノードを狙うことになります。
