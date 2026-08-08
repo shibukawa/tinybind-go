@@ -4,6 +4,7 @@ package pages
 
 import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type BadgeParams struct {
@@ -31,8 +32,8 @@ var planBadgeOps = htmlbind.Builder[BadgeParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planBadgeInput(p BadgeParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Label),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Label),
 	)
 }
 
@@ -65,8 +66,8 @@ var planNoteOps = htmlbind.Builder[NoteParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planNoteInput(p NoteParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Text),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Text),
 	)
 }
 
@@ -99,9 +100,9 @@ var planPanelOps = htmlbind.Builder[PanelParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planPanelInput(p PanelParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Label),
-		htmlbind.CanonString[string](p.Text),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Label),
+		delta.CanonString[string](p.Text),
 	)
 }
 

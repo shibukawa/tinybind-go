@@ -59,6 +59,24 @@ func (w Wrapper) Assets() []Asset { return w.assets }
 // question one layer down: MergeHead says what tags this document writes, and
 // this says what files those tags stand for.
 func MergeAssets(wrappers []Wrapper, leaf Fragment) []Asset {
+	// One contributor has nothing to deduplicate against, so its slice is the
+	// answer; merged results are treated as immutable everywhere they travel.
+	single, contributors := leaf.assets, 0
+	if len(leaf.assets) > 0 {
+		contributors = 1
+	}
+	for _, wrapper := range wrappers {
+		if len(wrapper.assets) > 0 {
+			single = wrapper.assets
+			contributors++
+		}
+	}
+	if contributors == 0 {
+		return nil
+	}
+	if contributors == 1 {
+		return single
+	}
 	var merged []Asset
 	seen := map[string]bool{}
 	add := func(assets []Asset) {

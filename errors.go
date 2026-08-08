@@ -1,7 +1,6 @@
 package httpbind
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -147,12 +146,4 @@ func AsHTTPError(err error) (*HTTPError, bool) {
 // BindError is returned when binding fails for a specific field/source.
 func BindError(field, location, message string) error {
 	return Validation(Field(field, location, message))
-}
-
-// Format for debugging non-HTTP errors.
-func formatError(err error) string {
-	if err == nil {
-		return ""
-	}
-	return fmt.Sprint(err)
 }

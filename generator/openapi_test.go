@@ -262,7 +262,7 @@ func TestGenerateOpenAPI_EmitsRegisterNotHandwrittenYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := string(data)
-	if !strings.Contains(code, `RegisterOpenAPIFragment("github.com/shibukawa/tinybind-go/internal/openapifixture"`) {
+	if !strings.Contains(code, `RegisterOpenAPIFragmentString("github.com/shibukawa/tinybind-go/internal/openapifixture"`) {
 		t.Fatalf("missing package-qualified RegisterOpenAPIFragment:\n%s", code)
 	}
 	if !strings.Contains(code, `\"paths\"`) || !strings.Contains(code, `\"components\"`) {

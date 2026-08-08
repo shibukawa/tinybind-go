@@ -114,12 +114,18 @@ func QueryOn[T any, PT interface {
 }](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
+		var contOpts []dynamodb.QueryOption
 		first := true
 		for first || len(start) > 0 {
 			first = false
 			pageOpts := opts
 			if len(start) > 0 {
-				pageOpts = append(append([]dynamodb.QueryOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
+				if contOpts == nil {
+					contOpts = make([]dynamodb.QueryOption, len(opts)+1)
+					copy(contOpts, opts)
+				}
+				contOpts[len(opts)] = dynamodb.WithExclusiveStartKey(start)
+				pageOpts = contOpts
 			}
 			page, err := QueryPageOn[T, PT](ctx, h, table, keyCond, pageOpts...)
 			if err != nil {
@@ -164,12 +170,18 @@ func ScanOn[T any, PT interface {
 }](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
+		var contOpts []dynamodb.ScanOption
 		first := true
 		for first || len(start) > 0 {
 			first = false
 			pageOpts := opts
 			if len(start) > 0 {
-				pageOpts = append(append([]dynamodb.ScanOption(nil), opts...), dynamodb.WithExclusiveStartKey(start))
+				if contOpts == nil {
+					contOpts = make([]dynamodb.ScanOption, len(opts)+1)
+					copy(contOpts, opts)
+				}
+				contOpts[len(opts)] = dynamodb.WithExclusiveStartKey(start)
+				pageOpts = contOpts
 			}
 			page, err := ScanPageOn[T, PT](ctx, h, table, pageOpts...)
 			if err != nil {

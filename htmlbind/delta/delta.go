@@ -1,6 +1,20 @@
-package htmlbind
+// Package delta compares two renders of one chain and expresses the
+// difference as operations a browser applies, so a screen already showing the
+// document reaches the server's fresh render without a full page load.
+//
+// It is the update half of htmlbind. The render half exposes only the
+// observation seam — htmlbind.Collector — and everything derived from it lives
+// here: manifests, keyed validators, canonical input encoding, and deltas. The
+// split is what it costs, or rather does not cost: an application that only
+// renders documents links none of the hashing and encoding this package needs
+// to authenticate validators.
+package delta
 
-import "io"
+import (
+	"io"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
+)
 
 // Operation is one change the browser applies to reach the server's render.
 type Operation struct {
@@ -43,15 +57,15 @@ type Delta struct {
 //
 // The document markup outside every boundary is discarded, because a delta
 // reuses the browser's existing document shell.
-func RenderDelta(key []byte, known Manifest, wrappers []Wrapper, leaf Fragment, options ...Option) (Delta, error) {
+func RenderDelta(key []byte, known Manifest, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) (Delta, error) {
 	collect := &collector{key: key, capture: true}
-	manifest, head, err := collectChain(io.Discard, collect, wrappers, leaf, options)
+	head, err := htmlbind.CollectChain(io.Discard, collect, wrappers, leaf, options...)
 	if err != nil {
 		return Delta{}, err
 	}
 	return Delta{
-		Manifest:   manifest,
-		Operations: operations(manifest, known, collect.contents),
+		Manifest:   collect.manifest,
+		Operations: operations(collect.manifest, known, collect.contents),
 		Head:       head,
 	}, nil
 }

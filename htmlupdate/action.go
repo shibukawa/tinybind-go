@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 // Update is one region an action response rewrites.
@@ -78,7 +79,7 @@ func (o Options) WriteUpdateStatus(w http.ResponseWriter, status int, updates ..
 			body.Head = append(body.Head, tag)
 		}
 		body.Operations = append(body.Operations, deltaOperation{
-			Kind: htmlbind.OpReplace, ID: update.TargetID, HTML: out.String(),
+			Kind: delta.OpReplace, ID: update.TargetID, HTML: out.String(),
 		})
 	}
 	return o.writeActionBody(w, status, body)

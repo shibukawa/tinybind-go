@@ -100,8 +100,12 @@ func KeyArray[T any](values []T, encode func(T) string) string {
 type MemoryCache struct {
 	mu      sync.Mutex
 	entries map[string]memoryEntry
-	order   []string
-	max     int
+	// order approximates insertion age. Eviction pops from the front by moving
+	// head instead of shifting the slice; a key expiry already removed keeps its
+	// slot and is skipped when it surfaces.
+	order []string
+	head  int
+	max   int
 	// now is swappable so expiry is testable without sleeping.
 	now func() time.Time
 }
@@ -126,7 +130,8 @@ func (c *MemoryCache) Get(_ context.Context, key string) ([]byte, bool) {
 		return nil, false
 	}
 	if !c.now().Before(entry.expires) {
-		c.remove(key)
+		delete(c.entries, key)
+		c.compact()
 		return nil, false
 	}
 	return entry.value, true
@@ -145,9 +150,12 @@ func (c *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.
 	c.entries[key] = memoryEntry{value: value, expires: c.now().Add(ttl)}
 	// Insertion order approximates age well enough for a render cache, and it
 	// avoids the bookkeeping a true LRU would add to every hit.
-	for c.max > 0 && len(c.entries) > c.max {
-		c.remove(c.order[0])
+	for c.max > 0 && len(c.entries) > c.max && c.head < len(c.order) {
+		oldest := c.order[c.head]
+		c.head++
+		delete(c.entries, oldest)
 	}
+	c.compact()
 }
 
 // Len reports how many entries the cache currently holds, including entries
@@ -158,13 +166,17 @@ func (c *MemoryCache) Len() int {
 	return len(c.entries)
 }
 
-// remove drops one key. The caller holds the lock.
-func (c *MemoryCache) remove(key string) {
-	delete(c.entries, key)
-	for i, candidate := range c.order {
-		if candidate == key {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			return
+// compact rebuilds order once most of it no longer names a live entry, so the
+// queue cannot grow past the map it approximates. The caller holds the lock.
+func (c *MemoryCache) compact() {
+	if len(c.order)-c.head <= len(c.entries)*2+16 {
+		return
+	}
+	kept := c.order[:0]
+	for _, key := range c.order[c.head:] {
+		if _, ok := c.entries[key]; ok {
+			kept = append(kept, key)
 		}
 	}
+	c.order, c.head = kept, 0
 }

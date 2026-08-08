@@ -3,6 +3,7 @@ package htmlbind
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // TrustedHTML is markup the template author vouched for. It is written without
@@ -34,47 +35,90 @@ func FormatFloat(value float64) string { return strconv.FormatFloat(value, 'g', 
 // characters that could close a script element or break a JavaScript line, so
 // the result is safe to embed in inline script content.
 func JSONString[T ~string](value T) string {
+	return string(appendJSONString(make([]byte, 0, len(value)+2), string(value)))
+}
+
+// appendJSONString appends value to dst under JSONString's rules and returns
+// the extended slice. It scans bytes and copies clean runs in bulk, so a value
+// needing no escapes costs one copy rather than a write per rune.
+func appendJSONString(dst []byte, value string) []byte {
 	const hex = "0123456789abcdef"
-	var out strings.Builder
-	out.WriteByte('"')
-	for _, r := range string(value) {
-		switch r {
-		case '"':
-			out.WriteString("\\\"")
-		case '\\':
-			out.WriteString("\\\\")
-		case '\b':
-			out.WriteString("\\b")
-		case '\f':
-			out.WriteString("\\f")
-		case '\n':
-			out.WriteString("\\n")
-		case '\r':
-			out.WriteString("\\r")
-		case '\t':
-			out.WriteString("\\t")
-		case '<':
-			out.WriteString("\\u003c")
-		case '>':
-			out.WriteString("\\u003e")
-		case '&':
-			out.WriteString("\\u0026")
-		case ' ':
-			out.WriteString("\\u2028")
-		case ' ':
-			out.WriteString("\\u2029")
-		default:
-			if r < 0x20 {
-				out.WriteString("\\u00")
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
-			} else {
-				out.WriteRune(r)
+	if free := cap(dst) - len(dst); free < len(value)+2 {
+		grown := make([]byte, len(dst), len(dst)+len(value)+18)
+		copy(grown, dst)
+		dst = grown
+	}
+	dst = append(dst, '"')
+	start := 0
+	for i := 0; i < len(value); {
+		c := value[i]
+		if c < utf8.RuneSelf {
+			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
+				i++
+				continue
 			}
+			if start < i {
+				dst = append(dst, value[start:i]...)
+			}
+			switch c {
+			case '"':
+				dst = append(dst, '\\', '"')
+			case '\\':
+				dst = append(dst, '\\', '\\')
+			case '\b':
+				dst = append(dst, '\\', 'b')
+			case '\f':
+				dst = append(dst, '\\', 'f')
+			case '\n':
+				dst = append(dst, '\\', 'n')
+			case '\r':
+				dst = append(dst, '\\', 'r')
+			case '\t':
+				dst = append(dst, '\\', 't')
+			case '<':
+				dst = append(dst, '\\', 'u', '0', '0', '3', 'c')
+			case '>':
+				dst = append(dst, '\\', 'u', '0', '0', '3', 'e')
+			case '&':
+				dst = append(dst, '\\', 'u', '0', '0', '2', '6')
+			default:
+				dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&15])
+			}
+			i++
+			start = i
+			continue
+		}
+		r, width := utf8.DecodeRuneInString(value[i:])
+		switch {
+		case r == ' ', r == ' ':
+			if start < i {
+				dst = append(dst, value[start:i]...)
+			}
+			if r == ' ' {
+				dst = append(dst, '\\', 'u', '2', '0', '2', '8')
+			} else {
+				dst = append(dst, '\\', 'u', '2', '0', '2', '9')
+			}
+			i += width
+			start = i
+		case r == utf8.RuneError && width == 1:
+			// An invalid byte becomes the replacement character, exactly as a
+			// rune loop would decode it. A genuine U+FFFD is three valid bytes
+			// and travels inside the clean run.
+			if start < i {
+				dst = append(dst, value[start:i]...)
+			}
+			dst = append(dst, "�"...)
+			i += width
+			start = i
+		default:
+			i += width
 		}
 	}
-	out.WriteByte('"')
-	return out.String()
+	if start < len(value) {
+		dst = append(dst, value[start:]...)
+	}
+	return append(dst, '"')
 }
 
 // JSONBool encodes a bool as JSON.

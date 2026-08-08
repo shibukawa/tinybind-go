@@ -478,8 +478,12 @@ func usageForCallOperation(operation CallOperation) Usage {
 	switch operation {
 	case OperationRequestBind:
 		return UsageBind
-	case OperationResponseWrite, OperationResponseWriteStatus, OperationStreamCreate:
+	case OperationResponseWrite, OperationResponseWriteStatus:
 		return UsageWrite
+	case OperationStreamCreate:
+		// Stream.Write encodes events through the jsonbind codec registry,
+		// so stream event types need their encoder registered too.
+		return UsageWrite | UsageEncodeJSON
 	case OperationJSONEncode:
 		return UsageEncodeJSON
 	case OperationJSONDecode:

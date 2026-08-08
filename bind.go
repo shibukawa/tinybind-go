@@ -12,7 +12,7 @@ func Bind[T any](r *http.Request) (T, error) {
 	var zero T
 	fn, ok := lookupBinder[T]()
 	if !ok {
-		return zero, missingBinderError(typeKey[T]())
+		return zero, missingBinderError()
 	}
 	out, err := fn(r)
 	if err != nil {

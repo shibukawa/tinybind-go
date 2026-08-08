@@ -141,7 +141,7 @@ func (p *Plan[P]) execCached(r *Renderer, params P) error {
 	// A cached subtree renders without the boundary coordinator. Generation
 	// rejects an await boundary inside a cached component, so this only makes
 	// the runtime's behavior match that rule instead of storing a placeholder.
-	sub := &Renderer{w: &buffer, head: r.head, opts: r.opts}
+	sub := &Renderer{w: &buffer, sw: &buffer, head: r.head, opts: r.opts}
 	if err := execOps(sub, p.Ops, params); err != nil {
 		return err
 	}
@@ -316,11 +316,15 @@ func (f Fragment) HasLiveBlock() bool { return f.hasLive }
 // Renderer is the coordinator walking plans. It owns the output stream and the
 // merged head, so instructions never touch either directly.
 type Renderer struct {
-	w    io.Writer
+	w io.Writer
+	// sw is w's io.StringWriter face, resolved once at construction so Write
+	// does not repeat the assertion per instruction. It is nil when w cannot
+	// take a string directly.
+	sw   io.StringWriter
 	head []string
 	// collect is nil for an ordinary render, which is what keeps the bytes of
 	// an unchanged template identical to before update support existed.
-	collect *collector
+	collect Collector
 	// opts holds the caller-supplied render options. It is never nil.
 	opts *renderOptions
 	// async is set only by the streaming render entries. When it is nil an
@@ -398,13 +402,6 @@ func (r *Renderer) context() context.Context {
 	return context.Background()
 }
 
-// buffered returns a renderer writing into w and sharing this render's merged
-// head, options, boundary coordinator, and identifier namespace.
-func (r *Renderer) buffered(w io.Writer) *Renderer {
-	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async,
-		idPrefix: r.idPrefix, idCount: r.idCount, boundaryCtx: r.boundaryCtx}
-}
-
 // subtree returns a renderer for one boundary's contents: it writes into w and
 // opens a fresh identifier namespace under that boundary's id, so the same
 // subtree rendered again produces the same placeholders.
@@ -414,8 +411,17 @@ func (r *Renderer) buffered(w io.Writer) *Renderer {
 // identifiers are handed out again; a settle-once boundary passes its own.
 func (r *Renderer) subtree(w io.Writer, id string, ctx context.Context) *Renderer {
 	count := 0
-	return &Renderer{w: w, head: r.head, opts: r.opts, async: r.async,
+	return &Renderer{w: w, sw: stringWriterOf(w), head: r.head, opts: r.opts, async: r.async,
 		idPrefix: id, idCount: &count, boundaryCtx: ctx}
+}
+
+// stringWriterOf resolves a writer's io.StringWriter face for the field every
+// renderer constructor fills, or nil for a writer without one.
+func stringWriterOf(w io.Writer) io.StringWriter {
+	if sw, ok := w.(io.StringWriter); ok {
+		return sw
+	}
+	return nil
 }
 
 // boundaryContext returns the context bounding work this subtree starts.
@@ -447,10 +453,10 @@ func (r *Renderer) reportError(err error) {
 // context-appropriate escaping.
 func (r *Renderer) Write(value string) error {
 	if r.collect != nil {
-		r.collect.write(value)
+		r.collect.Write(value)
 	}
-	if sw, ok := r.w.(io.StringWriter); ok {
-		_, err := sw.WriteString(value)
+	if r.sw != nil {
+		_, err := r.sw.WriteString(value)
 		return err
 	}
 	// A writer without WriteString — a compressing middleware's, for one —

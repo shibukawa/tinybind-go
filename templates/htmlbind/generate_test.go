@@ -342,18 +342,19 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 var key = []byte("test validator key")
 
-func collect(t *testing.T, section, query string, page int) (htmlbind.Manifest, string) {
+func collect(t *testing.T, section, query string, page int) (delta.Manifest, string) {
 	t.Helper()
 	var out bytes.Buffer
 	wrappers := []htmlbind.Wrapper{
 		BindDocument(DocumentParams{}),
 		BindLayout(LayoutParams{Section: section}),
 	}
-	manifest, err := htmlbind.CollectChain(&out, key, wrappers, Page(PageParams{Query: query, Page: page}))
+	manifest, err := delta.CollectChain(&out, key, wrappers, Page(PageParams{Query: query, Page: page}))
 	if err != nil {
 		t.Fatal(err)
 	}

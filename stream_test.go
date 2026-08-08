@@ -2,17 +2,35 @@ package httpbind_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
 type evt struct {
 	Type string `json:"type"`
 	N    int    `json:"n"`
+}
+
+// Mirrors the encoder shape the generator emits for stream event types.
+func init() {
+	jsonbind.RegisterEncode[evt](func(w io.Writer, v evt) error {
+		buf := jsonbind.GetBuffer()
+		b := append((*buf)[:0], `{"type":`...)
+		b = jsonbind.AppendString(b, v.Type)
+		b = append(b, `,"n":`...)
+		b = jsonbind.AppendInt(b, int64(v.N))
+		b = append(b, '}', '\n')
+		*buf = b
+		_, err := w.Write(b)
+		jsonbind.PutBuffer(buf)
+		return err
+	})
 }
 
 func TestNewStream_MultipleWrites_NDJSON(t *testing.T) {

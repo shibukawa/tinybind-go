@@ -3,7 +3,6 @@ package htmlbind
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // A builtin element is markup a framework registers with the generator, written
@@ -80,11 +79,11 @@ func (o provideOp[P, V]) Exec(r *Renderer, params P) error {
 		// happens: a test, a mail body, a static export. Naming the element is
 		// what makes it fixable, because the template that wrote it is the thing
 		// to look at.
-		return fmt.Errorf("%w: <%s> reads a per-request value; pass one through WithContext or an async entry", ErrNoRenderContext, o.element)
+		return wrapError(ErrNoRenderContext, ": <"+o.element+"> reads a per-request value; pass one through WithContext or an async entry")
 	}
 	value, err := o.resolve(ctx, r)
 	if err != nil {
-		return fmt.Errorf("htmlbind: <%s> provider failed: %w", o.element, err)
+		return &wrappedError{msg: "htmlbind: <" + o.element + "> provider failed: " + err.Error(), err: err}
 	}
 	for _, segment := range o.segments {
 		if segment.Hole == nil {
@@ -170,6 +169,24 @@ func (w Wrapper) Vary() []string { return w.vary }
 // MergeVary is the union of a whole chain's vary axes, deduplicated and in
 // composition order. It takes the same argument pair as MergeHead.
 func MergeVary(wrappers []Wrapper, leaf Fragment) []string {
+	// One contributor has nothing to deduplicate against, so its slice is the
+	// answer; merged results are treated as immutable everywhere they travel.
+	single, contributors := leaf.vary, 0
+	if len(leaf.vary) > 0 {
+		contributors = 1
+	}
+	for _, wrapper := range wrappers {
+		if len(wrapper.vary) > 0 {
+			single = wrapper.vary
+			contributors++
+		}
+	}
+	if contributors == 0 {
+		return nil
+	}
+	if contributors == 1 {
+		return single
+	}
 	var merged []string
 	seen := map[string]bool{}
 	add := func(axes []string) {

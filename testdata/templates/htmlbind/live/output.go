@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type Point struct {
@@ -113,8 +114,8 @@ var planGaugeOps = htmlbind.Builder[GaugeParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planGaugeInput(p GaugeParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Id),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Id),
 	)
 }
 
@@ -154,7 +155,7 @@ var planGaugePlan = &htmlbind.Plan[GaugeParams]{
 				planGaugeOpsAwait1Ops.Static(" <p class=\"value\">"),
 				planGaugeOpsAwait1Ops.Text(func(p planGaugeOpsAwait1) string { return p.Point.Label }),
 				planGaugeOpsAwait1Ops.Static(": "),
-				planGaugeOpsAwait1Ops.Text(func(p planGaugeOpsAwait1) string { return htmlbind.FormatInt(p.Point.Value) }),
+				planGaugeOpsAwait1Ops.Raw(func(p planGaugeOpsAwait1) string { return htmlbind.FormatInt(p.Point.Value) }),
 				planGaugeOpsAwait1Ops.Static("</p> "),
 			},
 			[]htmlbind.Op[GaugeParams]{
@@ -259,7 +260,7 @@ var planDashboardPlan = &htmlbind.Plan[DashboardParams]{
 				planDashboardOpsAwait4Ops.Static(" <p class=\"value\">"),
 				planDashboardOpsAwait4Ops.Text(func(p planDashboardOpsAwait4) string { return p.Point.Label }),
 				planDashboardOpsAwait4Ops.Static(": "),
-				planDashboardOpsAwait4Ops.Text(func(p planDashboardOpsAwait4) string { return htmlbind.FormatInt(p.Point.Value) }),
+				planDashboardOpsAwait4Ops.Raw(func(p planDashboardOpsAwait4) string { return htmlbind.FormatInt(p.Point.Value) }),
 				planDashboardOpsAwait4Ops.Static("</p> <ul> "),
 				htmlbind.For(
 					func(p planDashboardOpsAwait4) []string { return p.Messages },
@@ -326,7 +327,7 @@ var planMixedPlan = &htmlbind.Plan[MixedParams]{
 				planMixedOpsAwait6Ops.Static("</h1> <p class=\"value\">"),
 				planMixedOpsAwait6Ops.Text(func(p planMixedOpsAwait6) string { return p.Point.Label }),
 				planMixedOpsAwait6Ops.Static(": "),
-				planMixedOpsAwait6Ops.Text(func(p planMixedOpsAwait6) string { return htmlbind.FormatInt(p.Point.Value) }),
+				planMixedOpsAwait6Ops.Raw(func(p planMixedOpsAwait6) string { return htmlbind.FormatInt(p.Point.Value) }),
 				planMixedOpsAwait6Ops.Static("</p> "),
 			},
 			[]htmlbind.Op[MixedParams]{
@@ -350,8 +351,8 @@ var planStaticOps = htmlbind.Builder[StaticParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planStaticInput(p StaticParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Id),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Id),
 	)
 }
 

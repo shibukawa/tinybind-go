@@ -5,7 +5,6 @@ package minitoml
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -215,8 +214,18 @@ func (d Document) Keys() []string {
 	for k := range d.entries {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sortStrings(keys)
 	return keys
+}
+
+// sortStrings is an insertion sort: documents hold few keys and sort once per
+// load, and this avoids pulling the sort package into TinyGo builds.
+func sortStrings(keys []string) {
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
 }
 
 // Clone returns a shallow copy of the document map. Table-array elements are

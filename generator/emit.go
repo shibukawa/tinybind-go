@@ -347,12 +347,8 @@ func emitDecodeJSON(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 		if !isDocumentField(f) || f.IsRest() {
 			continue
 		}
-		key := f.JSON
-		if key == "" || key == "*" {
-			key = f.Wire
-		}
-		fmt.Fprintf(b, "\t\tcase %q:\n", key)
-		emitStreamAssign(b, f, types, "\t\t\t", "out."+f.Name, 0)
+		fmt.Fprintf(b, "\t\tcase %q:\n", jsonMemberName(f))
+		emitStreamAssign(b, f, types, "\t\t\t", "out."+f.Name)
 	}
 
 	// Names that belong to the body but decode to nothing here (an uploaded
@@ -412,13 +408,22 @@ func emitStreamDefault(b *bytes.Buffer, t TypePlan) {
 	b.WriteString("\t\t\tif err := p.SkipValue(); err != nil {\n\t\t\t\treturn out, err\n\t\t\t}\n")
 }
 
-// emitStreamAssign reads one value from the parser into dest. depth keeps
-// nested loop variables from shadowing each other.
-func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, prefix, dest string, depth int) {
+// jsonMemberName is the document key a streaming decoder matches a field by:
+// the json tag when present, the wire name otherwise. Field errors carry the
+// same name, so a report points at the member that actually failed.
+func jsonMemberName(f FieldPlan) string {
+	if f.JSON != "" && f.JSON != "*" {
+		return f.JSON
+	}
+	return f.Wire
+}
+
+// emitStreamAssign reads one value from the parser into dest.
+func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, prefix, dest string) {
 	switch f.Kind {
 	case "string", "int", "int64", "bool", "float64":
 		fmt.Fprintf(b, "%sv, err := p.%s()\n", prefix, parserMethod(f.Kind))
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, f.Wire, f.Kind, prefix)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), f.Kind, prefix)
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
@@ -426,11 +431,11 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindSlice:
 		if supportedElemKind(f.ElemKind) {
-			emitStreamSlice(b, f, prefix, dest, depth)
+			emitStreamSlice(b, f, prefix, dest)
 		}
 	case KindMap:
 		if supportedElemKind(f.ElemKind) {
-			emitStreamMap(b, f, prefix, dest, depth)
+			emitStreamMap(b, f, prefix, dest)
 		}
 	case "file":
 		// A file never arrives inside a JSON document.
@@ -471,62 +476,30 @@ func parserMethod(kind string) string {
 	return ""
 }
 
-func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string, depth int) {
-	elemType := f.ElemKind
-	if f.ElemKind == KindStruct {
-		elemType = f.TypeName
-	}
-	idx := fmt.Sprintf("i%d", depth)
-	tmp := fmt.Sprintf("slice%d", depth)
-	fmt.Fprintf(b, "%snull, err := p.ArrayStart()\n", prefix)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", prefix, prefix, f.Wire, prefix)
-	fmt.Fprintf(b, "%sif !null {\n", prefix)
-	inner := prefix + "\t"
-	fmt.Fprintf(b, "%s%s := []%s{}\n", inner, tmp, elemType)
-	fmt.Fprintf(b, "%sfor %s := 0; ; %s++ {\n", inner, idx, idx)
-	loop := inner + "\t"
-	fmt.Fprintf(b, "%smore, err := p.ArrayNext(%s)\n", loop, idx)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", loop, loop, f.Wire, loop)
-	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
-	// Sizing on the first element keeps an empty array allocation-free while
-	// giving a populated one a single growth step in the common case.
-	fmt.Fprintf(b, "%sif %s == 0 {\n%s\t%s = make([]%s, 0, 8)\n%s}\n", loop, idx, loop, tmp, elemType, loop)
-	elem := FieldPlan{Name: f.Name, Wire: f.Wire, Kind: f.ElemKind, TypeName: f.TypeName}
-	fmt.Fprintf(b, "%s{\n", loop)
-	emitStreamAssignElem(b, elem, loop+"\t", "item", depth+1)
-	fmt.Fprintf(b, "%s\t%s = append(%s, item)\n", loop, tmp, tmp)
-	fmt.Fprintf(b, "%s}\n", loop)
-	fmt.Fprintf(b, "%s}\n", inner)
-	fmt.Fprintf(b, "%s%s = %s\n", inner, dest, tmp)
-	fmt.Fprintf(b, "%s}\n", prefix)
+func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
+	read, message := streamElemReader(f)
+	fmt.Fprintf(b, "%sv, err := jsonbind.ParseSlice(p, %q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
+	// A null member leaves the destination alone, so a value bound earlier
+	// survives it.
+	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
 }
 
-func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest string, depth int) {
-	elemType := f.ElemKind
+func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
+	read, message := streamElemReader(f)
+	fmt.Fprintf(b, "%sv, err := jsonbind.ParseMap(p, %q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
+	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
+}
+
+// streamElemReader names the element read function handed to ParseSlice or
+// ParseMap, plus the message element errors get annotated with. A struct
+// decoder reports its own fields, so its message stays empty.
+func streamElemReader(f FieldPlan) (read, message string) {
 	if f.ElemKind == KindStruct {
-		elemType = f.TypeName
+		return "decode" + f.TypeName + "JSON", ""
 	}
-	idx := fmt.Sprintf("n%d", depth+1)
-	tmp := fmt.Sprintf("mout%d", depth)
-	fmt.Fprintf(b, "%snull, err := p.ObjectStart()\n", prefix)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", prefix, prefix, f.Wire, prefix)
-	fmt.Fprintf(b, "%sif !null {\n", prefix)
-	inner := prefix + "\t"
-	fmt.Fprintf(b, "%s%s := map[string]%s{}\n", inner, tmp, elemType)
-	fmt.Fprintf(b, "%sfor %s := 0; ; %s++ {\n", inner, idx, idx)
-	loop := inner + "\t"
-	fmt.Fprintf(b, "%smkey, mok, err := p.ObjectKey(%s)\n", loop, idx)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", loop, loop, f.Wire, loop)
-	fmt.Fprintf(b, "%sif !mok {\n%s\tbreak\n%s}\n", loop, loop, loop)
-	fmt.Fprintf(b, "%sname := string(mkey)\n", loop)
-	elem := FieldPlan{Name: f.Name, Wire: f.Wire, Kind: f.ElemKind, TypeName: f.TypeName}
-	fmt.Fprintf(b, "%s{\n", loop)
-	emitStreamAssignElem(b, elem, loop+"\t", "item", depth+1)
-	fmt.Fprintf(b, "%s\t%s[name] = item\n", loop, tmp)
-	fmt.Fprintf(b, "%s}\n", loop)
-	fmt.Fprintf(b, "%s}\n", inner)
-	fmt.Fprintf(b, "%s%s = %s\n", inner, dest, tmp)
-	fmt.Fprintf(b, "%s}\n", prefix)
+	return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), "invalid " + f.ElemKind
 }
 
 // supportedElemKind reports the slice and map element kinds the planner can
@@ -538,18 +511,6 @@ func supportedElemKind(kind string) bool {
 		return true
 	}
 	return false
-}
-
-// emitStreamAssignElem declares name and fills it with one element value.
-func emitStreamAssignElem(b *bytes.Buffer, f FieldPlan, prefix, name string, depth int) {
-	switch f.Kind {
-	case KindStruct:
-		fmt.Fprintf(b, "%s%s, err := decode%sJSON(p)\n", prefix, name, f.TypeName)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-	default:
-		fmt.Fprintf(b, "%s%s, err := p.%s()\n", prefix, name, parserMethod(f.Kind))
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, f.Wire, f.Kind, prefix)
-	}
 }
 
 func isDocumentField(f FieldPlan) bool {
@@ -646,8 +607,8 @@ func emitAssignMapFromRaw(b *bytes.Buffer, f FieldPlan, rawVar, prefix, dest, re
 		fmt.Fprintf(b, "%sobj, err := jsonbind.RawJSONMap(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
 		fmt.Fprintf(b, "%smout := make(map[string]%s, obj.Len())\n", prefix, f.TypeName)
-		fmt.Fprintf(b, "%sfor _, k := range obj.RestNames(nil) {\n", prefix)
-		fmt.Fprintf(b, "%s\tel, _ := obj.Get(k)\n", prefix)
+		fmt.Fprintf(b, "%sfor i := 0; i < obj.Len(); i++ {\n", prefix)
+		fmt.Fprintf(b, "%s\tk, el := obj.Member(i)\n", prefix)
 		fmt.Fprintf(b, "%s\titem, err := decode%sBytes(el)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\t%serr\n%s\t}\n", prefix, prefix, ret, prefix)
 		fmt.Fprintf(b, "%s\tmout[k] = item\n", prefix)
@@ -791,7 +752,11 @@ func emitBinder(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 	needsBody := false
 	needsFiles := false
 	needsForm := false // formBody used for scalar/rest fields
+	needsQuery := false
 	for _, f := range t.Fields {
+		if (f.Source == SourceQuery || f.Source == SourceInput) && !f.IsComposite() {
+			needsQuery = true
+		}
 		if f.Source == SourceInput || f.Source == SourcePayload {
 			needsBody = true
 			if f.Kind == "file" {
@@ -800,6 +765,9 @@ func emitBinder(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 				needsForm = true
 			}
 		}
+	}
+	if needsQuery {
+		b.WriteString("\tqueryVals := httpbind.Queries(r)\n")
 	}
 	if needsBody {
 		b.WriteString("\tvar jsonBody *jsonbind.Object\n")
@@ -813,34 +781,16 @@ func emitBinder(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 		b.WriteString("\treadBody := func() error {\n")
 		b.WriteString("\t\tif bodyRead {\n\t\t\treturn nil\n\t\t}\n")
 		b.WriteString("\t\tbodyRead = true\n")
-		b.WriteString("\t\tif httpbind.IsJSONRequest(r) {\n")
-		b.WriteString("\t\t\tm, err := httpbind.ReadJSONObject(r)\n")
-		b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n")
-		b.WriteString("\t\t\tjsonBody = m\n")
-		b.WriteString("\t\t\treturn nil\n")
-		b.WriteString("\t\t}\n")
-		if needsForm || needsFiles {
-			b.WriteString("\t\tif httpbind.IsFormRequest(r) {\n")
-			b.WriteString("\t\t\tm, err := httpbind.ParseFormMap(r)\n")
-			b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n")
-			b.WriteString("\t\t\tformBody = m\n")
-			b.WriteString("\t\t\treturn nil\n")
-			b.WriteString("\t\t}\n")
-			b.WriteString("\t\tif httpbind.IsMultipartRequest(r) {\n")
-			if needsFiles {
-				b.WriteString("\t\t\tm, files, err := httpbind.ParseMultipartMap(r)\n")
-				b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n")
-				b.WriteString("\t\t\tformBody = m\n")
-				b.WriteString("\t\t\tfileBody = files\n")
-			} else {
-				b.WriteString("\t\t\tm, _, err := httpbind.ParseMultipartMap(r)\n")
-				b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn err\n\t\t\t}\n")
-				b.WriteString("\t\t\tformBody = m\n")
-			}
-			b.WriteString("\t\t\treturn nil\n")
-			b.WriteString("\t\t}\n")
+		b.WriteString("\t\tvar err error\n")
+		switch {
+		case needsFiles:
+			fmt.Fprintf(b, "\t\tjsonBody, formBody, fileBody, err = httpbind.ReadBody(r, %t, true)\n", needsForm)
+		case needsForm:
+			b.WriteString("\t\tjsonBody, formBody, _, err = httpbind.ReadBody(r, true, false)\n")
+		default:
+			b.WriteString("\t\tjsonBody, _, _, err = httpbind.ReadBody(r, false, false)\n")
 		}
-		b.WriteString("\t\treturn nil\n")
+		b.WriteString("\t\treturn err\n")
 		b.WriteString("\t}\n")
 	}
 
@@ -889,8 +839,9 @@ func emitRestField(b *bytes.Buffer, t TypePlan, f FieldPlan) {
 		fmt.Fprintf(b, "\t\tout.%s = m\n", f.Name)
 	case KindRestRaw:
 		fmt.Fprintf(b, "\t\tout.%s = map[string]json.RawMessage{}\n", f.Name)
-		fmt.Fprintf(b, "\t\tfor _, k := range jsonbind.RestJSONNames(jsonBody, []string{%s}) {\n", quoteStringList(exclude))
-		b.WriteString("\t\t\traw, _ := jsonBody.Get(k)\n")
+		b.WriteString("\t\tfor i := 0; i < jsonBody.Len(); i++ {\n")
+		fmt.Fprintf(b, "\t\t\tk, raw, ok := jsonbind.RestJSONMember(jsonBody, i, []string{%s})\n", quoteStringList(exclude))
+		b.WriteString("\t\t\tif !ok {\n\t\t\t\tcontinue\n\t\t\t}\n")
 		fmt.Fprintf(b, "\t\t\tout.%s[k] = append(json.RawMessage(nil), raw...)\n", f.Name)
 		b.WriteString("\t\t}\n")
 	}
@@ -974,7 +925,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 		}
 	case SourceQuery:
 		if !f.IsComposite() {
-			fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryValue(r, %q); ok {\n", f.Wire)
+			fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryLookup(queryVals, %q); ok {\n", f.Wire)
 			if track {
 				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
 			}
@@ -989,7 +940,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			emitPayloadField(b, f, types, "\t", track)
 			return
 		}
-		fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryValue(r, %q); ok {\n", f.Wire)
+		fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryLookup(queryVals, %q); ok {\n", f.Wire)
 		if track {
 			fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
 		}

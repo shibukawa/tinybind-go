@@ -14,7 +14,7 @@ import (
 
 type openAPIFragment struct {
 	ID   string
-	JSON []byte
+	JSON string
 }
 
 // OpenAPIInfo is application-owned metadata for the assembled document.
@@ -37,6 +37,14 @@ var (
 	openAPIMu        sync.RWMutex
 	openAPIFragments []openAPIFragment
 	openAPIInfo      *OpenAPIInfo
+	// Assembled-document cache for OpenAPIJSON. Registrations happen at init(),
+	// so after the first request the document never changes; openAPIVersion is
+	// bumped on every mutation to invalidate a stale cache.
+	openAPIVersion  uint64
+	openAPIDoc      []byte
+	openAPIDocErr   error
+	openAPIDocAt    uint64
+	openAPIDocValid bool
 )
 
 // SetOpenAPIInfo sets application-level metadata for the assembled document.
@@ -52,15 +60,24 @@ func SetOpenAPIInfo(info OpenAPIInfo) error {
 	}
 	copy := info
 	openAPIInfo = &copy
+	openAPIVersion++
 	return nil
 }
 
 // RegisterOpenAPIFragment registers a generated package fragment. ID should be
 // the package import path. Assembly reports conflicting repeated IDs.
 func RegisterOpenAPIFragment(id string, jsonDoc []byte) {
-	fragment := openAPIFragment{ID: id, JSON: append([]byte(nil), jsonDoc...)}
+	RegisterOpenAPIFragmentString(id, string(jsonDoc))
+}
+
+// RegisterOpenAPIFragmentString is RegisterOpenAPIFragment for a string
+// document. Generated code registers its embedded fragment constant through
+// this so the constant is stored as-is, without a startup copy.
+func RegisterOpenAPIFragmentString(id string, jsonDoc string) {
+	fragment := openAPIFragment{ID: id, JSON: jsonDoc}
 	openAPIMu.Lock()
 	openAPIFragments = append(openAPIFragments, fragment)
+	openAPIVersion++
 	openAPIMu.Unlock()
 }
 
@@ -69,6 +86,7 @@ func ResetOpenAPIFragments() {
 	openAPIMu.Lock()
 	openAPIFragments = nil
 	openAPIInfo = nil
+	openAPIVersion++
 	openAPIMu.Unlock()
 }
 
@@ -84,11 +102,11 @@ func AssembleOpenAPI() (jsonDoc []byte, err error) {
 	parsed := make([]parsedOpenAPIFragment, 0, len(fragments))
 	seenIDs := map[string]struct{}{}
 	for _, fragment := range fragments {
-		if fragment.ID == "" || len(fragment.JSON) == 0 {
+		if fragment.ID == "" || fragment.JSON == "" {
 			return nil, fmt.Errorf("httpbind: OpenAPI fragment requires ID and JSON")
 		}
 		var doc map[string]any
-		if err := json.Unmarshal(fragment.JSON, &doc); err != nil {
+		if err := json.Unmarshal([]byte(fragment.JSON), &doc); err != nil {
 			return nil, fmt.Errorf("httpbind: parse OpenAPI fragment %q: %w", fragment.ID, err)
 		}
 		if _, ok := seenIDs[fragment.ID]; ok {
@@ -153,7 +171,7 @@ func AssembleOpenAPI() (jsonDoc []byte, err error) {
 
 // OpenAPIJSON serves the assembled OpenAPI document as application/json.
 func OpenAPIJSON(w http.ResponseWriter, r *http.Request) {
-	doc, err := AssembleOpenAPI()
+	doc, err := cachedOpenAPI()
 	if err != nil {
 		WriteError(w, r, Internal(err))
 		return
@@ -163,13 +181,33 @@ func OpenAPIJSON(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(doc)
 }
 
+// cachedOpenAPI assembles the document once and reuses the result until a
+// fragment or info registration invalidates it.
+func cachedOpenAPI() ([]byte, error) {
+	openAPIMu.RLock()
+	version := openAPIVersion
+	if openAPIDocValid && openAPIDocAt == version {
+		doc, err := openAPIDoc, openAPIDocErr
+		openAPIMu.RUnlock()
+		return doc, err
+	}
+	openAPIMu.RUnlock()
+	doc, err := AssembleOpenAPI()
+	openAPIMu.Lock()
+	if openAPIVersion == version {
+		openAPIDoc, openAPIDocErr = doc, err
+		openAPIDocAt = version
+		openAPIDocValid = true
+	}
+	openAPIMu.Unlock()
+	return doc, err
+}
+
 func snapshotOpenAPIFragments() []openAPIFragment {
 	openAPIMu.RLock()
 	defer openAPIMu.RUnlock()
 	result := make([]openAPIFragment, len(openAPIFragments))
-	for i, fragment := range openAPIFragments {
-		result[i] = openAPIFragment{ID: fragment.ID, JSON: append([]byte(nil), fragment.JSON...)}
-	}
+	copy(result, openAPIFragments)
 	return result
 }
 

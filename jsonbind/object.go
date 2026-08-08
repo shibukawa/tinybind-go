@@ -69,6 +69,13 @@ func (o *Object) Len() int {
 	return len(o.members)
 }
 
+// Member returns the i'th member's name and raw value in document order. The
+// raw bytes alias the buffer the Object was built from, like Get's.
+func (o *Object) Member(i int) (name string, raw []byte) {
+	m := &o.members[i]
+	return string(m.name), m.value
+}
+
 // Get returns the raw bytes of the named member.
 //
 // Lookup is a linear scan. Request bodies have few top-level fields, and

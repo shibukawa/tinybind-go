@@ -1,84 +1,75 @@
 package htmlbind
 
 import (
+	"context"
 	"io"
+	"iter"
 	"strconv"
 )
 
-// CollectChain renders like RenderChain and additionally returns the update
-// manifest of the boundaries it wrote. Every chain member declaring a boundary
-// becomes one instance, so the manifest describes the layout chain rather than
+// Collector observes one chain render: every byte an instruction writes, and
+// each chain member's boundary opening and closing around its own output. It
+// is the seam the update machinery hangs from — validators and captured
+// subtrees are derived by the implementation, so a render that collects
+// nothing links none of the hashing that derivation needs.
+//
+// A collector is driven by the one goroutine walking the plan, so an
+// implementation needs no locking of its own.
+type Collector interface {
+	// Begin starts one render, carrying the validator tag the render options
+	// resolved. It is called once, before anything else.
+	Begin(validatorTag string)
+	// Write observes one instruction's output, after escaping.
+	Write(value string)
+	// Open enters the boundary of one chain member: its instance ID, the
+	// component's declaration identity, the instance attribute its root
+	// element will carry, and the canonical encoding of its declared inputs.
+	Open(id, componentID, attr, input string)
+	// Close leaves the innermost open boundary.
+	Close()
+	// TakePending consumes the boundary whose root element has not yet written
+	// its instance attribute, returning that attribute and the instance ID.
+	// Only the boundary's own root consumes it, so an ordinary component
+	// nested inside cannot claim its parent's ID.
+	TakePending() (attr, id string, ok bool)
+}
+
+// CollectChain renders like RenderChain with collect observing the render, and
+// returns the merged head. Every chain member declaring a boundary opens one
+// around its own output, so the observer sees the layout chain rather than
 // every component call.
 //
-// key authenticates the returned validators. A digest published to a browser
-// must be keyed, because an unkeyed hash of low entropy content lets anyone
-// confirm a guess by comparing digests. The same key must be used for two
-// renders that are to be compared; changing it forces a full render, which is
-// the intended effect of a key rotation.
-//
 // Collecting emits the instance attribute on each boundary's root element, so
-// its output differs from RenderChain by exactly those attributes.
-func CollectChain(w io.Writer, key []byte, wrappers []Wrapper, leaf Fragment, options ...Option) (Manifest, error) {
-	manifest, _, err := collectChain(w, &collector{key: key}, wrappers, leaf, options)
-	return manifest, err
-}
-
-// collectChain composes the chain like RenderChain does and additionally opens
-// a boundary around each member that declares one.
-//
-// It returns the merged head as well, because a delta reuses the browser's
-// existing document shell and has to say which contributions a newly reachable
-// component brought with it.
-func collectChain(w io.Writer, collect *collector, wrappers []Wrapper, leaf Fragment, options []Option) (Manifest, []string, error) {
+// the output differs from RenderChain by exactly those attributes.
+func CollectChain(w io.Writer, collect Collector, wrappers []Wrapper, leaf Fragment, options ...Option) ([]string, error) {
 	opts := newRenderOptions(options)
 	if collect != nil {
-		collect.tag = opts.validatorTag
+		collect.Begin(opts.validatorTag)
 	}
-	if err := validateChain(wrappers, leaf); err != nil {
-		return Manifest{}, nil, err
-	}
-	head, err := mergeCallerHead(MergeHead(wrappers, leaf), opts.head)
+	composed, head, err := assemble(collect, wrappers, leaf)
 	if err != nil {
-		return Manifest{}, nil, err
+		return nil, err
 	}
-	// The chain index is the instance identity, so a member keeps its ID when
-	// only its parameters change. Position is assigned before rendering, which
-	// is why an unchanged chain shape yields comparable manifests.
-	next := memberFragment(leaf, leaf.boundary, len(wrappers))
-	for i := len(wrappers) - 1; i >= 0; i-- {
-		wrapper, inner, index := wrappers[i], next, i
-		child := Fragment{render: func(r *Renderer) error { return wrapper.render(r, inner) }}
-		next = memberFragment(child, wrapper.boundary, index)
+	head, err = mergeCallerHead(head, opts.head)
+	if err != nil {
+		return nil, err
 	}
-	if err := next.render(&Renderer{w: w, head: head, opts: opts, collect: collect}); err != nil {
-		return Manifest{}, nil, err
+	if err := composed(&Renderer{w: w, sw: stringWriterOf(w), head: head, opts: opts, collect: collect}); err != nil {
+		return nil, err
 	}
-	if collect == nil {
-		return Manifest{}, head, nil
-	}
-	return collect.manifest, head, nil
+	return head, nil
 }
 
-// validateChain repeats the assembly checks, so a malformed chain fails with
-// nothing written here exactly as it does on the ordinary path.
-func validateChain(wrappers []Wrapper, leaf Fragment) error {
-	if !leaf.Present() {
-		return ErrNoLeaf
-	}
-	for _, wrapper := range wrappers {
-		if wrapper.render == nil {
-			return ErrNilWrapper
-		}
-	}
-	if err := leaf.Validate(); err != nil {
-		return err
-	}
-	for _, wrapper := range wrappers {
-		if err := wrapper.Validate(); err != nil {
-			return err
-		}
-	}
-	return nil
+// CollectChainAsync is CollectChain for the streaming path: the initial pass
+// renders with every await boundary's fallback in place, and the sequence then
+// yields each boundary as it settles, exactly as RenderChainAsync does.
+//
+// rendered runs after the initial pass commits and before the first
+// completion, which is the moment the observer's state describes the whole
+// document. Returning false ends the sequence without waiting for the
+// outstanding boundaries. A nil rendered is allowed and skips the call.
+func CollectChainAsync(ctx context.Context, w io.Writer, collect Collector, rendered func() bool, wrappers []Wrapper, leaf Fragment, options ...Option) iter.Seq2[Content, error] {
+	return streamChain(ctx, w, collect, rendered, wrappers, leaf, options)
 }
 
 // memberFragment wraps one chain member so its boundary opens before its first
@@ -97,11 +88,11 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 			if r.collect == nil {
 				return member.render(r)
 			}
-			r.collect.open(id, decl.componentID, decl.attr, decl.input())
+			r.collect.Open(id, decl.componentID, decl.attr, decl.input())
 			if err := member.render(r); err != nil {
 				return err
 			}
-			r.collect.close()
+			r.collect.Close()
 			return nil
 		},
 	}

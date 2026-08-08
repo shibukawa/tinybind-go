@@ -61,7 +61,7 @@ type PatchRaw struct {
 		t.Fatal(err)
 	}
 	s := string(code)
-	for _, n := range []string{"RestJSONAny", "RestJSONNames", "RestFormAny", `"name"`} {
+	for _, n := range []string{"RestJSONAny", "RestJSONMember", "RestFormAny", `"name"`} {
 		if !strings.Contains(s, n) {
 			t.Fatalf("missing %q in:\n%s", n, s)
 		}

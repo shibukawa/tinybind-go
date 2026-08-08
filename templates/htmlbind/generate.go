@@ -364,6 +364,9 @@ func (e *goEmitter) emitImports() {
 		e.b.WriteString("\t\"net/http\"\n")
 	}
 	e.b.WriteString("\n\t\"github.com/shibukawa/tinybind-go/htmlbind\"\n")
+	if e.usesBoundary() {
+		e.b.WriteString("\t\"github.com/shibukawa/tinybind-go/htmlbind/delta\"\n")
+	}
 	if e.c.usesReloadable() {
 		e.b.WriteString("\t\"github.com/shibukawa/tinybind-go/htmlupdate\"\n")
 	}
@@ -698,6 +701,17 @@ func valueString(code string, t valueType) string {
 		return code + ".Format(time.RFC3339)"
 	}
 	return code
+}
+
+// escapeExempt reports whether valueString output for t can never contain a
+// character HTML escaping rewrites — formatted bools, numbers, and RFC3339
+// timestamps — so the emitter may write it unescaped.
+func escapeExempt(t valueType) bool {
+	switch t.required().kind {
+	case kindBool, kindInt, kindFloat, kindDateTime, kindDate, kindTime:
+		return true
+	}
+	return false
 }
 
 func goType(t valueType) string {

@@ -73,6 +73,18 @@ func (e *goEmitter) boundaryCandidate(component *TemplateDecl) *ElementNode {
 	return boundaryRoot(component.Body.([]Node))
 }
 
+// usesBoundary reports whether any component in the module becomes an update
+// boundary, which is what makes the generated code reference the delta package.
+func (e *goEmitter) usesBoundary() bool {
+	for _, declaration := range e.c.module.Declarations {
+		component, ok := declaration.(*TemplateDecl)
+		if ok && e.boundaryCandidate(component) != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // componentKind names a component: its package, its file, and its declaration.
 //
 // It is deliberately not a digest. Identity and version are separate jobs, and
@@ -232,7 +244,7 @@ func (e *goEmitter) emitBoundary(component *TemplateDecl, prefix, params, kind s
 	fmt.Fprintf(&e.b, "// %sInput canonically encodes the declared inputs of %s.\n", prefix, component.Name)
 	fmt.Fprintf(&e.b, "// Slot arguments are excluded: their content belongs to the child boundary,\n")
 	fmt.Fprintf(&e.b, "// so a frame stays comparable when only its child changed.\n")
-	fmt.Fprintf(&e.b, "func %sInput(p %s) string {\n\treturn htmlbind.CanonJoin(\n", prefix, params)
+	fmt.Fprintf(&e.b, "func %sInput(p %s) string {\n\treturn delta.CanonJoin(\n", prefix, params)
 	for _, parameter := range component.Parameters {
 		t, err := e.c.resolveType(parameter.Type)
 		// A slot argument belongs to the child boundary, and an async parameter
@@ -256,10 +268,10 @@ func (e *goEmitter) instanceAttr() string { return "data-" + e.prefix + "-id" }
 // canonEncodeCall returns an expression encoding code canonically.
 func canonEncodeCall(t valueType, code string) string {
 	if t.optional {
-		return "htmlbind.CanonOptional(" + code + ", " + canonEncoder(t.required()) + ")"
+		return "delta.CanonOptional(" + code + ", " + canonEncoder(t.required()) + ")"
 	}
 	if t.kind == kindArray && t.elem != nil {
-		return "htmlbind.CanonArray(" + code + ", " + canonEncoder(*t.elem) + ")"
+		return "delta.CanonArray(" + code + ", " + canonEncoder(*t.elem) + ")"
 	}
 	return canonEncoder(t) + "(" + code + ")"
 }
@@ -271,24 +283,24 @@ func canonEncoder(t valueType) string {
 	}
 	switch t.kind {
 	case kindBool:
-		return "htmlbind.CanonBool"
+		return "delta.CanonBool"
 	case kindInt:
-		return "htmlbind.CanonInt"
+		return "delta.CanonInt"
 	case kindFloat:
-		return "htmlbind.CanonFloat"
+		return "delta.CanonFloat"
 	case kindBytes:
-		return "htmlbind.CanonBytes"
+		return "delta.CanonBytes"
 	case kindDateTime, kindDate, kindTime:
-		return "htmlbind.CanonTime"
+		return "delta.CanonTime"
 	case kindURL:
-		return "htmlbind.CanonURL"
+		return "delta.CanonURL"
 	case kindRecord:
 		return canonRecordEncoder(t.name)
 	case kindArray:
 		return "func(value " + goType(t) + ") string { return " + canonEncodeCall(t, "value") + " }"
 	default:
 		// string, decimal, enums, and the trusted string types are all ~string.
-		return "htmlbind.CanonString[" + goType(t) + "]"
+		return "delta.CanonString[" + goType(t) + "]"
 	}
 }
 
@@ -337,7 +349,7 @@ func (e *goEmitter) collectCanonRecords() []valueType {
 func (e *goEmitter) emitCanonHelpers() {
 	for _, record := range e.canonRecords {
 		fmt.Fprintf(&e.b, "func %s(value %s) string {\n", canonRecordEncoder(record.name), goType(record))
-		e.b.WriteString("\treturn htmlbind.CanonRecord(htmlbind.CanonJoin(\n")
+		e.b.WriteString("\treturn delta.CanonRecord(delta.CanonJoin(\n")
 		for _, f := range e.c.records[record.name].Fields {
 			ft, _ := e.c.resolveType(f.Type)
 			// An async field is a handle, not a value, on the same terms as an

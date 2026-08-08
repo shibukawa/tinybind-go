@@ -3,7 +3,6 @@ package configbind
 
 import (
 	"iter"
-	"sort"
 	"strings"
 )
 
@@ -127,8 +126,24 @@ func (o *Overlay) Keys() []string {
 	for k := range o.entries {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sortStrings(keys)
 	return keys
+}
+
+// sortStrings is an insertion sort: config key lists are small and sorted once
+// at startup, and this avoids pulling the sort package into TinyGo builds.
+func sortStrings(keys []string) {
+	sortFunc(keys, func(a, b string) bool { return a < b })
+}
+
+// sortFunc is the insertion sort behind sortStrings for slices needing a
+// custom order.
+func sortFunc[T any](items []T, less func(a, b T) bool) {
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && less(items[j], items[j-1]); j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
 }
 
 // All iterates entries in sorted key order. Callers get a stable sequence

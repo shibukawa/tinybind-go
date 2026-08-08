@@ -153,7 +153,7 @@ func register() {
 	assertTypeUsage(t, plan, "Request", generator.UsageBind)
 	assertTypeUsage(t, plan, "Response", generator.UsageWrite)
 	assertTypeUsage(t, plan, "PlainResponse", generator.UsageWrite)
-	assertTypeUsage(t, plan, "Event", generator.UsageWrite)
+	assertTypeUsage(t, plan, "Event", generator.UsageWrite|generator.UsageEncodeJSON)
 	assertTypeUsage(t, plan, "Decoded", generator.UsageDecodeJSON)
 	assertTypeUsage(t, plan, "Encoded", generator.UsageEncodeJSON)
 	assertTypeUsage(t, plan, "Row", generator.UsageScanRows)

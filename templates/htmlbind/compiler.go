@@ -1661,6 +1661,7 @@ func (c *compiler) comparable(t valueType, visiting map[string]bool) bool {
 	}
 	return false
 }
+
 // isURLAttribute reports whether a browser resolves this attribute's value as a
 // URL. Membership decides two things at once: the analysis below requires a url
 // expression here, and the emitter routes the value through the runtime's

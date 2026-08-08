@@ -18,12 +18,12 @@ func SwaggerUI(specURL string) http.Handler {
 	if strings.TrimSpace(specURL) == "" {
 		specURL = "/openapi.json"
 	}
-	specJS := safeJSString(specURL)
+	page := strings.Replace(swaggerUIPage, "__SPEC_URL__", safeJSString(specURL), 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, strings.Replace(swaggerUIPage, "__SPEC_URL__", specJS, 1))
+		_, _ = io.WriteString(w, page)
 	})
 }
 
