@@ -257,9 +257,21 @@ func (e *goEmitter) emitBoundary(component *TemplateDecl, prefix, params, kind s
 		fmt.Fprintf(&e.b, "\t\t%s,\n", canonEncodeCall(t, "p."+goPublicName(parameter.Name)))
 	}
 	e.b.WriteString("\t)\n}\n\n")
+	// A reloadable component names its own instance, from the id an author
+	// writes at the call site. That is what makes it an update boundary
+	// wherever it renders, so a navigation delta can compare the region a
+	// redraw can replace rather than discovering it changed only by replacing
+	// an ancestor. Every other candidate leaves it nil and is numbered by its
+	// chain position instead, which keeps an ordinary component call out of the
+	// manifest.
+	instance := ""
+	if e.reloadable {
+		instance = fmt.Sprintf("\tInstance: func(p %s) string { return p.%s },\n",
+			params, goPublicName(reloadableIDParameter))
+	}
 	fmt.Fprintf(&e.b, "var %sBoundary = &htmlbind.Boundary[%s]{\n", prefix, params)
-	fmt.Fprintf(&e.b, "\tComponentID: %s,\n\tAttr: %s,\n\tInput: %sInput,\n}\n\n",
-		strconv.Quote(kind), strconv.Quote(e.instanceAttr()), prefix)
+	fmt.Fprintf(&e.b, "\tComponentID: %s,\n\tAttr: %s,\n%s\tInput: %sInput,\n}\n\n",
+		strconv.Quote(kind), strconv.Quote(e.instanceAttr()), instance, prefix)
 }
 
 // instanceAttr is the data attribute carrying an instance ID.

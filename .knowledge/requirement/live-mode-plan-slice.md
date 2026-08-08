@@ -28,6 +28,11 @@ not_workable_around_downstream:
   jitter: disperses the load and leaves the total unchanged
   idle_close: removes unwatched tabs and adds one execution when they return
   reading: each available dial relocates the cost rather than reducing it
+shares_a_home_with:
+  what: requirement:structured-render-output, asked for by the same reporter on 2026-08-08
+  common: both take a generated plan and use part of it rather than all of it — this one executing a subset of ops, that one emitting the ops separately instead of as one byte stream
+  not_a_dependency: neither needs the other, and the 2026-08-08 round says so explicitly while still asking for this one
+  why_it_is_worth_stating: both want the same emitter work read again, so scheduling them apart pays that reading twice
 proposal:
   shape: a generated plan variant executing the slice of ops that feeds a live binding's arguments, selected at generation time
   feasible_because: generation already knows statically which values flow into a live binding's arguments, and decision:generated-render-plan already carries per-plan ops, so this is a plan variant rather than a new mechanism

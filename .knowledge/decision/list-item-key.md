@@ -50,6 +50,6 @@ id_or_key:
   no_double_writing: where an id is present it also serves as the match key, since it is already unique and stable
   reading: the choice states intent, an id meaning the row is independently addressable and a key meaning it is only matched during a patch
 open_questions:
-  - whether an unkeyed loop inside an updatable region is a diagnostic, a warning, or silently positional
-  - whether the key participates in the static-dynamic value encoding or only in application
+  - whether an unkeyed loop inside an updatable region is a diagnostic, a warning, or silently positional; requirement:structured-render-output inline_loop_body folds in the same question for a for body written as inline markup rather than as a component call, since that one produces no unit and its rows share no skeleton
+  - whether the key participates in the static-dynamic value encoding or only in application; requirement:structured-render-output is where it becomes answerable, since a loop there is one skeleton and one value set per item and the key is what pairs a set with a row
 ```

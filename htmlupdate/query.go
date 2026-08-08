@@ -1,7 +1,6 @@
 package htmlupdate
 
 import (
-	"fmt"
 	"net/url"
 	"strconv"
 	"time"
@@ -12,6 +11,28 @@ import (
 // so a value that does not parse is an error rather than a zero: silently
 // substituting one would let a malformed request render as though it were
 // valid.
+
+// QueryError is a redraw parameter the decoder refused, naming which one.
+//
+// The name is what makes a refusal answerable: a failure response reports the
+// parameter as a field-level error rather than one line of prose a caller would
+// have to parse. The reason never quotes the value, because the value is
+// attacker-supplied and the response is not the place to reflect it.
+type QueryError struct {
+	// Parameter is the declared name the request got wrong.
+	Parameter string
+	// Reason completes the sentence "redraw parameter <name> …", so it reads
+	// the same in a log line and in a problem response.
+	Reason string
+}
+
+func (e *QueryError) Error() string {
+	return "redraw parameter " + e.Parameter + " " + e.Reason
+}
+
+func queryError(name, reason string) error {
+	return &QueryError{Parameter: name, Reason: reason}
+}
 
 // QueryString decodes any string-kinded parameter, covering plain strings,
 // decimals, and generated enums.
@@ -32,7 +53,7 @@ func QueryBool(values url.Values, name string, target *bool) error {
 	}
 	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
-		return fmt.Errorf("redraw parameter %s is not a bool", name)
+		return queryError(name, "is not a bool")
 	}
 	*target = parsed
 	return nil
@@ -46,7 +67,7 @@ func QueryInt(values url.Values, name string, target *int) error {
 	}
 	parsed, err := strconv.Atoi(raw)
 	if err != nil {
-		return fmt.Errorf("redraw parameter %s is not an integer", name)
+		return queryError(name, "is not an integer")
 	}
 	*target = parsed
 	return nil
@@ -60,7 +81,7 @@ func QueryFloat(values url.Values, name string, target *float64) error {
 	}
 	parsed, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return fmt.Errorf("redraw parameter %s is not a number", name)
+		return queryError(name, "is not a number")
 	}
 	*target = parsed
 	return nil
@@ -74,7 +95,7 @@ func QueryURL(values url.Values, name string, target *url.URL) error {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("redraw parameter %s is not a URL", name)
+		return queryError(name, "is not a URL")
 	}
 	*target = *parsed
 	return nil
@@ -89,7 +110,7 @@ func QueryTime(values url.Values, name string, target *time.Time) error {
 	}
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		return fmt.Errorf("redraw parameter %s is not an RFC 3339 timestamp", name)
+		return queryError(name, "is not an RFC 3339 timestamp")
 	}
 	*target = parsed
 	return nil
@@ -128,7 +149,7 @@ func decodeOne[T any](values url.Values, name string, target *T) error {
 	case *time.Time:
 		return QueryTime(values, name, typed)
 	default:
-		return fmt.Errorf("redraw parameter %s has no decoder", name)
+		return queryError(name, "has no decoder")
 	}
 }
 
@@ -138,10 +159,10 @@ func decodeOne[T any](values url.Values, name string, target *T) error {
 func requireOne(values url.Values, name string) (string, error) {
 	found, ok := values[name]
 	if !ok || len(found) == 0 {
-		return "", fmt.Errorf("redraw parameter %s is missing", name)
+		return "", queryError(name, "is missing")
 	}
 	if len(found) > 1 {
-		return "", fmt.Errorf("redraw parameter %s appears more than once", name)
+		return "", queryError(name, "appears more than once")
 	}
 	return found[0], nil
 }

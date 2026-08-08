@@ -200,7 +200,14 @@ const notFoundMessage = "404 page not found"
 // request from a page another build rendered: at a page URL the right answer to
 // a stale redraw is that page, which the caller is about to render anyway, and
 // that costs a reload rather than a refusal and then a reload.
-func (o Options) Redraw(w http.ResponseWriter, r *http.Request, reg *Registry) bool {
+//
+// options reach the component's render, so a redraw sees the same cache store,
+// URL scheme policy, and CSRF token the page render was given. Without them a
+// component renders one way inside its page and another in the response that
+// replaces it — and one containing an unsafe form does not render at all, since
+// [htmlbind.Builder.CSRFField] needs a token. The boundary prefix and the build
+// identity are supplied from these Options and do not need passing.
+func (o Options) Redraw(w http.ResponseWriter, r *http.Request, reg *Registry, options ...htmlbind.Option) bool {
 	// The page response and the redraw response share a URL, so the cache keys
 	// that tell them apart must be declared whichever one this turns out to be.
 	// Without the kind and instance here, two components redrawing on one page
@@ -236,13 +243,13 @@ func (o Options) Redraw(w http.ResponseWriter, r *http.Request, reg *Registry) b
 		})
 		return true
 	}
-	o.writeRedraw(w, r, component, kind, instance)
+	o.writeRedraw(w, r, component, kind, instance, options)
 	return true
 }
 
 // writeRedraw renders one instance and writes the response. Both entries reach
 // it with the target resolved and the build already settled their own way.
-func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component Reloadable, kind, instance string) {
+func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component Reloadable, kind, instance string, options []htmlbind.Option) {
 	if len(r.URL.RawQuery) > o.maxQueryBytes() {
 		o.fail(w, r, Failure{
 			Kind:       FailureArgumentsTooLarge,
@@ -266,7 +273,11 @@ func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component R
 		return
 	}
 	var out strings.Builder
-	if err := htmlbind.Render(&out, fragment); err != nil {
+	// The request's context goes in ahead of the caller's options, so a shared
+	// cache store and a context-taking external see this request's cancellation.
+	// The caller may still override it, since its own options come last.
+	render := append([]htmlbind.Option{htmlbind.WithContext(r.Context())}, options...)
+	if err := htmlbind.Render(&out, fragment, o.renderOptions(render)...); err != nil {
 		o.fail(w, r, Failure{
 			Kind:       FailureRenderFailed,
 			Status:     http.StatusInternalServerError,

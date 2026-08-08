@@ -46,8 +46,13 @@ const modeAction = "action"
 // the same code. Unlike a redraw this request is not idempotent: it carries
 // ambient credentials, so it needs CSRF protection, and its response is never
 // cacheable.
-func (o Options) WriteUpdate(w http.ResponseWriter, updates ...Update) error {
-	return o.WriteUpdateStatus(w, http.StatusOK, updates...)
+//
+// options reach every region's render. The token one matters most here: a region
+// holding an unsafe form emits a CSRF field, and without a token that render
+// fails outright — which is this entry's own headline case, since rewriting a
+// form with its validation errors is what it exists for.
+func (o Options) WriteUpdate(w http.ResponseWriter, r *http.Request, updates []Update, options ...htmlbind.Option) error {
+	return o.WriteUpdateStatus(w, r, http.StatusOK, updates, options...)
 }
 
 // WriteUpdateStatus is WriteUpdate with an explicit status, so a failed
@@ -55,16 +60,19 @@ func (o Options) WriteUpdate(w http.ResponseWriter, updates ...Update) error {
 //
 // The browser applies an update response whatever the status says, because
 // rendering the failure is the point.
-func (o Options) WriteUpdateStatus(w http.ResponseWriter, status int, updates ...Update) error {
+func (o Options) WriteUpdateStatus(w http.ResponseWriter, r *http.Request, status int, updates []Update, options ...htmlbind.Option) error {
 	body := deltaResponse{}
 	// An action can reveal a component the document never carried: a validation
 	// summary, a panel that was not there before. Its stylesheet is not in the
 	// live head, and markup landing before the sheet does is the flash of
 	// unstyled content the navigation delta added this field to prevent.
 	seen := map[string]bool{}
+	// Resolved once rather than per region: the options are the same for every
+	// one, and the request's context leads so a caller may still override it.
+	render := o.renderOptions(append([]htmlbind.Option{htmlbind.WithContext(r.Context())}, options...))
 	for _, update := range updates {
 		var out strings.Builder
-		if err := htmlbind.Render(&out, update.Fragment); err != nil {
+		if err := htmlbind.Render(&out, update.Fragment, render...); err != nil {
 			// Nothing is written yet, so the caller can still choose an error
 			// response.
 			return err
