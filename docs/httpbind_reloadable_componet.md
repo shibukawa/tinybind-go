@@ -164,6 +164,8 @@ The build identity is also mixed into every validator, so two builds can never p
 
 The full wire description — every header, every record, every status, and what a conforming client must not get wrong — is in [The update wire contract](httpbind_update_wire_contract.md). Read that if you are writing your own client.
 
+For how to call every entry — render, redraw, action, sequence — see [The update surface](httpbind_update_surface.md).
+
 ## Delta operations
 
 A delta carries the outermost changed boundaries only. A descendant of a replaced boundary is already inside that replacement, so sending it again would target a node that no longer exists.

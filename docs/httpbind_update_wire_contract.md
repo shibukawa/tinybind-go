@@ -160,10 +160,12 @@ Parameters go in the query string, and the generated decoder is strict: an unkno
 
 ### Redraw response
 
-The body is the component's rendered subtree: **a bare HTML fragment with one root element carrying the instance id**, no envelope. The endpoint stays testable with `curl` and a client parses what it already parses.
+The body is the shape every other update path returns: `ops`, `head`, and `manifest`, as `application/json`. The region travels as one `replace` operation naming the instance, with a hole where each nested boundary sits; each of those arrives as its own operation in the same response.
+
+It was a bare HTML fragment with its head in a header, which made the redraw the one response in this package with a form of its own — and left it nowhere to return the validator its own replacement had just made stale. The manifest entry is what closes that: a client stores the returned validator rather than dropping the one it held.
 
 - `Content-Type: text/html; charset=utf-8`
-- `<P>-Head` carries the component's head contribution as **base64 of a JSON array of strings**. Base64 because a head tag may hold any character an attribute value may, and a header is not a place to discover which of those a proxy passes through. Absent when the component contributes nothing.
+- The head is the `head` field of the body, a JSON array of ready-to-write tags, absent when the component contributes nothing. It used to travel as base64 of JSON in a `<P>-Head` header, bounded at registration so a proxy could not drop an oversized one; a field in a body needs neither the packing nor the bound, and both are gone.
 - `ETag` over the rendered bytes, and `Cache-Control: private, no-cache` by default. `If-None-Match` is honoured, including the list form and the `W/` prefix; an unchanged redraw answers `304` with no body.
 - `Vary` includes the render and build headers, and — when the redraw is served at a URL that also serves a page — the kind and instance headers. Without those two, two components redrawing on one page are one cache entry and either may be answered with the other's markup.
 
