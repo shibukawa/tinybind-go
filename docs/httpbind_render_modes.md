@@ -103,7 +103,9 @@ The upper tier preserves browser-owned state across an update. The lower tier re
 
 A compiled plan is an ordered instruction list, and each instruction writes one contiguous byte range. Recording each non-static instruction's start and end makes the static parts of a fragment the gaps between them. A slot is named by its position in instruction order — a fixed instruction path cannot reorder or omit one — so **no element, no comment marker, and no id is minted for a slot**.
 
-An `if` or a `for` changes which instructions run, so each distinct instruction path is its own static sequence, identified by a content address. An ordinal names a slot within a sequence; the address names the sequence.
+**A sequence is a tree, and there is one per component.** An `if` or a `for` changes which instructions run, but enumerating a sequence per path would be exponential in a component's conditionals, and assembling one from whatever a render happened to produce would make it unfetchable — the server cannot serve a sequence back from its address unless it can reproduce it, and a data-dependent one it could only reproduce by having stored it. So a sequence carries conditional nodes and repeat nodes, and which branch ran and how many times a loop repeated travel with the values. A five-row list and a six-row list share one address.
+
+The address is the plan fingerprint, computed at generation time — which is also why no request-time hashing is involved.
 
 A slot is one whole unit of output, not a bare value. An optional attribute's slot is ` title="…"` or the empty string. A boolean attribute's is ` disabled` or empty. A `href` is the value after our scheme policy ran, or the neutralization marker. There is no case where you have to decide what a slot means.
 
@@ -139,10 +141,6 @@ They travel as their own request, addressed by content hash, and not inside the 
 | live delivery stream | the subscription | `private` | lifetime bound, then reconnect |
 
 A static sequence derives from the template rather than from a request, which makes it **the only response on this wire that can be public and served from an edge**. Riding it inside a private response forfeits exactly the property it uniquely has, and makes you re-send every sequence on every page load, every lifetime rollover, and every reconnect.
-
-A sequence is identified by the plan fingerprint plus a selector for the instruction path the render took — not by a digest of its statics, because the statics depend on which branches ran and this module hashes nothing at request time. Two paths whose statics happen to be identical therefore get two addresses; that costs a client one redundant sequence and nothing in correctness.
-
-**A sequence is not a flat list of strings.** A fragment containing a loop has statics of the form prefix, body repeated, suffix, and the repetition count is data — so a flat list would give a five-row list and a six-row list different addresses and defeat the sharing. A sequence carries a repeat node referencing a sub-sequence: a loop body is its own address, and the spans group per iteration.
 
 The request for a sequence is a render mode on a URL you choose. This package mounts no path for it.
 
