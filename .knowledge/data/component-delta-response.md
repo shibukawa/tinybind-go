@@ -12,6 +12,14 @@ fields:
   next_manifest: data:component-update-manifest
   head_operations: requirement:delta-head-sync contributions, ordered before dependent content operations
   operations:
+    - kind: replace, or children
+      children_op:
+        shipped: 2026-08-08
+        carries: a boundary id and its new nested boundary order, and no markup
+        covers: insert, remove, and move at once, by stating the target order rather than the edits to reach it
+        why_not_three_kinds: the server would have to hold the client's previous order to diff it, and the client already holds the DOM, so naming the result is smaller to send and simpler to apply
+        emitted_when: the boundary's own frame is unchanged and its children digest is not
+        measured: appending one row to a hundred costs 365 bytes where replacing the parent cost 7,383
     - kind: replace, insert, remove, move, or replace_with_retained
       instance_id: rule:component-instance-identity
       anchor_or_parent: optional structural target

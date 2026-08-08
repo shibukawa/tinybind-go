@@ -379,17 +379,26 @@ func parseRender(value string) (mode string, version int, ok bool) {
 }
 
 // DecodeManifest reads the compact validator list a client sends back. The
-// encoding is "id:validator" pairs separated by commas, which stays inside one
-// header and needs no escaping because both halves are opaque tokens.
+// encoding is "id:frame" or "id:frame:children" separated by commas, which stays
+// inside one header and needs no escaping because every part is an opaque token.
+//
+// The third part is what lets a list say its rows moved without its parent being
+// replaced. It is absent for a boundary containing no nested boundary, which is
+// most of them, and a pair with only two parts still reads.
 func DecodeManifest(encoded string) delta.Manifest {
 	var manifest delta.Manifest
-	for _, pair := range strings.Split(encoded, ",") {
-		id, validator, found := strings.Cut(pair, ":")
-		if !found || id == "" || validator == "" {
+	for _, entry := range strings.Split(encoded, ",") {
+		id, rest, found := strings.Cut(entry, ":")
+		if !found || id == "" {
 			continue
 		}
+		frame, rest, _ := strings.Cut(rest, ":")
+		if frame == "" {
+			continue
+		}
+		childrenValidator, parent, _ := strings.Cut(rest, ":")
 		manifest.Instances = append(manifest.Instances, delta.Instance{
-			ID: id, FrameValidator: validator,
+			ID: id, ParentID: parent, FrameValidator: frame, ChildrenValidator: childrenValidator,
 		})
 	}
 	return manifest
@@ -406,6 +415,14 @@ func EncodeManifest(manifest delta.Manifest) string {
 		out.WriteString(instance.ID)
 		out.WriteByte(':')
 		out.WriteString(instance.FrameValidator)
+		if instance.ChildrenValidator != "" || instance.ParentID != "" {
+			out.WriteByte(':')
+			out.WriteString(instance.ChildrenValidator)
+		}
+		if instance.ParentID != "" {
+			out.WriteByte(':')
+			out.WriteString(instance.ParentID)
+		}
 	}
 	return out.String()
 }
@@ -457,6 +474,14 @@ type deltaOperation struct {
 type deltaInstance struct {
 	ID    string `json:"id"`
 	Frame string `json:"frame"`
+	// Children digests the nested boundary ids, so a later request can say a
+	// list reordered without its parent being replaced to express it. Absent for
+	// a boundary containing no nested boundary, which is most of them.
+	Children string `json:"children,omitempty"`
+	// Parent names the enclosing boundary, so a region that disappears can be
+	// attributed to the boundary that will report the survivors. Absent for an
+	// outermost boundary.
+	Parent string `json:"parent,omitempty"`
 }
 
 // Render answers one request with either a complete document or a delta.
@@ -542,7 +567,10 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 		})
 	}
 	for _, instance := range diff.Manifest.Instances {
-		body.Manifest = append(body.Manifest, deltaInstance{ID: instance.ID, Frame: instance.FrameValidator})
+		body.Manifest = append(body.Manifest, deltaInstance{
+			ID: instance.ID, Frame: instance.FrameValidator,
+			Children: instance.ChildrenValidator, Parent: instance.ParentID,
+		})
 	}
 	body.Head = diff.Head
 	// A navigation can arrive at a route whose composition owns a live boundary,
