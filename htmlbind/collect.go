@@ -28,8 +28,9 @@ type Collector interface {
 	Write(value string)
 	// Open enters the boundary of one chain member: its instance ID, the
 	// component's declaration identity, the instance attribute its root
-	// element will carry, and the canonical encoding of its declared inputs.
-	Open(id, componentID, attr, input string)
+	// element will carry, the canonical encoding of its declared inputs, and
+	// the address of the static half its values are walked against.
+	Open(id, componentID, attr, input, sequence string)
 	// Close leaves the innermost open boundary.
 	Close()
 	// TakePending consumes the boundary whose root element has not yet written
@@ -37,6 +38,13 @@ type Collector interface {
 	// Only the boundary's own root consumes it, so an ordinary component
 	// nested inside cannot claim its parent's ID.
 	TakePending() (attr, id string, ok bool)
+	// Slot brackets one instruction's output, so what it wrote can be separated
+	// from the static text around it. begin opens and end closes.
+	Slot(begin bool)
+	// Choice records what the value stream needs in order to walk the sequence
+	// tree: which branch a conditional took, how many times a loop ran, and
+	// whether a called component opened a boundary or rendered inline.
+	Choice(value string)
 }
 
 // CollectChain renders like RenderChain with collect observing the render, and
@@ -93,14 +101,17 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 		id = "c" + strconv.Itoa(index)
 	}
 	return Fragment{
-		head:     member.head,
-		hasAwait: member.hasAwait,
-		hasLive:  member.hasLive,
+		head:          member.head,
+		hasAwait:      member.hasAwait,
+		hasLive:       member.hasLive,
+		sequence:      member.sequence,
+		opensBoundary: true,
 		render: func(r *Renderer) error {
 			if r.collect == nil {
 				return member.render(r)
 			}
-			r.collect.Open(id, decl.componentID, decl.attr, decl.input())
+			r.collect.Open(id, decl.componentID, decl.attr, decl.input(),
+				member.sequenceAddress(r.boundaryPrefix()))
 			if err := member.render(r); err != nil {
 				return err
 			}

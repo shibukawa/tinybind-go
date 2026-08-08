@@ -28,6 +28,15 @@ type Operation struct {
 	// inert placeholder where each nested boundary sits rather than that
 	// boundary's bytes.
 	HTML string
+	// Sequence addresses this fragment's static half, and Values are the varying
+	// half a client walks it with. Together they reproduce HTML exactly, which
+	// is what lets a caller send one or the other: the statics travel once per
+	// client and the values travel per render.
+	//
+	// Both are empty for a boundary whose sequence could not be derived, which
+	// is the case a caller falls back to HTML for.
+	Sequence string
+	Values   []string
 	// Boundaries names the nested boundaries appearing as holes in HTML.
 	//
 	// It is what tells a hole to fill from one to retain: an id also carrying an
@@ -89,9 +98,10 @@ func RenderDelta(key []byte, known Manifest, wrappers []htmlbind.Wrapper, leaf h
 		return Delta{}, err
 	}
 	return Delta{
-		Manifest:   collect.manifest,
-		Operations: operations(collect.manifest, known, collect.contents, collect.children),
-		Head:       head,
+		Manifest: collect.manifest,
+		Operations: operations(collect.manifest, known, collect.contents, collect.children,
+			collect.sequences, collect.values),
+		Head: head,
 	}, nil
 }
 
@@ -104,7 +114,8 @@ func RenderDelta(key []byte, known Manifest, wrappers []htmlbind.Wrapper, leaf h
 // client moves the node it already holds into the hole — keeping the focus, the
 // form values, and the media state that recreating it inside the parent would
 // have destroyed.
-func operations(manifest, known Manifest, contents map[string]string, children map[string][]string) []Operation {
+func operations(manifest, known Manifest, contents map[string]string, children map[string][]string,
+	sequences map[string]string, values map[string][]string) []Operation {
 	// A boundary the browser holds that this render did not produce has to be
 	// taken off the screen, and the delta has no way to say where it was: the
 	// hints carry ids and validators, not structure. Replacing the outermost
@@ -142,6 +153,8 @@ func operations(manifest, known Manifest, contents map[string]string, children m
 			InstanceID: instance.ID,
 			HTML:       contents[instance.ID],
 			Boundaries: children[instance.ID],
+			Sequence:   sequences[instance.ID],
+			Values:     values[instance.ID],
 		})
 	}
 	return ops

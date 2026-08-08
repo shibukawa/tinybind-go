@@ -105,6 +105,11 @@ type collector struct {
 	// fragment, so a client can tell a hole it must fill from one it retains.
 	// Nothing in the markup distinguishes them.
 	children map[string][]string
+	// sequences names each fragment's static half by address.
+	sequences map[string]string
+	// values holds each fragment's varying half, in the order a client walking
+	// that fragment's sequence tree consumes them.
+	values map[string][]string
 	// scratch is reused for the string-to-bytes conversion hashing needs, so a
 	// collecting render does not allocate once per instruction. A collector is
 	// only ever driven by the one goroutine walking the plan.
@@ -121,13 +126,23 @@ type openBoundary struct {
 	attr     string
 	content  strings.Builder
 	children []string
+	sequence string
+	// values is the varying half of this fragment: one entry per slot, plus the
+	// branch a conditional took, the count a loop ran, and the shape a called
+	// component took. A client walks the sequence tree consuming these in order.
+	values []string
+	// depth and start bracket the slot being recorded. Nesting collapses: an
+	// inlined component opens one slot and the instructions inside it do not
+	// split it, because the sequence carries that component as one hole.
+	depth int
+	start int
 }
 
 func (c *collector) Begin(validatorTag, boundaryElement string) {
 	c.tag, c.element = validatorTag, boundaryElement
 }
 
-func (c *collector) Open(id, componentID, attr, input string) {
+func (c *collector) Open(id, componentID, attr, input, sequence string) {
 	parent := ""
 	if depth := len(c.stack); depth > 0 {
 		enclosing := c.stack[depth-1]
@@ -144,6 +159,11 @@ func (c *collector) Open(id, componentID, attr, input string) {
 		// changed children means telling the client the new order and leaving
 		// the parent's DOM alone.
 		enclosing.children = append(enclosing.children, id)
+		// The frame around a hole is identical for every one, so it stays in the
+		// static half and only the attribute name and the id travel. A hundred
+		// holes are then a hundred ids rather than a hundred copies of one
+		// element, which is the cost the split exists to remove.
+		enclosing.values = append(enclosing.values, attr, id)
 		if c.capture {
 			enclosing.content.WriteString(c.placeholder(attr, id))
 		}
@@ -155,10 +175,11 @@ func (c *collector) Open(id, componentID, attr, input string) {
 		InputValidator: c.digest("input", componentID+"\x00"+input),
 	})
 	state := &openBoundary{
-		index: len(c.manifest.Instances) - 1,
-		id:    id,
-		frame: hmac.New(sha256.New, c.key),
-		attr:  attr,
+		index:    len(c.manifest.Instances) - 1,
+		id:       id,
+		frame:    hmac.New(sha256.New, c.key),
+		attr:     attr,
+		sequence: sequence,
 	}
 	// Seeding with the validator tag and the component identity keeps two frames
 	// from ever comparing equal across two builds or across two components that
@@ -184,6 +205,14 @@ func (c *collector) Close() {
 		c.children = map[string][]string{}
 	}
 	c.children[state.id] = state.children
+	if c.values == nil {
+		c.values = map[string][]string{}
+	}
+	c.values[state.id] = state.values
+	if c.sequences == nil {
+		c.sequences = map[string]string{}
+	}
+	c.sequences[state.id] = state.sequence
 	if c.capture {
 		if c.contents == nil {
 			c.contents = map[string]string{}
@@ -215,6 +244,34 @@ func (c *collector) Write(value string) {
 	state.frame.Write(c.scratch)
 	if c.capture {
 		state.content.WriteString(value)
+	}
+}
+
+// Slot brackets one instruction's output inside the innermost open boundary.
+func (c *collector) Slot(begin bool) {
+	depth := len(c.stack)
+	if depth == 0 {
+		return
+	}
+	state := c.stack[depth-1]
+	if begin {
+		if state.depth == 0 {
+			state.start = state.content.Len()
+		}
+		state.depth++
+		return
+	}
+	state.depth--
+	if state.depth == 0 {
+		state.values = append(state.values, state.content.String()[state.start:])
+	}
+}
+
+// Choice records what a client needs in order to take the same path through the
+// sequence tree the render took.
+func (c *collector) Choice(value string) {
+	if depth := len(c.stack); depth > 0 {
+		c.stack[depth-1].values = append(c.stack[depth-1].values, value)
 	}
 }
 
