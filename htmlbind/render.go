@@ -335,7 +335,7 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
 		defer coordinator.stop()
 		if collect != nil {
-			collect.Begin(coordinator.opts.validatorTag)
+			collect.Begin(coordinator.opts.validatorTag, boundaryElementOf(coordinator.opts))
 		}
 		composed, head, err := assemble(collect, wrappers, leaf)
 		if err != nil {

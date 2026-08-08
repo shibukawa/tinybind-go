@@ -7,6 +7,32 @@ Return one render as its per-boundary HTML fragments plus the boundary tree that
 
 ```yaml
 priority: should
+as_built:
+  shipped: 2026-08-08, the boundary-hole tier; the slot-span tier and the static sequences are not built
+  capture: a boundary's captured fragment stops at its children — Collector.Write records into the innermost open boundary only, where it used to write into every enclosing one
+  holes: 'the collector writes an inert placeholder into the parent where a child opens, the same <prefix>-boundary element with display:contents a progressive render already writes for an await boundary, so a client recognises one hole shape rather than two'
+  boundary_list: Operation.Boundaries names the holes in a fragment, and travels as a boundaries field on the JSON body and on the stream record
+  selection_inverted:
+    was: send the topmost changed boundary carrying its whole subtree, and skip every descendant because the replacement contained it
+    now: send every changed boundary as its own fragment, and skip every unchanged one including a child of a changed parent, whose hole the client fills from the DOM it already holds
+    gain: a changed panel no longer recreates the rows inside it, so the focus, the form values, and the playing media those rows held survive
+  frame_covers_the_hole:
+    found_while_building: the placeholder has to be hashed into the parent's frame even though the child's bytes are not
+    without_it: a parent that gained or lost a region compares equal, and the client is handed a fragment with no hole to put it in
+    reading: this is the difference between a frame that excludes a child's content and one that cannot see the child at all
+  collector_signature: 'Begin gained the placeholder element name, because a decomposing observer writes markup and the naming is a render option it cannot otherwise see'
+  await_needs_nothing:
+    why: an await boundary already writes a placeholder carrying its own id, and its completion already arrives as a later record addressing that id
+    so: a boundary inside a fragment is a hole of the kind this concept already describes, and a caller overwrites by id
+  verified:
+    - TestFragmentCarriesHolesNotChildren, that a parent carries a hole and none of its child's bytes
+    - TestOnlyTheChangedRowIsSent
+    - TestChangedParentRetainsUnchangedChildren, the case the change exists for
+    - TestAGainedChildChangesTheParentFrame, covering both halves of the frame rule
+    - TestFirstDeltaReturnsEveryBoundary, rewritten from asserting whole-subtree containment to asserting a fragment per boundary
+  not_built_here:
+    - slot spans, and therefore the static sequences, their content addresses, and their fetch
+    - the JSON redraw body, so a redraw still writes a bare fragment and still cannot carry its new validator
 source:
   - owner scoping decision 2026-08-08
   - downstream framework partial transfer report 2026-08-08

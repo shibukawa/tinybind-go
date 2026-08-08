@@ -198,7 +198,11 @@ skeleton_delivery:
 open_questions:
   - whether decision:list-item-key participates in the encoding or only in application, which that concept already asks and this makes answerable
   - what the emitter cost is in generated file size, given every attribute op grows a static frame it did not carry
-  - what an await or live boundary inside a unit yields, since a boundary writes a placeholder now and content later; decision:cache-component-declaration rejects the same shape at generation time for the same reason
+resolved_2026_08_08:
+  await_or_live_inside_a_unit:
+    answer: nothing new; a boundary already writes a placeholder carrying its own id, and its completion already arrives as a later record addressing that id
+    so: it is a hole of the kind requirement:boundary-decomposed-render already describes, and a caller overwrites by id from the same response
+    why_it_looked_hard: the question assumed a unit had to express an asynchronously filling slot, and a hole plus a later record already is one
 related:
   - decision:dom-application-strategy
   - decision:generated-render-plan

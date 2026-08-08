@@ -24,8 +24,18 @@ type Operation struct {
 	Kind string
 	// InstanceID names the boundary the operation targets.
 	InstanceID string
-	// HTML is the boundary's complete subtree, including its root element.
+	// HTML is the boundary's own markup, including its root element, with an
+	// inert placeholder where each nested boundary sits rather than that
+	// boundary's bytes.
 	HTML string
+	// Boundaries names the nested boundaries appearing as holes in HTML.
+	//
+	// It is what tells a hole to fill from one to retain: an id also carrying an
+	// operation in this response is replaced, and one that does not is a
+	// boundary the client already holds and moves its live node into. Nothing in
+	// the markup distinguishes the two, and without the list a missing fragment
+	// would be indistinguishable from a truncated response.
+	Boundaries []string
 }
 
 // OpReplace names the only operation kind this milestone produces.
@@ -65,16 +75,21 @@ func RenderDelta(key []byte, known Manifest, wrappers []htmlbind.Wrapper, leaf h
 	}
 	return Delta{
 		Manifest:   collect.manifest,
-		Operations: operations(collect.manifest, known, collect.contents),
+		Operations: operations(collect.manifest, known, collect.contents, collect.children),
 		Head:       head,
 	}, nil
 }
 
-// operations selects the topmost changed boundaries. A descendant of a replaced
-// boundary is already contained in that replacement, so sending it again would
-// both waste bytes and apply to a node that no longer exists.
-func operations(manifest, known Manifest, contents map[string]string) []Operation {
-	replaced := map[string]bool{}
+// operations sends every changed boundary as its own fragment.
+//
+// A parent's fragment holds a placeholder where each child sits rather than the
+// child's bytes, so a descendant is no longer contained in its ancestor's
+// replacement and has to be sent when it changed. The gain is the other
+// direction: an unchanged child of a changed parent is sent by nobody, and the
+// client moves the node it already holds into the hole — keeping the focus, the
+// form values, and the media state that recreating it inside the parent would
+// have destroyed.
+func operations(manifest, known Manifest, contents map[string]string, children map[string][]string) []Operation {
 	// A boundary the browser holds that this render did not produce has to be
 	// taken off the screen, and the delta has no way to say where it was: the
 	// hints carry ids and validators, not structure. Replacing the outermost
@@ -86,20 +101,21 @@ func operations(manifest, known Manifest, contents map[string]string) []Operatio
 	forceRoot := disappeared(manifest, known)
 	var ops []Operation
 	for _, instance := range manifest.Instances {
-		if replaced[instance.ParentID] {
-			replaced[instance.ID] = true
-			continue
-		}
 		before, ok := known.Find(instance.ID)
 		unchanged := ok && before.FrameValidator == instance.FrameValidator
+		// An unchanged boundary is never sent, including one whose parent is
+		// being replaced: its hole in that replacement is what the client moves
+		// its live node into. A boundary the client does not hold is not
+		// unchanged by this test, since it is absent from the known manifest,
+		// so a newly appearing region is always sent.
 		if unchanged && !(forceRoot && instance.ParentID == "") {
 			continue
 		}
-		replaced[instance.ID] = true
 		ops = append(ops, Operation{
 			Kind:       OpReplace,
 			InstanceID: instance.ID,
 			HTML:       contents[instance.ID],
+			Boundaries: children[instance.ID],
 		})
 	}
 	return ops

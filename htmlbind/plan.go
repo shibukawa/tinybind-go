@@ -386,7 +386,18 @@ func (r *Renderer) boundaryPrefix() string {
 // boundaryElement is the placeholder tag name, derived from the same prefix as
 // everything else the protocol puts in the document.
 func (r *Renderer) boundaryElement() string {
-	return r.boundaryPrefix() + "-boundary"
+	return boundaryElementOf(r.opts)
+}
+
+// boundaryElementOf is boundaryElement for a caller holding the options rather
+// than a renderer, which is how a collecting entry names it before any renderer
+// exists.
+func boundaryElementOf(opts *renderOptions) string {
+	prefix := DefaultBoundaryPrefix
+	if opts != nil && opts.boundaryPrefix != "" {
+		prefix = opts.boundaryPrefix
+	}
+	return prefix + "-boundary"
 }
 
 // context returns the context this render runs under. The async entries take

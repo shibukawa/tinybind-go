@@ -17,8 +17,13 @@ import (
 // implementation needs no locking of its own.
 type Collector interface {
 	// Begin starts one render, carrying the validator tag the render options
-	// resolved. It is called once, before anything else.
-	Begin(validatorTag string)
+	// resolved and the placeholder element name they name. It is called once,
+	// before anything else.
+	//
+	// The element is here because a decomposing observer writes a placeholder
+	// of its own where a nested boundary sits, and the naming a render uses is
+	// a render option it cannot otherwise see.
+	Begin(validatorTag, boundaryElement string)
 	// Write observes one instruction's output, after escaping.
 	Write(value string)
 	// Open enters the boundary of one chain member: its instance ID, the
@@ -44,7 +49,7 @@ type Collector interface {
 func CollectChain(w io.Writer, collect Collector, wrappers []Wrapper, leaf Fragment, options ...Option) ([]string, error) {
 	opts := newRenderOptions(options)
 	if collect != nil {
-		collect.Begin(opts.validatorTag)
+		collect.Begin(opts.validatorTag, boundaryElementOf(opts))
 	}
 	composed, head, err := assemble(collect, wrappers, leaf)
 	if err != nil {

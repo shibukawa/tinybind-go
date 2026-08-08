@@ -20,6 +20,7 @@ fields:
       retained: descendant instance IDs whose existing DOM the client moves into holes in html_template
   directives: navigate, reload, or in-band error once the response has committed
 boundary_list:
+  shipped: 2026-08-08 as the boundaries field, on the buffered body and on the stream record alike
   added: 2026-08-08 by requirement:boundary-decomposed-render
   what: one record per fragment naming the reloadable boundary ids inside it, declared for that fragment's scope
   why: a hole with no fragment in the response has to read as a retain rather than as a truncation, and nothing else in the body distinguishes them

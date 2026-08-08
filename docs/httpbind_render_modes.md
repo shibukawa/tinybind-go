@@ -1,7 +1,11 @@
 # Two render outputs: assembled HTML, and the update record sequence
 
 **Audience:** someone building a framework on `tinybind-go`.
-**Status:** design. Nothing in this document is implemented. It records what the module will produce and where the line between it and you falls, so you can design against it before it exists.
+**Status:** partly built.
+
+> **Shipped:** the boundary decomposition — a fragment per boundary, a hole where each nested boundary sits, and the `boundaries` list that separates a hole to fill from one to retain. It is what a navigation delta and a live delivery already write.
+>
+> **Not built:** slot spans, and therefore the static sequences, their content addresses, and their fetch; and the JSON redraw body. Everything below describing those is design you can build against, not behaviour you can call.
 
 ## The shape in one paragraph
 
