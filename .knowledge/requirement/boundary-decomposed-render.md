@@ -33,6 +33,27 @@ as_built:
   not_built_here:
     - slot spans, and therefore the static sequences, their content addresses, and their fetch
     - the JSON redraw body, so a redraw still writes a bare fragment and still cannot carry its new validator
+structural_operations:
+  shipped: 2026-08-08, immediately after the decomposition, because measuring it showed the decomposition alone missed the case it was built for
+  measured_first:
+    method: a hundred-row message panel, bytes over the wire per event
+    decomposition_alone: 'a full render is 15,328; editing one row is 76; changing the title is 7,240; appending one row is 7,383'
+    reading: the case decomposition nails is one region changing among unchanged siblings, at two hundred times; anything that changes the parent re-sends its whole list of holes, at about two
+    why_that_mattered: appending is the ordinary event on a live list and is the reporter's own measured headline case, so the round had optimised everything except what it was for
+  what_shipped:
+    frame_stops_at_the_hole: the placeholder is no longer hashed into the parent's frame, so a frame answers only whether the component's own markup moved
+    children_validator: a second digest over the nested boundary ids in order, carried beside the frame in the manifest
+    op_children: an operation naming a boundary and its new child order, carrying no markup; the client keeps what the list keeps, moves what moved, drops what it omits, and fills what arrives as its own operation
+    three_way: frame changed means replace; frame equal and children changed means the order alone; both equal means nothing
+  measured_after: 'appending one row to a hundred fell from 7,383 bytes to 365, twenty times, and to forty-two times against a full render'
+  what_it_still_costs: changing the parent's own markup replaces it with its whole hole list, which is 7,240 bytes at a hundred rows and is what slot spans would compress to the ids alone
+  removal_is_the_subtle_half:
+    covered: a removal whose parent survives with an unchanged frame, since that parent reports the survivors and the client drops what the list omits
+    not_covered: everything else, which keeps the outermost-replacement fallback
+    why_the_frame_and_not_mere_survival: a chain member is numbered by position, so a shorter chain renumbers and an id surviving can mean a different component wearing the same number, whose operation says nothing about the region that went
+    found_by: the existing disappearing-boundary test, which failed against the looser rule
+  manifest_grew: 'an entry is now id:frame:children:parent rather than id:frame, adding roughly thirty bytes per instance; the parent is what lets a removal be attributed at all'
+  verified: TestAnAppendedRowCostsItsOwnFragmentAndAnIDList, TestARemovedRowIsAnIDListToo, TestAReorderedListSendsOnlyTheOrder, TestAChangedParentIsStillReplaced, and the unchanged disappearing-boundary fallback
 source:
   - owner scoping decision 2026-08-08
   - downstream framework partial transfer report 2026-08-08

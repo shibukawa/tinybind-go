@@ -25,9 +25,20 @@ type Instance struct {
 	// is a cache and diagnostic key rather than authority to skip a render.
 	InputValidator string
 	// FrameValidator digests this boundary's own rendered bytes, excluding the
-	// output of nested boundaries. A layout whose frame is unchanged can keep
-	// its DOM while its child is replaced.
+	// output of nested boundaries and the holes where they sit. A layout whose
+	// frame is unchanged can keep its DOM while its child is replaced.
 	FrameValidator string
+	// ChildrenValidator digests the ids of the nested boundaries, in order.
+	//
+	// It is separate from the frame because the two have different remedies. A
+	// changed frame means the component's own markup moved, and the parent is
+	// replaced. A changed children list means a region was inserted, removed,
+	// or reordered, and the parent's own DOM is fine — the client is told the
+	// new order and reconciles what it already holds. Folding the second into
+	// the first would make every appended list row cost the whole list.
+	//
+	// It is empty for a boundary with no nested boundary, which is most of them.
+	ChildrenValidator string
 }
 
 // Manifest is the update state of one render, in document order.
@@ -126,17 +137,15 @@ func (c *collector) Open(id, componentID, attr, input string) {
 		// either fills from this response or moves the node it already holds
 		// into.
 		//
-		// The placeholder is hashed into the parent's frame even though the
-		// child's bytes are not. That is the difference between a frame that
-		// excludes a child's content and one that cannot see the child at all:
-		// without it, a parent that gained or lost a region would compare equal,
-		// and the client would be sent a fragment with no hole to put it in.
-		hole := c.placeholder(attr, id)
-		c.scratch = append(c.scratch[:0], hole...)
-		enclosing.frame.Write(c.scratch)
+		// The hole is not hashed into the parent's frame. A frame answers "did
+		// this component's own markup change", and which children it has is a
+		// separate question with a separate answer below — because the two have
+		// different remedies. Changed markup means replacing the parent;
+		// changed children means telling the client the new order and leaving
+		// the parent's DOM alone.
+		enclosing.children = append(enclosing.children, id)
 		if c.capture {
-			enclosing.children = append(enclosing.children, id)
-			enclosing.content.WriteString(hole)
+			enclosing.content.WriteString(c.placeholder(attr, id))
 		}
 	}
 	c.manifest.Instances = append(c.manifest.Instances, Instance{
@@ -168,12 +177,18 @@ func (c *collector) Close() {
 	c.stack = c.stack[:depth-1]
 	c.pending = nil
 	c.manifest.Instances[state.index].FrameValidator = truncate(state.frame.Sum(nil))
+	if len(state.children) > 0 {
+		c.manifest.Instances[state.index].ChildrenValidator = c.digest("children", strings.Join(state.children, "\x00"))
+	}
+	if c.children == nil {
+		c.children = map[string][]string{}
+	}
+	c.children[state.id] = state.children
 	if c.capture {
 		if c.contents == nil {
-			c.contents, c.children = map[string]string{}, map[string][]string{}
+			c.contents = map[string]string{}
 		}
 		c.contents[state.id] = state.content.String()
-		c.children[state.id] = state.children
 	}
 }
 

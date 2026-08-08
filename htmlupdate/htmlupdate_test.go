@@ -109,18 +109,14 @@ func get(t *testing.T, url string, headers map[string]string) *http.Response {
 	return recorder.Result()
 }
 
-func fetchDelta(t *testing.T, url string, known map[string]string) (*http.Response, deltaBody) {
+func fetchDelta(t *testing.T, url string, known delta.Manifest) (*http.Response, deltaBody) {
 	t.Helper()
 	headers := map[string]string{
 		"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(clientVersion),
 		"X-Tinybind-Build":  htmlupdate.BuildID(),
 	}
-	if len(known) > 0 {
-		var manifest delta.Manifest
-		for id, frame := range known {
-			manifest.Instances = append(manifest.Instances, delta.Instance{ID: id, FrameValidator: frame})
-		}
-		headers["X-Tinybind-Manifest"] = htmlupdate.EncodeManifest(manifest)
+	if len(known.Instances) > 0 {
+		headers["X-Tinybind-Manifest"] = htmlupdate.EncodeManifest(known)
 	}
 	response := get(t, url, headers)
 	var body deltaBody
@@ -143,17 +139,24 @@ type deltaBody struct {
 		Boundaries []string `json:"boundaries"`
 	} `json:"ops"`
 	Manifest []struct {
-		ID    string `json:"id"`
-		Frame string `json:"frame"`
+		ID       string `json:"id"`
+		Frame    string `json:"frame"`
+		Children string `json:"children"`
 	} `json:"manifest"`
 }
 
-func (b deltaBody) validators() map[string]string {
-	out := map[string]string{}
+// validators is what a client returns on its next request: everything the last
+// response's manifest gave it, including the children digest a list needs so its
+// rows can move without their parent being replaced to say so. Returning less
+// than a response gave is what a client does not do.
+func (b deltaBody) validators() delta.Manifest {
+	var known delta.Manifest
 	for _, instance := range b.Manifest {
-		out[instance.ID] = instance.Frame
+		known.Instances = append(known.Instances, delta.Instance{
+			ID: instance.ID, FrameValidator: instance.Frame, ChildrenValidator: instance.Children,
+		})
 	}
-	return out
+	return known
 }
 
 // A request without the header must be indistinguishable from an ordinary page,
@@ -187,7 +190,7 @@ func TestEveryResponseVariesOnTheRenderHeader(t *testing.T) {
 
 // The first update has no validators, so it legitimately returns everything.
 func TestFirstDeltaReturnsEveryBoundary(t *testing.T) {
-	response, body := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	response, body := fetchDelta(t, "/search?q=go&section=Docs", delta.Manifest{})
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 		t.Fatalf("content type = %q", got)
 	}
@@ -221,7 +224,7 @@ func TestFirstDeltaReturnsEveryBoundary(t *testing.T) {
 // The milestone's target case: only the search parameter changed, so only the
 // page travels and the layout markup is never resent.
 func TestSearchParameterChangeSendsOnlyThePage(t *testing.T) {
-	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", delta.Manifest{})
 	_, second := fetchDelta(t, "/search?q=rust&section=Docs", first.validators())
 	if len(second.Operations) != 1 {
 		t.Fatalf("want one operation, got %+v", second.Operations)
@@ -240,7 +243,7 @@ func TestSearchParameterChangeSendsOnlyThePage(t *testing.T) {
 
 // An unchanged render sends no markup at all, which is the payoff.
 func TestUnchangedRenderSendsNoOperations(t *testing.T) {
-	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", delta.Manifest{})
 	_, second := fetchDelta(t, "/search?q=go&section=Docs", first.validators())
 	if len(second.Operations) != 0 {
 		t.Fatalf("want no operations, got %+v", second.Operations)
@@ -253,7 +256,7 @@ func TestUnchangedRenderSendsNoOperations(t *testing.T) {
 // A layout change replaces the layout, and the page inside it is not sent
 // separately.
 func TestLayoutChangeReplacesTheAncestorOnly(t *testing.T) {
-	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", delta.Manifest{})
 	_, second := fetchDelta(t, "/search?q=go&section=Guides", first.validators())
 	if len(second.Operations) != 1 || second.Operations[0].ID != "c1" {
 		t.Fatalf("want only the layout replaced, got %+v", second.Operations)
@@ -360,7 +363,9 @@ func TestOversizedManifestIsIgnored(t *testing.T) {
 // A stale validator is a hint, not authority: the server recomputes and the
 // client converges.
 func TestStaleValidatorsYieldAFullDelta(t *testing.T) {
-	_, body := fetchDelta(t, "/search?q=go&section=Docs", map[string]string{"c1": "stale", "c2": "stale"})
+	_, body := fetchDelta(t, "/search?q=go&section=Docs", delta.Manifest{Instances: []delta.Instance{
+		{ID: "c1", FrameValidator: "stale"}, {ID: "c2", FrameValidator: "stale"},
+	}})
 	if len(body.Operations) != 2 {
 		t.Fatalf("every stale boundary must be re-sent, got %+v", body.Operations)
 	}

@@ -155,10 +155,12 @@ func TestChangedParentRetainsUnchangedChildren(t *testing.T) {
 	}
 }
 
-// A frame excludes a child's bytes and includes the child's hole. Without the
-// second half a region that appeared would compare equal, and the client would
-// be handed a fragment with nowhere to put it.
-func TestAGainedChildChangesTheParentFrame(t *testing.T) {
+// Appending is the ordinary event on a live list, and expressing it by replacing
+// the parent costs the whole list of holes — measured at 7,383 bytes to add one
+// 76-byte row to a hundred. A frame answers whether the component's own markup
+// moved; which children it has is a separate question with a separate answer,
+// and the remedy for the second is a list of ids rather than a fragment.
+func TestAnAppendedRowCostsItsOwnFragmentAndAnIDList(t *testing.T) {
 	known := render(t, delta.Manifest{}, base).Manifest
 	next := base
 	next.Rows = append(append([]row{}, base.Rows...), row{ID: "row-c", Text: "delta"})
@@ -166,22 +168,82 @@ func TestAGainedChildChangesTheParentFrame(t *testing.T) {
 	result := render(t, known, next)
 	parent, ok := find(result.Operations, panelID)
 	if !ok {
-		t.Fatalf("the panel was not re-sent, so the new row has no hole: %+v", result.Operations)
+		t.Fatalf("the panel said nothing, so the new row has nowhere to go: %+v", result.Operations)
 	}
-	if !strings.Contains(parent.HTML, `data-tb-id="row-c"`) {
-		t.Fatalf("the panel fragment has no hole for the new row: %s", parent.HTML)
+	// The panel's own markup did not move, so its DOM stays and it carries no
+	// HTML at all — only the order its children are now in.
+	if parent.Kind != delta.OpChildren {
+		t.Fatalf("panel operation kind = %q, want %q", parent.Kind, delta.OpChildren)
 	}
-	// The new row is not in the known manifest, so it is sent rather than
-	// retained: there is no node on screen to move into its hole.
-	if _, ok := find(result.Operations, "row-c"); !ok {
-		t.Fatalf("the new row was not sent: %+v", result.Operations)
+	if parent.HTML != "" {
+		t.Fatalf("a children operation carries markup: %q", parent.HTML)
 	}
-	// The rows that did not move are still retained, even though their parent is
-	// being replaced around them.
+	if strings.Join(parent.Boundaries, ",") != "row-a,row-b,row-c" {
+		t.Fatalf("boundaries = %v", parent.Boundaries)
+	}
+	// The new row is not in the known manifest, so it arrives as its own
+	// fragment: there is no node on screen for the client to move.
+	added, ok := find(result.Operations, "row-c")
+	if !ok || added.Kind != delta.OpReplace {
+		t.Fatalf("the new row was not sent as a fragment: %+v", result.Operations)
+	}
+	// Every row that did not move is sent by nobody.
 	for _, id := range []string{"row-a", "row-b"} {
 		if _, ok := find(result.Operations, id); ok {
 			t.Fatalf("%s was re-sent though nothing about it changed", id)
 		}
+	}
+}
+
+// A removed row is the same shape from the other direction: the list says who
+// remains, and the client drops what the list no longer names.
+func TestARemovedRowIsAnIDListToo(t *testing.T) {
+	known := render(t, delta.Manifest{}, base).Manifest
+	next := base
+	next.Rows = []row{{ID: "row-a", Text: "alpha"}}
+
+	result := render(t, known, next)
+	if len(result.Operations) != 1 {
+		t.Fatalf("operations = %+v, want the list alone", result.Operations)
+	}
+	parent := result.Operations[0]
+	if parent.Kind != delta.OpChildren || strings.Join(parent.Boundaries, ",") != "row-a" {
+		t.Fatalf("operation = %+v", parent)
+	}
+}
+
+// Reordering moves no markup at all: both rows are unchanged and so is the
+// parent's own markup, so the whole delta is the new order.
+func TestAReorderedListSendsOnlyTheOrder(t *testing.T) {
+	known := render(t, delta.Manifest{}, base).Manifest
+	next := base
+	next.Rows = []row{{ID: "row-b", Text: "beta"}, {ID: "row-a", Text: "alpha"}}
+
+	result := render(t, known, next)
+	if len(result.Operations) != 1 {
+		t.Fatalf("operations = %+v", result.Operations)
+	}
+	if got := result.Operations[0]; got.Kind != delta.OpChildren ||
+		strings.Join(got.Boundaries, ",") != "row-b,row-a" {
+		t.Fatalf("operation = %+v", got)
+	}
+}
+
+// A parent whose own markup changed is replaced, and the replacement carries the
+// holes, so the children question does not also need answering.
+func TestAChangedParentIsStillReplaced(t *testing.T) {
+	known := render(t, delta.Manifest{}, base).Manifest
+	next := base
+	next.Title = "Archive"
+	next.Rows = append(append([]row{}, base.Rows...), row{ID: "row-c", Text: "delta"})
+
+	result := render(t, known, next)
+	parent, ok := find(result.Operations, panelID)
+	if !ok || parent.Kind != delta.OpReplace {
+		t.Fatalf("want the panel replaced, got %+v", result.Operations)
+	}
+	if !strings.Contains(parent.HTML, `data-tb-id="row-c"`) {
+		t.Fatalf("the replacement has no hole for the new row: %s", parent.HTML)
 	}
 }
 

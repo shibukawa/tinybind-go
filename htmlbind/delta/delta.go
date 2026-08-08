@@ -38,8 +38,23 @@ type Operation struct {
 	Boundaries []string
 }
 
-// OpReplace names the only operation kind this milestone produces.
-const OpReplace = "replace"
+const (
+	// OpReplace swaps a boundary's own markup, holes and all.
+	OpReplace = "replace"
+	// OpChildren says a boundary's own markup is unchanged and its nested
+	// boundaries are now these, in this order.
+	//
+	// It carries no HTML. The client reconciles what it already holds against
+	// the list: an id it holds and the list keeps stays, moving if the order
+	// moved; an id the list drops is removed; an id it does not hold arrives as
+	// its own operation in the same response.
+	//
+	// It exists because appending one row to a list is the ordinary event on a
+	// live screen, and expressing it by replacing the parent costs the whole
+	// list of holes — measured at 7,383 bytes to add one 76-byte row to a
+	// hundred, where the list of ids costs a few hundred.
+	OpChildren = "children"
+)
 
 // Delta is the result of comparing a fresh render against what the browser
 // already holds.
@@ -102,15 +117,26 @@ func operations(manifest, known Manifest, contents map[string]string, children m
 	var ops []Operation
 	for _, instance := range manifest.Instances {
 		before, ok := known.Find(instance.ID)
-		unchanged := ok && before.FrameValidator == instance.FrameValidator
-		// An unchanged boundary is never sent, including one whose parent is
-		// being replaced: its hole in that replacement is what the client moves
-		// its live node into. A boundary the client does not hold is not
-		// unchanged by this test, since it is absent from the known manifest,
-		// so a newly appearing region is always sent.
-		if unchanged && !(forceRoot && instance.ParentID == "") {
+		root := forceRoot && instance.ParentID == ""
+		if ok && before.FrameValidator == instance.FrameValidator && !root {
+			// The component's own markup is unchanged, so its DOM stays. If its
+			// nested boundaries moved, the client is told the new order and
+			// reconciles what it holds; a parent replacement would have cost
+			// every hole in the list to express one insertion.
+			if before.ChildrenValidator != instance.ChildrenValidator {
+				ops = append(ops, Operation{
+					Kind:       OpChildren,
+					InstanceID: instance.ID,
+					Boundaries: children[instance.ID],
+				})
+			}
+			// An unchanged boundary is never sent, including one whose parent is
+			// being replaced: its hole in that replacement is what the client
+			// moves its live node into.
 			continue
 		}
+		// A boundary absent from the known manifest is not unchanged by the test
+		// above, so a newly appearing region is always sent.
 		ops = append(ops, Operation{
 			Kind:       OpReplace,
 			InstanceID: instance.ID,
@@ -122,12 +148,40 @@ func operations(manifest, known Manifest, contents map[string]string, children m
 }
 
 // disappeared reports whether the browser holds a boundary this render no
-// longer produces.
+// longer produces and nothing in the response can say so.
+//
+// A removal is covered when its parent survives with its own markup unchanged:
+// that parent's child set shrank, so it reports the survivors and the client
+// drops what the list no longer names. The test is the parent's frame rather
+// than its mere presence, because a chain member is numbered by position — a
+// shorter chain renumbers, so an id surviving can mean a different component
+// wearing the same number, whose operation says nothing about the region that
+// went.
+//
+// Everything else falls back to replacing the outermost boundary, which takes
+// the region off the screen along with everything else that moved.
 func disappeared(manifest, known Manifest) bool {
 	for _, before := range known.Instances {
-		if _, ok := manifest.Find(before.ID); !ok {
+		if _, ok := manifest.Find(before.ID); ok {
+			continue
+		}
+		if before.ParentID == "" {
+			return true
+		}
+		parent, ok := manifest.Find(before.ParentID)
+		if !ok || parent.FrameValidator != knownFrame(known, before.ParentID) {
 			return true
 		}
 	}
 	return false
+}
+
+// knownFrame is the frame the client holds for an instance, or empty when it
+// holds none — which never compares equal to a rendered one.
+func knownFrame(known Manifest, id string) string {
+	instance, ok := known.Find(id)
+	if !ok {
+		return ""
+	}
+	return instance.FrameValidator
 }
