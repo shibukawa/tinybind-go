@@ -72,17 +72,28 @@ type collector struct {
 	// second, weaker copy of the same idea: it could only change when this
 	// module's wire shape changed, while a build identity also covers a changed
 	// template, a changed external function, and a changed client.
-	tag      string
+	tag string
+	// element names the placeholder a decomposing capture writes where a nested
+	// boundary sits. It is the same element a progressive render already writes
+	// for an await boundary, so a client has one hole shape to recognise.
+	element  string
 	manifest Manifest
 	stack    []*openBoundary
 	// pending holds the boundary whose root element has not yet written its
 	// instance attribute. Only the boundary's own root consumes it, so an
 	// ordinary component nested inside cannot claim its parent's ID.
 	pending *openBoundary
-	// capture records each boundary's complete subtree HTML, which a delta
-	// needs as the payload of a replace operation.
+	// capture records each boundary's own HTML, with a placeholder where each
+	// nested boundary sits rather than that boundary's bytes. A delta sends one
+	// fragment per changed boundary and leaves a hole for every child, so an
+	// unchanged child keeps the DOM it already has — and the state inside it —
+	// instead of being recreated inside its parent's replacement.
 	capture  bool
 	contents map[string]string
+	// children names the boundaries appearing as holes in each captured
+	// fragment, so a client can tell a hole it must fill from one it retains.
+	// Nothing in the markup distinguishes them.
+	children map[string][]string
 	// scratch is reused for the string-to-bytes conversion hashing needs, so a
 	// collecting render does not allocate once per instruction. A collector is
 	// only ever driven by the one goroutine walking the plan.
@@ -93,19 +104,40 @@ type openBoundary struct {
 	// index is the instance's slot in the manifest, reserved when the boundary
 	// opens so the manifest stays in document order. A parent therefore
 	// precedes its children, which is the order a structural operation needs.
-	index   int
-	id      string
-	frame   hash.Hash
-	attr    string
-	content strings.Builder
+	index    int
+	id       string
+	frame    hash.Hash
+	attr     string
+	content  strings.Builder
+	children []string
 }
 
-func (c *collector) Begin(validatorTag string) { c.tag = validatorTag }
+func (c *collector) Begin(validatorTag, boundaryElement string) {
+	c.tag, c.element = validatorTag, boundaryElement
+}
 
 func (c *collector) Open(id, componentID, attr, input string) {
 	parent := ""
 	if depth := len(c.stack); depth > 0 {
-		parent = c.stack[depth-1].id
+		enclosing := c.stack[depth-1]
+		parent = enclosing.id
+		// The child's bytes never reach the parent's fragment. What lands there
+		// instead is an inert element carrying the child's id, which a client
+		// either fills from this response or moves the node it already holds
+		// into.
+		//
+		// The placeholder is hashed into the parent's frame even though the
+		// child's bytes are not. That is the difference between a frame that
+		// excludes a child's content and one that cannot see the child at all:
+		// without it, a parent that gained or lost a region would compare equal,
+		// and the client would be sent a fragment with no hole to put it in.
+		hole := c.placeholder(attr, id)
+		c.scratch = append(c.scratch[:0], hole...)
+		enclosing.frame.Write(c.scratch)
+		if c.capture {
+			enclosing.children = append(enclosing.children, id)
+			enclosing.content.WriteString(hole)
+		}
 	}
 	c.manifest.Instances = append(c.manifest.Instances, Instance{
 		ID:             id,
@@ -138,27 +170,35 @@ func (c *collector) Close() {
 	c.manifest.Instances[state.index].FrameValidator = truncate(state.frame.Sum(nil))
 	if c.capture {
 		if c.contents == nil {
-			c.contents = map[string]string{}
+			c.contents, c.children = map[string]string{}, map[string][]string{}
 		}
 		c.contents[state.id] = state.content.String()
+		c.children[state.id] = state.children
 	}
 }
 
-// Write hashes into the innermost open boundary only, so a frame validator
-// covers the component's own markup and not its child's. Captured content works
-// the other way: a replace operation must carry the whole subtree, so every
-// enclosing boundary records the bytes too.
+// placeholder is the hole one boundary leaves in its parent's fragment. It is
+// the element a progressive render already writes for an await boundary, so a
+// client recognises one shape rather than two, and display:contents keeps it out
+// of layout for the moment before it is filled.
+func (c *collector) placeholder(attr, id string) string {
+	return `<` + c.element + ` ` + attr + `="` + id + `" style="display:contents"></` + c.element + `>`
+}
+
+// Write records into the innermost open boundary only. Both the frame validator
+// and the captured fragment stop at a nested boundary: the validator so an
+// ancestor whose own markup is unchanged compares equal while its child moves,
+// and the fragment so that child is transferred once, as itself, rather than
+// again inside every ancestor that encloses it.
 func (c *collector) Write(value string) {
 	depth := len(c.stack)
 	if depth == 0 {
 		return
 	}
+	state := c.stack[depth-1]
 	c.scratch = append(c.scratch[:0], value...)
-	c.stack[depth-1].frame.Write(c.scratch)
-	if !c.capture {
-		return
-	}
-	for _, state := range c.stack {
+	state.frame.Write(c.scratch)
+	if c.capture {
 		state.content.WriteString(value)
 	}
 }

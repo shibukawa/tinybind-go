@@ -444,6 +444,14 @@ type deltaOperation struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
 	HTML string `json:"html"`
+	// Boundaries names the nested boundaries appearing as holes in HTML.
+	//
+	// A hole whose id also carries an operation in this response is filled from
+	// it; one that does not is a region the client already holds, and it moves
+	// that live node in rather than recreating it — which is what keeps the
+	// focus, the form values, and the media state inside it. Without the list a
+	// missing fragment would be indistinguishable from a truncated response.
+	Boundaries []string `json:"boundaries,omitempty"`
 }
 
 type deltaInstance struct {
@@ -530,6 +538,7 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 	for _, operation := range diff.Operations {
 		body.Operations = append(body.Operations, deltaOperation{
 			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
+			Boundaries: operation.Boundaries,
 		})
 	}
 	for _, instance := range diff.Manifest.Instances {

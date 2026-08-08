@@ -38,6 +38,10 @@ type record struct {
 	ID    string `json:"id,omitempty"`
 	HTML  string `json:"html,omitempty"`
 	Frame string `json:"frame,omitempty"`
+	// Boundaries names the holes in HTML. One that also arrives as an operation
+	// is filled from it; one that does not is retained from the DOM the client
+	// already has, which is what keeps the state inside it.
+	Boundaries []string `json:"boundaries,omitempty"`
 	// terminator and directive fields
 	Navigate string `json:"navigate,omitempty"`
 	Error    string `json:"error,omitempty"`
@@ -152,9 +156,17 @@ func (s *DeltaStream) ExpectLive() {
 	}
 }
 
-// Replace writes one settled boundary and the validator it produced.
-func (s *DeltaStream) Replace(instanceID, html, frame string) {
-	s.writer.write(record{Record: recordOp, Kind: delta.OpReplace, ID: instanceID, HTML: html, Frame: frame})
+// Replace writes one settled boundary, the validator it produced, and the
+// nested boundaries appearing as holes in its markup.
+//
+// A hole whose id also arrives as an operation on this stream is filled from it;
+// one that does not is a region the client already holds and moves in. The list
+// is what separates the two, since nothing in the markup does.
+func (s *DeltaStream) Replace(instanceID, html, frame string, boundaries ...string) {
+	s.writer.write(record{
+		Record: recordOp, Kind: delta.OpReplace, ID: instanceID,
+		HTML: html, Frame: frame, Boundaries: boundaries,
+	})
 }
 
 // Unchanged restates a boundary's validator without markup, so the client can
@@ -299,7 +311,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 		case item.Completion != nil:
 			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
 		case item.Operation != nil && item.Operation.HTML != "":
-			stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame)
+			stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame, item.Operation.Boundaries...)
 		case item.Operation != nil && live:
 			// A live client already holds this boundary from the document render,
 			// and its manifest is not rebuilt from a delivery stream. Restating a
@@ -355,7 +367,7 @@ func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers [
 		frames[instance.ID] = instance.FrameValidator
 	}
 	for _, operation := range diff.Operations {
-		stream.Replace(operation.InstanceID, operation.HTML, frames[operation.InstanceID])
+		stream.Replace(operation.InstanceID, operation.HTML, frames[operation.InstanceID], operation.Boundaries...)
 	}
 	for _, instance := range diff.Manifest.Instances {
 		if stream.Sent(instance.ID) {

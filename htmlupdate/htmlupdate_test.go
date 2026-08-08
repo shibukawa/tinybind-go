@@ -137,9 +137,10 @@ const clientVersion = 1
 
 type deltaBody struct {
 	Operations []struct {
-		Kind string `json:"kind"`
-		ID   string `json:"id"`
-		HTML string `json:"html"`
+		Kind       string   `json:"kind"`
+		ID         string   `json:"id"`
+		HTML       string   `json:"html"`
+		Boundaries []string `json:"boundaries"`
 	} `json:"ops"`
 	Manifest []struct {
 		ID    string `json:"id"`
@@ -193,13 +194,24 @@ func TestFirstDeltaReturnsEveryBoundary(t *testing.T) {
 	if got := response.Header.Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	if len(body.Operations) != 1 || body.Operations[0].ID != "c1" {
-		t.Fatalf("want the outermost boundary replaced once, got %+v", body.Operations)
+	// Every boundary is its own fragment. The layout carries a hole where the
+	// page sits rather than the page's bytes, so a later render that changes only
+	// the page replaces the page alone — and one that changes only the layout
+	// leaves the page's DOM, and the state inside it, untouched.
+	if len(body.Operations) != 2 || body.Operations[0].ID != "c1" || body.Operations[1].ID != "c2" {
+		t.Fatalf("want a fragment per boundary, outermost first, got %+v", body.Operations)
 	}
-	// The layout replacement contains the page, so sending the page too would
-	// target a node that no longer exists.
-	if !strings.Contains(body.Operations[0].HTML, `<p data-tb-id="c2"`) {
-		t.Fatalf("ancestor replacement must contain its descendants: %q", body.Operations[0].HTML)
+	layout := body.Operations[0]
+	if strings.Contains(layout.HTML, "results for go") {
+		t.Fatalf("the layout fragment carries the page's bytes: %q", layout.HTML)
+	}
+	if !strings.Contains(layout.HTML, `data-tb-id="c2"`) {
+		t.Fatalf("the layout fragment has no hole for the page: %q", layout.HTML)
+	}
+	// The list is what tells a hole to fill from a hole to retain; nothing in the
+	// markup does. Here it is filled, because the client holds no page yet.
+	if strings.Join(layout.Boundaries, ",") != "c2" {
+		t.Fatalf("boundaries = %v", layout.Boundaries)
 	}
 	if len(body.Manifest) != 2 {
 		t.Fatalf("want both instances in the manifest, got %+v", body.Manifest)
@@ -340,7 +352,7 @@ func TestOversizedManifestIsIgnored(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Operations) != 1 {
+	if len(body.Operations) != 2 {
 		t.Fatalf("dropped hints must yield a full delta, got %+v", body.Operations)
 	}
 }
@@ -349,8 +361,8 @@ func TestOversizedManifestIsIgnored(t *testing.T) {
 // client converges.
 func TestStaleValidatorsYieldAFullDelta(t *testing.T) {
 	_, body := fetchDelta(t, "/search?q=go&section=Docs", map[string]string{"c1": "stale", "c2": "stale"})
-	if len(body.Operations) != 1 || body.Operations[0].ID != "c1" {
-		t.Fatalf("want the outermost boundary replaced, got %+v", body.Operations)
+	if len(body.Operations) != 2 {
+		t.Fatalf("every stale boundary must be re-sent, got %+v", body.Operations)
 	}
 }
 

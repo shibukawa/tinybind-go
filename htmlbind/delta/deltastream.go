@@ -50,7 +50,7 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 				frames[instance.ID] = instance.FrameValidator
 			}
 			sent := map[string]bool{}
-			for _, operation := range operations(manifest, known, collect.contents) {
+			for _, operation := range operations(manifest, known, collect.contents, collect.children) {
 				op := operation
 				sent[op.InstanceID] = true
 				if !yield(DeltaRecord{Operation: &op, Frame: frames[op.InstanceID]}, nil) {
