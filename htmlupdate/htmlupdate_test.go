@@ -126,6 +126,25 @@ func fetchDelta(t *testing.T, url string, known delta.Manifest) (*http.Response,
 	return response, body
 }
 
+// deltaManifest is the empty manifest a first request carries.
+func deltaManifest() delta.Manifest { return delta.Manifest{} }
+
+// fetchDeltaWithSequences is fetchDelta for a client that says it can walk a
+// sequence tree, so the response sends values in place of markup.
+func fetchDeltaWithSequences(t *testing.T, url string) (*http.Response, deltaBody) {
+	t.Helper()
+	response := get(t, url, map[string]string{
+		"X-Tinybind-Render":    "navigation;v=" + strconv.Itoa(clientVersion),
+		"X-Tinybind-Build":     htmlupdate.BuildID(),
+		"X-Tinybind-Sequences": "1",
+	})
+	var body deltaBody
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode delta: %v", err)
+	}
+	return response, body
+}
+
 // clientVersion is the wire version this test's client claims. The package
 // neither defines nor judges one, so a test picks its own exactly as a caller
 // does.
@@ -137,6 +156,8 @@ type deltaBody struct {
 		ID         string   `json:"id"`
 		HTML       string   `json:"html"`
 		Boundaries []string `json:"boundaries"`
+		Seq        string   `json:"seq"`
+		Values     []string `json:"values"`
 	} `json:"ops"`
 	Manifest []struct {
 		ID       string `json:"id"`

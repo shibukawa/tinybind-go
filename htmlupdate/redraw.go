@@ -293,11 +293,9 @@ func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component R
 	// Registry.RequiredHead aggregates: a redraw rewrites a region of a page this
 	// endpoint never rendered, so it can only name what its component needs.
 	response := deltaResponse{Head: component.Head}
+	sequences := o.wantsSequences(r)
 	for _, operation := range diff.Operations {
-		response.Operations = append(response.Operations, deltaOperation{
-			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
-			Boundaries: operation.Boundaries,
-		})
+		response.Operations = append(response.Operations, o.operationBody(operation, sequences))
 	}
 	for _, entry := range diff.Manifest.Instances {
 		response.Manifest = append(response.Manifest, deltaInstance{

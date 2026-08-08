@@ -22,6 +22,8 @@ type Wrapper struct {
 	hasLive     bool
 	validate    func() error
 	render      func(*Renderer, Fragment) error
+	// sequence derives this component's static half, as it does on a Fragment.
+	sequence func(prefix string) *Sequence
 }
 
 // Validate runs the wrapper's parameter check without rendering.
@@ -49,6 +51,7 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 			setChildren(&local, children)
 			return plan.Exec(r, local)
 		},
+		sequence: plan.Sequence,
 	}
 	if plan.Check != nil {
 		// The children field is still unset here, and a check never reads it:
@@ -424,7 +427,10 @@ func assemble(collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Rende
 	next := memberFragment(leaf, leaf.boundary, len(wrappers))
 	for i := len(wrappers) - 1; i >= 0; i-- {
 		wrapper, inner, index := wrappers[i], next, i
-		child := Fragment{render: func(r *Renderer) error { return wrapper.render(r, inner) }}
+		child := Fragment{
+			render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+			sequence: wrapper.sequence,
+		}
 		next = memberFragment(child, wrapper.boundary, index)
 	}
 	return next.render, head, nil

@@ -16,6 +16,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -108,6 +109,12 @@ type Plan[P any] struct {
 	// consulted only when the caller supplied a store through WithCache, so the
 	// same generated code runs cached or uncached.
 	Cache *CachePolicy[P]
+
+	// sequences memoizes the derived static half, keyed by the boundary prefix
+	// that names the placeholder element inside it. Derivation walks the
+	// instruction list and evaluates nothing, so one plan yields one tree
+	// however many times it renders.
+	sequences sync.Map
 }
 
 // Exec runs the plan against params.
@@ -152,8 +159,36 @@ func (p *Plan[P]) execCached(r *Renderer, params P) error {
 }
 
 func execOps[P any](r *Renderer, ops []Op[P], params P) error {
+	if r.collect == nil {
+		for _, op := range ops {
+			if err := op.Exec(r, params); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// A collecting render brackets every instruction whose output varies, so the
+	// literal text between them is separable from the values. Control flow is not
+	// bracketed: a conditional and a loop are structure the sequence tree carries,
+	// and their inner instructions are bracketed on their own.
 	for _, op := range ops {
-		if err := op.Exec(r, params); err != nil {
+		switch op.(type) {
+		case staticOp[P], ifOp[P], ifCtxOp[P], componentOp[P], componentCtxOp[P], slotOp[P], slotCtxOp[P]:
+			if err := op.Exec(r, params); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, repeats := op.(interface{ sequenceBody(string) []SeqNode }); repeats {
+			if err := op.Exec(r, params); err != nil {
+				return err
+			}
+			continue
+		}
+		r.collect.Slot(true)
+		err := op.Exec(r, params)
+		r.collect.Slot(false)
+		if err != nil {
 			return err
 		}
 	}
@@ -177,6 +212,15 @@ type Fragment struct {
 	hasLive     bool
 	validate    func() error
 	render      func(*Renderer) error
+	// opensBoundary marks a fragment that opens its own boundary when it renders,
+	// which a chain member does. Without it a slot holding one would be recorded
+	// as an inlined component while a boundary opened inside it, and the values
+	// would carry both the hole and the subtree it stands for.
+	opensBoundary bool
+	// sequence derives this component's static half. It closes over the plan
+	// rather than holding the tree, because the tree depends on the boundary
+	// prefix a render option names and one plan is shared by every render.
+	sequence func(prefix string) *Sequence
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
@@ -190,6 +234,7 @@ func Bind[P any](plan *Plan[P], params P) Fragment {
 		hasAwait:    plan.HasAwaitBlock,
 		hasLive:     plan.HasLiveBlock,
 		render:      func(r *Renderer) error { return plan.Exec(r, params) },
+		sequence:    plan.Sequence,
 	}
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
@@ -283,6 +328,14 @@ func (f Fragment) Present() bool { return f.render != nil }
 // contributions would drop a library's stylesheet, and drop it before a caller
 // that refuses an undeliverable contribution could ever see it.
 func (f Fragment) Head() []string { return f.head }
+
+// sequenceAddress names this fragment's static half, or empty when it has none.
+func (f Fragment) sequenceAddress(prefix string) string {
+	if f.sequence == nil {
+		return ""
+	}
+	return f.sequence(prefix).Address
+}
 
 // InstanceID returns the update-boundary instance this fragment renders as, and
 // empty when it renders as no addressable boundary.

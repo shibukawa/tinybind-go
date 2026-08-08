@@ -64,6 +64,13 @@ const (
 	// in step with the one protecting the page — two rules that must agree and
 	// that nothing forces to agree.
 	ModeRedraw
+	// ModeSequence returns the static half of one fragment, addressed by a
+	// digest of its own content.
+	//
+	// It is the one response in this package that is not per user: a sequence
+	// derives from the template rather than from a request, so it is the only
+	// one that can be public, immutable, and held by a shared cache.
+	ModeSequence
 )
 
 const (
@@ -157,6 +164,10 @@ type Options struct {
 	// DefaultMaxQueryBytes. Unlike an oversized manifest an oversized query is
 	// rejected, because the arguments are the request rather than a hint.
 	MaxQueryBytes int
+	// SequenceCacheControl overrides the cache policy of a sequence response.
+	// Empty uses DefaultSequenceCacheControl, which keeps it forever because the
+	// address is a digest of the body.
+	SequenceCacheControl string
 	// RedrawCacheControl overrides the cache policy of a redraw response. Empty
 	// uses DefaultRedrawCacheControl.
 	//
@@ -222,6 +233,48 @@ func (o Options) maxManifestBytes() int {
 // entry this package drives, so the placeholder element, the boundary
 // identifiers, and the instance attributes are one naming system rather than
 // two. Caller options follow, so a caller can still override.
+// sequenceHeader names the request header a client sets to say it can walk a
+// sequence tree, so a response may send values instead of markup.
+//
+// It is a capability rather than a list of held addresses: the choice between a
+// fragment and its values is a heuristic, since values a client cannot resolve
+// cost it one fetch and a fragment where values would have done costs a few
+// bytes. Neither is wrong, so no per-address bookkeeping travels.
+func (o Options) sequenceHeader() string { return o.prefix() + "-Sequences" }
+
+// wantsSequences reports whether this request said it can walk sequences.
+func (o Options) wantsSequences(r *http.Request) bool {
+	return r != nil && r.Header.Get(o.sequenceHeader()) != ""
+}
+
+// operationBody writes one operation, in whichever half the client can use.
+func (o Options) operationBody(operation delta.Operation, sequences bool) deltaOperation {
+	body := deltaOperation{
+		Kind: operation.Kind, ID: operation.InstanceID,
+		Boundaries: operation.Boundaries,
+	}
+	// Values replace the markup only when they are smaller. A fragment of two
+	// elements costs more as an address plus its values than as the markup
+	// itself, because the address is per-operation overhead and there is almost
+	// no static text to save; a list row is exactly that shape, and its parent —
+	// a hundred hole frames — is the opposite one. Choosing per fragment is what
+	// keeps the split from ever being a loss.
+	if sequences && operation.Sequence != "" && valuesAreSmaller(operation) {
+		body.Seq, body.Values = operation.Sequence, operation.Values
+		return body
+	}
+	body.HTML = operation.HTML
+	return body
+}
+
+func valuesAreSmaller(operation delta.Operation) bool {
+	size := len(operation.Sequence)
+	for _, value := range operation.Values {
+		size += len(value)
+	}
+	return size < len(operation.HTML)
+}
+
 func (o Options) renderOptions(caller []htmlbind.Option) []htmlbind.Option {
 	owned := []htmlbind.Option{
 		htmlbind.WithBoundaryPrefix(o.dataAttributePrefix()),
@@ -298,6 +351,8 @@ func (o Options) Negotiate(r *http.Request) Negotiated {
 		mode = ModeLive
 	case modeRedraw:
 		mode = ModeRedraw
+	case modeSequence:
+		mode = ModeSequence
 	default:
 		return Negotiated{Mode: ModeDocument}
 	}
@@ -306,6 +361,14 @@ func (o Options) Negotiate(r *http.Request) Negotiated {
 	// action. A non-GET arriving in this mode is a client error, not a delta.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return Negotiated{Mode: ModeDocument}
+	}
+	// A sequence is asked for by an address that digests its own content, so a
+	// build mismatch cannot make it wrong: either this process has that exact
+	// tree or it does not. Gating it on the build would forfeit the one thing
+	// this response uniquely has, which is that a shared cache may hold it
+	// across builds and across users.
+	if mode == ModeSequence {
+		return Negotiated{Mode: mode, Version: version}
 	}
 	// A page rendered by another build holds state this binary cannot vouch
 	// for: a template it does not have, a function that behaves differently, a
@@ -469,6 +532,12 @@ type deltaOperation struct {
 	// focus, the form values, and the media state inside it. Without the list a
 	// missing fragment would be indistinguishable from a truncated response.
 	Boundaries []string `json:"boundaries,omitempty"`
+	// Seq addresses this fragment's static half and Values are the varying half
+	// a client walks it with. They replace HTML for a client that said it can
+	// walk sequences, because the statics then travel once per client instead of
+	// once per render.
+	Seq    string   `json:"seq,omitempty"`
+	Values []string `json:"values,omitempty"`
 }
 
 type deltaInstance struct {
@@ -495,7 +564,7 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	negotiated := o.Negotiate(r)
 	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeNavigation {
-		return renderDelta(w, o, negotiated, wrappers, leaf)
+		return renderDelta(w, r, o, negotiated, wrappers, leaf)
 	}
 	// This entry buffers, so it cannot hold a delivery stream open. A live
 	// request reaching it is answered with the document, which is the same
@@ -546,7 +615,8 @@ func (o Options) markLive(w http.ResponseWriter, wrappers []htmlbind.Wrapper, le
 	}
 }
 
-func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
+func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
+	sequences := o.wantsSequences(r)
 	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
 	if err != nil {
 		// Nothing has been written yet, so the caller can still choose a status
@@ -555,10 +625,7 @@ func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappe
 	}
 	body := deltaResponse{}
 	for _, operation := range diff.Operations {
-		body.Operations = append(body.Operations, deltaOperation{
-			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
-			Boundaries: operation.Boundaries,
-		})
+		body.Operations = append(body.Operations, o.operationBody(operation, sequences))
 	}
 	for _, instance := range diff.Manifest.Instances {
 		body.Manifest = append(body.Manifest, deltaInstance{

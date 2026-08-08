@@ -8,7 +8,7 @@ Return one render as its per-boundary HTML fragments plus the boundary tree that
 ```yaml
 priority: should
 as_built:
-  shipped: 2026-08-08, the boundary-hole tier; the slot-span tier and the static sequences are not built
+  shipped: 2026-08-08, the boundary-hole tier
   capture: a boundary's captured fragment stops at its children — Collector.Write records into the innermost open boundary only, where it used to write into every enclosing one
   holes: 'the collector writes an inert placeholder into the parent where a child opens, the same <prefix>-boundary element with display:contents a progressive render already writes for an await boundary, so a client recognises one hole shape rather than two'
   boundary_list: Operation.Boundaries names the holes in a fragment, and travels as a boundaries field on the JSON body and on the stream record
@@ -30,21 +30,40 @@ as_built:
     - TestChangedParentRetainsUnchangedChildren, the case the change exists for
     - TestAGainedChildChangesTheParentFrame, covering both halves of the frame rule
     - TestFirstDeltaReturnsEveryBoundary, rewritten from asserting whole-subtree containment to asserting a fragment per boundary
-  not_built_here:
-    - slot spans, and therefore the static sequences, their content addresses, and their fetch
+  slot_spans: shipped later the same day; see slot_spans_as_built
   redraw_json_body: shipped 2026-08-08; requirement:component-redraw-endpoint json_body carries it, and the validator gap it was opened for is closed
-slot_spans_are_the_remaining_work:
-  status: specified and not built, 2026-08-08
-  why_it_is_emitter_work_after_all:
-    earlier_reading: this concept recorded that span recording needs no emitter change, only a renderer recording ranges
-    true_of: producing the spans
-    not_true_of: producing the sequence they interleave with, which has to be generation-time data for the reasons in a_sequence_must_be_data_independent
-    so: the reporter's original judgement that the work touches the emitter rather than only the runtime was right, and this concept's cheaper reading covered half of it
-  what_it_still_buys_after_the_rest_shipped:
-    measured_events: 'editing one row costs 76 bytes and appending one costs 365, so the frequent live events are already answered'
-    what_is_left: a cold load, where the whole page travels, and a parent whose own markup changed, which re-sends its list of holes at 7,240 bytes for a hundred rows
-    estimate: roughly fourfold on a cold page and eightfold on that parent, which is where the reporter's original threefold measurement lives
-  scope: a generated sequence table per component, a runtime recording branch choices and iteration counts beside the slot values, a client walking the tree, and a render mode serving a sequence by address
+slot_spans_as_built:
+  shipped: 2026-08-08
+  derivation_is_from_the_plan_not_the_render:
+    what: Plan.Sequence walks the instruction list and evaluates nothing, so one plan yields one tree however many times it renders
+    why_that_matters: it is what makes a sequence addressable — a server rebuilds one from the plan rather than having stored what a render happened to produce
+    corrects: the earlier reading that this needed generated tables; the plan is already the static data the derivation needs, so no emitter change was required after all
+  tree_shape: static text, a slot, a conditional carrying both branches, a repeat carrying the body once, and a component carrying the two shapes a call takes
+  values: one flat stream per fragment — a slot's output, the branch a conditional took, the count a loop ran, and whether a call opened a boundary or rendered inline
+  hole_frames_are_static: a called boundary contributes only its attribute name and its id, so a hundred holes are a hundred ids rather than a hundred copies of one element
+  round_trip_is_the_property: Sequence.Reassemble rebuilds the exact bytes the render wrote, and a value list that does not fit the tree is refused rather than reassembled into something plausible
+  wire:
+    request: a client sets the sequences header to say it can walk a tree
+    response: an operation carries the address and the values in place of the markup
+    fetch: Options.Sequence answers a tree by address, on a URL the caller chooses, public and immutable because a sequence derives from the template rather than from a request
+    build_exempt: a sequence request skips the build comparison, since the address digests the tree; gating it would forfeit the one response here a shared cache may hold across builds
+    unknown_address: answered not found, and a client falls back to asking for markup — a sequence is an optimisation over something still available
+  per_fragment_choice:
+    found_by_measuring: 'a hundred-row panel is 10,641 bytes of markup and 6,429 as values, only forty percent, because the address is per-operation overhead and a small fragment has almost no static text to save'
+    rule: values replace markup only where they are smaller, decided per fragment
+    consequence: the split is never a loss; a list row stays markup and its parent, a hundred hole frames, becomes values
+  found_while_building:
+    a_slot_is_a_called_component: a filled slot renders another fragment exactly as a call does, so it takes the component shape; treating it as an ordinary instruction made the parent's values carry both the hole and the subtree it stands for
+    a_chain_member_opens_its_own: memberFragment already opens and closes, so a slot holding one records the shape and leaves the opening alone rather than opening twice
+slot_span_readings_that_were_wrong:
+  emitter_work:
+    said: the sequence has to be generation-time data, so this is emitter work after all
+    actual: it has to be plan-derived, and a plan is already static data the runtime holds, so the derivation walks the instruction list and no emitter change was needed
+    what_survives: the reason, which is that a sequence assembled from what a render happened to produce cannot be served back from its address
+  what_it_buys:
+    estimated: roughly fourfold on a cold page
+    measured: forty percent on a hundred-row panel taken whole, because the address is per-operation overhead and a small fragment saves almost nothing
+    resolved_by: per_fragment_choice, which sends values only where they are smaller, so the estimate was optimistic and the shipped rule is never a loss
 structural_operations:
   shipped: 2026-08-08, immediately after the decomposition, because measuring it showed the decomposition alone missed the case it was built for
   measured_first:

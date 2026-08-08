@@ -9,7 +9,7 @@
 >
 > **Also shipped:** the redraw body is now that same shape — `ops`, `head`, and `manifest` — so one client applies every update path, the head has left its header, and a redraw returns the validator it used to leave stale.
 >
-> **Not built:** slot spans, and therefore the static sequences, their content addresses, and their fetch. Everything below describing those is design you can build against, not behaviour you can call.
+> **Also shipped:** slot spans and the static sequences. Set the `-Sequences` request header and a fragment arrives as an address plus its values wherever that is smaller than its markup; ask `Options.Sequence` for the tree behind an address, public and immutable because a sequence derives from the template rather than from a request.
 
 ## The shape in one paragraph
 

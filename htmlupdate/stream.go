@@ -42,6 +42,10 @@ type record struct {
 	// is filled from it; one that does not is retained from the DOM the client
 	// already has, which is what keeps the state inside it.
 	Boundaries []string `json:"boundaries,omitempty"`
+	// Seq and Values are the fragment split into its static and varying halves,
+	// sent in place of HTML to a client that walks sequences.
+	Seq    string   `json:"seq,omitempty"`
+	Values []string `json:"values,omitempty"`
 	// terminator and directive fields
 	Navigate string `json:"navigate,omitempty"`
 	Error    string `json:"error,omitempty"`
@@ -169,6 +173,16 @@ func (s *DeltaStream) Replace(instanceID, html, frame string, boundaries ...stri
 	})
 }
 
+// ReplaceValues is Replace for a client that walks sequences: the fragment
+// travels as the address of its static half and the values that fill it, so the
+// statics cost one response per client rather than one per render.
+func (s *DeltaStream) ReplaceValues(instanceID, sequence string, values []string, frame string, boundaries ...string) {
+	s.writer.write(record{
+		Record: recordOp, Kind: delta.OpReplace, ID: instanceID,
+		Seq: sequence, Values: values, Frame: frame, Boundaries: boundaries,
+	})
+}
+
 // Unchanged restates a boundary's validator without markup, so the client can
 // rebuild its whole manifest from what it received.
 func (s *DeltaStream) Unchanged(instanceID, frame string) {
@@ -273,6 +287,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 	w.Header().Add("Vary", o.renderHeader())
 	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
+	sequences := o.wantsSequences(r)
 	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeDocument {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -311,7 +326,12 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 		case item.Completion != nil:
 			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
 		case item.Operation != nil && item.Operation.HTML != "":
-			stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame, item.Operation.Boundaries...)
+			if sequences && item.Operation.Sequence != "" {
+				stream.ReplaceValues(item.Operation.InstanceID, item.Operation.Sequence,
+					item.Operation.Values, item.Frame, item.Operation.Boundaries...)
+			} else {
+				stream.Replace(item.Operation.InstanceID, item.Operation.HTML, item.Frame, item.Operation.Boundaries...)
+			}
 		case item.Operation != nil && live:
 			// A live client already holds this boundary from the document render,
 			// and its manifest is not rebuilt from a delivery stream. Restating a
