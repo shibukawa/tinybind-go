@@ -284,6 +284,24 @@ func (f Fragment) Present() bool { return f.render != nil }
 // that refuses an undeliverable contribution could ever see it.
 func (f Fragment) Head() []string { return f.head }
 
+// InstanceID returns the update-boundary instance this fragment renders as, and
+// empty when it renders as no addressable boundary.
+//
+// It is set for a component that names its own instance — a reloadable one,
+// whose id an author writes at the call site. A chain member is numbered by its
+// position instead, and reports nothing here because that number is decided by
+// the chain rather than by the fragment.
+//
+// A redraw reads it to check that the component it just bound is addressable at
+// the id the request asked for, which generated code guarantees and a
+// hand-assembled registration can get wrong.
+func (f Fragment) InstanceID() string {
+	if f.boundary == nil {
+		return ""
+	}
+	return f.boundary.instance
+}
+
 // HeadSources names the component that declared each Head entry, in the same
 // order and with the same length. Head and HeadSources are two views of one
 // list, so index i of either describes the same contributed tag.

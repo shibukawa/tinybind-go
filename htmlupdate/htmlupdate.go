@@ -528,12 +528,6 @@ func (o Options) kindHeader() string { return o.prefix() + "-Kind" }
 
 func (o Options) instanceHeader() string { return o.prefix() + "-Instance" }
 
-// headHeader names the response header carrying a redraw's head contribution.
-// Every other mode has a body a head field fits into; a redraw's body is the
-// component's markup, and wrapping it would cost the plain-fragment property
-// that makes the endpoint testable with curl.
-func (o Options) headHeader() string { return o.prefix() + "-Head" }
-
 // markLive writes the handoff marker for a chain that owns a live boundary, so
 // a client knows whether a live request is worth issuing at all.
 //

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 // Reloadable is one component published as a redraw endpoint.
@@ -80,15 +81,6 @@ func (reg *Registry) Register(component Reloadable) error {
 		return errors.New("htmlupdate: two components registered as " + component.KindID +
 			"; the kind covers name, parameters, and markup but not the package, so rename one or change its markup")
 	}
-	// A component's head is a static declaration, so an oversized one is a fact
-	// about the templates rather than about any request. Discovering it at
-	// startup is the point: the alternative is a proxy dropping the header in
-	// production and a region rendering unstyled with nothing to look at.
-	if encoded := encodeHead(component.Head); len(encoded) > DefaultMaxHeadBytes {
-		return errors.New("htmlupdate: " + component.KindID + " contributes " + strconv.Itoa(len(encoded)) +
-			" bytes of head, past the " + strconv.Itoa(DefaultMaxHeadBytes) + " a redraw response may carry;" +
-			" put its contribution in the document shell from Registry.RequiredHead instead")
-	}
 	reg.kinds[component.KindID] = component
 	reg.order = append(reg.order, component.KindID)
 	return nil
@@ -137,28 +129,11 @@ func (reg *Registry) RequiredAssets() []htmlbind.Asset {
 	return merged
 }
 
-// DefaultMaxHeadBytes bounds the head one redraw response may carry. It is a
-// header, so it lives inside whatever the deployment's proxies allow, and the
-// value it holds is a static template declaration rather than anything a request
-// influenced.
-const DefaultMaxHeadBytes = 2 << 10
-
-// encodeHead packs head tags into one header value.
-//
-// Base64 of JSON rather than the markup itself: a head tag holds quotes and may
-// hold any character an attribute value may, and a header is not a place to
-// discover which of those a proxy will pass through. The runtime unpacks it with
-// the two calls every browser has.
-func encodeHead(tags []string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-	encoded, err := json.Marshal(tags)
-	if err != nil {
-		return ""
-	}
-	return base64.StdEncoding.EncodeToString(encoded)
-}
+// A redraw's head used to travel in a header, packed as base64 of JSON, and was
+// bounded at startup so a proxy could not drop it. Both are gone: the body is
+// the shared JSON shape now, and a head field in a body needs no packing and no
+// bound. Registry.RequiredHead is unaffected and is still what a deployment puts
+// in its document shell, which is the only way nothing is fetched mid-swap.
 
 // MustRegister is Register for a caller with nowhere to return an error, such
 // as a package-level registry value.
@@ -272,12 +247,33 @@ func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component R
 		})
 		return
 	}
-	var out strings.Builder
+	// A redraw answers with the region the request named, so the component has to
+	// be addressable at that id. Generated code guarantees it — a reloadable
+	// component is an update boundary and takes its id from a declared parameter
+	// — and a registration assembled by hand can get it wrong, where the failure
+	// would otherwise be a response with no operations in it.
+	if got := fragment.InstanceID(); got != instance {
+		o.fail(w, r, Failure{
+			Kind:       FailureRenderFailed,
+			Status:     http.StatusInternalServerError,
+			Message:    "component is not addressable at the requested instance",
+			Err:        errors.New("htmlupdate: " + kind + " rendered as instance " + strconv.Quote(got) + ", want " + strconv.Quote(instance)),
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return
+	}
 	// The request's context goes in ahead of the caller's options, so a shared
 	// cache store and a context-taking external see this request's cancellation.
 	// The caller may still override it, since its own options come last.
-	render := append([]htmlbind.Option{htmlbind.WithContext(r.Context())}, options...)
-	if err := htmlbind.Render(&out, fragment, o.renderOptions(render)...); err != nil {
+	render := o.renderOptions(append([]htmlbind.Option{htmlbind.WithContext(r.Context())}, options...))
+	// A redraw returns the same decomposition every other update path returns:
+	// the component's own fragment, a hole where each nested boundary sits, and
+	// a fragment for each of those. An empty known manifest is what makes every
+	// one of them travel, which is right — the caller asked for this region and
+	// holds nothing of what is about to replace it.
+	diff, err := delta.RenderDelta(o.Key, delta.Manifest{}, nil, fragment, render...)
+	if err != nil {
 		o.fail(w, r, Failure{
 			Kind:       FailureRenderFailed,
 			Status:     http.StatusInternalServerError,
@@ -288,27 +284,47 @@ func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component R
 		})
 		return
 	}
-	body := out.String()
-	// The body stays the bare subtree — no envelope, so the endpoint is still
-	// testable with curl and a client parses what it already parsed — and the
-	// contribution travels beside it.
-	//
-	// It is sent so a component whose stylesheet is not on the page installs
-	// it before its markup lands, which is the flash of unstyled content the
-	// navigation delta added its own head field to prevent. A well-configured
-	// deployment has already put every one of these in its shell from
-	// Registry.RequiredHead, and then this changes nothing: the runtime finds
-	// each tag present and installs none.
-	//
-	// A component contributing no head sends no header, so its response is
-	// byte-identical to what it was before this existed.
-	if encoded := encodeHead(component.Head); encoded != "" {
-		w.Header().Set(o.headHeader(), encoded)
+	// The manifest is what a redraw used to leave stale. A reloadable component
+	// is an update boundary, so the client held a validator the page render gave
+	// it and this replacement made it wrong; returning the new one is what keeps
+	// the next navigation delta from re-sending a region that is already right.
+	// The head is the component's published contribution rather than the render's
+	// merged one, which is what Reloadable.Head documents and what
+	// Registry.RequiredHead aggregates: a redraw rewrites a region of a page this
+	// endpoint never rendered, so it can only name what its component needs.
+	response := deltaResponse{Head: component.Head}
+	for _, operation := range diff.Operations {
+		response.Operations = append(response.Operations, deltaOperation{
+			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
+			Boundaries: operation.Boundaries,
+		})
 	}
-	// A redraw response is identified by its URL and its bytes, so it can
-	// be revalidated like any other resource. Sending the digest is what
-	// lets an unchanged region cost a 304 instead of its whole markup.
-	etag := `"` + o.redrawETag(body) + `"`
+	for _, entry := range diff.Manifest.Instances {
+		response.Manifest = append(response.Manifest, deltaInstance{
+			ID: entry.ID, Frame: entry.FrameValidator,
+			Children: entry.ChildrenValidator, Parent: entry.ParentID,
+		})
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		o.fail(w, r, Failure{
+			Kind:       FailureRenderFailed,
+			Status:     http.StatusInternalServerError,
+			Message:    "render failed",
+			Err:        err,
+			KindID:     kind,
+			InstanceID: instance,
+		})
+		return
+	}
+	// A redraw response is identified by its URL and its bytes, so it can be
+	// revalidated like any other resource. Sending the digest is what lets an
+	// unchanged region cost a 304 instead of its whole markup.
+	//
+	// The digest covers the whole body, head and manifest included, so a
+	// component that changed only what it contributes to the document head does
+	// not answer 304 with the old contribution.
+	etag := `"` + o.redrawETag(string(encoded)) + `"`
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", o.redrawCacheControl())
 	w.Header().Set(o.renderHeader(), modeRedraw)
@@ -316,8 +332,8 @@ func (o Options) writeRedraw(w http.ResponseWriter, r *http.Request, component R
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(body))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(encoded)
 }
 
 const modeRedraw = "redraw"

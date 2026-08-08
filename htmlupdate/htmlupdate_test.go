@@ -143,6 +143,7 @@ type deltaBody struct {
 		Frame    string `json:"frame"`
 		Children string `json:"children"`
 	} `json:"manifest"`
+	Head []string `json:"head"`
 }
 
 // validators is what a client returns on its next request: everything the last
