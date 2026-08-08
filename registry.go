@@ -1,16 +1,19 @@
 package httpbind
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
-	"reflect"
 	"sync"
 )
 
-// typeKey is used only for registry dispatch identity — not for field walking.
-// Generated binders/writers perform all field mapping without reflect.
-func typeKey[T any]() reflect.Type {
-	return reflect.TypeFor[T]()
+// typeMarker is used only for registry dispatch identity — not for field
+// walking. A zero-size generic struct gives each T a distinct comparable `any`
+// key without pulling reflect into the runtime. Generated binders/writers
+// perform all field mapping without reflect.
+type typeMarker[T any] struct{}
+
+func typeKey[T any]() any {
+	return typeMarker[T]{}
 }
 
 // The registries hold the generated function itself, not a closure that
@@ -18,8 +21,8 @@ func typeKey[T any]() reflect.Type {
 // an interface is free, while passing T through `any` would box (and copy) the
 // bound struct on every request.
 var (
-	binders sync.Map // reflect.Type -> func(*http.Request) (T, error)
-	writers sync.Map // reflect.Type -> func(http.ResponseWriter, *http.Request, T) error
+	binders sync.Map // typeMarker[T] -> func(*http.Request) (T, error)
+	writers sync.Map // typeMarker[T] -> func(http.ResponseWriter, *http.Request, T) error
 )
 
 // RegisterBind registers a generated binder for T.
@@ -51,10 +54,10 @@ func lookupWriter[T any]() (func(http.ResponseWriter, *http.Request, T) error, b
 	return fn, ok
 }
 
-func missingBinderError(t reflect.Type) error {
-	return Internal(fmt.Errorf("httpbind: no binder registered for %s", t.String()))
+func missingBinderError() error {
+	return Internal(errors.New("httpbind: no binder registered for request type (missing generated init?)"))
 }
 
-func missingWriterError(t reflect.Type) error {
-	return Internal(fmt.Errorf("httpbind: no writer registered for %s", t.String()))
+func missingWriterError() error {
+	return Internal(errors.New("httpbind: no writer registered for response type (missing generated init?)"))
 }

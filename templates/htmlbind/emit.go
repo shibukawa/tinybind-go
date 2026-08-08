@@ -741,8 +741,8 @@ func escapeAttributeValue(value string) string { return attributeValueEscaper.Re
 // of an expression is part of the URL the browser resolves rather than text
 // around it.
 func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, raw bool) (string, func(string) string, error) {
-	escaped := func(code string) string {
-		if raw {
+	escaped := func(code string, t valueType) string {
+		if raw || escapeExempt(t) {
 			return code
 		}
 		return "htmlbind.Escape(" + code + ")"
@@ -755,12 +755,12 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, ra
 			return "", nil, err
 		}
 		if t.optional {
-			value := escaped(valueString("*("+code+")", t.required()))
+			value := escaped(valueString("*("+code+")", t.required()), t)
 			return value, func(v string) string {
 				return "if " + code + " == nil { return \"\", false }; return " + v + ", true"
 			}, nil
 		}
-		return escaped(valueString(code, t)), func(v string) string {
+		return escaped(valueString(code, t), t), func(v string) string {
 			return "return " + v + ", true"
 		}, nil
 	}
@@ -778,7 +778,7 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, ra
 		if err != nil {
 			return "", nil, err
 		}
-		parts = append(parts, escaped(valueString(code, e.c.exprTypes[part.Expression])))
+		parts = append(parts, escaped(valueString(code, e.c.exprTypes[part.Expression]), e.c.exprTypes[part.Expression]))
 	}
 	if len(parts) == 0 {
 		parts = append(parts, `""`)
@@ -820,7 +820,9 @@ func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error
 	}
 	raw := t.required().kind == kindTrustedHTML || t.required().kind == kindTrustedCSS || t.required().kind == kindTrustedJS || t.required().kind == kindScriptJSON
 	kind := "Text"
-	if raw {
+	if raw || escapeExempt(t) {
+		// escapeExempt values render byte-identically through Raw, minus the
+		// escaping scan.
 		kind = "Raw"
 	}
 	body := "return " + valueString(code, t)

@@ -75,11 +75,11 @@ type Resp struct {
 	for _, n := range []string{
 		"func bindReq",
 		"func writeResp",
-		`QueryValue(r, "page")`,
+		`QueryLookup(queryVals, "page")`,
 		`PathValue(r, "org_id")`,
 		`HeaderValue(r, "Authorization")`,
 		`"note"`,
-		"ParseMultipartMap",
+		"httpbind.ReadBody(r,",
 		"fileBody",
 		`"image"`,
 		"missing file",

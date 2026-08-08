@@ -63,11 +63,8 @@ func CheckTime(s string) bool {
 	return err == nil
 }
 
-// CheckDateTime reports whether s is RFC3339 (or RFC3339Nano on failure).
+// CheckDateTime reports whether s is RFC3339 (fractional seconds accepted).
 func CheckDateTime(s string) bool {
-	if _, err := time.Parse(time.RFC3339, s); err == nil {
-		return true
-	}
-	_, err := time.Parse(time.RFC3339Nano, s)
+	_, err := time.Parse(time.RFC3339, s)
 	return err == nil
 }

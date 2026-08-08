@@ -4,8 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
@@ -15,7 +13,7 @@ import (
 func Write[T any](w http.ResponseWriter, r *http.Request, value T) error {
 	fn, ok := lookupWriter[T]()
 	if !ok {
-		return missingWriterError(typeKey[T]())
+		return missingWriterError()
 	}
 	return fn(w, r, value)
 }
@@ -80,33 +78,31 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func encodeProblemJSON(title, detail, code string, status int, fields []FieldError) []byte {
-	var b strings.Builder
-	b.WriteString(`{"type":"about:blank","title":`)
-	b.WriteString(strconv.Quote(title))
-	b.WriteString(`,"status":`)
-	b.WriteString(strconv.Itoa(status))
-	b.WriteString(`,"detail":`)
-	b.WriteString(strconv.Quote(detail))
-	b.WriteString(`,"code":`)
-	b.WriteString(strconv.Quote(code))
+	b := append([]byte(nil), `{"type":"about:blank","title":`...)
+	b = jsonbind.AppendString(b, title)
+	b = append(b, `,"status":`...)
+	b = jsonbind.AppendInt(b, int64(status))
+	b = append(b, `,"detail":`...)
+	b = jsonbind.AppendString(b, detail)
+	b = append(b, `,"code":`...)
+	b = jsonbind.AppendString(b, code)
 	if len(fields) > 0 {
-		b.WriteString(`,"errors":[`)
+		b = append(b, `,"errors":[`...)
 		for i, f := range fields {
 			if i > 0 {
-				b.WriteByte(',')
+				b = append(b, ',')
 			}
-			b.WriteString(`{"field":`)
-			b.WriteString(strconv.Quote(f.Field))
-			b.WriteString(`,"location":`)
-			b.WriteString(strconv.Quote(f.Location))
-			b.WriteString(`,"message":`)
-			b.WriteString(strconv.Quote(f.Message))
-			b.WriteByte('}')
+			b = append(b, `{"field":`...)
+			b = jsonbind.AppendString(b, f.Field)
+			b = append(b, `,"location":`...)
+			b = jsonbind.AppendString(b, f.Location)
+			b = append(b, `,"message":`...)
+			b = jsonbind.AppendString(b, f.Message)
+			b = append(b, '}')
 		}
-		b.WriteByte(']')
+		b = append(b, ']')
 	}
-	b.WriteByte('}')
-	return []byte(b.String())
+	return append(b, '}')
 }
 
 // WriteJSON is a helper for generated writers: encode a pre-built map/slice without

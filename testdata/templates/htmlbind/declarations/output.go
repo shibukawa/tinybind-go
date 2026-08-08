@@ -4,6 +4,7 @@ package pages
 
 import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type Tone string
@@ -24,9 +25,9 @@ var planLabelOps = htmlbind.Builder[LabelParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planLabelInput(p LabelParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Value),
-		htmlbind.CanonString[Tone](p.Tone),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Value),
+		delta.CanonString[Tone](p.Tone),
 	)
 }
 

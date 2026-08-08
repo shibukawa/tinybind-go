@@ -4,6 +4,7 @@ package pages
 
 import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type PageParams struct{}
@@ -14,7 +15,7 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planPageInput(p PageParams) string {
-	return htmlbind.CanonJoin()
+	return delta.CanonJoin()
 }
 
 var planPageBoundary = &htmlbind.Boundary[PageParams]{

@@ -85,8 +85,6 @@ func sizeOf(r io.Reader) int64 {
 	return 0
 }
 
-func readJSONBytes(r io.Reader, limit int64) ([]byte, error) { return ReadLimit(r, limit) }
-
 // IsBlank reports whether data holds no JSON document at all. Generated
 // decoders treat that as the zero value rather than a parse error, which is how
 // an absent body and an empty config file have always behaved.
@@ -237,48 +235,165 @@ func decodeScalarSlice[T any](raw []byte, message string, read func(*Parser) (T,
 	}
 }
 
+// The scalar decoders below are spelled out rather than routed through a
+// generic helper: an indirect read function would make the Parser escape to
+// the heap, and generated binders call one of these per scalar body field.
+// Slice and map helpers keep the indirection because one Parser amortizes
+// over every element.
+
 // DecodeJSONString decodes a JSON string value.
 func DecodeJSONString(raw []byte) (string, error) {
-	return decodeScalar(raw, "invalid string", (*Parser).String)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.String()
+	if err != nil {
+		return "", fieldTypeError("invalid string", err)
+	}
+	if err := p.End(); err != nil {
+		return "", fieldTypeError("invalid string", err)
+	}
+	return v, nil
 }
 
 // DecodeJSONInt decodes a JSON number as int.
 func DecodeJSONInt(raw []byte) (int, error) {
-	return decodeScalar(raw, "invalid int", (*Parser).Int)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.Int()
+	if err != nil {
+		return 0, fieldTypeError("invalid int", err)
+	}
+	if err := p.End(); err != nil {
+		return 0, fieldTypeError("invalid int", err)
+	}
+	return v, nil
 }
 
 // DecodeJSONInt64 decodes a JSON number as int64.
 func DecodeJSONInt64(raw []byte) (int64, error) {
-	return decodeScalar(raw, "invalid int64", (*Parser).Int64)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.Int64()
+	if err != nil {
+		return 0, fieldTypeError("invalid int64", err)
+	}
+	if err := p.End(); err != nil {
+		return 0, fieldTypeError("invalid int64", err)
+	}
+	return v, nil
 }
 
 // DecodeJSONBool decodes a JSON boolean.
 func DecodeJSONBool(raw []byte) (bool, error) {
-	return decodeScalar(raw, "invalid bool", (*Parser).Bool)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.Bool()
+	if err != nil {
+		return false, fieldTypeError("invalid bool", err)
+	}
+	if err := p.End(); err != nil {
+		return false, fieldTypeError("invalid bool", err)
+	}
+	return v, nil
 }
 
 // DecodeJSONFloat64 decodes a JSON number as float64.
 func DecodeJSONFloat64(raw []byte) (float64, error) {
-	return decodeScalar(raw, "invalid float64", (*Parser).Float64)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.Float64()
+	if err != nil {
+		return 0, fieldTypeError("invalid float64", err)
+	}
+	if err := p.End(); err != nil {
+		return 0, fieldTypeError("invalid float64", err)
+	}
+	return v, nil
 }
 
 // DecodeJSONAny decodes any JSON value into the Go shapes encoding/json uses
 // for an `any` destination.
 func DecodeJSONAny(raw []byte) (any, error) {
-	return decodeScalar(raw, "invalid JSON value", (*Parser).Any)
-}
-
-func decodeScalar[T any](raw []byte, message string, read func(*Parser) (T, error)) (T, error) {
-	var zero T
-	p := NewParser(raw)
-	v, err := read(p)
+	var p Parser
+	p.Reset(raw)
+	v, err := p.Any()
 	if err != nil {
-		return zero, fieldTypeError(message, err)
+		return nil, fieldTypeError("invalid JSON value", err)
 	}
 	if err := p.End(); err != nil {
-		return zero, fieldTypeError(message, err)
+		return nil, fieldTypeError("invalid JSON value", err)
 	}
 	return v, nil
+}
+
+// ParseSlice decodes a JSON array field, reading each element with read. A
+// JSON null decodes as a nil slice and an empty array as a non-nil empty one.
+// Structural errors are annotated with the field's document name; an element
+// error is annotated with message, or passed through unchanged when message is
+// empty so a nested decoder can report its own fields.
+func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, error)) ([]T, error) {
+	null, err := p.ArrayStart()
+	if err != nil {
+		return nil, FieldError(field, "invalid array", err)
+	}
+	if null {
+		return nil, nil
+	}
+	out := []T{}
+	for i := 0; ; i++ {
+		more, err := p.ArrayNext(i)
+		if err != nil {
+			return nil, FieldError(field, "invalid array", err)
+		}
+		if !more {
+			return out, nil
+		}
+		// Sizing on the first element keeps an empty array allocation-free
+		// while giving a populated one a single growth step in the common case.
+		if i == 0 {
+			out = make([]T, 0, 8)
+		}
+		v, err := read(p)
+		if err != nil {
+			if message == "" {
+				return nil, err
+			}
+			return nil, FieldError(field, message, err)
+		}
+		out = append(out, v)
+	}
+}
+
+// ParseMap decodes a JSON object field, reading each member value with read.
+// A JSON null decodes as a nil map and an empty object as a non-nil empty
+// one. Errors are annotated the same way as ParseSlice.
+func ParseMap[T any](p *Parser, field, message string, read func(*Parser) (T, error)) (map[string]T, error) {
+	null, err := p.ObjectStart()
+	if err != nil {
+		return nil, FieldError(field, "invalid map", err)
+	}
+	if null {
+		return nil, nil
+	}
+	out := map[string]T{}
+	for n := 0; ; n++ {
+		key, ok, err := p.ObjectKey(n)
+		if err != nil {
+			return nil, FieldError(field, "invalid map", err)
+		}
+		if !ok {
+			return out, nil
+		}
+		name := string(key)
+		v, err := read(p)
+		if err != nil {
+			if message == "" {
+				return nil, err
+			}
+			return nil, FieldError(field, message, err)
+		}
+		out[name] = v
+	}
 }
 
 func fieldTypeError(message string, cause error) error {
@@ -327,6 +442,20 @@ func BytesJSONMap(data []byte) (*Object, error) { return ParseObject(data) }
 // RestJSONAny returns JSON fields not named in exclude.
 func RestJSONAny(body *Object, exclude []string) (map[string]any, error) {
 	return body.RestAny(exclude)
+}
+
+// RestJSONMember returns body's i'th member unless its name is in exclude.
+// Paired with Object.Len it lets generated code sweep rest fields in one pass
+// over the document instead of a name lookup per member.
+func RestJSONMember(body *Object, i int, exclude []string) (name string, raw []byte, ok bool) {
+	if body == nil || i < 0 || i >= len(body.members) {
+		return "", nil, false
+	}
+	m := &body.members[i]
+	if excluded(exclude, m.name) {
+		return "", nil, false
+	}
+	return string(m.name), m.value, true
 }
 
 // RestJSONNames returns the names of JSON fields not named in exclude.

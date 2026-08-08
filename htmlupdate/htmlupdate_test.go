@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -40,7 +41,7 @@ var layoutPlan = &htmlbind.Plan[layoutParams]{
 	Boundary: &htmlbind.Boundary[layoutParams]{
 		ComponentID: "Layout@v1",
 		Attr:        "data-tb-id",
-		Input:       func(p layoutParams) string { return htmlbind.CanonString(p.Section) },
+		Input:       func(p layoutParams) string { return delta.CanonString(p.Section) },
 	},
 	Ops: []htmlbind.Op[layoutParams]{
 		layoutOps.Static("<main"),
@@ -61,7 +62,7 @@ var pagePlan = &htmlbind.Plan[pageParams]{
 	Boundary: &htmlbind.Boundary[pageParams]{
 		ComponentID: "Page@v1",
 		Attr:        "data-tb-id",
-		Input:       func(p pageParams) string { return htmlbind.CanonString(p.Query) },
+		Input:       func(p pageParams) string { return delta.CanonString(p.Query) },
 	},
 	Ops: []htmlbind.Op[pageParams]{
 		pageOps.Static("<p"),
@@ -108,16 +109,16 @@ func get(t *testing.T, url string, headers map[string]string) *http.Response {
 	return recorder.Result()
 }
 
-func delta(t *testing.T, url string, known map[string]string) (*http.Response, deltaBody) {
+func fetchDelta(t *testing.T, url string, known map[string]string) (*http.Response, deltaBody) {
 	t.Helper()
 	headers := map[string]string{
 		"X-Tinybind-Render": "navigation;v=" + strconv.Itoa(clientVersion),
 		"X-Tinybind-Build":  htmlupdate.BuildID(),
 	}
 	if len(known) > 0 {
-		var manifest htmlbind.Manifest
+		var manifest delta.Manifest
 		for id, frame := range known {
-			manifest.Instances = append(manifest.Instances, htmlbind.Instance{ID: id, FrameValidator: frame})
+			manifest.Instances = append(manifest.Instances, delta.Instance{ID: id, FrameValidator: frame})
 		}
 		headers["X-Tinybind-Manifest"] = htmlupdate.EncodeManifest(manifest)
 	}
@@ -185,7 +186,7 @@ func TestEveryResponseVariesOnTheRenderHeader(t *testing.T) {
 
 // The first update has no validators, so it legitimately returns everything.
 func TestFirstDeltaReturnsEveryBoundary(t *testing.T) {
-	response, body := delta(t, "/search?q=go&section=Docs", nil)
+	response, body := fetchDelta(t, "/search?q=go&section=Docs", nil)
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 		t.Fatalf("content type = %q", got)
 	}
@@ -208,8 +209,8 @@ func TestFirstDeltaReturnsEveryBoundary(t *testing.T) {
 // The milestone's target case: only the search parameter changed, so only the
 // page travels and the layout markup is never resent.
 func TestSearchParameterChangeSendsOnlyThePage(t *testing.T) {
-	_, first := delta(t, "/search?q=go&section=Docs", nil)
-	_, second := delta(t, "/search?q=rust&section=Docs", first.validators())
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, second := fetchDelta(t, "/search?q=rust&section=Docs", first.validators())
 	if len(second.Operations) != 1 {
 		t.Fatalf("want one operation, got %+v", second.Operations)
 	}
@@ -227,8 +228,8 @@ func TestSearchParameterChangeSendsOnlyThePage(t *testing.T) {
 
 // An unchanged render sends no markup at all, which is the payoff.
 func TestUnchangedRenderSendsNoOperations(t *testing.T) {
-	_, first := delta(t, "/search?q=go&section=Docs", nil)
-	_, second := delta(t, "/search?q=go&section=Docs", first.validators())
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, second := fetchDelta(t, "/search?q=go&section=Docs", first.validators())
 	if len(second.Operations) != 0 {
 		t.Fatalf("want no operations, got %+v", second.Operations)
 	}
@@ -240,8 +241,8 @@ func TestUnchangedRenderSendsNoOperations(t *testing.T) {
 // A layout change replaces the layout, and the page inside it is not sent
 // separately.
 func TestLayoutChangeReplacesTheAncestorOnly(t *testing.T) {
-	_, first := delta(t, "/search?q=go&section=Docs", nil)
-	_, second := delta(t, "/search?q=go&section=Guides", first.validators())
+	_, first := fetchDelta(t, "/search?q=go&section=Docs", nil)
+	_, second := fetchDelta(t, "/search?q=go&section=Guides", first.validators())
 	if len(second.Operations) != 1 || second.Operations[0].ID != "c1" {
 		t.Fatalf("want only the layout replaced, got %+v", second.Operations)
 	}
@@ -347,14 +348,14 @@ func TestOversizedManifestIsIgnored(t *testing.T) {
 // A stale validator is a hint, not authority: the server recomputes and the
 // client converges.
 func TestStaleValidatorsYieldAFullDelta(t *testing.T) {
-	_, body := delta(t, "/search?q=go&section=Docs", map[string]string{"c1": "stale", "c2": "stale"})
+	_, body := fetchDelta(t, "/search?q=go&section=Docs", map[string]string{"c1": "stale", "c2": "stale"})
 	if len(body.Operations) != 1 || body.Operations[0].ID != "c1" {
 		t.Fatalf("want the outermost boundary replaced, got %+v", body.Operations)
 	}
 }
 
 func TestManifestHeaderRoundTrips(t *testing.T) {
-	manifest := htmlbind.Manifest{Instances: []htmlbind.Instance{
+	manifest := delta.Manifest{Instances: []delta.Instance{
 		{ID: "c1", FrameValidator: "aaa"},
 		{ID: "c2", FrameValidator: "bbb"},
 	}}
@@ -370,14 +371,14 @@ func TestManifestHeaderRoundTrips(t *testing.T) {
 // A different key must not validate another deployment's digests, which is what
 // makes a key rotation force complete renders.
 func TestValidatorsAreKeyed(t *testing.T) {
-	render := func(key string) htmlbind.Manifest {
+	render := func(key string) delta.Manifest {
 		wrappers := []htmlbind.Wrapper{htmlbind.BindWrapper(layoutPlan, layoutParams{Section: "Docs"},
 			func(target *layoutParams, children htmlbind.Fragment) { target.Children = children })}
-		delta, err := htmlbind.RenderDelta([]byte(key), htmlbind.Manifest{}, wrappers, htmlbind.Bind(pagePlan, pageParams{Query: "go"}))
+		diff, err := delta.RenderDelta([]byte(key), delta.Manifest{}, wrappers, htmlbind.Bind(pagePlan, pageParams{Query: "go"}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		return delta.Manifest
+		return diff.Manifest
 	}
 	first, second := render("key one"), render("key two")
 	if first.Instances[0].FrameValidator == second.Instances[0].FrameValidator {
@@ -478,14 +479,14 @@ func TestDisappearingBoundaryIsNotLeftOnScreen(t *testing.T) {
 	shallow := deep[:1]
 	leaf := htmlbind.Bind(pagePlan, pageParams{Query: "go"})
 
-	first, err := htmlbind.RenderDelta(options.Key, htmlbind.Manifest{}, deep, leaf)
+	first, err := delta.RenderDelta(options.Key, delta.Manifest{}, deep, leaf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Manifest.Instances) != 3 {
 		t.Fatalf("want three boundaries, got %+v", first.Manifest.Instances)
 	}
-	second, err := htmlbind.RenderDelta(options.Key, first.Manifest, shallow, leaf)
+	second, err := delta.RenderDelta(options.Key, first.Manifest, shallow, leaf)
 	if err != nil {
 		t.Fatal(err)
 	}

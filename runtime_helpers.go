@@ -188,13 +188,14 @@ func fileFromHeader(fh *multipart.FileHeader, limit int64) (File, error) {
 	}
 	defer rc.Close()
 
-	// Read at most limit+1 bytes so an unknown FileHeader size stays bounded.
-	data, err := io.ReadAll(io.LimitReader(rc, limit+1))
+	// Read at most limit+1 bytes so an unknown FileHeader size stays bounded;
+	// the header size (when known) sizes the buffer in one allocation.
+	data, err := jsonbind.ReadLimitHint(rc, limit, fh.Size)
 	if err != nil {
+		if err == jsonbind.ErrBodyTooLarge {
+			return File{}, errFileTooLarge
+		}
 		return File{}, err
-	}
-	if int64(len(data)) > limit {
-		return File{}, errFileTooLarge
 	}
 	ct := fh.Header.Get("Content-Type")
 	size := fh.Size
@@ -311,7 +312,7 @@ func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
 		}
 		return nil, BadRequest(Problem{Code: "body_read", Message: "failed to read body"}, err)
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	if jsonbind.IsBlank(data) {
 		return jsonbind.EmptyObject(), nil
 	}
 	obj, err := jsonbind.ParseObject(data)
@@ -344,9 +345,8 @@ func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
 	if formBody == nil {
 		return out
 	}
-	skip := excludeSet(exclude)
 	for k, v := range formBody {
-		if skip[k] {
+		if isExcluded(exclude, k) {
 			continue
 		}
 		out[k] = v
@@ -360,9 +360,8 @@ func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.R
 	if formBody == nil {
 		return out
 	}
-	skip := excludeSet(exclude)
 	for k, v := range formBody {
-		if skip[k] {
+		if isExcluded(exclude, k) {
 			continue
 		}
 		b, _ := json.Marshal(v)
@@ -371,14 +370,13 @@ func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.R
 	return out
 }
 
-func excludeSet(exclude []string) map[string]bool {
-	skip := make(map[string]bool, len(exclude))
+func isExcluded(exclude []string, key string) bool {
 	for _, k := range exclude {
-		if k != "" && k != "*" {
-			skip[k] = true
+		if k == key && k != "" && k != "*" {
+			return true
 		}
 	}
-	return skip
+	return false
 }
 
 // ParseFormMap parses urlencoded form body into a flat map (first value wins).

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 // DefaultStreamContentType marks a delta delivered as a record stream. One JSON
@@ -153,7 +154,7 @@ func (s *DeltaStream) ExpectLive() {
 
 // Replace writes one settled boundary and the validator it produced.
 func (s *DeltaStream) Replace(instanceID, html, frame string) {
-	s.writer.write(record{Record: recordOp, Kind: htmlbind.OpReplace, ID: instanceID, HTML: html, Frame: frame})
+	s.writer.write(record{Record: recordOp, Kind: delta.OpReplace, ID: instanceID, HTML: html, Frame: frame})
 }
 
 // Unchanged restates a boundary's validator without markup, so the client can
@@ -263,7 +264,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeDocument {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
+		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 		return err
 	}
 	live := serveLive && negotiated.Mode == ModeLive
@@ -274,7 +275,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 	}
 	// The head is known before the first record, so a stylesheet a newly
 	// reachable component brought is installed before its markup arrives.
-	head, err := htmlbind.DeltaStreamHead(wrappers, leaf, o.renderOptions(options)...)
+	head, err := delta.DeltaStreamHead(wrappers, leaf, o.renderOptions(options)...)
 	if err != nil {
 		return err
 	}
@@ -287,7 +288,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 			stream.ExpectLive()
 		}
 	}
-	for item, err := range htmlbind.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...) {
+	for item, err := range delta.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...) {
 		if err != nil {
 			// The response committed with the head record, so the status cannot
 			// change and the failure has to travel in band.
@@ -336,27 +337,27 @@ func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers [
 	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode != ModeNavigation {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
+		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
 		return err
 	}
 	// Rendering happens before the first byte, so a failure here is still an
 	// ordinary error the caller can turn into a status.
-	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
+	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
 	if err != nil {
 		return err
 	}
-	stream := o.openStream(w, ModeNavigation, negotiated.Version, delta.Head)
+	stream := o.openStream(w, ModeNavigation, negotiated.Version, diff.Head)
 	if htmlbind.HasLiveBlock(wrappers, leaf) {
 		stream.ExpectLive()
 	}
 	frames := map[string]string{}
-	for _, instance := range delta.Manifest.Instances {
+	for _, instance := range diff.Manifest.Instances {
 		frames[instance.ID] = instance.FrameValidator
 	}
-	for _, operation := range delta.Operations {
+	for _, operation := range diff.Operations {
 		stream.Replace(operation.InstanceID, operation.HTML, frames[operation.InstanceID])
 	}
-	for _, instance := range delta.Manifest.Instances {
+	for _, instance := range diff.Manifest.Instances {
 		if stream.Sent(instance.ID) {
 			continue
 		}

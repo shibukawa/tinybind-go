@@ -143,9 +143,11 @@ func (o *renderOptions) permitsDataURL(normalized string) bool {
 // is what makes "java\tscript:alert(1)" a javascript URL rather than a relative
 // path with an odd name. Leading control characters and spaces are trimmed for
 // the same reason.
+var urlWhitespaceStripper = strings.NewReplacer("\t", "", "\n", "", "\r", "")
+
 func browserNormalizedURL(value string) string {
 	if strings.ContainsAny(value, "\t\n\r") {
-		value = strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(value)
+		value = urlWhitespaceStripper.Replace(value)
 	}
 	return strings.TrimLeftFunc(value, func(r rune) bool { return r <= ' ' })
 }

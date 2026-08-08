@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -36,9 +37,9 @@ func streamRecords(t *testing.T, url string, known map[string]string) (*http.Res
 	request.Header.Set("X-Tinybind-Render", "navigation;v="+strconv.Itoa(clientVersion))
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
 	if len(known) > 0 {
-		var manifest htmlbind.Manifest
+		var manifest delta.Manifest
 		for id, frame := range known {
-			manifest.Instances = append(manifest.Instances, htmlbind.Instance{ID: id, FrameValidator: frame})
+			manifest.Instances = append(manifest.Instances, delta.Instance{ID: id, FrameValidator: frame})
 		}
 		request.Header.Set("X-Tinybind-Manifest", htmlupdate.EncodeManifest(manifest))
 	}
@@ -218,7 +219,7 @@ var asyncPlan = &htmlbind.Plan[asyncParams]{
 	Boundary: &htmlbind.Boundary[asyncParams]{
 		ComponentID: "Async@v1",
 		Attr:        "data-tb-id",
-		Input:       func(p asyncParams) string { return htmlbind.CanonString(p.Query) },
+		Input:       func(p asyncParams) string { return delta.CanonString(p.Query) },
 	},
 	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[asyncParams]{

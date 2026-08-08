@@ -17,12 +17,12 @@ func ForEach(rows Rows, fn func(Row) error) error {
 	if err != nil {
 		return err
 	}
+	values := make([]any, len(cols))
+	dest := make([]any, len(cols))
+	for i := range values {
+		dest[i] = &values[i]
+	}
 	for rows.Next() {
-		values := make([]any, len(cols))
-		dest := make([]any, len(cols))
-		for i := range values {
-			dest[i] = &values[i]
-		}
 		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
@@ -46,8 +46,15 @@ func Key(row Row, column string) (key string, present bool, err error) {
 	if v == nil {
 		return "", false, nil
 	}
-	if b, ok := v.([]byte); ok {
-		return string(b), true, nil
+	switch k := v.(type) {
+	case []byte:
+		return string(k), true, nil
+	case int64:
+		return strconv.FormatInt(k, 10), true, nil
+	case int:
+		return strconv.Itoa(k), true, nil
+	case float64:
+		return strconv.FormatFloat(k, 'g', -1, 64), true, nil
 	}
 	return fmt.Sprint(v), true, nil
 }
@@ -86,6 +93,14 @@ func Int(row Row, column string) (int, error) {
 	v, err := value(row, column)
 	if err != nil || v == nil {
 		return 0, err
+	}
+	switch n := v.(type) {
+	case int64:
+		return int(n), nil
+	case int:
+		return n, nil
+	case float64:
+		return int(n), nil
 	}
 	return strconv.Atoi(text(v))
 }

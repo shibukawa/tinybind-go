@@ -2,7 +2,6 @@ package htmlbind
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -76,7 +75,7 @@ func HeadScript(attrs ...HeadAttr) HeadNode {
 			return node
 		}
 	}
-	return HeadNode{err: fmt.Errorf("%w: script needs a src attribute; inline script is never contributed", ErrHeadNode)}
+	return HeadNode{err: wrapError(ErrHeadNode, ": script needs a src attribute; inline script is never contributed")}
 }
 
 // HeadNoScript contributes a noscript element wrapping meta, link, or style
@@ -90,7 +89,7 @@ func HeadNoScript(children ...HeadNode) HeadNode {
 		switch child.element {
 		case "meta", "link", "style":
 		default:
-			return HeadNode{err: fmt.Errorf("%w: noscript cannot contain %s", ErrHeadNode, child.element)}
+			return HeadNode{err: wrapError(ErrHeadNode, ": noscript cannot contain "+child.element)}
 		}
 	}
 	return HeadNode{element: "noscript", children: children}
@@ -99,7 +98,7 @@ func HeadNoScript(children ...HeadNode) HeadNode {
 func headElement(name string, attrs []HeadAttr, children []HeadNode) HeadNode {
 	for _, attr := range attrs {
 		if !validAttrName(attr.Name) {
-			return HeadNode{err: fmt.Errorf("%w: %s is not a usable attribute name", ErrHeadNode, quoteForError(attr.Name))}
+			return HeadNode{err: wrapError(ErrHeadNode, ": "+quoteForError(attr.Name)+" is not a usable attribute name")}
 		}
 	}
 	return HeadNode{element: name, attrs: attrs, children: children}
@@ -218,6 +217,9 @@ func mergeCallerHead(head []string, nodes []HeadNode) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The merged head may be one component's own slice, so growing it must
+	// reallocate rather than write into that component's backing array.
+	head = head[:len(head):len(head)]
 	seen := make(map[string]bool, len(head))
 	for _, tag := range head {
 		seen[tag] = true

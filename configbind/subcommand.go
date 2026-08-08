@@ -3,7 +3,6 @@ package configbind
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 
@@ -239,7 +238,7 @@ func commandNames(definitions map[string]SubCommandDefinition) []string {
 	for name := range definitions {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	sortStrings(names)
 	return names
 }
 

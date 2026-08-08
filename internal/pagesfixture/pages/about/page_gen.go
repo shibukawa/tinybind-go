@@ -25,7 +25,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 			},
 			[]htmlbind.Op[PageParams]{
 				planPageOps.Static(" <p>page "),
-				planPageOps.Text(func(p PageParams) string {
+				planPageOps.Raw(func(p PageParams) string {
 					if p.Page == nil {
 						return ""
 					}

@@ -5,8 +5,6 @@ package cliparser
 import (
 	"fmt"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Kind classifies how a flag consumes argv values.
@@ -178,13 +176,22 @@ func envName(longOpt string) string {
 }
 
 func validEnvName(name string) bool {
-	for i, r := range name {
-		if r == '_' || unicode.IsLetter(r) || (i > 0 && unicode.IsDigit(r)) {
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c == '_' || asciiLetter(c) || (i > 0 && asciiDigit(c)) {
 			continue
 		}
 		return false
 	}
 	return name != ""
+}
+
+func asciiLetter(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+func asciiDigit(c byte) bool {
+	return '0' <= c && c <= '9'
 }
 
 func parseOpt(opt string) (longs []string, shorts []string, err error) {
@@ -207,8 +214,7 @@ func parseOpt(opt string) (longs []string, shorts []string, err error) {
 		if short == "" {
 			return nil, nil, fmt.Errorf("cliparser: empty short in opt %q", opt)
 		}
-		r, size := utf8.DecodeRuneInString(short)
-		if size != len(short) || r == utf8.RuneError || !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+		if len(short) != 1 || !asciiLetter(short[0]) && !asciiDigit(short[0]) {
 			return nil, nil, fmt.Errorf("cliparser: short flag must be a single letter or digit in opt %q", opt)
 		}
 		shorts = []string{short}

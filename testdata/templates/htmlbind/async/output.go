@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type User struct {
@@ -106,8 +107,8 @@ var planProfileOps = htmlbind.Builder[ProfileParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planProfileInput(p ProfileParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Id),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Id),
 	)
 }
 
@@ -181,8 +182,8 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planPageInput(p PageParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonString[string](p.Id),
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Id),
 	)
 }
 
@@ -214,7 +215,7 @@ var planShellOps = htmlbind.Builder[ShellParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planShellInput(p ShellParams) string {
-	return htmlbind.CanonJoin()
+	return delta.CanonJoin()
 }
 
 var planShellBoundary = &htmlbind.Boundary[ShellParams]{

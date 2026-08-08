@@ -640,8 +640,8 @@ func TestGenerator_EmitsTypeSpecificNoReflect(t *testing.T) {
 	if !strings.Contains(code, "func bindUploadAvatarRequest") {
 		t.Fatalf("missing bindUploadAvatarRequest in:\n%s", code)
 	}
-	if !strings.Contains(code, "ParseMultipartMap") {
-		t.Fatalf("missing ParseMultipartMap in:\n%s", code)
+	if !strings.Contains(code, "httpbind.ReadBody(r,") {
+		t.Fatalf("missing httpbind.ReadBody in:\n%s", code)
 	}
 	if strings.Contains(code, "\"reflect\"") || strings.Contains(code, "reflect.") {
 		t.Fatalf("generated code must not use reflect:\n%s", code)
@@ -650,8 +650,8 @@ func TestGenerator_EmitsTypeSpecificNoReflect(t *testing.T) {
 	for _, needle := range []string{
 		`PathValue(r, "org_id")`,
 		`HeaderValue(r, "Authorization")`,
-		`QueryValue(r, "name")`,
-		`QueryValue(r, "keyword")`,
+		`QueryLookup(queryVals, "name")`,
+		`QueryLookup(queryVals, "keyword")`,
 		`fileBody["image"]`,
 	} {
 		if !strings.Contains(code, needle) {

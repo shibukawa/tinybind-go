@@ -2,7 +2,6 @@ package htmlbind
 
 import (
 	"errors"
-	"fmt"
 )
 
 // A CSRF token is not a framework extension. It is a property of every unsafe
@@ -18,6 +17,10 @@ import (
 // ErrNoCSRFToken reports a render that reached an unsafe form with no token to
 // put in it.
 var ErrNoCSRFToken = errors.New("htmlbind: form needs a CSRF token")
+
+// errCSRFTokenUnset is the full failure CSRFField returns, built once because
+// nothing in it varies per render.
+var errCSRFTokenUnset = wrapError(ErrNoCSRFToken, ": this render supplied none; pass WithCSRFToken, or WithoutCSRFToken for a render with no session behind it")
 
 // WithCSRFToken supplies the session's CSRF token for this render.
 //
@@ -58,7 +61,7 @@ type csrfFieldOp[P any] string
 func (o csrfFieldOp[P]) Exec(r *Renderer, _ P) error {
 	token, ok := r.csrfToken()
 	if !ok {
-		return fmt.Errorf("%w: this render supplied none; pass WithCSRFToken, or WithoutCSRFToken for a render with no session behind it", ErrNoCSRFToken)
+		return errCSRFTokenUnset
 	}
 	return r.Write(`<input type="hidden" name="` + string(o) + `" value="` + Escape(token) + `">`)
 }

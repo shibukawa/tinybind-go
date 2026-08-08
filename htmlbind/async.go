@@ -3,7 +3,6 @@ package htmlbind
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 )
@@ -70,8 +69,7 @@ func (e *UnrecoveredError) Unwrap() error { return e.Err }
 
 // normalizeAsyncError maps a Go error to the value a recover clause sees.
 func normalizeAsyncError(err error) AsyncError {
-	var public PublicError
-	if errors.As(err, &public) {
+	if public, ok := findPublicError(err); ok {
 		return public.PublicError()
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -80,12 +78,49 @@ func normalizeAsyncError(err error) AsyncError {
 	return AsyncError{Code: ErrorCodeInternal}
 }
 
+// findPublicError walks the wrap chain looking for the one interface this
+// package projects. It is errors.As for a fixed interface target, written out
+// so the runtime compiled into an application never links reflect for it.
+func findPublicError(err error) (PublicError, bool) {
+	for err != nil {
+		if public, ok := err.(PublicError); ok {
+			return public, true
+		}
+		switch wrapper := err.(type) {
+		case interface{ Unwrap() error }:
+			err = wrapper.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, wrapped := range wrapper.Unwrap() {
+				if public, ok := findPublicError(wrapped); ok {
+					return public, true
+				}
+			}
+			return nil, false
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
 // panicError carries a recovered panic so it travels the same path as a
 // returned error.
 type panicError struct{ value any }
 
 func (e *panicError) Error() string {
-	return fmt.Sprintf("htmlbind: panic in async external: %v", e.value)
+	const prefix = "htmlbind: panic in async external"
+	// The usual panic values are covered by hand rather than handed to fmt,
+	// whose %v formatter would be the only reflection this package links.
+	switch value := e.value.(type) {
+	case error:
+		return prefix + ": " + value.Error()
+	case string:
+		return prefix + ": " + value
+	case interface{ String() string }:
+		return prefix + ": " + value.String()
+	default:
+		return prefix
+	}
 }
 
 // Concurrent runs every task in its own goroutine and reports the first failure
@@ -171,9 +206,9 @@ type Content struct {
 // to choose, because it has to match the client that reads it.
 func (c Content) AppendJSON(dst []byte) []byte {
 	dst = append(dst, `{"id":`...)
-	dst = append(dst, JSONString(c.BoundaryID)...)
+	dst = appendJSONString(dst, c.BoundaryID)
 	dst = append(dst, `,"html":`...)
-	dst = append(dst, JSONString(string(c.HTML))...)
+	dst = appendJSONString(dst, string(c.HTML))
 	return append(dst, '}')
 }
 

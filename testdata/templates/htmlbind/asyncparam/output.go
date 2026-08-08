@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type Order struct {
@@ -38,21 +39,21 @@ type RowsParams struct {
 }
 
 func _tinybindCanonCustomer(value Customer) string {
-	return htmlbind.CanonRecord(htmlbind.CanonJoin(
-		htmlbind.CanonString[string](value.Name),
+	return delta.CanonRecord(delta.CanonJoin(
+		delta.CanonString[string](value.Name),
 	))
 }
 
 func _tinybindCanonOrder(value Order) string {
-	return htmlbind.CanonRecord(htmlbind.CanonJoin(
-		htmlbind.CanonString[string](value.Id),
-		htmlbind.CanonInt(value.Total),
+	return delta.CanonRecord(delta.CanonJoin(
+		delta.CanonString[string](value.Id),
+		delta.CanonInt(value.Total),
 	))
 }
 
 func _tinybindCanonRow(value Row) string {
-	return htmlbind.CanonRecord(htmlbind.CanonJoin(
-		htmlbind.CanonString[string](value.Label),
+	return delta.CanonRecord(delta.CanonJoin(
+		delta.CanonString[string](value.Label),
 	))
 }
 
@@ -205,7 +206,7 @@ var planProfileOps = htmlbind.Builder[ProfileParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planProfileInput(p ProfileParams) string {
-	return htmlbind.CanonJoin(
+	return delta.CanonJoin(
 		_tinybindCanonCustomer(p.Customer),
 	)
 }
@@ -260,7 +261,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 						planProfileOpsAwait3OpsScope4Ops.Static("<li>"),
 						planProfileOpsAwait3OpsScope4Ops.Text(func(p planProfileOpsAwait3OpsScope4) string { return p.Item.Id }),
 						planProfileOpsAwait3OpsScope4Ops.Static(": "),
-						planProfileOpsAwait3OpsScope4Ops.Text(func(p planProfileOpsAwait3OpsScope4) string { return htmlbind.FormatInt(p.Item.Total) }),
+						planProfileOpsAwait3OpsScope4Ops.Raw(func(p planProfileOpsAwait3OpsScope4) string { return htmlbind.FormatInt(p.Item.Total) }),
 						planProfileOpsAwait3OpsScope4Ops.Static("</li>"),
 					}),
 				planProfileOpsAwait3Ops.Static("</ul> "),
@@ -317,8 +318,8 @@ var planRowsOps = htmlbind.Builder[RowsParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planRowsInput(p RowsParams) string {
-	return htmlbind.CanonJoin(
-		htmlbind.CanonArray(p.Rows, _tinybindCanonRow),
+	return delta.CanonJoin(
+		delta.CanonArray(p.Rows, _tinybindCanonRow),
 	)
 }
 
@@ -367,7 +368,7 @@ var planRowsPlan = &htmlbind.Plan[RowsParams]{
 						planRowsOpsScope6OpsAwait7Ops.Static(" <li>"),
 						planRowsOpsScope6OpsAwait7Ops.Text(func(p planRowsOpsScope6OpsAwait7) string { return p.Outer.Item.Label }),
 						planRowsOpsScope6OpsAwait7Ops.Static(": "),
-						planRowsOpsScope6OpsAwait7Ops.Text(func(p planRowsOpsScope6OpsAwait7) string { return htmlbind.FormatInt(p.Count) }),
+						planRowsOpsScope6OpsAwait7Ops.Raw(func(p planRowsOpsScope6OpsAwait7) string { return htmlbind.FormatInt(p.Count) }),
 						planRowsOpsScope6OpsAwait7Ops.Static("</li> "),
 					},
 					[]htmlbind.Op[planRowsOpsScope6]{

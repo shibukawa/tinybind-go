@@ -1,10 +1,11 @@
 package httpbind
 
 import (
-	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
 // StreamFormat is the negotiated on-the-wire format for Stream[T].
@@ -34,10 +35,12 @@ const (
 // Format (SSE vs NDJSON vs JSON array) is chosen once by rule:stream-content-negotiation.
 // Write may be called many times; headers/status are sent only in NewStream.
 // JSON array framing requires Close (via defer) so the trailing ']' is written.
+//
+// Events are encoded through the jsonbind codec registry: T must have a
+// generated encoder (or one registered manually via jsonbind.RegisterEncode).
 type Stream[T any] struct {
 	w       http.ResponseWriter
 	format  StreamFormat
-	enc     *json.Encoder
 	closed  bool
 	started bool // JSON array: '[' already written
 }
@@ -52,7 +55,6 @@ func NewStream[T any](w http.ResponseWriter, r *http.Request) (*Stream[T], error
 	s := &Stream[T]{
 		w:      w,
 		format: format,
-		enc:    json.NewEncoder(w),
 	}
 	switch format {
 	case StreamSSE:
@@ -80,44 +82,57 @@ func (s *Stream[T]) Format() StreamFormat {
 	return s.format
 }
 
+var (
+	errNilStream    = errors.New("httpbind: nil stream")
+	errStreamClosed = errors.New("httpbind: stream closed")
+)
+
+var (
+	ssePrefix     = []byte("data: ")
+	sseNewline    = []byte("\n")
+	arrayOpen     = []byte("[")
+	arrayComma    = []byte(",")
+	arrayClose    = []byte("]")
+	arrayEmptyDoc = []byte("[]")
+)
+
 // Write encodes one event in the negotiated format.
 // Callable many times; does not re-send HTTP status or headers.
+//
+// Generated encoders terminate each event with a single '\n', which supplies
+// the NDJSON line ending and the first newline of the SSE frame.
 func (s *Stream[T]) Write(v T) error {
 	if s == nil {
-		return Internal(fmt.Errorf("httpbind: nil stream"))
+		return Internal(errNilStream)
 	}
 	if s.closed {
-		return Internal(fmt.Errorf("httpbind: stream closed"))
+		return Internal(errStreamClosed)
 	}
 	switch s.format {
 	case StreamSSE:
-		data, err := json.Marshal(v)
-		if err != nil {
+		if _, err := s.w.Write(ssePrefix); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(s.w, "data: %s\n\n", data); err != nil {
+		if err := jsonbind.EncodeJSON(s.w, v); err != nil {
+			return err
+		}
+		if _, err := s.w.Write(sseNewline); err != nil {
 			return err
 		}
 	case StreamJSONArray:
-		data, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
+		sep := arrayComma
 		if !s.started {
-			if _, err := s.w.Write([]byte{'['}); err != nil {
-				return err
-			}
+			sep = arrayOpen
 			s.started = true
-		} else {
-			if _, err := s.w.Write([]byte{','}); err != nil {
-				return err
-			}
 		}
-		if _, err := s.w.Write(data); err != nil {
+		if _, err := s.w.Write(sep); err != nil {
 			return err
 		}
-	default: // NDJSON: Encoder.Encode appends '\n'
-		if err := s.enc.Encode(v); err != nil {
+		if err := jsonbind.EncodeJSON(s.w, v); err != nil {
+			return err
+		}
+	default: // NDJSON: the encoder's trailing '\n' ends the line
+		if err := jsonbind.EncodeJSON(s.w, v); err != nil {
 			return err
 		}
 	}
@@ -138,9 +153,9 @@ func (s *Stream[T]) Close() error {
 	if s.format == StreamJSONArray {
 		var err error
 		if !s.started {
-			_, err = s.w.Write([]byte("[]"))
+			_, err = s.w.Write(arrayEmptyDoc)
 		} else {
-			_, err = s.w.Write([]byte{']'})
+			_, err = s.w.Write(arrayClose)
 		}
 		if err != nil {
 			return err

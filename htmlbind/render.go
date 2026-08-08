@@ -256,7 +256,7 @@ func Render(w io.Writer, leaf Fragment, options ...Option) error {
 // so render into a buffer when you want that failure to become an error status.
 func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) error {
 	opts := newRenderOptions(options)
-	composed, head, err := assemble(wrappers, leaf)
+	composed, head, err := assemble(nil, wrappers, leaf)
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Opti
 	if err != nil {
 		return err
 	}
-	return composed(&Renderer{w: w, head: head, opts: opts})
+	return composed(&Renderer{w: w, sw: stringWriterOf(w), head: head, opts: opts})
 }
 
 // RenderAsync renders one component and yields each await boundary as it
@@ -323,14 +323,25 @@ func RenderChainAsync(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf
 // difference between them is whether the options keep live boundaries
 // subscribed, which the coordinator reads.
 func renderStreaming(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf Fragment, options []Option) iter.Seq2[Content, error] {
+	return streamChain(ctx, w, nil, nil, wrappers, leaf, options)
+}
+
+// streamChain is the body behind every streaming entry, with or without a
+// collector attached. rendered runs once the initial pass has committed, so a
+// caller comparing renders can speak before the first completion; returning
+// false ends the sequence.
+func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered func() bool, wrappers []Wrapper, leaf Fragment, options []Option) iter.Seq2[Content, error] {
 	return func(yield func(Content, error) bool) {
-		composed, head, err := assemble(wrappers, leaf)
+		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
+		defer coordinator.stop()
+		if collect != nil {
+			collect.Begin(coordinator.opts.validatorTag)
+		}
+		composed, head, err := assemble(collect, wrappers, leaf)
 		if err != nil {
 			yield(Content{}, err)
 			return
 		}
-		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
-		defer coordinator.stop()
 		// The caller's own contributions join the merge here, before the head is
 		// written, so a malformed one still fails while the status can change.
 		head, err = mergeCallerHead(head, coordinator.opts.head)
@@ -341,12 +352,15 @@ func renderStreaming(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf 
 		// The head carries component contributions only. Nothing is injected on
 		// this path: the script that applies a completion belongs with the framing
 		// the caller writes around it, so both are the framework's to ship.
-		renderer := &Renderer{w: w, head: head, opts: coordinator.opts, async: coordinator}
+		renderer := &Renderer{w: w, sw: stringWriterOf(w), head: head, opts: coordinator.opts, async: coordinator, collect: collect}
 		if err := composed(renderer); err != nil {
 			yield(Content{}, err)
 			return
 		}
 		flush(w)
+		if rendered != nil && !rendered() {
+			return
+		}
 		coordinator.wait()
 		for {
 			select {
@@ -370,7 +384,12 @@ func renderStreaming(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf 
 
 // assemble validates the chain and returns the composed render entry together
 // with the merged head, before anything is written.
-func assemble(wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
+//
+// A collecting render composes through memberFragment instead, so each member
+// declaring a boundary opens one around its own output. The chain index is the
+// instance identity, assigned before rendering, which is why an unchanged
+// chain shape yields comparable manifests even when parameters change.
+func assemble(collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
 	if !leaf.Present() {
 		return nil, nil, ErrNoLeaf
 	}
@@ -390,14 +409,23 @@ func assemble(wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []strin
 		}
 	}
 	head := MergeHead(wrappers, leaf)
-	next := leaf
-	for i := len(wrappers) - 1; i >= 0; i-- {
-		wrapper, inner := wrappers[i], next
-		next = Fragment{
-			hasAwait: wrapper.hasAwait || inner.hasAwait,
-			hasLive:  wrapper.hasLive || inner.hasLive,
-			render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+	if collect == nil {
+		next := leaf
+		for i := len(wrappers) - 1; i >= 0; i-- {
+			wrapper, inner := wrappers[i], next
+			next = Fragment{
+				hasAwait: wrapper.hasAwait || inner.hasAwait,
+				hasLive:  wrapper.hasLive || inner.hasLive,
+				render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+			}
 		}
+		return next.render, head, nil
+	}
+	next := memberFragment(leaf, leaf.boundary, len(wrappers))
+	for i := len(wrappers) - 1; i >= 0; i-- {
+		wrapper, inner, index := wrappers[i], next, i
+		child := Fragment{render: func(r *Renderer) error { return wrapper.render(r, inner) }}
+		next = memberFragment(child, wrapper.boundary, index)
 	}
 	return next.render, head, nil
 }
@@ -426,6 +454,24 @@ func flush(w io.Writer) {
 // dropping later duplicates so two components declaring the same stylesheet
 // emit one tag.
 func MergeHead(wrappers []Wrapper, leaf Fragment) []string {
+	// One contributor has nothing to deduplicate against, so its slice is the
+	// answer; merged results are treated as immutable everywhere they travel.
+	single, contributors := leaf.head, 0
+	if len(leaf.head) > 0 {
+		contributors = 1
+	}
+	for _, wrapper := range wrappers {
+		if len(wrapper.head) > 0 {
+			single = wrapper.head
+			contributors++
+		}
+	}
+	if contributors == 0 {
+		return nil
+	}
+	if contributors == 1 {
+		return single
+	}
 	var merged []string
 	seen := map[string]bool{}
 	add := func(tags []string) {
@@ -442,6 +488,14 @@ func MergeHead(wrappers []Wrapper, leaf Fragment) []string {
 	}
 	add(leaf.head)
 	return merged
+}
+
+// ChainHead returns the merged head a render of this chain would write: every
+// member's contributions plus the caller's own, deduplicated in composition
+// order. It renders nothing, so a caller that sends the head ahead of any
+// markup — a streamed delta does — can know it first.
+func ChainHead(wrappers []Wrapper, leaf Fragment, options ...Option) ([]string, error) {
+	return mergeCallerHead(MergeHead(wrappers, leaf), newRenderOptions(options).head)
 }
 
 // HasAwaitBlock reports whether any member of a chain can open an await

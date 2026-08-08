@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -25,7 +26,7 @@ var livePlan = &htmlbind.Plan[liveParams]{
 	Boundary: &htmlbind.Boundary[liveParams]{
 		ComponentID: "Feed@v1",
 		Attr:        "data-tb-id",
-		Input:       func(p liveParams) string { return htmlbind.CanonString(strings.Join(p.Values, ",")) },
+		Input:       func(p liveParams) string { return delta.CanonString(strings.Join(p.Values, ",")) },
 	},
 	HasAwaitBlock: true,
 	HasLiveBlock:  true,

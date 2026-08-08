@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 // DefaultHeaderPrefix names the request and response headers.
@@ -275,7 +276,7 @@ type Negotiated struct {
 	Version int
 	// Known holds the validators the client already has. It is empty on a
 	// client's first update, which simply yields a larger delta.
-	Known htmlbind.Manifest
+	Known delta.Manifest
 }
 
 // Negotiate resolves how a request must be answered.
@@ -380,14 +381,14 @@ func parseRender(value string) (mode string, version int, ok bool) {
 // DecodeManifest reads the compact validator list a client sends back. The
 // encoding is "id:validator" pairs separated by commas, which stays inside one
 // header and needs no escaping because both halves are opaque tokens.
-func DecodeManifest(encoded string) htmlbind.Manifest {
-	var manifest htmlbind.Manifest
+func DecodeManifest(encoded string) delta.Manifest {
+	var manifest delta.Manifest
 	for _, pair := range strings.Split(encoded, ",") {
 		id, validator, found := strings.Cut(pair, ":")
 		if !found || id == "" || validator == "" {
 			continue
 		}
-		manifest.Instances = append(manifest.Instances, htmlbind.Instance{
+		manifest.Instances = append(manifest.Instances, delta.Instance{
 			ID: id, FrameValidator: validator,
 		})
 	}
@@ -396,7 +397,7 @@ func DecodeManifest(encoded string) htmlbind.Manifest {
 
 // EncodeManifest renders the validator list a client sends back. It exists so a
 // test, and any non-browser client, can produce exactly what the runtime does.
-func EncodeManifest(manifest htmlbind.Manifest) string {
+func EncodeManifest(manifest delta.Manifest) string {
 	var out strings.Builder
 	for _, instance := range manifest.Instances {
 		if out.Len() > 0 {
@@ -471,7 +472,7 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	// The document render collects so every boundary carries its instance
 	// attribute; without them a later delta could not find its targets.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := htmlbind.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
+	_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(nil)...)
 	return err
 }
 
@@ -519,22 +520,22 @@ func (o Options) markLive(w http.ResponseWriter, wrappers []htmlbind.Wrapper, le
 }
 
 func renderDelta(w http.ResponseWriter, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) error {
-	delta, err := htmlbind.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
+	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(nil)...)
 	if err != nil {
 		// Nothing has been written yet, so the caller can still choose a status
 		// and serve an ordinary error page.
 		return err
 	}
 	body := deltaResponse{}
-	for _, operation := range delta.Operations {
+	for _, operation := range diff.Operations {
 		body.Operations = append(body.Operations, deltaOperation{
 			Kind: operation.Kind, ID: operation.InstanceID, HTML: operation.HTML,
 		})
 	}
-	for _, instance := range delta.Manifest.Instances {
+	for _, instance := range diff.Manifest.Instances {
 		body.Manifest = append(body.Manifest, deltaInstance{ID: instance.ID, Frame: instance.FrameValidator})
 	}
-	body.Head = delta.Head
+	body.Head = diff.Head
 	// A navigation can arrive at a route whose composition owns a live boundary,
 	// and the client reused its document shell, so this body is the only place
 	// that can tell it so.

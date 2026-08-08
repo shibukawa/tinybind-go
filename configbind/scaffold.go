@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -160,7 +159,7 @@ func ScaffoldEnv() (string, error) {
 		seen[name] = entry.fullKey
 		envs = append(envs, envEntry{name: name, entry: entry})
 	}
-	sort.Slice(envs, func(i, j int) bool { return envs[i].name < envs[j].name })
+	sortFunc(envs, func(a, b envEntry) bool { return a.name < b.name })
 
 	var b strings.Builder
 	for _, item := range envs {
@@ -212,11 +211,11 @@ func scaffoldEntries() ([]scaffoldEntry, map[string]string, error) {
 	}
 	definitionsMu.RUnlock()
 
-	sort.Slice(registered, func(i, j int) bool {
-		if registered[i].Prefix != registered[j].Prefix {
-			return registered[i].Prefix < registered[j].Prefix
+	sortFunc(registered, func(a, b Definition) bool {
+		if a.Prefix != b.Prefix {
+			return a.Prefix < b.Prefix
 		}
-		return registered[i].TypeName < registered[j].TypeName
+		return a.TypeName < b.TypeName
 	})
 	seenKeys := map[string]string{}
 	docs := map[string]string{}

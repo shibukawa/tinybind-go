@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type User struct {
@@ -21,12 +22,12 @@ type ProfileParams struct {
 }
 
 func _tinybindCanonUser(value User) string {
-	return htmlbind.CanonRecord(htmlbind.CanonJoin(
-		htmlbind.CanonString[string](value.Name),
-		htmlbind.CanonBool(value.Active),
-		htmlbind.CanonOptional(value.Nickname, htmlbind.CanonString[string]),
-		htmlbind.CanonURL(value.ProfileURL),
-		htmlbind.CanonArray(value.Tags, htmlbind.CanonString[string]),
+	return delta.CanonRecord(delta.CanonJoin(
+		delta.CanonString[string](value.Name),
+		delta.CanonBool(value.Active),
+		delta.CanonOptional(value.Nickname, delta.CanonString[string]),
+		delta.CanonURL(value.ProfileURL),
+		delta.CanonArray(value.Tags, delta.CanonString[string]),
 	))
 }
 
@@ -44,7 +45,7 @@ var planProfileOps = htmlbind.Builder[ProfileParams]{}
 // Slot arguments are excluded: their content belongs to the child boundary,
 // so a frame stays comparable when only its child changed.
 func planProfileInput(p ProfileParams) string {
-	return htmlbind.CanonJoin(
+	return delta.CanonJoin(
 		_tinybindCanonUser(p.User),
 	)
 }
@@ -83,7 +84,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 					},
 					[]htmlbind.Op[planProfileOpsScope1]{
 						planProfileOpsScope1Ops.Static("<li"),
-						planProfileOpsScope1Ops.Attr("data-index", func(p planProfileOpsScope1) (string, bool) { return htmlbind.Escape(htmlbind.FormatInt(p.Index)), true }),
+						planProfileOpsScope1Ops.Attr("data-index", func(p planProfileOpsScope1) (string, bool) { return htmlbind.FormatInt(p.Index), true }),
 						planProfileOpsScope1Ops.Static(">"),
 						planProfileOpsScope1Ops.Text(func(p planProfileOpsScope1) string { return p.Item }),
 						planProfileOpsScope1Ops.Static("</li>"),

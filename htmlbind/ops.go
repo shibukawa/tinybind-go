@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Builder constructs instructions for one component. Generated code declares
@@ -267,12 +268,14 @@ func (Builder[P]) BoundaryAttr() Op[P] { return boundaryAttrOp[P]{} }
 type boundaryAttrOp[P any] struct{}
 
 func (boundaryAttrOp[P]) Exec(r *Renderer, _ P) error {
-	if r.collect == nil || r.collect.pending == nil {
+	if r.collect == nil {
 		return nil
 	}
-	state := r.collect.pending
-	r.collect.pending = nil
-	return r.Write(" " + state.attr + `="` + state.id + `"`)
+	attr, id, ok := r.collect.TakePending()
+	if !ok {
+		return nil
+	}
+	return r.Write(" " + attr + `="` + id + `"`)
 }
 
 // If selects one of two instruction lists.
@@ -559,22 +562,40 @@ func Escape(value string) string {
 		return value
 	}
 	var out strings.Builder
-	out.Grow(len(value) + 8)
-	for _, r := range value {
+	out.Grow(len(value) + 32)
+	start := 0
+	for i, r := range value {
+		var entity string
 		switch r {
 		case '&':
-			out.WriteString("&amp;")
+			entity = "&amp;"
 		case '<':
-			out.WriteString("&lt;")
+			entity = "&lt;"
 		case '>':
-			out.WriteString("&gt;")
+			entity = "&gt;"
 		case '"':
-			out.WriteString("&#34;")
+			entity = "&#34;"
 		case '\'':
-			out.WriteString("&#39;")
+			entity = "&#39;"
+		case utf8.RuneError:
+			// A rune loop decodes each invalid byte to the replacement
+			// character. A genuine U+FFFD is its own three bytes and passes
+			// through inside the clean run.
+			if _, width := utf8.DecodeRuneInString(value[i:]); width != 1 {
+				continue
+			}
+			entity = "�"
 		default:
-			out.WriteRune(r)
+			continue
 		}
+		if start < i {
+			out.WriteString(value[start:i])
+		}
+		out.WriteString(entity)
+		start = i + 1
+	}
+	if start < len(value) {
+		out.WriteString(value[start:])
 	}
 	return out.String()
 }

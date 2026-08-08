@@ -6,7 +6,7 @@ import "io"
 // DecodeJSON decodes one JSON value from r into T using a generated codec.
 // It does not inspect HTTP headers or use reflection on T's fields.
 func DecodeJSON[T any](r io.Reader) (T, error) {
-	return decodeJSON[T](r, MaxJSONBodyBytes())
+	return decodeJSON[T](r, MaxJSONBodyBytes(), 0)
 }
 
 // DecodeJSONLimit is DecodeJSON with a per-call byte limit. A non-positive
@@ -15,19 +15,29 @@ func DecodeJSONLimit[T any](r io.Reader, limit int64) (T, error) {
 	if limit <= 0 {
 		limit = MaxJSONBodyBytes()
 	}
-	return decodeJSON[T](r, limit)
+	return decodeJSON[T](r, limit, 0)
 }
 
-func decodeJSON[T any](r io.Reader, limit int64) (T, error) {
+// DecodeJSONHint is DecodeJSONLimit with an expected document size. A caller
+// that knows the length up front — an HTTP handler with a Content-Length, say
+// — lets the whole body land in one allocation; see ReadLimitHint.
+func DecodeJSONHint[T any](r io.Reader, limit, hint int64) (T, error) {
+	if limit <= 0 {
+		limit = MaxJSONBodyBytes()
+	}
+	return decodeJSON[T](r, limit, hint)
+}
+
+func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 	var zero T
 	fn, ok := lookupDecoder[T]()
 	if !ok {
-		return zero, missingDecoderError(typeKey[T]())
+		return zero, missingDecoderError()
 	}
 	if r == nil {
 		return zero, newError("json_parse", "nil reader", nil)
 	}
-	data, err := readJSONBytes(r, limit)
+	data, err := ReadLimitHint(r, limit, hint)
 	if err != nil {
 		if err == ErrBodyTooLarge {
 			return zero, newError("payload_too_large", "JSON body too large", err)
@@ -42,7 +52,7 @@ func decodeJSON[T any](r io.Reader, limit int64) (T, error) {
 func EncodeJSON[T any](w io.Writer, v T) error {
 	fn, ok := lookupEncoder[T]()
 	if !ok {
-		return missingEncoderError(typeKey[T]())
+		return missingEncoderError()
 	}
 	if w == nil {
 		return newError("internal", "jsonbind: nil writer", nil)
