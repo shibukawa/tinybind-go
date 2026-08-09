@@ -1,0 +1,74 @@
+---
+id: flow:fasthttp-generation
+type: flow
+title: fasthttp Backend Generation
+---
+Generation reads the same net/http source flow:code-generation already parses, then admits, rewrites, and emits a tagged fasthttp copy of every handler and helper.
+
+```yaml
+flow:
+  trigger: a generate run with the fasthttp backend selected, over a package whose net/http source is unchanged
+  steps:
+    - id: reuse-discovery
+      action: run the existing discovery unchanged; the fasthttp backend adds no new way to declare a route or a model
+      refs:
+        - flow:code-generation
+        - concept:handler-discovery
+        - concept:route-discovery
+    - id: seed-admission
+      action: take every discovered handler as an admission seed
+      refs:
+        - rule:transform-eligibility
+        - concept:handler-forms
+    - id: close-call-graph
+      action: add every same-package function that an admitted function passes a transport value to, and iterate
+      refs:
+        - rule:transform-eligibility
+    - id: classify-occurrences
+      action: classify each occurrence of a transport value as an admitted form or a refusal, and propagate refusals to callers until the set is stable
+      refs:
+        - rule:transform-eligibility
+    - id: report-refusals
+      action: on any refusal, emit every refusal with its position and chain, and stop before writing files
+      refs:
+        - requirement:transform-diagnostics
+    - id: rewrite
+      action: collapse signatures, substitute the context identifier, drop transport arguments from recognized calls, and apply enumerated selector rewrites
+      refs:
+        - rule:transform-rewrite-table
+    - id: emit-handlers
+      action: print the rewritten declarations into a fasthttp-tagged file, deriving imports from the rewritten body
+      refs:
+        - decision:backend-build-tag-mode
+        - decision:transport-source-transform
+    - id: emit-binders
+      action: emit the fasthttp binder and writer for every discovered model, registering only those in the tagged init
+      refs:
+        - api:fasthttpbind-bind
+        - api:fasthttpbind-write
+        - rule:fasthttpbind-requestctx-lifetime
+    - id: emit-registration
+      action: emit the tagged route registration and the per-route body limit table and header hook
+      refs:
+        - rule:fasthttpbind-body-limit-mapping
+        - requirement:generated-route-registration
+    - id: emit-openapi
+      action: emit the same OpenAPI fragment as the net/http run, since it derives from the field plan and not from the transport
+      refs:
+        - concept:openapi-generation
+  outputs:
+    net_http: unchanged; the authored files and their existing generated companions
+    fasthttp: one tagged file set per package, compiled only under the fasthttp tag
+  invariants:
+    - a run with the backend unselected produces byte-identical output to a run predating this feature
+    - the two backends produce the same status, headers, and body bytes for the same request, per requirement:fasthttpbind-parity-scope
+    - no generated file imports both transports
+prerequisites:
+  ast_printing: the binder and writer emitter builds strings today; rewriting user statements needs an AST path, which templates and artifacts already use through format.Node
+  call_pattern_slots: recognized calls must declare which arguments are the writer and the request, which no pattern records today
+  stream_shape: decision:stream-callback-shape must land first, so no stream value is held across statements for the rewriter to track
+related:
+  - decision:backend-build-tag-mode
+  - requirement:transport-port-surface
+  - requirement:fasthttpbind-product-goals
+```

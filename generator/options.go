@@ -381,7 +381,7 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 				patterns = append(patterns, canonicalFirestoreCalls(path)...)
 				continue
 			}
-			patterns = append(patterns, canonicalRuntimeCalls(path)...)
+			patterns = append(patterns, withHTTPTransportSlots(path, canonicalRuntimeCalls(path))...)
 		}
 		if len(o.RuntimePackages.Set) > 0 {
 			patterns = append(patterns, ConfigBindCall(
@@ -403,12 +403,71 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 	return result, nil
 }
 
+// withHTTPTransportSlots declares which arguments of the canonical calls carry
+// the transport, for the one runtime that has a transport.
+//
+// The canonical set is spelled once for every runtime package, so most of these
+// names resolve nowhere and never match. Slots are attached only for the HTTP
+// runtime, so a same-named function in another runtime cannot inherit a claim
+// about arguments it does not have.
+func withHTTPTransportSlots(path string, patterns []CallPattern) []CallPattern {
+	if path != httpbindImportPath {
+		return patterns
+	}
+	for i, pattern := range patterns {
+		name := ""
+		if pattern.Target.Function != nil {
+			name = pattern.Target.Function.Name
+		}
+		switch name {
+		case "Bind":
+			// func Bind[T](r *http.Request) (T, error)
+			RequestArgument(0)(&patterns[i])
+		case "Write", "WriteStatus", "NewStream", "WriteStream":
+			// (w, r) leads, and whatever follows keeps its place.
+			WriterArgument(0)(&patterns[i])
+			RequestArgument(1)(&patterns[i])
+		}
+	}
+	return append(patterns, httpTransportOnlyCalls(path)...)
+}
+
+// httpTransportOnlyCalls declares the runtime calls that take a transport value
+// and name no model. Discovery reads nothing from them, but the transform must
+// know them: WriteError is in every handler ever written against this runtime,
+// and without a pattern it would look like an unrecognized call and refuse the
+// handler for making it.
+//
+// Every name here exists under the same spelling on both runtimes.
+func httpTransportOnlyCalls(path string) []CallPattern {
+	writerThenRequest := []string{"WriteError"}
+	writerOnly := []string{"WriteJSON", "WriteJSONBytes"}
+	requestOnly := []string{
+		"Queries", "QueryValue", "PathValue", "HeaderValue", "CookieValue",
+		"ReadBody", "ReadJSONObject", "ParseFormMap", "ParseMultipartMap",
+		"IsJSONRequest", "IsFormRequest", "IsMultipartRequest",
+		"NegotiateStreamFormat",
+	}
+	patterns := make([]CallPattern, 0, len(writerThenRequest)+len(writerOnly)+len(requestOnly))
+	for _, name := range writerThenRequest {
+		patterns = append(patterns, TransportCall(Function(path, name), WriterArgument(0), RequestArgument(1)))
+	}
+	for _, name := range writerOnly {
+		patterns = append(patterns, TransportCall(Function(path, name), WriterArgument(0)))
+	}
+	for _, name := range requestOnly {
+		patterns = append(patterns, TransportCall(Function(path, name), RequestArgument(0)))
+	}
+	return patterns
+}
+
 func canonicalRuntimeCalls(path string) []CallPattern {
 	patterns := []CallPattern{
 		RequestBindCall(Function(path, "Bind"), GenericType("request", 0)),
 		ResponseWriteCall(Function(path, "Write"), GenericType("response", 0)),
 		ResponseWriteStatusCall(Function(path, "WriteStatus"), GenericType("response", 0), Argument("status", 2)),
 		StreamCreateCall(Function(path, "NewStream"), GenericType("stream", 0)),
+		StreamCreateCall(Function(path, "WriteStream"), GenericType("stream", 0)),
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
 		RowsScanCall(Function(path, "ScanRows"), GenericType("row", 0)),

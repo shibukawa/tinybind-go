@@ -139,6 +139,20 @@ func TestParsePackage_representativeSamples(t *testing.T) {
 				t.Fatalf("request: %s", rt.Request)
 			}
 		},
+		"stream_writestream": func(t *testing.T, r *parser.Result) {
+			if len(r.Routes) != 1 {
+				t.Fatalf("routes: %d", len(r.Routes))
+			}
+			rt := r.Routes[0]
+			// The call names no type argument, so this passes only if the
+			// element type is recovered from the inferred instantiation.
+			if rt.Stream != "ChatEvent" || !strings.Contains(rt.Response, "Stream[ChatEvent]") {
+				t.Fatalf("WriteStream discovery: resp=%q stream=%q", rt.Response, rt.Stream)
+			}
+			if rt.Request != "ChatRequest" {
+				t.Fatalf("request: %s", rt.Request)
+			}
+		},
 		"nested_wrappers": func(t *testing.T, r *parser.Result) {
 			if len(r.Routes) != 1 {
 				t.Fatalf("routes: %d", len(r.Routes))

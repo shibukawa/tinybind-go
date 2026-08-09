@@ -1,10 +1,10 @@
 package httpbind
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 
+	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
@@ -38,71 +38,17 @@ func WriteStatus[T any](w http.ResponseWriter, r *http.Request, status int, valu
 // JSON is written without encoding/json for the problem document so TinyGo
 // does not hit unimplemented reflect.AssignableTo when binders also use
 // json.RawMessage (a known interaction in TinyGo's encoding/json).
+// The document itself is derived in bindcore, so the other transport runtime
+// writes the same bytes for the same error rather than reimplementing the rule.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
-	if err == nil {
+	_ = r
+	status, body, ok := bindcore.ProblemResponse(err)
+	if !ok {
 		return
 	}
-	_ = r
-	status := http.StatusInternalServerError
-	title := "Internal Server Error"
-	detail := "internal error"
-	code := "internal"
-	var fields []FieldError
-
-	if he, ok := AsHTTPError(err); ok {
-		status = he.Status
-		if he.Title != "" {
-			title = he.Title
-		} else {
-			title = http.StatusText(status)
-		}
-		if he.Problem.Message != "" {
-			detail = he.Problem.Message
-		} else {
-			detail = title
-		}
-		if he.Problem.Code != "" {
-			code = he.Problem.Code
-		}
-		// Hide internal implementation details from clients for 5xx.
-		if status >= 500 {
-			detail = title
-			code = "internal"
-		}
-		fields = he.Fields
-	}
-
-	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Content-Type", bindcore.ProblemContentType)
 	w.WriteHeader(status)
-	_, _ = w.Write(encodeProblemJSON(title, detail, code, status, fields))
-}
-
-func encodeProblemJSON(title, detail, code string, status int, fields []FieldError) []byte {
-	b := append([]byte(nil), `{"type":"about:blank","title":`...)
-	b = jsonbind.AppendString(b, title)
-	b = append(b, `,"status":`...)
-	b = jsonbind.AppendInt(b, int64(status))
-	b = append(b, `,"detail":`...)
-	b = jsonbind.AppendString(b, detail)
-	b = append(b, `,"code":`...)
-	b = jsonbind.AppendString(b, code)
-	if len(fields) > 0 {
-		b = append(b, `,"errors":[`...)
-		for i, f := range fields {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			b = append(b, `{"field":`...)
-			b = jsonbind.AppendString(b, f.Field)
-			b = append(b, `,"location":`...)
-			b = jsonbind.AppendString(b, f.Location)
-			b = append(b, `,"message":`...)
-			b = jsonbind.AppendString(b, f.Message)
-			b = append(b, '}')
-		}
-		b = append(b, ']')
-	}
-	return append(b, '}')
+	_, _ = w.Write(body)
 }
 
 // WriteJSON is a helper for generated writers: encode a pre-built map/slice without
@@ -136,19 +82,5 @@ var newline = []byte("\n")
 // before generated encoders stopped going through reflection: exported fields
 // in declaration order, with the content base64-encoded.
 func AppendFileJSON(dst []byte, f File) []byte {
-	dst = append(dst, `{"Filename":`...)
-	dst = jsonbind.AppendString(dst, f.Filename)
-	dst = append(dst, `,"ContentType":`...)
-	dst = jsonbind.AppendString(dst, f.ContentType)
-	dst = append(dst, `,"Size":`...)
-	dst = jsonbind.AppendInt(dst, f.Size)
-	dst = append(dst, `,"Content":`...)
-	if f.Content == nil {
-		dst = append(dst, "null"...)
-	} else {
-		dst = append(dst, '"')
-		dst = base64.StdEncoding.AppendEncode(dst, f.Content)
-		dst = append(dst, '"')
-	}
-	return append(dst, '}')
+	return bindcore.AppendFileJSON(dst, f)
 }

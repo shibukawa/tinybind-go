@@ -6,6 +6,7 @@ title: httpbind.NewStream
 Creates a typed response stream bound to the ResponseWriter; transport format is chosen from the request.
 
 ```yaml
+status: shipped; superseded by decision:stream-callback-shape, which replaces this entry point with api:write-stream
 signature: "func NewStream[T any](w http.ResponseWriter, r *http.Request) (*Stream[T], error)"
 example: |
   stream, err := httpbind.NewStream[ChatEvent](w, r)

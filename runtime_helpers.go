@@ -7,9 +7,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
-	"strings"
-	"sync/atomic"
 
+	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
@@ -37,65 +36,38 @@ func readJSONBytes(r io.Reader, limit int64) ([]byte, error) {
 // http.Request.ParseMultipartForm (how much of the form stays in RAM before
 // spilling file parts to temp files). This is not a body size cap; see
 // DefaultMaxMultipartBodyBytes.
-const DefaultMultipartMaxMemory int64 = 32 << 20
+const DefaultMultipartMaxMemory = bindcore.DefaultMultipartMaxMemory
 
 // DefaultMaxMultipartBodyBytes is the default cap on multipart request bodies
 // enforced by ParseMultipartMap (1 MiB). Override with SetMaxMultipartBodyBytes.
 // Without this, io.ReadAll / unrestricted ParseMultipartForm would accept
 // arbitrarily large bodies inside tinybind-go alone.
-const DefaultMaxMultipartBodyBytes int64 = 1 << 20
-
-// maxMultipartBodyBytes holds the process-wide multipart body limit.
-// Zero means "use DefaultMaxMultipartBodyBytes".
-var maxMultipartBodyBytes atomic.Int64
+const DefaultMaxMultipartBodyBytes = bindcore.DefaultMaxMultipartBodyBytes
 
 // SetMaxMultipartBodyBytes sets the global multipart body size limit used by
 // ParseMultipartMap (and generated binders). The limit wraps r.Body with
 // http.MaxBytesReader and bounds per-file reads.
 //
+// The value lives in bindcore, so a process setting it once configures every
+// transport runtime rather than only the one it happened to call.
+//
 //	n > 0  → use n bytes
 //	n <= 0 → restore DefaultMaxMultipartBodyBytes (1 MiB)
 func SetMaxMultipartBodyBytes(n int64) {
-	if n <= 0 {
-		maxMultipartBodyBytes.Store(0)
-		return
-	}
-	maxMultipartBodyBytes.Store(n)
+	bindcore.SetMaxMultipartBodyBytes(n)
 }
 
 // MaxMultipartBodyBytes returns the effective global multipart body limit.
 func MaxMultipartBodyBytes() int64 {
-	n := maxMultipartBodyBytes.Load()
-	if n <= 0 {
-		return DefaultMaxMultipartBodyBytes
-	}
-	return n
+	return bindcore.MaxMultipartBodyBytes()
 }
 
 // Content-type helpers and scalar parsers used by generated binders.
 // These do not inspect application struct fields via reflect.
 
-// mediaType returns the lowercase type/subtype of a Content-Type header value
-// (parameters after ';' are stripped).
-func mediaType(ct string) string {
-	media, _, _ := strings.Cut(ct, ";")
-	return strings.TrimSpace(strings.ToLower(media))
-}
+func mediaType(ct string) string { return bindcore.MediaType(ct) }
 
-// isJSONMediaType reports whether media is JSON or a +json structured syntax
-// suffix type (RFC 6839), e.g. application/json, application/problem+json,
-// application/vnd.api+json. text/json is also accepted.
-func isJSONMediaType(media string) bool {
-	if media == "" {
-		return false
-	}
-	switch media {
-	case "application/json", "text/json":
-		return true
-	}
-	// "+json" structured syntax suffix (not "+jsonl", "+json-seq", etc.).
-	return strings.HasSuffix(media, "+json")
-}
+func isJSONMediaType(media string) bool { return bindcore.IsJSONMediaType(media) }
 
 // IsJSONRequest reports whether the request body should be treated as JSON.
 // Matches application/json, text/json, and *+json types such as
@@ -173,73 +145,32 @@ func ParseMultipartMap(r *http.Request) (form map[string]string, files map[strin
 }
 
 // errFileTooLarge is returned when a single file part exceeds MaxMultipartBodyBytes.
-var errFileTooLarge = errors.New("httpbind: multipart file too large")
+var errFileTooLarge = bindcore.ErrFileTooLarge
 
 func fileFromHeader(fh *multipart.FileHeader, limit int64) (File, error) {
-	if limit <= 0 {
-		limit = DefaultMaxMultipartBodyBytes
-	}
-	if limit > 0 && fh.Size > limit {
-		return File{}, errFileTooLarge
-	}
-	rc, err := fh.Open()
-	if err != nil {
-		return File{}, err
-	}
-	defer rc.Close()
-
-	// Read at most limit+1 bytes so an unknown FileHeader size stays bounded;
-	// the header size (when known) sizes the buffer in one allocation.
-	data, err := jsonbind.ReadLimitHint(rc, limit, fh.Size)
-	if err != nil {
-		if err == jsonbind.ErrBodyTooLarge {
-			return File{}, errFileTooLarge
-		}
-		return File{}, err
-	}
-	ct := fh.Header.Get("Content-Type")
-	size := fh.Size
-	if size <= 0 {
-		size = int64(len(data))
-	}
-	return File{
-		Filename:    fh.Filename,
-		ContentType: ct,
-		Size:        size,
-		Content:     data,
-	}, nil
+	return bindcore.FileFromHeader(fh, limit)
 }
 
 func multipartParseError(err error) error {
-	if isRequestTooLarge(err) {
-		return PayloadTooLarge(Problem{Code: "payload_too_large", Message: "multipart body too large"}, err)
-	}
-	return BadRequest(Problem{Code: "multipart_parse", Message: "invalid multipart body"}, err)
+	return bindcore.MultipartParseError(err, isRequestTooLarge(err))
 }
 
 // isRequestTooLarge reports body/message size limit errors without errors.As,
-// matching AsHTTPError's TinyGo-friendly unwrap style.
+// matching AsHTTPError's TinyGo-friendly unwrap style. The net/http-specific
+// MaxBytesError is checked here; the transport-neutral cases live in bindcore
+// so the other runtime reaches the same verdict for the same body.
 func isRequestTooLarge(err error) bool {
-	for err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
+	for e := err; e != nil; {
+		if _, ok := e.(*http.MaxBytesError); ok {
 			return true
 		}
-		if err == multipart.ErrMessageTooLarge {
-			return true
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "request body too large") ||
-			strings.Contains(msg, "message too large") ||
-			strings.Contains(msg, "http: request body too large") {
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
+		u, ok := e.(interface{ Unwrap() error })
 		if !ok {
-			return false
+			break
 		}
-		err = u.Unwrap()
+		e = u.Unwrap()
 	}
-	return false
+	return bindcore.IsMessageTooLarge(err)
 }
 
 // RawJSONMap splits a JSON object value into its raw fields.
@@ -341,42 +272,12 @@ func RestJSONNames(jsonBody *jsonbind.Object, exclude []string) []string {
 
 // RestFormAny builds map[string]any from leftover form keys not in exclude (string values).
 func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
-	out := make(map[string]any)
-	if formBody == nil {
-		return out
-	}
-	for k, v := range formBody {
-		if isExcluded(exclude, k) {
-			continue
-		}
-		out[k] = v
-	}
-	return out
+	return bindcore.RestFormAny(formBody, exclude)
 }
 
 // RestFormRaw builds map[string]json.RawMessage from leftover form keys (JSON-encoded strings).
 func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.RawMessage {
-	out := make(map[string]json.RawMessage)
-	if formBody == nil {
-		return out
-	}
-	for k, v := range formBody {
-		if isExcluded(exclude, k) {
-			continue
-		}
-		b, _ := json.Marshal(v)
-		out[k] = json.RawMessage(b)
-	}
-	return out
-}
-
-func isExcluded(exclude []string, key string) bool {
-	for _, k := range exclude {
-		if k == key && k != "" && k != "*" {
-			return true
-		}
-	}
-	return false
+	return bindcore.RestFormRaw(formBody, exclude)
 }
 
 // ParseFormMap parses urlencoded form body into a flat map (first value wins).

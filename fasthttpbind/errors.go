@@ -1,11 +1,10 @@
-package httpbind
+package fasthttpbind
 
 import "github.com/shibukawa/tinybind-go/internal/bindcore"
 
-// The error model lives in bindcore so both transport runtimes share one set of
-// types: an error built by one surface has to match when the other inspects it,
-// and a duplicated HTTPError would silently stop matching. These are aliases,
-// not wrappers, so *HTTPError is the same type on either side.
+// The error model is shared with the net/http runtime rather than duplicated,
+// so an *HTTPError built on one surface still matches when the other inspects
+// it. These are aliases; the types are the same types.
 
 // Problem is an application error payload carried by status helpers.
 type Problem = bindcore.Problem
@@ -15,6 +14,9 @@ type FieldError = bindcore.FieldError
 
 // HTTPError is an HTTP-mapped error with optional RFC 9457 details and cause.
 type HTTPError = bindcore.HTTPError
+
+// File is an uploaded file bound from a multipart/form-data part.
+type File = bindcore.File
 
 // Field builds a field-level validation error.
 func Field(field, location, message string) FieldError {
@@ -52,21 +54,30 @@ func PayloadTooLarge(problem Problem, cause ...error) error {
 }
 
 // Internal returns a 500 Internal Server Error that wraps err.
-func Internal(err error) error {
-	return bindcore.Internal(err)
-}
+func Internal(err error) error { return bindcore.Internal(err) }
 
 // Validation returns a 400 Bad Request validation error with field details.
-func Validation(fields ...FieldError) error {
-	return bindcore.Validation(fields...)
-}
+func Validation(fields ...FieldError) error { return bindcore.Validation(fields...) }
 
 // AsHTTPError extracts *HTTPError from err if present.
-func AsHTTPError(err error) (*HTTPError, bool) {
-	return bindcore.AsHTTPError(err)
-}
+func AsHTTPError(err error) (*HTTPError, bool) { return bindcore.AsHTTPError(err) }
 
 // BindError is returned when binding fails for a specific field/source.
 func BindError(field, location, message string) error {
 	return bindcore.BindError(field, location, message)
 }
+
+// CheckEmail reports whether s is a pragmatic (non-RFC5322) email.
+func CheckEmail(s string) bool { return bindcore.CheckEmail(s) }
+
+// CheckUUID reports whether s is a UUID string (8-4-4-4-12 hex with dashes).
+func CheckUUID(s string) bool { return bindcore.CheckUUID(s) }
+
+// CheckDate reports whether s is an ISO date (YYYY-MM-DD / time.DateOnly).
+func CheckDate(s string) bool { return bindcore.CheckDate(s) }
+
+// CheckTime reports whether s is an ISO time (HH:MM:SS / time.TimeOnly).
+func CheckTime(s string) bool { return bindcore.CheckTime(s) }
+
+// CheckDateTime reports whether s is RFC3339 (fractional seconds accepted).
+func CheckDateTime(s string) bool { return bindcore.CheckDateTime(s) }

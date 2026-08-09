@@ -1,3 +1,7 @@
 /examples/demo/demo
 /examples/demo/demo.exe
 .knowledge/.cache/
+
+# developer-local Go workspace, for building against an unreleased dependency
+go.work
+go.work.sum

@@ -24,6 +24,20 @@ packages:
       - HTTP registry, errors, streaming, and OpenAPI serving
     may_import:
       - jsonbind
+  fasthttpbind:
+    status: proposed by decision:fasthttpbind-runtime-package
+    path: github.com/shibukawa/tinybind-go/fasthttpbind
+    owns:
+      - api:fasthttpbind-bind
+      - api:fasthttpbind-write
+      - api:fasthttpbind-stream
+    imports:
+      - github.com/shibukawa/tinygodriver/fasthttp
+      - jsonbind
+    excludes:
+      - net/http
+      - database/sql
+    note: the second transport runtime; it never shares a package with httpbind, so no binary links both
   sqlbind:
     path: github.com/shibukawa/tinybind-go/sqlbind
     owns:

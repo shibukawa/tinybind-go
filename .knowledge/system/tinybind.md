@@ -9,6 +9,7 @@ TinyGo-oriented Go library and generator with dependency-isolated HTTP, JSON, an
 runtime_packages:
   - github.com/shibukawa/tinybind-go/jsonbind: standalone JSON codec runtime
   - github.com/shibukawa/tinybind-go: package httpbind; net/http runtime
+  - github.com/shibukawa/tinybind-go/fasthttpbind: proposed decision:fasthttpbind-runtime-package fasthttp runtime over system:tinygodriver-fasthttp
   - github.com/shibukawa/tinybind-go/sqlbind: database/sql runtime
   - github.com/shibukawa/tinybind-go/dynamobind: proposed decision:dynamobind-runtime-package DynamoDB item runtime over system:tinygodriver-dynamodb
 generator_command: cmd/tinybind-gen

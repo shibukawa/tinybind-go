@@ -36,6 +36,12 @@ const (
 	OperationConfigSubCommand CallOperation = "config_subcommand"
 	OperationRouteRegister    CallOperation = "route_register"
 	OperationErrorResponse    CallOperation = "error_response"
+	// OperationTransportOnly carries transport slots and nothing else. It exists
+	// for calls the transform has to recognize but discovery reads nothing from:
+	// WriteError and the request accessors take a writer or a request, yet name
+	// no model. Without a pattern they would look like any unrecognized call and
+	// refuse every handler that makes one.
+	OperationTransportOnly CallOperation = "transport_only"
 )
 
 // CallTarget identifies either a package function or a named-receiver method.
@@ -70,12 +76,35 @@ type ValueSource struct {
 	IsConstant bool
 }
 
+// TransportSlots names the argument positions holding the transport values a
+// call receives: the response writer and the request.
+//
+// The other roles say where a semantic value is read from. These say the
+// opposite — which arguments carry nothing semantic and exist only because the
+// net/http shape passes both halves separately. A backend carrying both in one
+// value drops exactly these positions, so a call whose slots are undeclared is
+// one the transform cannot rewrite.
+type TransportSlots struct {
+	Writer  *int
+	Request *int
+}
+
+// Declared reports whether either slot was named.
+func (s TransportSlots) Declared() bool { return s.Writer != nil || s.Request != nil }
+
+// Drops reports whether the zero-based argument index is a transport slot, and
+// so is removed when the call is rewritten for a single-value transport.
+func (s TransportSlots) Drops(index int) bool {
+	return (s.Writer != nil && *s.Writer == index) || (s.Request != nil && *s.Request == index)
+}
+
 // CallPattern maps a framework call identity onto one generator operation.
 type CallPattern struct {
 	Target        CallTarget
 	Operation     CallOperation
 	TypeRoles     map[string]TypeSource
 	ArgumentRoles map[string]ValueSource
+	Transport     TransportSlots
 }
 
 // CallPatternOption adds one semantic role source to a CallPattern.
@@ -111,6 +140,24 @@ func Argument(role string, index int) CallPatternOption {
 		}
 		value := index
 		pattern.ArgumentRoles[role] = ValueSource{Argument: &value}
+	}
+}
+
+// WriterArgument names the zero-based argument holding the response writer.
+// Declare it on any wrapper that takes one, so a single-value transport knows
+// which argument disappears.
+func WriterArgument(index int) CallPatternOption {
+	return func(pattern *CallPattern) {
+		value := index
+		pattern.Transport.Writer = &value
+	}
+}
+
+// RequestArgument names the zero-based argument holding the request.
+func RequestArgument(index int) CallPatternOption {
+	return func(pattern *CallPattern) {
+		value := index
+		pattern.Transport.Request = &value
 	}
 }
 
@@ -230,6 +277,13 @@ func ErrorResponseCall(target CallTarget, options ...CallPatternOption) CallPatt
 	return Call(OperationErrorResponse, target, options...)
 }
 
+// TransportCall declares a call that takes a transport value and yields no
+// model. Discovery ignores it; the transform needs it, so that a handler
+// calling one is not refused for making an ordinary runtime call.
+func TransportCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationTransportOnly, target, options...)
+}
+
 // CallRegistry accumulates framework wrapper declarations without global state.
 type CallRegistry struct {
 	patterns []CallPattern
@@ -347,6 +401,35 @@ func validateCallPattern(pattern CallPattern) error {
 	if pattern.Operation == OperationErrorResponse && !pattern.ArgumentRoles["status"].IsConstant {
 		return fmt.Errorf("generator: call pattern %s error_response status must be a fixed constant", key)
 	}
+	if err := validateTransportSlots(key, pattern); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateTransportSlots(key string, pattern CallPattern) error {
+	writer, request := pattern.Transport.Writer, pattern.Transport.Request
+	if pattern.Operation == OperationTransportOnly && !pattern.Transport.Declared() {
+		return fmt.Errorf("generator: call pattern %s is transport_only and must declare a transport slot", key)
+	}
+	if writer != nil && *writer < 0 || request != nil && *request < 0 {
+		return fmt.Errorf("generator: call pattern %s has negative transport slot index", key)
+	}
+	if writer != nil && request != nil && *writer == *request {
+		return fmt.Errorf("generator: call pattern %s names argument %d as both writer and request", key, *writer)
+	}
+	// A transport slot carries no semantic value, so an argument cannot be both
+	// something to read and something to drop.
+	for role, source := range pattern.ArgumentRoles {
+		if source.Argument != nil && pattern.Transport.Drops(*source.Argument) {
+			return fmt.Errorf("generator: call pattern %s argument %d is a transport slot and cannot also supply role %q", key, *source.Argument, role)
+		}
+	}
+	for role, source := range pattern.TypeRoles {
+		if source.ArgumentType != nil && pattern.Transport.Drops(*source.ArgumentType) {
+			return fmt.Errorf("generator: call pattern %s argument %d is a transport slot and cannot also supply type role %q", key, *source.ArgumentType, role)
+		}
+	}
 	return nil
 }
 
@@ -367,7 +450,7 @@ func supportedCallOperation(operation CallOperation) bool {
 	case OperationRequestBind, OperationResponseWrite, OperationResponseWriteStatus,
 		OperationStreamCreate, OperationJSONDecode, OperationJSONEncode,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
-		OperationRouteRegister, OperationErrorResponse,
+		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
 		OperationItemEncodeDecode, OperationItemKeyDecode,
 		OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
@@ -429,6 +512,14 @@ func callTargetKey(target CallTarget) string {
 
 func cloneCallPattern(pattern CallPattern) CallPattern {
 	clone := pattern
+	if pattern.Transport.Writer != nil {
+		index := *pattern.Transport.Writer
+		clone.Transport.Writer = &index
+	}
+	if pattern.Transport.Request != nil {
+		index := *pattern.Transport.Request
+		clone.Transport.Request = &index
+	}
 	if pattern.Target.Function != nil {
 		target := *pattern.Target.Function
 		clone.Target.Function = &target
