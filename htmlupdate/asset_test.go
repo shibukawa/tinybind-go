@@ -92,7 +92,7 @@ func TestCallerOwnedRuntimeIsNotServed(t *testing.T) {
 	// Redraw is unaffected: owning the runtime is not owning the endpoints, and
 	// a redraw is answered from the caller's handler rather than a mounted route.
 	redraw := httptest.NewRecorder()
-	if !owned.Redraw(redraw, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t)) {
+	if !redrawInto(redraw, owned, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t)) {
 		t.Fatal("redraw stopped working when the runtime asset was disowned")
 	}
 }

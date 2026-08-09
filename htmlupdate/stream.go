@@ -141,9 +141,6 @@ func (o Options) OpenLiveStream(w http.ResponseWriter, head []string) *DeltaStre
 // the echoed token carries the caller's own number back rather than one this
 // package invented; zero writes a bare mode name.
 func (o Options) openStream(w http.ResponseWriter, mode Mode, version int, head []string) *DeltaStream {
-	w.Header().Set("Content-Type", o.streamContentType())
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), renderToken(mode, version))
 	ending := endFinal
 	if mode == ModeLive {
 		ending = endDone
@@ -322,13 +319,9 @@ func (o Options) RenderLiveStream(ctx context.Context, w http.ResponseWriter, r 
 // renderStream is the body behind both streaming entries. serveLive says whether
 // this caller answers the live mode at all; the request says whether it asked to.
 func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *http.Request, serveLive bool, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options []htmlbind.Option) error {
-	w.Header().Add("Vary", o.renderHeader())
-	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
 	sequences := o.wantsSequences(r)
-	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeDocument {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 		return err
 	}
@@ -411,12 +404,8 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 // because writing it commits the response. After that a failure can only be
 // reported in band.
 func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
-	w.Header().Add("Vary", o.renderHeader())
-	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
-	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode != ModeNavigation {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 		return err
 	}

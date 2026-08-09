@@ -57,13 +57,16 @@ var styledPlan = &htmlbind.Plan[badgeParams]{
 // action response had never carried one.
 func TestActionResponseCarriesHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	err := options.WriteUpdate(recorder, actionRequest(), []htmlupdate.Update{
+	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
 		htmlupdate.Replace("cart", htmlbind.Bind(styledPlan, badgeParams{ID: "cart", Count: 1})),
 		// A second region declaring the same sheet emits one tag, which is the
 		// htmlbind.MergeHead rule applied across the written set.
 		htmlupdate.Replace("mini", htmlbind.Bind(styledPlan, badgeParams{ID: "mini", Count: 1})),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := answer.WriteTo(recorder); err != nil {
 		t.Fatal(err)
 	}
 	var body struct {
@@ -84,8 +87,12 @@ func TestActionResponseCarriesHead(t *testing.T) {
 // component styles gets the response it got before.
 func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	if err := options.WriteUpdate(recorder, actionRequest(), []htmlupdate.Update{
-		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))}); err != nil {
+	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
+		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := answer.WriteTo(recorder); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(recorder.Body.String(), `"head"`) {
@@ -98,8 +105,11 @@ func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 func api(count int, status int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if options.WantsUpdate(r) {
-			_ = options.WriteUpdateStatus(w, r, status, []htmlupdate.Update{
+			answer, _ := options.WriteUpdateStatus(r, status, []htmlupdate.Update{
 				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count}))})
+			// The cache policy is the caller's: this package sets none.
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = answer.WriteTo(w)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -199,7 +209,8 @@ func TestActionKeepsItsStatus(t *testing.T) {
 // which regions to rewrite.
 func TestActionCanNavigate(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = options.WriteNavigate(w, "/orders/17")
+		navigate, _ := options.WriteNavigate("/orders/17")
+		_, _ = navigate.WriteTo(w)
 	})
 	response := post(t, handler, actionHeader)
 	var body struct {

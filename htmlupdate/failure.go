@@ -93,9 +93,9 @@ func (f Failure) Error() string {
 // Unwrap exposes the cause, so errors.Is and errors.As reach it.
 func (f Failure) Unwrap() error { return f.Err }
 
-// WriteFailure writes the response this package writes when no caller took
-// over. It is exported so a caller that only wants to observe a failure can log
-// it and delegate the response, rather than reimplementing five status codes.
+// FailureResponse is the refusal this package computes, exported so a caller
+// raising one of its own — a redraw it declined before this package saw it —
+// answers in the same shape rather than reimplementing five status codes.
 //
 // The body is RFC 9457 problem details, which is this module's documented error
 // format everywhere else; the update endpoints were the only paths writing
@@ -106,10 +106,25 @@ func (f Failure) Unwrap() error { return f.Err }
 // The status still directs. A client's rule — any non-2xx falls back to an
 // ordinary navigation — is unchanged, so a client that cannot read the body
 // still lands correctly; the body adds diagnosis rather than direction.
-func WriteFailure(w http.ResponseWriter, failure Failure) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(failure.Status)
-	_, _ = w.Write(failure.problemJSON())
+//
+// Nothing is sent until a caller sends it: [Response.WriteTo] does that, and a
+// caller with its own error page sends that instead.
+func FailureResponse(failure Failure) Response {
+	return Response{
+		Status:  failure.Status,
+		Header:  http.Header{"Content-Type": []string{"application/problem+json"}},
+		Body:    failure.problemJSON(),
+		Failure: &failure,
+	}
+}
+
+// failure is FailureResponse for the entries, which also report the refusal
+// through the observation hook when a caller installed one.
+func (o Options) failure(r *http.Request, f Failure) Response {
+	if o.OnFailure != nil {
+		o.OnFailure(r, f)
+	}
+	return FailureResponse(f)
 }
 
 // problemBody is the RFC 9457 shape, matching what httpbind.WriteError emits so
@@ -232,10 +247,3 @@ func validateNamePrefix(what, prefix string) error {
 }
 
 // fail reports one failure through the caller's hook, or writes the default.
-func (o Options) fail(w http.ResponseWriter, r *http.Request, failure Failure) {
-	if o.OnFailure != nil {
-		o.OnFailure(w, r, failure)
-		return
-	}
-	WriteFailure(w, failure)
-}

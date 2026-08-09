@@ -25,6 +25,8 @@ func streamServer() http.Handler {
 			}),
 		}
 		leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+		htmlupdate.ApplyTo(options.StreamHeaders(r, wrappers, leaf), w)
+		w.Header().Set("Cache-Control", "no-store")
 		if err := options.RenderStream(w, r, wrappers, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -68,6 +70,7 @@ func TestStreamIsFramedByHeadAndTerminator(t *testing.T) {
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/x-ndjson") {
 		t.Fatalf("content type = %q", got)
 	}
+	// The caller set it: this package writes no cache policy.
 	if got := response.Header.Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
@@ -244,6 +247,7 @@ var asyncPlan = &htmlbind.Plan[asyncParams]{
 func TestStreamCarriesAwaitCompletions(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaf := htmlbind.Bind(asyncPlan, asyncParams{Query: r.URL.Query().Get("q")})
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
 		if err := options.RenderStreamAsync(r.Context(), w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
