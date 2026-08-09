@@ -317,11 +317,12 @@ func (m *modulePrinter) flushBefore(pos Position) {
 
 func (m *modulePrinter) flushRemaining() {
 	for _, c := range m.comments {
-		if m.wrote {
+		if m.wrote && (c.BlankBefore || !m.afterComment) {
 			m.p.Blank()
 		}
 		m.writeComment(c)
 		m.wrote = true
+		m.afterComment = true
 	}
 	m.comments = nil
 }
