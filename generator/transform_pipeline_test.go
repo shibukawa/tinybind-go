@@ -103,17 +103,24 @@ func TestReportOnlyListsRefusalsAndWritesNothing(t *testing.T) {
 	if len(result.Diagnostics) < 7 {
 		t.Errorf("reported %d diagnostics, expected one per refusal", len(result.Diagnostics))
 	}
+	// The classification goes in Reason, where a consumer reads it, and the
+	// prose carries the occurrence and the remedy.
+	kinds := map[string]bool{}
 	var joined string
 	for _, d := range result.Diagnostics {
 		if d.File == "" || d.Line == 0 {
 			t.Errorf("diagnostic has no position: %+v", d)
 		}
+		kinds[d.Reason] = true
 		joined += d.Message + "\n"
 	}
-	for _, want := range []string{"unknown_call", "inherited", "remedy:"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("diagnostics missing %q:\n%s", want, joined)
+	for _, want := range []string{"unknown_call", "inherited", "type_assertion", "escapes"} {
+		if !kinds[want] {
+			t.Errorf("no diagnostic classified %q; saw %v", want, kinds)
 		}
+	}
+	if !strings.Contains(joined, "remedy:") {
+		t.Errorf("diagnostics carry no remedy:\n%s", joined)
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Errorf("report-only wrote %d files", len(entries))

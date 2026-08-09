@@ -107,8 +107,11 @@ type GenerateResult struct {
 	// FastBindersPath is the selected backend's binders and writers.
 	FastBindersPath string
 	// RoutesPath is the selected backend's route registration.
-	RoutesPath  string
-	Diagnostics []parser.Diagnostic
+	RoutesPath string
+	// LayoutWarnings name authored files a build tag cannot cleanly exclude,
+	// because they hold transport handlers beside declarations both builds need.
+	LayoutWarnings []string
+	Diagnostics    []parser.Diagnostic
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
 	Cached bool
@@ -246,7 +249,7 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
 	}
-	result.TransportPath, err = runner.generateTransport(load, request.Out, request.TransportName)
+	result.TransportPath, result.LayoutWarnings, err = runner.generateTransport(load, request.Out, request.TransportName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate transport: %w", err)
 	}

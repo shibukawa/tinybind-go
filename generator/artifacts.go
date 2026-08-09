@@ -129,7 +129,7 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	transport, err := runner.transportArtifacts(load)
+	transport, _, err := runner.transportArtifacts(load)
 	if err != nil {
 		return nil, fmt.Errorf("generate transport: %w", err)
 	}
@@ -501,27 +501,27 @@ const transportArtifactBase = "tinybind_transport"
 // A refusal stops the run. decision:backend-build-tag-mode leaves no adapter,
 // so there is nowhere for an untransformable handler to go, and emitting the
 // rest would produce a package that silently serves fewer routes.
-func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, error) {
+func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, []string, error) {
 	if g.Options.Transform == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pkg, err := load.get()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	plan, err := AnalyzeTransform(pkg, *g.Options.Transform)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(plan.Refusals) > 0 {
-		return nil, plan.Refusals
+		return nil, nil, plan.Refusals
 	}
 	if len(plan.Admitted) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	out, err := RewriteTransform(pkg, plan, *g.Options.Transform)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return []Artifact{{
 		Kind:        ArtifactTransport,
@@ -530,7 +530,7 @@ func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, error) {
 		Extension:   ExtensionGo,
 		PackageName: pkg.Name,
 		Content:     out.Source,
-	}}, nil
+	}}, out.LayoutWarnings, nil
 }
 
 func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {

@@ -112,6 +112,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		fmt.Fprintln(stdout, "ok")
 		return 0
 	}
+	for _, warning := range result.LayoutWarnings {
+		fmt.Fprintf(stderr, "generate: %s\n", warning)
+	}
 	if result.Cached {
 		fmt.Fprintf(stderr, "generate: %s is up to date\n", *dir)
 	}

@@ -28,6 +28,10 @@ non_fatal_mode:
   offer: a report-only run that lists what a fasthttp build would refuse, without generating
   why: adoption is all-or-nothing per decision:backend-build-tag-mode, so an application needs to see the whole cost before committing to the migration rather than after
   shape: the same diagnostics, exit zero, no files written
+as_built_2026_08_09:
+  reason_field: the classification goes in the diagnostic's Reason, where a consumer reads it, rather than being repeated in the prose; nothing in the module switched on the previous value
+  layout_warning: the mixed-file warning reaches stderr on a generating run, which it did not when first written; it is computed during the rewrite, so a package that refuses never reaches it
+  docs: docs/httpbind_fasthttp.md for an application author, docs/httpbind_fasthttp_frameworkowner.md for a framework
 acceptance:
   - a refusal names an occurrence position rather than only a declaration
   - an inherited refusal prints its chain to the original occurrence
