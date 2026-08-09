@@ -61,11 +61,21 @@ the_render_side_is_a_separate_gap:
   what: this concept gave the caller the response cache policy; the render itself still takes no htmlbind option, so a cached component redrawn alone renders uncached whatever this policy says
   wider: requirement:fragment-render-options, which found that the redraw and action entries pass no render option at all, and that two of the absences fail rather than default
   reading: the HTTP-level and the render-level caches were adjacent enough that closing one read as closing both
+superseded_by_decision_caller_writes_the_response_2026_08_09:
+  what_this_concept_asked_for: the caller supplies the cache policy, with a private revalidatable default when it supplies nothing
+  what_shipped_instead: no default at all, because the module no longer writes a header field of any kind
+  removed: Options.RedrawCacheControl and Options.SequenceCacheControl, along with the DefaultRedrawCacheControl and DefaultSequenceCacheControl constants they overrode
+  kept: the ETag, which only this module can compute, and Response.NotModified, which does the If-None-Match comparison a caller would otherwise reimplement
+  the_304_is_now_the_callers: answering one is a cache decision, and a module writing no cache policy has no business making it
+  acceptance_still_met: an unchanged redraw still answers 304 to a conditional request, by a caller writing four lines the guide gives verbatim
+  acceptance_no_longer_met_by_default: 'a caller supplying nothing now gets no Cache-Control rather than private, no-cache; the suggestion survives in docs/httpbind_update_surface.md as prose'
+  the_open_question_below_is_answered: yes, the same seam covers the delta and stream paths, and it covers Vary and the content type too
 related:
   - requirement:component-redraw-endpoint
   - requirement:render-mode-negotiation
   - requirement:component-output-cache
   - requirement:fragment-render-options
+  - decision:caller-writes-the-response
 open_questions:
   - whether the same seam covers the delta and stream paths, whose no-store the reporter accepts
 ```

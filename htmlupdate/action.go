@@ -1,6 +1,7 @@
 package htmlupdate
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -51,8 +52,8 @@ const modeAction = "action"
 // holding an unsafe form emits a CSRF field, and without a token that render
 // fails outright — which is this entry's own headline case, since rewriting a
 // form with its validation errors is what it exists for.
-func (o Options) WriteUpdate(w http.ResponseWriter, r *http.Request, updates []Update, options ...htmlbind.Option) error {
-	return o.WriteUpdateStatus(w, r, http.StatusOK, updates, options...)
+func (o Options) WriteUpdate(r *http.Request, updates []Update, options ...htmlbind.Option) (Response, error) {
+	return o.WriteUpdateStatus(r, http.StatusOK, updates, options...)
 }
 
 // WriteUpdateStatus is WriteUpdate with an explicit status, so a failed
@@ -60,7 +61,7 @@ func (o Options) WriteUpdate(w http.ResponseWriter, r *http.Request, updates []U
 //
 // The browser applies an update response whatever the status says, because
 // rendering the failure is the point.
-func (o Options) WriteUpdateStatus(w http.ResponseWriter, r *http.Request, status int, updates []Update, options ...htmlbind.Option) error {
+func (o Options) WriteUpdateStatus(r *http.Request, status int, updates []Update, options ...htmlbind.Option) (Response, error) {
 	body := deltaResponse{}
 	// An action can reveal a component the document never carried: a validation
 	// summary, a panel that was not there before. Its stylesheet is not in the
@@ -75,7 +76,7 @@ func (o Options) WriteUpdateStatus(w http.ResponseWriter, r *http.Request, statu
 		if err := htmlbind.Render(&out, update.Fragment, render...); err != nil {
 			// Nothing is written yet, so the caller can still choose an error
 			// response.
-			return err
+			return Response{}, err
 		}
 		for _, tag := range update.Fragment.Head() {
 			// Two regions declaring one stylesheet emit one tag, which is the
@@ -90,20 +91,27 @@ func (o Options) WriteUpdateStatus(w http.ResponseWriter, r *http.Request, statu
 			Kind: delta.OpReplace, ID: update.TargetID, HTML: out.String(),
 		})
 	}
-	return o.writeActionBody(w, status, body)
+	return o.actionResponse(status, body)
 }
 
 // WriteNavigate tells the browser to leave the page, which is how an action
 // that changed where the user belongs stays correct without guessing which
 // regions to rewrite.
-func (o Options) WriteNavigate(w http.ResponseWriter, url string) error {
-	return o.writeActionBody(w, http.StatusOK, deltaResponse{Navigate: url})
+func (o Options) WriteNavigate(url string) (Response, error) {
+	return o.actionResponse(http.StatusOK, deltaResponse{Navigate: url})
 }
 
-func (o Options) writeActionBody(w http.ResponseWriter, status int, body deltaResponse) error {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), modeAction)
-	w.WriteHeader(status)
-	return encodeJSON(w, body)
+func (o Options) actionResponse(status int, body deltaResponse) (Response, error) {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return Response{}, err
+	}
+	return Response{
+		Status: status,
+		Header: http.Header{
+			"Content-Type":   []string{"application/json; charset=utf-8"},
+			o.renderHeader(): []string{modeAction},
+		},
+		Body: encoded,
+	}, nil
 }

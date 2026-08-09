@@ -95,7 +95,7 @@ func TestRedrawRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 	registry := formRegistry(t, formPlan)
 
 	bare := httptest.NewRecorder()
-	if !options.Redraw(bare, request, registry) {
+	if !redrawInto(bare, options, request, registry) {
 		t.Fatal("Redraw did not answer the request")
 	}
 	if bare.Code != http.StatusInternalServerError {
@@ -103,7 +103,7 @@ func TestRedrawRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 	}
 
 	withToken := httptest.NewRecorder()
-	if !options.Redraw(withToken, request, registry, htmlbind.WithCSRFToken("t0ken")) {
+	if !redrawInto(withToken, options, request, registry, htmlbind.WithCSRFToken("t0ken")) {
 		t.Fatal("Redraw did not answer the request")
 	}
 	if withToken.Code != http.StatusOK {
@@ -121,22 +121,24 @@ func TestActionRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 		htmlupdate.Replace("signup", htmlbind.Bind(formPlan, formParams{ID: "signup"})),
 	}
 
-	bare := httptest.NewRecorder()
-	if err := options.WriteUpdateStatus(bare, actionRequest(), http.StatusUnprocessableEntity, region); err == nil {
+	if _, err := options.WriteUpdateStatus(actionRequest(), http.StatusUnprocessableEntity, region); err == nil {
 		t.Fatal("a form region with no token should not render")
 	}
 
-	ok := httptest.NewRecorder()
-	err := options.WriteUpdateStatus(ok, actionRequest(), http.StatusUnprocessableEntity, region,
+	answer, err := options.WriteUpdateStatus(actionRequest(), http.StatusUnprocessableEntity, region,
 		htmlbind.WithCSRFToken("t0ken"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d", ok.Code)
+	recorder := httptest.NewRecorder()
+	if _, err := answer.WriteTo(recorder); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(ok.Body.String(), `value=\"t0ken\"`) {
-		t.Fatalf("body carries no token field: %s", ok.Body.String())
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), `value=\"t0ken\"`) {
+		t.Fatalf("body carries no token field: %s", recorder.Body.String())
 	}
 }
 
@@ -149,13 +151,13 @@ func TestRedrawAppliesTheConfiguredURLSchemes(t *testing.T) {
 	registry := formRegistry(t, linkPlan)
 
 	bare := httptest.NewRecorder()
-	options.Redraw(bare, request, registry)
+	redrawInto(bare, options, request, registry)
 	if markup := redrawHTML(t, bare.Result(), "deep"); !strings.Contains(markup, "#tb-blocked-url") {
 		t.Fatalf("the default allowlist should still neutralise an unconfigured scheme: %s", markup)
 	}
 
 	configured := httptest.NewRecorder()
-	options.Redraw(configured, request, registry, htmlbind.WithURLSchemes("http", "https", "myapp"))
+	redrawInto(configured, options, request, registry, htmlbind.WithURLSchemes("http", "https", "myapp"))
 	if markup := redrawHTML(t, configured.Result(), "deep"); !strings.Contains(markup, `href="myapp://open/42"`) {
 		t.Fatalf("the configured scheme did not reach the redraw render: %s", markup)
 	}
@@ -166,8 +168,7 @@ func TestRedrawAppliesTheConfiguredURLSchemes(t *testing.T) {
 func TestRedrawStillNeutralisesAHostileScheme(t *testing.T) {
 	request := redrawRequest(linkKind, "deep", url.Values{"link": {"javascript:alert(1)"}})
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, request, formRegistry(t, linkPlan),
-		htmlbind.WithURLSchemes("http", "https", "myapp"))
+	redrawInto(recorder, options, request, formRegistry(t, linkPlan), htmlbind.WithURLSchemes("http", "https", "myapp"))
 	if strings.Contains(recorder.Body.String(), "javascript:") {
 		t.Fatalf("hostile scheme reached the attribute: %s", recorder.Body.String())
 	}
@@ -183,11 +184,11 @@ func TestRedrawReachesTheCacheStore(t *testing.T) {
 	registry := cardRegistry(t)
 
 	first := httptest.NewRecorder()
-	if !options.Redraw(first, request, registry, htmlbind.WithCache(store)) {
+	if !redrawInto(first, options, request, registry, htmlbind.WithCache(store)) {
 		t.Fatal("Redraw did not answer the request")
 	}
 	second := httptest.NewRecorder()
-	if !options.Redraw(second, request, registry, htmlbind.WithCache(store)) {
+	if !redrawInto(second, options, request, registry, htmlbind.WithCache(store)) {
 		t.Fatal("Redraw did not answer the request")
 	}
 	// badgePlan carries no cache annotation, so this asserts the option reaches
@@ -235,7 +236,7 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := redrawRequest("Ctx@0001", "ctx-1", nil).WithContext(ctx)
-	options.Redraw(httptest.NewRecorder(), request, registry)
+	redrawInto(httptest.NewRecorder(), options, request, registry)
 	if !ran {
 		t.Fatal("the render never reached the context-taking op")
 	}

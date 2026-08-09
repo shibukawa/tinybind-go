@@ -149,7 +149,9 @@ func listRequest(t *testing.T, mode string, serve func(http.ResponseWriter, *htt
 // could only fall back to a full reload.
 func TestStreamedNavigationCarriesTheChildrenOperation(t *testing.T) {
 	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
-		return options.RenderStreamAsync(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+		leaf := htmlbind.Bind(listPlan, p)
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
+		return options.RenderStreamAsync(r.Context(), w, r, nil, leaf)
 	})
 	list, ok := findRecord(records, "the-list")
 	if !ok {
@@ -173,7 +175,9 @@ func TestStreamedNavigationCarriesTheChildrenOperation(t *testing.T) {
 // that drops an unchanged boundary, so an appended row never appeared at all.
 func TestLiveDeliveryCarriesTheChildrenOperation(t *testing.T) {
 	records := listRequest(t, "live", func(w http.ResponseWriter, r *http.Request, p listParams) error {
-		return options.RenderLiveStream(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+		leaf := htmlbind.Bind(listPlan, p)
+		htmlupdate.ApplyTo(options.LiveHeaders(r, nil, leaf), w)
+		return options.RenderLiveStream(r.Context(), w, r, nil, leaf)
 	})
 	list, ok := findRecord(records, "the-list")
 	if !ok {
@@ -192,7 +196,9 @@ func TestLiveDeliveryCarriesTheChildrenOperation(t *testing.T) {
 // the region rather than reordering it.
 func TestStreamedRenderDoesNotEmptyTheList(t *testing.T) {
 	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
-		return options.RenderStream(w, r, nil, htmlbind.Bind(listPlan, p))
+		leaf := htmlbind.Bind(listPlan, p)
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
+		return options.RenderStream(w, r, nil, leaf)
 	})
 	list, ok := findRecord(records, "the-list")
 	if !ok {
@@ -214,7 +220,9 @@ func TestStreamedRenderDoesNotEmptyTheList(t *testing.T) {
 // exists to make cheap.
 func TestStreamRecordsCarryTheWholeManifestEntry(t *testing.T) {
 	records := listRequest(t, "navigation", func(w http.ResponseWriter, r *http.Request, p listParams) error {
-		return options.RenderStreamAsync(r.Context(), w, r, nil, htmlbind.Bind(listPlan, p))
+		leaf := htmlbind.Bind(listPlan, p)
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
+		return options.RenderStreamAsync(r.Context(), w, r, nil, leaf)
 	})
 	row, ok := findRecord(records, "row-3")
 	if !ok {
@@ -241,8 +249,9 @@ func TestAShrinkingListStaysAChildrenOperation(t *testing.T) {
 			request.Header.Set("X-Tinybind-Manifest", htmlupdate.EncodeManifest(known))
 		}
 		recorder := httptest.NewRecorder()
-		err := options.RenderStreamAsync(request.Context(), recorder, request, nil,
-			htmlbind.Bind(listPlan, listParams{ID: "the-list", Rows: rowsUpTo(rows)}))
+		leaf := htmlbind.Bind(listPlan, listParams{ID: "the-list", Rows: rowsUpTo(rows)})
+		htmlupdate.ApplyTo(options.StreamHeaders(request, nil, leaf), recorder)
+		err := options.RenderStreamAsync(request.Context(), recorder, request, nil, leaf)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -137,6 +137,8 @@ They travel as their own request, addressed by content hash, and not inside the 
 
 A static sequence derives from the template rather than from a request, which makes it **the only response on this wire that can be public and served from an edge**. Riding it inside a private response forfeits exactly the property it uniquely has, and makes you re-send every sequence on every page load, every lifetime rollover, and every reconnect.
 
+That column is what each response *can* carry, not what this module writes — it writes no header at all. The lifetimes differ per deployment as much as per response kind, and a policy chosen here would be a guess overriding a caller who knows.
+
 The request for a sequence is a render mode on a URL you choose. This package mounts no path for it.
 
 ### You do not tell us which sequences you hold

@@ -91,6 +91,12 @@ func server() http.Handler {
 			}),
 		}
 		leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+		// The package writes bytes and nothing else, so a caller sets what the
+		// response has to say about itself and adds its own cache policy on top.
+		htmlupdate.ApplyTo(options.Headers(r, wrappers, leaf), w)
+		if options.Negotiate(r).Mode != htmlupdate.ModeDocument {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		if err := options.Render(w, r, wrappers, leaf); err != nil {
 			t := http.StatusInternalServerError
 			http.Error(w, http.StatusText(t), t)

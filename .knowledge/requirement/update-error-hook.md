@@ -88,11 +88,22 @@ as_built:
   four_o_four_included: the open question below is resolved in favour of including it; an unpublished kind is the version-skew signal, and a sustained rate of it after a deploy has settled is exactly what a caller wants to see
   default_preserved: WriteFailure is exported, so a caller that only wants to observe logs and delegates rather than reimplementing four status codes
   scope: the redraw endpoint, which is the only surface this package owns end to end; every other entry already returns its error to the caller
+hook_stops_answering_2026_08_09:
+  was: 'OnFailure(w http.ResponseWriter, r *http.Request, failure Failure), which wrote the response, and nil meant the module wrote one'
+  now: 'OnFailure(r *http.Request, failure Failure), which observes only'
+  where_the_answer_went: the failure travels on the returned Response with its Failure field set, so a caller reads the kind and sends its own error page, or sends the one it was handed
+  why: decision:caller-writes-the-response; a hook that writes is a second write path, and the point of the split is that a wrong response has one place it came from
+  what_did_not_change: the default body is still RFC 9457 problem details with the kind as the code field
+  write_failure_removed: 'WriteFailure(w, failure) wrote a status and a header, which is the thing this round removed everywhere else; FailureResponse survives and a caller sends it with Response.WriteTo'
+  default_preserved_differently: 'the as_built note below says WriteFailure is what a caller delegates to; it is now FailureResponse, and a caller raising a refusal of its own still answers in one shape rather than reimplementing five status codes'
+  acceptance_reread: a caller answers with its own error page by not sending the Response it was handed, rather than by taking over a writer
+  a_constraint_this_dissolves: 'the third constraint below — a hook that panics or writes nothing must not leave the response uncommitted — cannot arise once the hook cannot write'
 related:
   - policy:problem-details
   - api:write-error
   - requirement:framework-render-entry
   - requirement:component-redraw-endpoint
+  - decision:caller-writes-the-response
 open_questions:
   - whether a failure raised after the response committed should reach the same hook, given requirement:streaming-delta-response can only report it in band
 ```

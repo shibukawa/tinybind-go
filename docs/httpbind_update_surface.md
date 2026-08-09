@@ -8,7 +8,47 @@ This is how to use it. For why it is shaped this way, see [`httpbind_render_mode
 
 ## The shape in one paragraph
 
-One URL answers several ways. A request with no render header gets the complete document, so a crawler and a browser with no runtime are unaffected. With the header, the same handler returns only the regions that changed — as markup, or as the values that fill a static shape the client already holds. Every entry is something you call from inside your own handler; this package mounts no routes and owns no URLs.
+One URL answers several ways. A request with no render header gets the complete document, so a crawler and a browser with no runtime are unaffected. With the header, the same handler returns only the regions that changed — as markup, or as the values that fill a static shape the client already holds. Every entry is something you call from inside your own handler; this package mounts no routes, owns no URLs, and **writes no header and no status**.
+
+## What this package writes, and what you write
+
+It writes bytes. That is all.
+
+What it knows and you cannot derive — which request headers a response depends on, what its content type is, which mode was actually served, what the body digests to — it **computes and hands you**. What your deployment decides — the cache policy, whether to answer a conditional request, what a failure looks like — it never touches.
+
+| | who |
+| --- | --- |
+| `Vary`, `Content-Type`, the render echo, `X-Tinybind-Live`, `ETag` | computed here, **written by you** |
+| `Cache-Control`, the 304 answer, the status you finally send | yours |
+| the body | written here |
+
+Two shapes, depending on whether the headers can be known before the body:
+
+**Headers first, then the body** — the entries that write directly or stream:
+
+```go
+htmlupdate.ApplyTo(update.Headers(r, wrappers, leaf), w)   // or StreamHeaders / LiveHeaders
+w.Header().Set("Cache-Control", "no-store")                // yours
+err := update.Render(w, r, wrappers, leaf, renderOptions(r)...)
+```
+
+**A whole answer you send** — the entries whose headers depend on what they rendered, because a redraw digests its own body:
+
+```go
+answer, ok := update.Redraw(r, registry, renderOptions(r)...)
+if ok {
+    w.Header().Set("Cache-Control", "private, no-cache")
+    if answer.NotModified(r) {
+        htmlupdate.ApplyTo(answer.Header, w)
+        w.WriteHeader(http.StatusNotModified)
+        return
+    }
+    _, _ = answer.WriteTo(w)
+    return
+}
+```
+
+> **`Vary` is a correctness control, not a preference.** A response that loses it can be handed by a shared cache to a browser asking for a page. `Headers` and `Response.Header` both compute it and `ApplyTo` and `WriteTo` both write it, so skipping it is a decision rather than an omission — but it is now a decision you can make.
 
 ## Setting up
 
@@ -44,17 +84,24 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
         htmlbind.BindWrapper(layoutPlan, layoutParams{Section: r.URL.Query().Get("section")}, setChildren),
     }
     leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+    htmlupdate.ApplyTo(update.Headers(r, wrappers, leaf), w)
     if err := update.Render(w, r, wrappers, leaf); err != nil {
         http.Error(w, http.StatusText(500), 500)
     }
 })
 ```
 
-Every render entry takes the options — `Render`, `RenderStream`, `RenderStreamAsync`, `RenderLiveStream` — so pass them here too:
+`Headers` needs the same wrappers and leaf the render will get, because whether the composition owns a live boundary is a property of the composition. Pass none and the live marker is left off — and a page that owns one then never gets a live request opened against it.
 
-```go
-err := update.Render(w, r, wrappers, leaf, renderOptions(r)...)
-```
+Every render entry takes the options — `Render`, `RenderStream`, `RenderStreamAsync`, `RenderLiveStream`.
+
+Three header accessors, one per entry shape. They differ only in what a live request resolves to, and the difference matters: a response has to claim to be what it is, or a proxy substitution stops being detectable.
+
+| accessor | for | a live request resolves to |
+| --- | --- | --- |
+| `Headers` | `Render` | the document, which is what that entry serves |
+| `StreamHeaders` | `RenderStream`, `RenderStreamAsync` | a navigation, terminated |
+| `LiveHeaders` | `RenderLiveStream` | live |
 
 `Render` buffers. For a page with `await` boundaries, use `RenderStreamAsync` so a slow boundary delays only itself:
 
@@ -104,12 +151,19 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "forbidden", http.StatusForbidden)
         return
     }
-    if update.Redraw(w, r, registry, renderOptions(r)...) {
+    // A page and the redraws of the components on it share this URL, so a cache
+    // must key on the redraw axes whichever way this request turns out.
+    htmlupdate.ApplyTo(update.RedrawHeaders(r), w)
+    if answer, ok := update.Redraw(r, registry, renderOptions(r)...); ok {
+        w.Header().Set("Cache-Control", "private, no-cache")
+        _, _ = answer.WriteTo(w)
         return // it was a redraw, and it inherited the check above
     }
     // ordinary page render
 })
 ```
+
+`private, no-cache` is what this package used to choose for everybody: private because a redraw usually renders per-user content, and `no-cache` rather than `no-store` because `no-store` forbids the conditional request the `ETag` exists for. It is a suggestion now, not a default.
 
 Put `Registry.RequiredHead()` in your document shell at startup. A redraw rewrites a region of a page this endpoint never rendered, so it cannot install a stylesheet before the markup that needs it:
 
@@ -127,9 +181,15 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
         return
     }
     if update.WantsUpdate(r) {
-        _ = update.WriteUpdate(w, r, []htmlupdate.Update{
+        answer, err := update.WriteUpdate(r, []htmlupdate.Update{
             htmlupdate.Replace("cart", CartBadge(CartBadgeParams{ID: "cart", Count: count})),
         }, renderOptions(r)...)
+        if err != nil {
+            httpbind.WriteError(w, r, err)
+            return
+        }
+        w.Header().Set("Cache-Control", "no-store") // an action response is never cacheable
+        _, _ = answer.WriteTo(w)
         return
     }
     httpbind.Write(w, r, result) // the endpoint's ordinary JSON
@@ -156,17 +216,16 @@ Ask for the tree behind an address the same way you answer a redraw:
 
 ```go
 mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
-    if update.Sequence(w, r) {
+    if answer, ok := update.Sequence(r); ok {
+        w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+        _, _ = answer.WriteTo(w)
         return
     }
-    if update.Redraw(w, r, registry, renderOptions(r)...) {
-        return
-    }
-    // ordinary page render
+    // redraw, then the ordinary page render
 })
 ```
 
-A sequence is the one response here that is **not per user** — it derives from the template, not from the request — so it is served `public, max-age=31536000, immutable` and a shared cache may hold it across users and across builds. An address this process has never rendered is answered 404, and the client asks for markup instead.
+A sequence is the one response here that is **not per user** — it derives from the template, not from the request — so it is the only one you can serve `public, max-age=31536000, immutable`, held by a shared cache across users and across builds. It is addressed by a digest of its own content, so a template edit produces a new address rather than a new body at the old one and nothing needs invalidating. An address this process has never rendered is answered 404, and the client asks for markup instead.
 
 **Whether it pays depends on the shape.** Measured on a hundred-row panel: values are 40% of the markup taken whole, but a small fragment costs *more* as an address plus values than as markup — which is why the choice is made per fragment, and why the split is never a loss.
 
@@ -220,7 +279,9 @@ An update that could not be produced answers `application/problem+json`:
 
 **The media type is the discriminator.** `application/json` is an update to apply — including a non-2xx one, since a 422 carrying the validation errors is a *successful* update. `application/problem+json` is a request that produced none; apply nothing and fall back.
 
-`code` carries the failure kind, because a stale page and a failed render are one status to a proxy and different events to whoever is on call. Take over the response with `Options.OnFailure` to log it, trace it, or write your own body.
+`code` carries the failure kind, because a stale page and a failed render are one status to a proxy and different events to whoever is on call.
+
+A refusal comes back as an ordinary `Response` with its `Failure` field set, so you read the kind and send your own error page instead if you have one. `Options.OnFailure` observes rather than answers — it is for the log line and the span you want on every refusal whether or not you change the answer.
 
 ## Headers
 
@@ -240,6 +301,7 @@ The prefix is `Options.HeaderPrefix`. Everything composes from it, so renaming i
 
 ## What this package will not do
 
+- **Write a header or a status.** It computes both and hands them over. A cache policy belongs to a deployment, not to a library, and a header written in one place is a header traceable to one place.
 - **Choose your wire version.** Add your own field beside the emitted shape; the build identity is the only compatibility axis this package operates.
 - **Ship your browser runtime.** Set `CallerOwnsRuntime` and merge `RuntimeSource` into your own asset, or write your own against the wire contract.
 - **Mount a route.** Every entry is one you call. The URL a redraw or a sequence is served at is yours, which is what lets it inherit the page handler's authorization instead of needing a second path pattern kept in step with the first.

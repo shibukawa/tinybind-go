@@ -702,7 +702,13 @@ func serve(t *testing.T, query url.Values) *httptest.ResponseRecorder {
 	request.Header.Set("X-Tinybind-Instance", "counter-1")
 	// A real page carries the build it was rendered by, from its script tag.
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
-	options.Redraw(recorder, request, registry)
+	answer, ok := options.Redraw(request, registry)
+	if !ok {
+		t.Fatal("Redraw did not answer the request")
+	}
+	// This package writes no header and no status of its own, so a caller sends
+	// the answer it computed and adds its own cache policy.
+	_, _ = answer.WriteTo(recorder)
 	return recorder
 }
 

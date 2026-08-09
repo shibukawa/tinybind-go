@@ -18,6 +18,31 @@ import (
 // refuses a value it cannot parse rather than substituting a zero.
 const cardKind = "UserCard@8Qv3n1"
 
+// redrawInto is what a caller writes now: the entry computes an answer and the
+// caller sends it. This package sets no header and no status of its own, so a
+// test that wants the response has to write it, exactly as a handler does.
+func redrawInto(w http.ResponseWriter, o htmlupdate.Options, r *http.Request,
+	reg *htmlupdate.Registry, opts ...htmlbind.Option) bool {
+	answer, ok := o.Redraw(r, reg, opts...)
+	if !ok {
+		return false
+	}
+	// The policy and the conditional answer are both the caller's now. This one
+	// keeps a redraw out of every shared cache and lets a private one
+	// revalidate, which is what this package used to choose for everybody.
+	w.Header().Set("Cache-Control", redrawCachePolicy)
+	if answer.NotModified(r) {
+		htmlupdate.ApplyTo(answer.Header, w)
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	_, _ = answer.WriteTo(w)
+	return true
+}
+
+// redrawCachePolicy is this test caller's choice, not a package default.
+var redrawCachePolicy = "private, no-cache"
+
 func cardRegistry(t *testing.T) *htmlupdate.Registry {
 	t.Helper()
 	registry := &htmlupdate.Registry{}
@@ -76,7 +101,7 @@ func redrawServerWith(t *testing.T, opts htmlupdate.Options) http.Handler {
 	t.Helper()
 	registry := cardRegistry(t)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if opts.Redraw(w, r, registry) {
+		if redrawInto(w, opts, r, registry) {
 			return
 		}
 		_, _ = w.Write([]byte("<!doctype html><title>the page</title>"))
@@ -124,7 +149,7 @@ func TestRedrawRendersOneComponent(t *testing.T) {
 	// The content is usually per-user, so no shared cache may hold it. It is
 	// still revalidatable, because no-store would forbid the conditional
 	// request the ETag exists for.
-	if got := response.Header.Get("Cache-Control"); got != htmlupdate.DefaultRedrawCacheControl {
+	if got := response.Header.Get("Cache-Control"); got != redrawCachePolicy {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	body := redrawBody(t, response)
@@ -247,7 +272,7 @@ func TestRedrawETagIsKeyed(t *testing.T) {
 	tag := func(key string) string {
 		opts := htmlupdate.Options{Key: []byte(key)}
 		recorder := httptest.NewRecorder()
-		opts.Redraw(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
+		redrawInto(recorder, opts, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
 		return recorder.Header().Get("ETag")
 	}
 	if tag("one key") == tag("another key") {
@@ -256,12 +281,19 @@ func TestRedrawETagIsKeyed(t *testing.T) {
 }
 
 // A deployment whose redraws are public, or whose proxy needs different terms,
-// supplies its own policy.
-func TestRedrawCachePolicyIsConfigurable(t *testing.T) {
-	custom := options
-	custom.RedrawCacheControl = "public, max-age=60"
+// supplies its own policy — which it now does by writing it, since this package
+// writes none.
+func TestRedrawCachePolicyIsTheCallers(t *testing.T) {
+	answer, ok := options.Redraw(redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
+	if !ok {
+		t.Fatal("Redraw did not answer the request")
+	}
+	if got := answer.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("this package chose a cache policy: %q", got)
+	}
 	recorder := httptest.NewRecorder()
-	custom.Redraw(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
+	recorder.Header().Set("Cache-Control", "public, max-age=60")
+	_, _ = answer.WriteTo(recorder)
 	if got := recorder.Header().Get("Cache-Control"); got != "public, max-age=60" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
@@ -313,7 +345,7 @@ func TestDuplicateKindIsRefused(t *testing.T) {
 	// The registration that was already there stands, so a refused duplicate
 	// leaves a working endpoint rather than a half-replaced one.
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), registry)
+	redrawInto(recorder, options, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), registry)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want the first registration to stand", recorder.Code)
 	}
@@ -369,7 +401,7 @@ func styledRegistry(t *testing.T) *htmlupdate.Registry {
 
 func TestRedrawCarriesTheComponentHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, redrawRequest(styledKind, "card-1", nil), styledRegistry(t))
+	redrawInto(recorder, options, redrawRequest(styledKind, "card-1", nil), styledRegistry(t))
 	response := recorder.Result()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", response.StatusCode)
@@ -391,7 +423,7 @@ func TestRedrawCarriesTheComponentHead(t *testing.T) {
 // component styles sees no head in its redraw responses at all.
 func TestRedrawWithoutHeadIsUnchanged(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
+	redrawInto(recorder, options, redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}}), cardRegistry(t))
 	if strings.Contains(recorder.Body.String(), `"head"`) {
 		t.Fatalf("body carries an empty head field: %s", recorder.Body.String())
 	}
@@ -526,7 +558,7 @@ func callerRedraw(t *testing.T, target, instance string, values url.Values, regi
 	recorder := httptest.NewRecorder()
 	// The shape a caller writes: branch inside its own handler, after its own
 	// authorization, and fall through to the page when this is not a redraw.
-	if !options.Redraw(recorder, request, registry) {
+	if !redrawInto(recorder, options, request, registry) {
 		_, _ = recorder.WriteString("<!doctype html><title>the page</title>")
 	}
 	return recorder.Result()
@@ -567,13 +599,18 @@ func TestRedrawAtAPageURLVariesOnTheComponent(t *testing.T) {
 	}
 }
 
-// An ordinary request for the page is not a redraw, so the caller renders it.
-// The Vary axes are declared anyway, because the two responses share a URL and a
-// cache that learned only one of them would answer the other from it.
+// An ordinary request for the page is not a redraw, so the caller renders it —
+// and declares the redraw's Vary axes anyway, because the two responses share a
+// URL and a cache that learned only one of them would answer the other from it.
+// This package computes those axes; declaring them on a response it did not
+// produce is the caller's, and this is the shape that does it.
 func TestAPageRequestFallsThroughWithItsCacheKeysDeclared(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	recorder := httptest.NewRecorder()
-	if options.Redraw(recorder, request, cardRegistry(t)) {
+	// A page handler serving redraws at this URL declares their axes before it
+	// branches, since the branch it takes is what a cache must key on.
+	htmlupdate.ApplyTo(options.RedrawHeaders(request), recorder)
+	if redrawInto(recorder, options, request, cardRegistry(t)) {
 		t.Fatal("a request with no redraw header must not be answered as one")
 	}
 	if vary := recorder.Header().Values("Vary"); len(vary) == 0 {
@@ -588,7 +625,7 @@ func TestAStalePageRedrawingAtItsOwnURLGetsThePage(t *testing.T) {
 	request := redrawRequest(cardKind, "card-1", url.Values{"page": {"2"}})
 	request.Header.Set("X-Tinybind-Build", "an-older-revision")
 	recorder := httptest.NewRecorder()
-	if options.Redraw(recorder, request, cardRegistry(t)) {
+	if redrawInto(recorder, options, request, cardRegistry(t)) {
 		t.Fatal("a stale redraw at a page URL must fall through to the page")
 	}
 	// And the caller's handler then serves the page, as it would for any
@@ -606,7 +643,7 @@ func TestARedrawNamingNoComponentIsRefused(t *testing.T) {
 	request := buildRequest("/dashboard")
 	request.Header.Set("X-Tinybind-Render", "redraw")
 	recorder := httptest.NewRecorder()
-	if !options.Redraw(recorder, request, cardRegistry(t)) {
+	if !redrawInto(recorder, options, request, cardRegistry(t)) {
 		t.Fatal("a redraw naming nothing must be answered rather than fall through")
 	}
 	if recorder.Code != http.StatusBadRequest {
@@ -622,7 +659,7 @@ func TestAnUnknownKindAtThePageURLIs404(t *testing.T) {
 	request.Header.Set("X-Tinybind-Kind", "NotRegistered@0000")
 	request.Header.Set("X-Tinybind-Instance", "card-1")
 	recorder := httptest.NewRecorder()
-	if !options.Redraw(recorder, request, cardRegistry(t)) {
+	if !redrawInto(recorder, options, request, cardRegistry(t)) {
 		t.Fatal("an unknown kind must be answered rather than fall through")
 	}
 	if recorder.Code != http.StatusNotFound {
@@ -638,7 +675,7 @@ func TestARedrawCarriesTheCallersVersion(t *testing.T) {
 		request.Header.Set("X-Tinybind-Kind", cardKind)
 		request.Header.Set("X-Tinybind-Instance", "card-1")
 		recorder := httptest.NewRecorder()
-		if !options.Redraw(recorder, request, cardRegistry(t)) {
+		if !redrawInto(recorder, options, request, cardRegistry(t)) {
 			t.Fatalf("header %q was not read as a redraw", header)
 		}
 		if recorder.Code != http.StatusOK {

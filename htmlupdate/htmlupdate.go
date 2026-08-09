@@ -164,18 +164,6 @@ type Options struct {
 	// DefaultMaxQueryBytes. Unlike an oversized manifest an oversized query is
 	// rejected, because the arguments are the request rather than a hint.
 	MaxQueryBytes int
-	// SequenceCacheControl overrides the cache policy of a sequence response.
-	// Empty uses DefaultSequenceCacheControl, which keeps it forever because the
-	// address is a digest of the body.
-	SequenceCacheControl string
-	// RedrawCacheControl overrides the cache policy of a redraw response. Empty
-	// uses DefaultRedrawCacheControl.
-	//
-	// A caller relaxing it takes responsibility for what a redraw renders: the
-	// arguments come from the browser, so the component authorizes its own
-	// inputs, and a cache keyed on the URL alone would serve one user's render
-	// to another.
-	RedrawCacheControl string
 	// StreamContentType overrides the media type of a streamed delta. Empty
 	// uses DefaultStreamContentType.
 	//
@@ -183,17 +171,15 @@ type Options struct {
 	// framing choice a client has to agree with, not a tuning knob.
 	StreamContentType string
 	// OnFailure receives every request an endpoint of this package could not
-	// answer, and writes the response for it. Nil writes the plain-text
-	// response WriteFailure writes.
+	// answer. It observes rather than answers.
 	//
-	// This package owns the endpoint, so it has to write something; it does
-	// not have to decide what a failure looks like. A caller with problem
-	// responses, its own error pages, a request-scoped logger, or a tracer
-	// takes the whole Failure and answers however it answers everything else.
-	//
-	// A hook must write a response, exactly as a handler must. Delegating to
-	// WriteFailure after logging is the cheapest way to keep the default body.
-	OnFailure func(w http.ResponseWriter, r *http.Request, failure Failure)
+	// Every entry returns the response it computed, with its Failure field set,
+	// so a caller with its own error pages substitutes them by sending something
+	// else instead of what it was handed. This hook is for the log line and the
+	// span, which a caller wants on every refusal whether or not it changes the
+	// answer — and which are otherwise lost, since a status alone cannot say
+	// whether a page was stale or a render failed.
+	OnFailure func(r *http.Request, failure Failure)
 }
 
 // DefaultMaxManifestBytes bounds the validators a request may carry. Beyond it
@@ -559,10 +545,7 @@ type deltaInstance struct {
 // request would hand a browser a page of JSON. The caller keeps every other
 // response concern, as elsewhere in this module.
 func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
-	w.Header().Add("Vary", o.renderHeader())
-	w.Header().Add("Vary", o.buildHeader())
 	negotiated := o.Negotiate(r)
-	o.markLive(w, wrappers, leaf)
 	if negotiated.Mode == ModeNavigation {
 		return renderDelta(w, r, o, negotiated, wrappers, leaf, options)
 	}
@@ -573,7 +556,6 @@ func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlb
 	//
 	// The document render collects so every boundary carries its instance
 	// attribute; without them a later delta could not find its targets.
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
 	return err
 }
@@ -609,12 +591,6 @@ func (o Options) instanceHeader() string { return o.prefix() + "-Instance" }
 //
 // Nothing is written when the chain owns no live boundary, so a page that had
 // none is byte-identical to what it was before the marker existed.
-func (o Options) markLive(w http.ResponseWriter, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) {
-	if htmlbind.HasLiveBlock(wrappers, leaf) {
-		w.Header().Set(o.liveHeader(), "1")
-	}
-}
-
 func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options []htmlbind.Option) error {
 	sequences := o.wantsSequences(r)
 	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...)
@@ -638,9 +614,5 @@ func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated N
 	// and the client reused its document shell, so this body is the only place
 	// that can tell it so.
 	body.Live = htmlbind.HasLiveBlock(wrappers, leaf)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	// A delta carries per-document validators, so it is never shareable.
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set(o.renderHeader(), renderToken(ModeNavigation, negotiated.Version))
 	return encodeJSON(w, body)
 }

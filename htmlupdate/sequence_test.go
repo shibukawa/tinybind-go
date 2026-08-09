@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
-	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
 // A fragment's static half derives from the template rather than from a request,
@@ -24,9 +23,16 @@ func sequenceRequest(t *testing.T, address string) *http.Response {
 	if address != "" {
 		request.Header.Set("X-Tinybind-Sequence-Address", address)
 	}
-	recorder := httptest.NewRecorder()
-	if !options.Sequence(recorder, request) {
+	answer, ok := options.Sequence(request)
+	if !ok {
 		t.Fatal("Sequence did not answer the request")
+	}
+	recorder := httptest.NewRecorder()
+	// The cache policy is the caller's; a sequence is addressed by a digest of
+	// its own content, so a deployment may hold it forever.
+	recorder.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if _, err := answer.WriteTo(recorder); err != nil {
+		t.Fatal(err)
 	}
 	return recorder.Result()
 }
@@ -88,7 +94,8 @@ func TestWithoutTheHeaderTheMarkupTravels(t *testing.T) {
 func TestSequenceIsPublicAndImmutable(t *testing.T) {
 	_, body := fetchDeltaWithSequences(t, "/search?q=go&section=Docs")
 	response := sequenceRequest(t, body.Operations[0].Seq)
-	if got := response.Header.Get("Cache-Control"); got != htmlupdate.DefaultSequenceCacheControl {
+	// This package set none: the caller above did.
+	if got := response.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	if !strings.Contains(bodyOf(response), `"addr":"`+body.Operations[0].Seq+`"`) {

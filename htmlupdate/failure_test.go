@@ -61,16 +61,12 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			var seen []htmlupdate.Failure
 			opts := options
-			opts.OnFailure = func(w http.ResponseWriter, r *http.Request, failure htmlupdate.Failure) {
+			// The hook observes; it no longer answers. Every entry returns the
+			// response it computed, so a caller substituting its own error page
+			// writes that instead of what it was handed, and this is for the log
+			// line and the span a caller wants on every refusal either way.
+			opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) {
 				seen = append(seen, failure)
-				// A caller answering in its own format, which is the whole
-				// point of the hook.
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(failure.Status)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"title":  failure.Kind.String(),
-					"status": failure.Status,
-				})
 			}
 			recorder := httptest.NewRecorder()
 			redrawServerWith(t, opts).ServeHTTP(recorder, testCase.request)
@@ -94,8 +90,8 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 			if testCase.named && failure.KindID == "" {
 				t.Fatal("KindID is empty, so a log line cannot say what was asked for")
 			}
-			// The caller's response is what the client gets, not this
-			// package's.
+			// The response the caller sent is the one it was handed, since this
+			// test's server writes it unchanged.
 			if recorder.Code != testCase.status {
 				t.Fatalf("response status = %d, want %d", recorder.Code, testCase.status)
 			}
@@ -111,10 +107,7 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	var seen htmlupdate.Failure
 	opts := options
-	opts.OnFailure = func(w http.ResponseWriter, r *http.Request, failure htmlupdate.Failure) {
-		seen = failure
-		htmlupdate.WriteFailure(w, failure)
-	}
+	opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) { seen = failure }
 	registry := &htmlupdate.Registry{}
 	broken := errors.New("upstream unavailable")
 	if err := registry.Register(htmlupdate.Reloadable{
@@ -126,7 +119,7 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	opts.Redraw(recorder, redrawRequest("Broken@0001", "b-1", nil), registry)
+	redrawInto(recorder, opts, redrawRequest("Broken@0001", "b-1", nil), registry)
 
 	if seen.Kind != htmlupdate.FailureInvalidArguments {
 		t.Fatalf("kind = %v", seen.Kind)
@@ -134,8 +127,8 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	if !errors.Is(seen, broken) {
 		t.Fatalf("cause = %v, want %v reachable through errors.Is", seen.Err, broken)
 	}
-	// Delegating to WriteFailure keeps the default body, which is how a caller
-	// that only wants to observe stays out of the response's way.
+	// Sending the response as it was handed back keeps the default body, which is
+	// how a caller that only wants to observe stays out of the response's way.
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", recorder.Code)
 	}
@@ -196,7 +189,7 @@ func TestFailureNamesTheRefusedParameter(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, redrawRequest("Typed@0001", "t-1", url.Values{"page": {"nope"}}), registry)
+	redrawInto(recorder, options, redrawRequest("Typed@0001", "t-1", url.Values{"page": {"nope"}}), registry)
 
 	var body struct {
 		Errors []struct {
@@ -233,7 +226,7 @@ func TestFailureBodyOmitsTheCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	options.Redraw(recorder, redrawRequest("Leaky@0001", "l-1", nil), registry)
+	redrawInto(recorder, options, redrawRequest("Leaky@0001", "l-1", nil), registry)
 	if strings.Contains(recorder.Body.String(), "10.0.0.5") {
 		t.Fatalf("the cause reached the response: %s", recorder.Body.String())
 	}
