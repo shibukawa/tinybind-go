@@ -78,6 +78,13 @@
     // redraw stopped working and nothing said so.
     var KIND_ATTR = "data-" + config.attr + "-kind";
     var IGNORE_ATTR = "data-" + config.attr + "-ignore";
+    // An await boundary is bracketed by a comment pair carrying the same prefix,
+    // rather than wrapped in an element. An element around a fallback is
+    // foster-parented out of a table and left beside it while the fallback rows
+    // stay inside, so settling by element id wrote the finished row outside the
+    // table and the fallback never went away.
+    var AWAIT_OPEN = config.attr + ":";
+    var AWAIT_CLOSE = "/" + config.attr + ":";
 
     // A header namespace is a deployment choice for the same reason an endpoint
     // prefix is, so it is read the same way rather than compiled in.
@@ -374,6 +381,48 @@
         // stands rather than being replaced by an unrelated node.
         if (live) holes[j].replaceWith(live);
       }
+    }
+
+    // fence finds the comment pair bracketing one await boundary. There is no
+    // selector for a comment, so this is a walk — over comments only, which is a
+    // small set even on a large document, and only when a boundary settles.
+    function fence(id) {
+      var open = AWAIT_OPEN + id;
+      var close = AWAIT_CLOSE + id;
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
+      var start = null;
+      while (walker.nextNode()) {
+        var data = walker.currentNode.data;
+        if (data === open) {
+          start = walker.currentNode;
+        } else if (data === close && start) {
+          return { start: start, end: walker.currentNode };
+        }
+      }
+      return null;
+    }
+
+    // settle replaces one await boundary's fallback with the fragment that
+    // settled, and takes the markers with it: a boundary settles once, and
+    // markers left behind would be matched by the next boundary reusing the id.
+    //
+    // The fragment is parsed inside a template element, which is what lets a
+    // settled table row stay a row: parsing <tr> anywhere else discards the tags
+    // and leaves the cells loose.
+    function settle(id, html) {
+      var found = fence(id);
+      if (!found) return;
+      var template = document.createElement("template");
+      template.innerHTML = html;
+      var node = found.start.nextSibling;
+      while (node && node !== found.end) {
+        var next = node.nextSibling;
+        node.remove();
+        node = next;
+      }
+      found.end.parentNode.insertBefore(template.content, found.end);
+      found.start.remove();
+      found.end.remove();
     }
 
     // swap installs a replacement in place of a live region, carrying across the
@@ -725,16 +774,11 @@
           return;
         }
         if (item.r === "await") {
-          // An await completion addresses a placeholder inside a region already
-          // installed, so it replaces that element rather than a boundary.
+          // An await completion addresses a fallback inside a region already
+          // installed, so it replaces that range rather than a boundary.
           chain = chain.then(function () {
             if (failed) return;
-            var placeholder = document.getElementById(item.id);
-            if (!placeholder) return;
-            var template = document.createElement("template");
-            template.innerHTML = item.html;
-            var settled = template.content.firstElementChild;
-            if (settled) placeholder.replaceWith(settled);
+            settle(item.id, item.html);
           });
           return;
         }

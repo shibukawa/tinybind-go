@@ -106,7 +106,7 @@ func TestLiveEntryDeliversEveryUpdate(t *testing.T) {
 	if !strings.Contains(document.String(), "waiting") {
 		t.Errorf("fallback was not committed:\n%s", document.String())
 	}
-	if !strings.Contains(document.String(), `<tb-boundary id="tb-1"`) {
+	if !strings.Contains(document.String(), `<!--tb:tb-1-->`) {
 		t.Errorf("no placeholder was written:\n%s", document.String())
 	}
 }
@@ -185,7 +185,7 @@ func TestSyncEntryRendersFirstDeliveryInPlace(t *testing.T) {
 	if !strings.Contains(got, "cpu: 10") {
 		t.Errorf("sync render did not settle the boundary:\n%s", got)
 	}
-	if strings.Contains(got, "tb-boundary") || strings.Contains(got, "waiting") {
+	if strings.Contains(got, "<!--tb:") || strings.Contains(got, "waiting") {
 		t.Errorf("sync render leaked streaming markup:\n%s", got)
 	}
 }
@@ -201,7 +201,7 @@ func TestBoundaryIDsRepeatAcrossExecutions(t *testing.T) {
 	}
 	// Re-executing the same page has to address the placeholders already on
 	// screen, which is what lets a reconnect carry no state of its own.
-	if !strings.Contains(first.String(), `id="tb-1"`) || !strings.Contains(second.String(), `id="tb-1"`) {
+	if !strings.Contains(first.String(), `<!--tb:tb-1-->`) || !strings.Contains(second.String(), `<!--tb:tb-1-->`) {
 		t.Errorf("boundary ids are not stable across executions:\n%s\n%s", first.String(), second.String())
 	}
 }

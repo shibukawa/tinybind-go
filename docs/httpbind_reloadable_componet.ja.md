@@ -494,7 +494,7 @@ file input はこれら全ての例外で、選択を値から復元する手段
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。同じ接頭辞がプレースホルダ要素と境界 ID も名付けるので、`pw` を設定したプロジェクトでは境界が `data-pw-id`、プレースホルダが `<pw-boundary id="pw-1">` になります。命名体系は2つではなく1つです。属性を書くのは生成器、読むのはランタイムなので、`Options.DataAttributePrefix` にも同じ値を設定してください。
+`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。同じ接頭辞が await のマーカーと境界 ID も名付けるので、`pw` を設定したプロジェクトでは境界が `data-pw-id`、await のマーカーが `<!--pw:pw-1-->` になります。命名体系は2つではなく1つです。属性を書くのは生成器、読むのはランタイムなので、`Options.DataAttributePrefix` にも同じ値を設定してください。
 
 配信。プロトコルがドキュメントに書き込む名前はすべて設定可能で、フレームワークが所有するものは2つの名前空間の内側にあります。
 

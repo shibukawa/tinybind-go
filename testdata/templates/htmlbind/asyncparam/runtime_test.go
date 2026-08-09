@@ -195,7 +195,7 @@ func TestForBodyAwaitsItsOwnRow(t *testing.T) {
 	}
 	got := output.String()
 	// One boundary per iteration, per the await clause inside a for body.
-	if !strings.Contains(got, `id="tb-1"`) || !strings.Contains(got, `id="tb-2"`) {
+	if !strings.Contains(got, `<!--tb:tb-1-->`) || !strings.Contains(got, `<!--tb:tb-2-->`) {
 		t.Fatalf("each row did not open its own boundary:\n%s", got)
 	}
 	for _, want := range []string{"first: 1", "second: 2"} {
@@ -216,7 +216,7 @@ func TestSyncEntryBlocksOnTheValue(t *testing.T) {
 	got := output.String()
 	// The same template renders settled in place, which is what serves a client
 	// without JavaScript.
-	if strings.Contains(got, "tb-boundary") || strings.Contains(got, "loading") {
+	if strings.Contains(got, "<!--tb:") || strings.Contains(got, "loading") {
 		t.Fatalf("sync render leaked streaming markup:\n%s", got)
 	}
 	for _, want := range []string{"a1: 10", `title="hello"`} {

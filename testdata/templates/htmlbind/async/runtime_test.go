@@ -99,9 +99,13 @@ func TestSyncRenderSettlesBoundaryInPlace(t *testing.T) {
 }
 
 // A framework owns the names its markup carries. Before this the placeholder
-// element and the identifier allocation were literals while the instance
-// attribute was configurable, so a project setting the prefix got two naming
-// systems in one document and could only choose one of them.
+// and the identifier allocation were literals while the instance attribute was
+// configurable, so a project setting the prefix got two naming systems in one
+// document and could only choose one of them.
+//
+// The placeholder is a comment pair rather than an element now, so the prefix
+// spells the markers instead of a tag name. An element around the fallback was
+// foster-parented out of a table and left beside it.
 func TestBoundaryPrefixNamesTheElementAndTheIdentifiers(t *testing.T) {
 	reset()
 	var output bytes.Buffer
@@ -111,10 +115,10 @@ func TestBoundaryPrefixNamesTheElementAndTheIdentifiers(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := output.String()
-	if !strings.Contains(got, `<pw-boundary id="pw-1"`) {
+	if !strings.Contains(got, `<!--pw:pw-1-->`) {
 		t.Fatalf("placeholder does not carry the configured prefix:\n%s", got)
 	}
-	if !strings.Contains(got, `</pw-boundary>`) {
+	if !strings.Contains(got, `<!--/pw:pw-1-->`) {
 		t.Fatalf("placeholder is not closed with the configured name:\n%s", got)
 	}
 	// The completion addresses the identifier the placeholder was written
@@ -122,8 +126,8 @@ func TestBoundaryPrefixNamesTheElementAndTheIdentifiers(t *testing.T) {
 	if !strings.Contains(got, `<template data-tb-boundary="pw-1">`) {
 		t.Fatalf("completion does not address the prefixed identifier:\n%s", got)
 	}
-	if strings.Contains(got, "tb-boundary id=") {
-		t.Fatalf("the default element name survived the override:\n%s", got)
+	if strings.Contains(got, "<!--tb:") {
+		t.Fatalf("the default marker name survived the override:\n%s", got)
 	}
 }
 
@@ -134,7 +138,7 @@ func TestRenderAsyncWritesFallbackThenCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := output.String()
-	placeholder := strings.Index(got, `<tb-boundary id="tb-1"`)
+	placeholder := strings.Index(got, `<!--tb:tb-1-->`)
 	completion := strings.Index(got, `<template data-tb-boundary="tb-1">`)
 	if placeholder < 0 || completion < 0 {
 		t.Fatalf("stream did not emit both halves of the boundary:\n%s", got)

@@ -47,6 +47,15 @@ caching:
   vary: every generated response varies on the mode header, and a redraw additionally on the kind and instance headers once requirement:caller-addressed-redraw stops the URL identifying which component the bytes belong to
   delta_privacy: delta responses default to private or no-store, because they carry per-document validators and tokens
   never_share: a delta body must never be served to a document request, and a shared cache that cannot vary must be bypassed
+echo_defect_2026_08_09_v0_4_7:
+  what: 'modeName has no ModeSequence case, so renderToken falls to the default and every sequence response claims navigation'
+  introduced_by: routing the echo through the shared function in v0.4.7; the entry set the literal itself in v0.4.6, which is what the action path still does
+  cost: 'a client enforcing the echo — which this concept requires, so that a proxy-substituted body is detectable — discards every sequence tree, and each values-only operation has no markup to fall back to, so the navigation degrades to a complete document'
+  visibility: none beyond larger pages, because the fallback invariant absorbed it
+  the_general_shape: an echo derived from a mode enum needs a case per mode, and a default arm turns a missing case into a wrong claim rather than a compile error
+  fixed: 2026-08-09; modeName is exhaustive and panics on a mode it does not name, rather than resolving one to navigation
+  why_panic_rather_than_a_default: Negotiate resolves anything unrecognized to ModeDocument, so the arm is unreachable; it is there to make the next mode fail at its first test instead of quietly claiming to be something else
+  test: TestASequenceResponseSaysItIsASequence
 observability: log the served mode, so delta traffic is distinguishable from document traffic
 acceptance:
   - a request without the header is byte-identical to current behavior

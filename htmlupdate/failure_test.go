@@ -244,3 +244,22 @@ func TestRedrawQueryBoundIsConfigurable(t *testing.T) {
 		t.Fatalf("status = %d, want the configured bound to apply", recorder.Code)
 	}
 }
+
+// A refusal is a response at the same URL as the page, and some refusals are
+// cacheable: 404 is heuristically cacheable with no Cache-Control at all. One
+// carrying no Vary can therefore be stored and handed back to a request for the
+// page. It reads the same headers a successful redraw reads, so it varies on the
+// same ones.
+func TestARefusalCarriesTheVaryAxesAnAnswerWouldHave(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	redrawInto(recorder, options, redrawRequest("Gone@0000", "card-1", url.Values{"page": {"1"}}), &htmlupdate.Registry{})
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	vary := strings.Join(recorder.Header().Values("Vary"), ",")
+	for _, axis := range []string{"X-Tinybind-Render", "X-Tinybind-Build", "X-Tinybind-Kind", "X-Tinybind-Instance"} {
+		if !strings.Contains(vary, axis) {
+			t.Fatalf("Vary = %q, missing %s — a cache could answer a page request with this 404", vary, axis)
+		}
+	}
+}

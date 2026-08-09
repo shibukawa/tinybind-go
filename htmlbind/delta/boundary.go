@@ -138,8 +138,8 @@ type openBoundary struct {
 	start int
 }
 
-func (c *collector) Begin(validatorTag, boundaryElement string) {
-	c.tag, c.element = validatorTag, boundaryElement
+func (c *collector) Begin(validatorTag string) {
+	c.tag = validatorTag
 }
 
 func (c *collector) Open(id, componentID, attr, input, sequence string) {
@@ -221,12 +221,26 @@ func (c *collector) Close() {
 	}
 }
 
-// placeholder is the hole one boundary leaves in its parent's fragment. It is
-// the element a progressive render already writes for an await boundary, so a
-// client recognises one shape rather than two, and display:contents keeps it out
-// of layout for the moment before it is filled.
+// placeholder is the hole one boundary leaves in its parent's fragment.
+//
+// It is a template because a template is the one element the HTML parser keeps
+// where it was written and never renders. The element this used to write —
+// prefix-boundary, the same one a progressive render wrapped an await fallback
+// in — is unknown to the parser, and an unknown element in table context is
+// foster-parented: the parser moves it out to just before the table, so every
+// hole a table's rows leave ends up outside the table, the rows filling those
+// holes land loose on the page, and the list is left empty. Nothing reports it,
+// because the response is correct as bytes and the resulting DOM is valid.
+//
+// A template needs no display:contents, since it renders nothing to begin with,
+// and it stays an element carrying the boundary's id — so a client still finds a
+// hole by the attribute selector it already uses and still replaces one node.
+//
+// An await boundary cannot use this shape: it brackets a fallback that has to
+// stay visible, and a template's content does not render. That is why the two
+// hole shapes, deliberately identical until now, have diverged.
 func (c *collector) placeholder(attr, id string) string {
-	return `<` + c.element + ` ` + attr + `="` + id + `" style="display:contents"></` + c.element + `>`
+	return `<template ` + attr + `="` + id + `"></template>`
 }
 
 // Write records into the innermost open boundary only. Both the frame validator

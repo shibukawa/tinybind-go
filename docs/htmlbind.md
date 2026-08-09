@@ -1153,7 +1153,7 @@ chunk, and it is a no-op for a writer that cannot flush.
 
 ### Framing a completion
 
-A progressive render writes each pending boundary as `<tb-boundary id="...">`
+A progressive render brackets each pending boundary with `<!--tb:...-->` markers
 holding the fallback. That is the module's half. The other half is yours: a
 yielded `Content` is the settled fragment plus the id of the placeholder it
 belongs to, and `WriteTo` emits that fragment and nothing else — no wrapper, no

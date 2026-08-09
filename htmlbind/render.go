@@ -23,7 +23,7 @@ type Wrapper struct {
 	validate    func() error
 	render      func(*Renderer, Fragment) error
 	// sequence derives this component's static half, as it does on a Fragment.
-	sequence func(prefix string) *Sequence
+	sequence func() *Sequence
 }
 
 // Validate runs the wrapper's parameter check without rendering.
@@ -338,7 +338,7 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 		coordinator := newAsyncCoordinator(ctx, newRenderOptions(options))
 		defer coordinator.stop()
 		if collect != nil {
-			collect.Begin(coordinator.opts.validatorTag, boundaryElementOf(coordinator.opts))
+			collect.Begin(coordinator.opts.validatorTag)
 		}
 		composed, head, err := assemble(collect, wrappers, leaf)
 		if err != nil {

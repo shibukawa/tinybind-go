@@ -366,7 +366,7 @@ func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *htt
 			// where an unchanged boundary is deliberately silent.
 			stream.Children(item.Operation.InstanceID, entryOf(item), item.Operation.Boundaries...)
 		case item.Operation.Kind == delta.OpReplace:
-			if sequences && item.Operation.Sequence != "" {
+			if sendsValues(sequences, *item.Operation) {
 				stream.ReplaceValues(item.Operation.InstanceID, item.Operation.Sequence,
 					item.Operation.Values, entryOf(item), item.Operation.Boundaries...)
 			} else {

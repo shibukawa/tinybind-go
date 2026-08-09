@@ -4,6 +4,8 @@ go 1.26.0
 
 require golang.org/x/tools v0.48.0
 
+require golang.org/x/net v0.57.0 // indirect
+
 require (
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
 	github.com/shibukawa/tinygodriver v1.1.9

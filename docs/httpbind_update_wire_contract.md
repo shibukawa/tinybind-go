@@ -28,7 +28,8 @@ Every header derives from one configured prefix, default `X-Tinybind`. Written `
 | `<P>-Kind` | request | The component a redraw addresses. |
 | `<P>-Instance` | request | The instance a redraw addresses. |
 | `<P>-Live` | response | Present with the value `1` when the composition owns a live boundary. |
-| `<P>-Head` | response | A redraw's head contribution. See [Redraw response](#redraw-response). |
+| `<P>-Sequences` | request | Present when the client can walk a sequence tree. See [Sequences](#sequences-sending-values-instead-of-markup). |
+| `<P>-Sequence-Address` | request | Which sequence tree to serve. |
 
 The CSRF header is **not** derived from this prefix. It defaults to `X-CSRF-Token`, because that names a convention every framework's middleware already recognises rather than anything this protocol owns.
 
@@ -52,6 +53,7 @@ Whitespace around the mode and around the version is ignored. A version that is 
 | `live` | `GET` or `HEAD` | Return the deliveries of this route's live boundaries, held open. |
 | `redraw` | `GET` or `HEAD` | Return one registered component's subtree. |
 | `action` | any | Return the regions a mutating request changed. |
+| `sequence` | `GET` or `HEAD` | Return one fragment's static half, named by `<P>-Sequence-Address`. |
 
 `action` is negotiated separately from the other three, because it is the only one that is not side-effect free: it carries ambient credentials and therefore requires the CSRF token, and it is the only mode a non-`GET` may use.
 
@@ -74,10 +76,12 @@ A streamed response repeats the build in its opening record, so a client that co
 A navigation request may carry the validators it already holds:
 
 ```text
-<P>-Manifest: <instanceId>:<validator>,<instanceId>:<validator>,…
+<P>-Manifest: <instanceId>:<frame>[:<children>[:<parent>]],…
 ```
 
-Both halves are opaque tokens: base64url, no padding, no character needing escaping. Pairs are comma-separated. A malformed pair is skipped rather than failing the request.
+Every field is an opaque token: base64url, no padding, no character needing escaping. Entries are comma-separated, fields within an entry colon-separated. A malformed entry is skipped rather than failing the request.
+
+`frame` digests the boundary's own bytes; `children` digests the ids of its nested boundaries, in order; `parent` names the boundary enclosing it. The last two are omitted when empty, so a leaf boundary with no parent is still `id:frame`. A client that stores only the frame makes every list look reordered on the request after next, and makes a removal fall back to replacing the outermost boundary.
 
 **Oversize rule.** A value longer than the configured bound (default 8192 bytes) is *dropped, not rejected*: the server answers as though the client sent nothing, which costs a larger delta rather than a failed request. A client must therefore never assume a delta is minimal.
 
@@ -93,8 +97,8 @@ A validator is a hint and nothing else. The server never derives arguments, iden
 
 ```json
 {
-  "ops": [ { "kind": "replace", "id": "c2", "html": "<p …>" } ],
-  "manifest": [ { "id": "c1", "frame": "8Qv…" } ],
+  "ops": [ { "kind": "replace", "id": "c2", "html": "<p …>", "boundaries": ["c3"] } ],
+  "manifest": [ { "id": "c1", "frame": "8Qv…", "children": "R1p…", "parent": "c0" } ],
   "head": ["<link …>"],
   "navigate": "/orders/17",
   "live": true
@@ -110,13 +114,21 @@ Every field except `ops` is optional and absent when empty. There is no version 
 | `r` | Fields | Meaning |
 | --- | --- | --- |
 | `head` | `head`, `build` | Opens the stream. Always first. |
-| `op` | `kind`, `id`, `html`, `frame` | One boundary. `html` absent means unchanged: record the validator, apply nothing. |
-| `await` | `id`, `html` | An async boundary that settled. `id` addresses a *placeholder*, not an instance. |
+| `op` | `kind`, `id`, `html` or `seq`+`values`, `boundaries`, `frame`, `children`, `parent` | One boundary. No `kind` and no markup means unchanged: record the validators, apply nothing. |
+| `await` | `id`, `html` | An async boundary that settled. `id` addresses an *await marker*, not an instance. |
 | `end` | `reason`, `error`, `retryMs` | The terminator. |
 
-`await` and `op` address different namespaces. A placeholder id names a hole inside a region the client already installed; an instance id names a boundary. A client that looks one up in the other's namespace finds nothing and silently drops the update.
+`await` and `op` address different namespaces. An await id names a marker pair inside a region the client already installed; an instance id names a boundary. A client that looks one up in the other's namespace finds nothing and silently drops the update.
 
-**Operation kinds.** Currently only `replace`. A client **must** ignore an operation kind it does not recognise rather than guessing, and must not treat one as a reason to abandon the stream.
+An await boundary is bracketed in the document by a comment pair, `<!--<prefix>:<id>-->` and `<!--/<prefix>:<id>-->`, with the committed fallback between them. Settling replaces that range. Comments rather than an element because the fallback has to be visible — so it cannot be inside a `template` — and has to stay where it was written, which an unknown element in a table does not.
+
+**Operation kinds.** `replace` and `children`. A client **must** ignore an operation kind it does not recognise rather than guessing, and must not treat one as a reason to abandon the stream.
+
+**Dispatch on `kind`, not on whether `html` is present.** A `children` operation carries no markup at all, and a `replace` may carry `seq`+`values` instead. Every stream path in the reference implementation got this wrong once, and the result was a list emptied rather than reordered.
+
+**Holes.** A `replace` fragment stops at its nested boundaries, leaving one `<template>` per nested boundary carrying that boundary's instance attribute, and `boundaries` names them in order. A hole whose id also carries an operation in this response is filled from it; one that does not is a region the client already holds and moves its live node into. Nothing in the markup distinguishes the two, which is what the list is for.
+
+The hole is a `template` because that is the one element the parser keeps where it was written and never renders. A client **must** parse a fragment inside a `template` element for the same reason: a `<tr>` parsed anywhere else loses its tags, and an unknown element inside a table is moved out to just before it.
 
 ### The terminator
 
@@ -131,6 +143,37 @@ A stream that ends without an `end` record is **truncated**. A client must treat
 | `retry` | A live stream the server closed healthy: a lifetime bound, a shutdown, a rebalance. | Reconnect promptly. |
 
 `retry` **must not** spend a backoff attempt. Nothing failed, and treating a healthy rollover as a fault stalls a working screen every time the server rotates a connection. `retryMs`, when present, is the server's own hint; it is the only party that knows it is shedding load.
+
+## Sequences: sending values instead of markup
+
+A fragment's static half — its literal text — is identical in every render, so it can travel once per client instead of once per render. A client that can walk one says so:
+
+```text
+<P>-Sequences: 1
+```
+
+An operation then carries an address and the values that fill it **instead of** `html`, wherever that is smaller:
+
+```json
+{"kind":"replace","id":"panel","seq":"Yb3_x…","values":["Inbox","30","data-tb-id","r0"],"boundaries":["r0"]}
+```
+
+The choice is per operation and per response. A fragment of two elements costs more as an address plus its values than as markup, so an operation carries one half or the other and never both. A client must handle either on every operation.
+
+The tree behind an address is fetched separately, in `sequence` mode, at a URL the server author chooses:
+
+```text
+<P>-Render: sequence
+<P>-Sequence-Address: Yb3_x…
+```
+
+The answer is `application/json` and echoes `<P>-Render: sequence`. An address this server has never rendered is `404`, and the client asks for markup instead — a sequence is an optimisation over something still available, never a thing a screen depends on. A request naming no address is `400`.
+
+A sequence derives from the template rather than from the request, which makes it the one response on this wire that is not per user. It is addressed by a digest of its own content, so it survives a build change and a template edit produces a new address rather than a new body at the old one.
+
+**Walking the tree.** Consume one value per hole, one per conditional (which branch ran), one per loop (how many times), and one per component call (whether it opened a boundary or rendered inline). Concatenate and parse once.
+
+**Escaping never leaves the server.** Values arrive already escaped, exactly as they would have been written into HTML. Concatenate and parse; apply no escaper and judge no value. The URL scheme allowlist in particular stays on the server.
 
 ## Head operations
 
@@ -166,7 +209,7 @@ It was a bare HTML fragment with its head in a header, which made the redraw the
 
 - `Content-Type: application/json; charset=utf-8`
 - The head is the `head` field of the body, a JSON array of ready-to-write tags, absent when the component contributes nothing. It used to travel as base64 of JSON in a `<P>-Head` header, bounded at registration so a proxy could not drop an oversized one; a field in a body needs neither the packing nor the bound, and both are gone.
-- `ETag` over the rendered bytes. Matching it against `If-None-Match` — list form and `W/` prefix included — and answering `304` is the server author's, since a `304` is a cache decision and this module makes none. `Response.NotModified` does the comparison so the decision is the only part left to make.
+- `ETag` over the rendered bytes. It is the one header a server author cannot compute without rendering the component twice, which is why this module still produces it. Matching it against `If-None-Match` — list form and `W/` prefix included — and answering `304` is the server author's, since a `304` is a cache decision and this module makes none. `Response.NotModified` does the comparison so the decision is the only part left to make.
 - `Vary` includes the render and build headers, and — when the redraw is served at a URL that also serves a page — the kind and instance headers. Without those two, two components redrawing on one page are one cache entry and either may be answered with the other's markup.
 - No `Cache-Control`. `private, no-cache` is the sensible one for a per-user region that still wants its `ETag` revalidated, and a server author sets it.
 
@@ -178,6 +221,8 @@ It was a bare HTML fragment with its head in a header, which made the redraw the
 | `404` | This deployment publishes no such kind — usually a page loaded before a deploy. | Fall back: the *page* is stale, not the region. |
 | `414` | The query is past the configured bound. | Fall back. |
 | `500` | The component could not render. | Fall back. |
+
+A refusal carries the same `Vary` axes an answer would have. Without them a `404` — heuristically cacheable with no `Cache-Control` — can be stored and served to a request for the page at the same URL.
 
 ## Action response
 

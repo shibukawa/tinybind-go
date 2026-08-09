@@ -360,8 +360,8 @@ type forOp[P, E, S any] struct {
 // sequenceBody exposes the loop body to the sequence walk. A loop repeats one
 // instruction list, so its static half is that list's — how many times it ran is
 // data and travels with the values.
-func (o forOp[P, E, S]) sequenceBody(prefix string) []SeqNode {
-	return sequenceOf(o.body, prefix)
+func (o forOp[P, E, S]) sequenceBody() []SeqNode {
+	return sequenceOf(o.body)
 }
 
 func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
@@ -427,15 +427,17 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 	}
 	coordinator := r.async
 	id := r.nextBoundaryID()
-	// display:contents keeps the placeholder out of layout, so a boundary
-	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
+	// Comment markers rather than a wrapper element, so the fallback stays where
+	// it was written: an element around it is foster-parented out of a table and
+	// separated from the rows it was wrapping. See awaitFenceOpen.
+	prefix := r.boundaryPrefix()
+	if err := r.Write(awaitFenceOpen(prefix, id)); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
+	if err := r.Write(awaitFenceClose(prefix, id)); err != nil {
 		return err
 	}
 	boundaryCtx := r.boundaryContext()
@@ -556,7 +558,7 @@ func renderNested(r *Renderer, fragment Fragment) error {
 	}
 	r.collect.Choice(seqBoundary)
 	r.collect.Open(decl.instance, decl.componentID, decl.attr, decl.input(),
-		fragment.sequenceAddress(r.boundaryPrefix()))
+		fragment.sequenceAddress())
 	if err := fragment.render(r); err != nil {
 		return err
 	}
@@ -742,15 +744,17 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 	}
 	coordinator := r.async
 	id := r.nextBoundaryID()
-	// display:contents keeps the placeholder out of layout, so a boundary
-	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
+	// Comment markers rather than a wrapper element, so the fallback stays where
+	// it was written: an element around it is foster-parented out of a table and
+	// separated from the rows it was wrapping. See awaitFenceOpen.
+	prefix := r.boundaryPrefix()
+	if err := r.Write(awaitFenceOpen(prefix, id)); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
+	if err := r.Write(awaitFenceClose(prefix, id)); err != nil {
 		return err
 	}
 	keepOpen := coordinator.liveMode()

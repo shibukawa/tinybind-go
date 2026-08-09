@@ -49,6 +49,29 @@ precedent:
   htmlbind: sets no status, writes no header, and chooses no encoding, which is why it composes
   update_error_hook_drew_the_line: 'requirement:update-error-hook contrast_with_htmlbind said writing a response is not the same as deciding what a failure looks like, and kept the writing'
   this_moves_the_line_further: htmlupdate owns endpoints but not responses; owning an endpoint turns out to mean producing a body and its facts, not sending them
+downstream_report_2026_08_09:
+  accepted: the reporter took the whole of what the split hands over — cache policy for all four shapes, the conditional request, the refusal body, and the vary axes — and reports no argument against the split
+  they_corrected_the_sequence_echo_on_the_answer: possible only because the header is theirs to write now, which is the split paying for itself on the round that introduced the defect
+  failure_response_carries_no_vary:
+    found: while checking their vary placement, not reported by them
+    what: 'FailureResponse sets Content-Type alone, so a redraw refusal has no Vary of its own'
+    why_it_bites: '404 is heuristically cacheable, so a stored redraw 404 with no Vary and no cache policy can be served to a document request at the same URL'
+    who_it_bites: a caller applying vary only on the success branch; a caller following the guide's before-the-branch placement is covered by accident
+    fixed: 2026-08-09; Options.failure adds the axes for the negotiated mode, so a refusal varies on what it read
+    still_true_of_the_exported_one: FailureResponse has no Options and no request, so it carries none and says so; a caller raising its own refusal adds them
+    test: TestARefusalCarriesTheVaryAxesAnAnswerWouldHave
+  vary_placement_they_chose_differently:
+    guide_said: apply RedrawHeaders before the branch, so a page response declares the redraw axes too
+    they_do: declare the render and build headers before the branch, and leave kind and instance to the redraw response itself
+    their_argument: a cache matches on each stored response's own Vary, a page response varying on the render header cannot be selected for a request naming a mode, and every redraw response already carries kind and instance
+    verdict: correct, per RFC 9111 selecting-header-field matching; the reason the guide gave for the placement does not hold
+    the_placement_still_earns_its_place: for the reason above — a refusal carries no vary at all — which is a defect to fix rather than a reason to keep the advice
+    lesson: the advice was right for a reason that was wrong, and it took someone disagreeing with the reason to find the actual one
+  etag_is_the_one_header_a_caller_cannot_take:
+    what: it digests the body this package assembles, so producing it caller-side means rendering the component a second time
+    status: the correct exception to the rule
+    ask: state it in the guide beside the rule, which is a doc gap rather than a defect
+    done: 2026-08-09, in docs/httpbind_update_surface.md beside the Vary note and in the wire contract's redraw response
 docs:
   - docs/httpbind_update_surface.md 'What this package writes, and what you write'
   - docs/httpbind_update_wire_contract.md redraw response

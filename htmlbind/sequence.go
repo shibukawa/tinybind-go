@@ -69,7 +69,7 @@ const (
 )
 
 // sequenceOf derives the sequence of one instruction list.
-func sequenceOf[P any](ops []Op[P], prefix string) []SeqNode {
+func sequenceOf[P any](ops []Op[P]) []SeqNode {
 	nodes := make([]SeqNode, 0, len(ops))
 	for _, op := range ops {
 		switch typed := op.(type) {
@@ -78,32 +78,32 @@ func sequenceOf[P any](ops []Op[P], prefix string) []SeqNode {
 		case ifOp[P]:
 			nodes = append(nodes, SeqNode{
 				Kind: SeqIf,
-				Then: sequenceOf(typed.then, prefix),
-				Else: sequenceOf(typed.otherwise, prefix),
+				Then: sequenceOf(typed.then),
+				Else: sequenceOf(typed.otherwise),
 			})
 		case ifCtxOp[P]:
 			nodes = append(nodes, SeqNode{
 				Kind: SeqIf,
-				Then: sequenceOf(typed.then, prefix),
-				Else: sequenceOf(typed.otherwise, prefix),
+				Then: sequenceOf(typed.then),
+				Else: sequenceOf(typed.otherwise),
 			})
 		case componentOp[P], componentCtxOp[P]:
-			nodes = append(nodes, componentNode(prefix))
+			nodes = append(nodes, componentNode())
 		case slotOp[P]:
 			nodes = append(nodes, SeqNode{
 				Kind: SeqIf,
-				Then: []SeqNode{componentNode(prefix)},
-				Else: sequenceOf(typed.fallback, prefix),
+				Then: []SeqNode{componentNode()},
+				Else: sequenceOf(typed.fallback),
 			})
 		case slotCtxOp[P]:
 			nodes = append(nodes, SeqNode{
 				Kind: SeqIf,
-				Then: []SeqNode{componentNode(prefix)},
-				Else: sequenceOf(typed.fallback, prefix),
+				Then: []SeqNode{componentNode()},
+				Else: sequenceOf(typed.fallback),
 			})
 		default:
-			if body, ok := op.(interface{ sequenceBody(string) []SeqNode }); ok {
-				nodes = append(nodes, SeqNode{Kind: SeqRepeat, Then: body.sequenceBody(prefix)})
+			if body, ok := op.(interface{ sequenceBody() []SeqNode }); ok {
+				nodes = append(nodes, SeqNode{Kind: SeqRepeat, Then: body.sequenceBody()})
 				continue
 			}
 			nodes = append(nodes, SeqNode{Kind: SeqSlot})
@@ -116,16 +116,15 @@ func sequenceOf[P any](ops []Op[P], prefix string) []SeqNode {
 // boundary leaves a placeholder whose only varying part is the id, so the frame
 // around it stays static and does not travel per row — which is the whole reason
 // a list of a hundred holes is not a hundred copies of the same markup.
-func componentNode(prefix string) SeqNode {
-	element := prefix + "-boundary"
+func componentNode() SeqNode {
 	return SeqNode{
 		Kind: SeqComponent,
 		Then: []SeqNode{
-			{Kind: SeqStatic, Text: "<" + element + " "},
+			{Kind: SeqStatic, Text: "<template "},
 			{Kind: SeqSlot},
 			{Kind: SeqStatic, Text: `="`},
 			{Kind: SeqSlot},
-			{Kind: SeqStatic, Text: `" style="display:contents"></` + element + ">"},
+			{Kind: SeqStatic, Text: `"></template>`},
 		},
 		Else: []SeqNode{{Kind: SeqSlot}},
 	}
@@ -181,19 +180,13 @@ func LookupSequence(address string) (*Sequence, bool) {
 //
 // The derivation walks the instruction list and evaluates nothing, so it needs
 // no parameters and yields the same tree for every render of this component.
-func (p *Plan[P]) Sequence(boundaryPrefix string) *Sequence {
-	if boundaryPrefix == "" {
-		boundaryPrefix = DefaultBoundaryPrefix
-	}
-	if cached, ok := p.sequences.Load(boundaryPrefix); ok {
-		return cached.(*Sequence)
-	}
-	nodes := sequenceOf(p.Ops, boundaryPrefix)
-	sequence := &Sequence{Address: sequenceAddress(nodes), Nodes: nodes}
-	actual, _ := p.sequences.LoadOrStore(boundaryPrefix, sequence)
-	sequence = actual.(*Sequence)
-	registry.Store(sequence.Address, sequence)
-	return sequence
+func (p *Plan[P]) Sequence() *Sequence {
+	p.sequenceOnce.Do(func() {
+		nodes := sequenceOf(p.Ops)
+		p.sequenceMemo = &Sequence{Address: sequenceAddress(nodes), Nodes: nodes}
+		registry.Store(p.sequenceMemo.Address, p.sequenceMemo)
+	})
+	return p.sequenceMemo
 }
 
 // AppendJSON writes a sequence as the tree a client walks.

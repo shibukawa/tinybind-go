@@ -80,6 +80,8 @@ type streamRecord struct {
 	ID         string   `json:"id"`
 	HTML       string   `json:"html"`
 	Boundaries []string `json:"boundaries"`
+	Seq        string   `json:"seq"`
+	Values     []string `json:"values"`
 	Frame      string   `json:"frame"`
 	Children   string   `json:"children"`
 	Parent     string   `json:"parent"`
@@ -275,5 +277,45 @@ func TestAShrinkingListStaysAChildrenOperation(t *testing.T) {
 	}
 	if strings.Join(list.Boundaries, ",") != "row-0,row-1" {
 		t.Fatalf("boundaries = %v", list.Boundaries)
+	}
+}
+
+// The values-or-markup choice is per fragment, and it was applied on the
+// buffered path and not on the streamed one — which is the path every navigation
+// goes through. A list row is the shape that inverts: two elements cost more as
+// an address plus their values than as the markup itself.
+func TestTheStreamedPathAlsoSendsWhicheverIsSmaller(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	request.Header.Set("X-Tinybind-Render", "navigation")
+	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+	request.Header.Set("X-Tinybind-Sequences", "1")
+	recorder := httptest.NewRecorder()
+	leaf := htmlbind.Bind(listPlan, listParams{ID: "the-list", Rows: rowsUpTo(40)})
+	htmlupdate.ApplyTo(options.StreamHeaders(request, nil, leaf), recorder)
+	if err := options.RenderStreamAsync(request.Context(), recorder, request, nil, leaf); err != nil {
+		t.Fatal(err)
+	}
+	records := childRecords(t, recorder.Body.String())
+
+	row, ok := findRecord(records, "row-0")
+	if !ok {
+		t.Fatalf("the row was not sent: %+v", records)
+	}
+	if row.Seq != "" {
+		values := len(row.Seq)
+		for _, value := range row.Values {
+			values += len(value)
+		}
+		t.Fatalf("a %d-byte row travelled as %d bytes of address and values", len(row.HTML), values)
+	}
+	// The list is the opposite shape — forty hole frames, almost all static — so
+	// the same rule has to send it the other way, or the test would pass with the
+	// choice hard-wired to markup.
+	list, ok := findRecord(records, "the-list")
+	if !ok {
+		t.Fatalf("the list was not sent: %+v", records)
+	}
+	if list.Seq == "" {
+		t.Fatalf("a list of forty holes travelled as markup: %q", list.HTML)
 	}
 }

@@ -110,11 +110,13 @@ type Plan[P any] struct {
 	// same generated code runs cached or uncached.
 	Cache *CachePolicy[P]
 
-	// sequences memoizes the derived static half, keyed by the boundary prefix
-	// that names the placeholder element inside it. Derivation walks the
-	// instruction list and evaluates nothing, so one plan yields one tree
-	// however many times it renders.
-	sequences sync.Map
+	// sequenceOnce and sequenceMemo hold the derived static half. Derivation
+	// walks the instruction list and evaluates nothing, so one plan yields one
+	// tree however many times it renders — and, since the hole a nested boundary
+	// leaves no longer spells the boundary prefix, one tree however that prefix
+	// is named.
+	sequenceOnce sync.Once
+	sequenceMemo *Sequence
 }
 
 // Exec runs the plan against params.
@@ -179,7 +181,7 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 			}
 			continue
 		}
-		if _, repeats := op.(interface{ sequenceBody(string) []SeqNode }); repeats {
+		if _, repeats := op.(interface{ sequenceBody() []SeqNode }); repeats {
 			if err := op.Exec(r, params); err != nil {
 				return err
 			}
@@ -218,9 +220,9 @@ type Fragment struct {
 	// would carry both the hole and the subtree it stands for.
 	opensBoundary bool
 	// sequence derives this component's static half. It closes over the plan
-	// rather than holding the tree, because the tree depends on the boundary
-	// prefix a render option names and one plan is shared by every render.
-	sequence func(prefix string) *Sequence
+	// rather than holding the tree, so a fragment costs nothing until something
+	// asks for the address.
+	sequence func() *Sequence
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
@@ -330,11 +332,11 @@ func (f Fragment) Present() bool { return f.render != nil }
 func (f Fragment) Head() []string { return f.head }
 
 // sequenceAddress names this fragment's static half, or empty when it has none.
-func (f Fragment) sequenceAddress(prefix string) string {
+func (f Fragment) sequenceAddress() string {
 	if f.sequence == nil {
 		return ""
 	}
-	return f.sequence(prefix).Address
+	return f.sequence().Address
 }
 
 // InstanceID returns the update-boundary instance this fragment renders as, and
@@ -444,9 +446,9 @@ func (r *Renderer) nextBoundaryID() string {
 	return prefix + "-" + strconv.Itoa(*r.idCount)
 }
 
-// boundaryPrefix names the placeholder element and the root identifier
-// namespace. A nested boundary inherits its parent's id instead, so this is
-// consulted once per render tree.
+// boundaryPrefix names the await markers and the root identifier namespace. A
+// nested boundary inherits its parent's id instead, so this is consulted once
+// per render tree.
 func (r *Renderer) boundaryPrefix() string {
 	if r.opts != nil && r.opts.boundaryPrefix != "" {
 		return r.opts.boundaryPrefix
@@ -454,22 +456,29 @@ func (r *Renderer) boundaryPrefix() string {
 	return DefaultBoundaryPrefix
 }
 
-// boundaryElement is the placeholder tag name, derived from the same prefix as
-// everything else the protocol puts in the document.
-func (r *Renderer) boundaryElement() string {
-	return boundaryElementOf(r.opts)
-}
+// awaitFenceOpen and awaitFenceClose bracket an await boundary's fallback, so a
+// completion replaces the range between them rather than one element.
+//
+// They are comments rather than the wrapper element this used to write, because
+// the fallback has to be visible and has to stay where it was written, and no
+// element is both:
+//
+//   - An unknown element in table context is foster-parented. The parser moves
+//     it out to just before the table and leaves the fallback rows inside, so a
+//     client replacing the placeholder writes the settled row outside the table
+//     and the fallback stays in the list forever. This is the tree construction
+//     algorithm, not a browser quirk, and no caller markup avoids it.
+//   - A template is kept where it was written, but a template does not render
+//     its content, so the fallback would be invisible until it settled — and a
+//     visible fallback with no JavaScript is what this whole path is for.
+//
+// A comment is kept wherever it appears and renders nothing itself, which is the
+// pair of properties needed. The cost is that a client walks siblings between
+// two markers instead of replacing one node; see the hole placeholder in
+// htmlbind/delta, which stays an element because it has no content to keep.
+func awaitFenceOpen(prefix, id string) string { return "<!--" + prefix + ":" + id + "-->" }
 
-// boundaryElementOf is boundaryElement for a caller holding the options rather
-// than a renderer, which is how a collecting entry names it before any renderer
-// exists.
-func boundaryElementOf(opts *renderOptions) string {
-	prefix := DefaultBoundaryPrefix
-	if opts != nil && opts.boundaryPrefix != "" {
-		prefix = opts.boundaryPrefix
-	}
-	return prefix + "-boundary"
-}
+func awaitFenceClose(prefix, id string) string { return "<!--/" + prefix + ":" + id + "-->" }
 
 // context returns the context this render runs under. The async entries take
 // one directly; the synchronous entries accept one through WithContext so a
