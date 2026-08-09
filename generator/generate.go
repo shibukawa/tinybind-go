@@ -78,7 +78,13 @@ func (g *Generator) generate(load *packageLoad, outDir, outName string) (string,
 		// routetree.Tree.Packages leaves it holding.
 		return "", fmt.Errorf("%w: no generatable structs in %s", ErrNothingToGenerate, dir)
 	}
-	src, err := Emit(plan)
+	// When a backend is selected the two binder sets register the same types
+	// against two runtimes, so they must never compile together.
+	target := netHTTPTarget()
+	if g.Options.Transform != nil {
+		target.buildTag = "!fasthttp"
+	}
+	src, err := emitSelectedFor(plan, nil, target)
 	if err != nil {
 		return "", err
 	}
@@ -87,6 +93,48 @@ func (g *Generator) generate(load *packageLoad, outDir, outName string) (string,
 	}
 	if outName == "" {
 		outName = "tinybind_gen.go"
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(outDir, outName)
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path, nil
+	}
+	return abs, nil
+}
+
+// defaultFastBindersOut is the derived backend's binder and writer file.
+const defaultFastBindersOut = "tinybind_fasthttp_gen.go"
+
+// generateFastBinders writes the selected backend's binders and writers. The
+// transport-free half of the file is emitted into both copies rather than
+// split out: only one ever compiles, so duplicating it on disk costs nothing
+// and keeps each file self-contained.
+func (g *Generator) generateFastBinders(load *packageLoad, outDir, outName string) (string, error) {
+	if g.Options.Transform == nil {
+		return "", nil
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
+	if err != nil {
+		return "", err
+	}
+	if len(plan.Types) == 0 {
+		return "", nil
+	}
+	src, err := emitSelectedFor(plan, nil, fasthttpTarget())
+	if err != nil {
+		return "", err
+	}
+	if outDir == "" {
+		outDir = load.dir
+	}
+	if outName == "" {
+		outName = defaultFastBindersOut
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err

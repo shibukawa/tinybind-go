@@ -3,6 +3,7 @@ package generator
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,5 +132,50 @@ func TestReportOnlyOnACleanPackageSaysNothing(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Errorf("report-only wrote %d files", len(entries))
+	}
+}
+
+// The whole loop: one authored package generates two builds, and each compiles
+// on its own. Everything else in this file is a claim about which file was
+// written; this is the one that would catch two halves that do not fit.
+func TestBothTagConfigurationsCompile(t *testing.T) {
+	transform := DefaultTransformOptions()
+	result, out, err := generateInto(t, "transform_rewrite", &transform)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result.FastBindersPath == "" {
+		t.Fatal("no backend binder file was written")
+	}
+
+	// The generated files join the authored package, which is where they are
+	// meant to live; a temp directory could not resolve the package's own types.
+	const dir = "testdata/transform_rewrite"
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	for _, entry := range entries {
+		source, err := os.ReadFile(filepath.Join(out, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		path := filepath.Join("..", dir, entry.Name())
+		if err := os.WriteFile(path, source, 0o644); err != nil {
+			t.Fatalf("place %s: %v", entry.Name(), err)
+		}
+		t.Cleanup(func() { os.Remove(path) })
+	}
+
+	for _, tags := range []string{"fasthttp", ""} {
+		args := []string{"build", "-o", os.DevNull}
+		if tags != "" {
+			args = append(args, "-tags", tags)
+		}
+		cmd := exec.Command("go", append(args, "./"+dir)...)
+		cmd.Dir = ".."
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("build with tags %q failed: %v\n%s", tags, err, output)
+		}
 	}
 }

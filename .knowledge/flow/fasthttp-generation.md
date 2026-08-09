@@ -64,8 +64,15 @@ flow:
     report_only: TransformOptions.ReportOnly returns the refusals as parser diagnostics, writes nothing and exits zero, riding the same rail as --check
     cli: "-backend fasthttp, -transport-name, -transport-report"
     stamp: the transport file joins Paths and goPaths, so it is stamped and cache-checked with the rest; the stamp comment sits above the build constraint and the file still compiles
+  binders_wired_2026_08_08:
+    mechanism: the emitter takes a transportTarget naming the binder and writer parameter lists, the writer's transport variable, the runtime import path, and the build constraint
+    bodies_unchanged: the fasthttp binder parameter keeps the name r, because every accessor the fasthttp runtime declares takes its transport value first under the same name, so only the signature line and the import move
+    writer: the one place both halves were named; there w and r collapse onto r and the "_ = r" discard disappears with them
+    alias: the runtime is imported as httpbind whichever package it is, so no emitted call changes
+    file_split: selecting a backend tags the existing binder file !fasthttp and adds tinybind_fasthttp_gen.go; the transport-free half is duplicated into both rather than split out, because only one ever compiles
+    why_the_split_is_needed: a generated init registering a net/http binder is reachable by construction, which is exactly the reachability rule:transport-dead-code-elimination warns about
+    verified: one authored package generates two builds and each compiles on its own, tagged and untagged, in one test
   not_yet_wired:
-    - the fasthttp binder and writer emission, which needs the emitter's signature line parameterized the way routetree already is
     - the route registration and the per-route body limit hook of rule:fasthttpbind-body-limit-mapping
   outputs:
     net_http: unchanged; the authored files and their existing generated companions
