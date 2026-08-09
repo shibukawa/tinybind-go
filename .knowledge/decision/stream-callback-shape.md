@@ -44,9 +44,9 @@ unchanged:
   - rule:openapi-streaming-content output
 breaking_change:
   accepted: yes, at v0.4.x
-  migration: NewStream deprecated for one release, then removed; the mechanical rewrite is wrapping the body and deleting the defer
+  migration: NewStream deprecated for one release, then removed 2026-08-10; the mechanical rewrite is wrapping the body and deleting the defer
 discovery_impact:
-  today: parser CallStreamCreate reads the type argument of NewStream[T](w, r) at index 0
+  was: parser CallStreamCreate read the type argument of NewStream[T](w, r) at index 0
   after: the same index on WriteStream[T]; when the call is spelled without an explicit type argument, the element type is inferred from the closure parameter
   verified_2026_08_08:
     result: inference from the func literal parameter works; discovery recovers the element type from a call spelling no type argument at all
@@ -54,6 +54,14 @@ discovery_impact:
     fixture: testdata/stream_writestream, whose call is WriteStream(w, r, func(s *Stream[ChatEvent]) error)
     also_found: the parser keeps its own DefaultConfig of runtime call names, separate from the generator call patterns, and both had to learn WriteStream; a name added to only one is silently undiscovered
   framework_wrappers: generator StreamCreateCall keeps its shape; only the target signature changes
+extended_to_htmlupdate_2026_08_10:
+  status: implemented
+  what: 'OpenStream and OpenLiveStream become WriteStream and WriteLiveStream taking func(*DeltaStream) error'
+  same_two_defects: a producer that forgot to close wrote a truncated stream, and a write error it discarded was invisible; the entry now closes unconditionally and routes the error
+  difference_from_the_typed_stream: "the pre-commit window survives here, because the module's own planning — negotiation and the head render — runs in handler scope on both transports and can still return an error the caller turns into a status"
+  removed_rather_than_deprecated: 'the held pair is gone; a deprecated entry that still compiles is a call site with no counterpart, found at deploy rather than at build'
+  one_type_rule: 'the callback parameter is one type both shells alias, never two that match; a wrapper renaming a method would put a difference in the handler body, which this transform does not rewrite'
+  downstream_agreement: the framework on top had already made the same change to its own stream API and removed rather than deprecated, which is where the argument came from
 related:
   - concept:streaming
   - api:stream-write

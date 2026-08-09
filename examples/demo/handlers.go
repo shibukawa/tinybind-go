@@ -120,7 +120,7 @@ func getUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// chatStreamHandler demos NewStream + multiple Write calls.
+// chatStreamHandler demos WriteStream + multiple Write calls.
 // Transport (SSE / NDJSON-JSONL / JSON array) is selected from Accept / ?stream= / User-Agent.
 func chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	input, err := httpbind.Bind[ChatRequest](r)
@@ -129,32 +129,30 @@ func chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stream, err := httpbind.NewStream[ChatEvent](w, r)
-	if err != nil {
-		httpbind.WriteError(w, r, err)
-		return
-	}
-	defer stream.Close()
-
 	msg := input.Message
 	if msg == "" {
 		msg = "hello"
 	}
 
-	// Incremental event emission (ideal streaming path).
-	events := []ChatEvent{
-		{Type: "start"},
-		{Type: "delta", Delta: msg + " "},
-		{Type: "delta", Delta: "from "},
-		{Type: "delta", Delta: "httpbind"},
-		{Type: "meta", Delta: string(stream.Format())},
-		{Type: "done"},
-	}
-	for _, e := range events {
-		if err := stream.Write(e); err != nil {
-			return
+	// The entry closes the stream, so the JSON array framing is terminated even
+	// when an event fails halfway through.
+	httpbind.WriteStream(w, r, func(stream *httpbind.Stream[ChatEvent]) error {
+		// Incremental event emission (ideal streaming path).
+		events := []ChatEvent{
+			{Type: "start"},
+			{Type: "delta", Delta: msg + " "},
+			{Type: "delta", Delta: "from "},
+			{Type: "delta", Delta: "httpbind"},
+			{Type: "meta", Delta: string(stream.Format())},
+			{Type: "done"},
 		}
-	}
+		for _, e := range events {
+			if err := stream.Write(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // forbiddenDemoHandler always fails with a domain 403 error.

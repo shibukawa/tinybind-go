@@ -3,6 +3,7 @@ package htmlupdate_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -202,16 +203,26 @@ func TestLiveStreamCarriesDeliveriesWithoutRestatingTheManifest(t *testing.T) {
 	}
 }
 
+// liveRequest is a live request, which is all WriteLiveStream reads from one.
+func liveRequest() *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	request.Header.Set("X-Tinybind-Render", "live")
+	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+	return request
+}
+
 // A healthy close at the server's own lifetime bound is not a fault. Without the
 // distinction a client backs off on both, which stalls a working screen every
 // time the server rotates a connection.
 func TestRetryTerminatorNamesAHealthyClose(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	stream := options.OpenLiveStream(recorder, nil)
-	stream.Replace("c1", `<main id="c1">now</main>`, htmlupdate.ManifestEntry{Frame: ""})
-	if err := stream.Retry(2 * time.Second); err != nil {
-		t.Fatal(err)
-	}
+	options.WriteLiveStream(recorder, liveRequest(), nil,
+		func(stream *htmlupdate.DeltaStream) error {
+			stream.Replace("c1", `<main id="c1">now</main>`, htmlupdate.ManifestEntry{Frame: ""})
+			// Retry writes the terminator itself, so the entry's own Close is a
+			// no-op after it: a healthy rollover must not also say final.
+			return stream.Retry(2 * time.Second)
+		})
 	var last map[string]any
 	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
@@ -226,15 +237,11 @@ func TestRetryTerminatorNamesAHealthyClose(t *testing.T) {
 	if last["retryMs"] != float64(2000) {
 		t.Fatalf("retry hint = %+v", last)
 	}
-	// Close after Retry must not write a second terminator.
+	// The entry closes the stream after the callback returns, and Retry already
+	// wrote the terminator. A healthy rollover that also said final would tell
+	// the client to stop, so this counts rather than assumes.
 	if got := strings.Count(recorder.Body.String(), `"r":"end"`); got != 1 {
-		t.Fatalf("terminator written %d times", got)
-	}
-	if err := stream.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(recorder.Body.String(), `"r":"end"`); got != 1 {
-		t.Fatalf("Close after Retry wrote another terminator: %q", recorder.Body.String())
+		t.Fatalf("terminator written %d times: %q", got, recorder.Body.String())
 	}
 }
 
@@ -279,5 +286,73 @@ func TestCancelledLiveStreamClosesRetry(t *testing.T) {
 	}
 	if last["reason"] != "retry" {
 		t.Fatalf("terminator = %+v, want the client told to come back", last)
+	}
+}
+
+// brokenWriter is a client that went away: every write fails, as a closed
+// socket does.
+type brokenWriter struct{ header http.Header }
+
+func (b *brokenWriter) Header() http.Header {
+	if b.header == nil {
+		b.header = http.Header{}
+	}
+	return b.header
+}
+func (b *brokenWriter) Write([]byte) (int, error) { return 0, errors.New("connection reset") }
+func (b *brokenWriter) WriteHeader(int)           {}
+
+// A live source delivers until somebody stops it, so the stream has to stop
+// when nobody is reading. This is the one disconnect signal both transports
+// have: net/http also cancels the request context, and fasthttp does not cancel
+// anything per request, so a loop that ignored a failed write would render a
+// subscription into a closed socket until the server stopped.
+//
+// The source is capped so a missing guard fails this test instead of hanging
+// it.
+func TestALiveStreamStopsWhenWritingFails(t *testing.T) {
+	const cap = 500
+	delivered := 0
+	unbounded := &htmlbind.Plan[liveParams]{
+		Boundary:      livePlan.Boundary,
+		HasAwaitBlock: true,
+		HasLiveBlock:  true,
+		Ops: []htmlbind.Op[liveParams]{
+			liveOps.Static("<section"),
+			liveOps.BoundaryAttr(),
+			liveOps.Static(">"),
+			htmlbind.Live(
+				func(ctx context.Context, p liveParams) []htmlbind.LiveBinding[string] {
+					return []htmlbind.LiveBinding[string]{
+						func(deliver func(func(*string), error) bool) error {
+							for i := 0; i < cap; i++ {
+								if !deliver(func(scope *string) { *scope = "tick" }, nil) {
+									return nil
+								}
+								delivered++
+							}
+							return nil
+						},
+					}
+				},
+				func(liveParams) string { return "" },
+				func(_ liveParams, err htmlbind.AsyncError) htmlbind.AsyncError { return err },
+				[]htmlbind.Op[string]{htmlbind.Builder[string]{}.Text(func(value string) string { return value })},
+				[]htmlbind.Op[liveParams]{liveOps.Static("pending")},
+				nil,
+			),
+			liveOps.Static("</section>"),
+		},
+	}
+
+	err := options.RenderLiveStream(context.Background(), &brokenWriter{}, liveRequest(),
+		nil, htmlbind.Bind(unbounded, liveParams{}))
+	if err == nil {
+		t.Fatal("a stream written into a closed socket reported no error")
+	}
+	// A couple of deliveries can be in flight before the first failed write is
+	// observed. What must not happen is the source running to its cap.
+	if delivered > 8 {
+		t.Errorf("the source delivered %d times after the client went away", delivered)
 	}
 }

@@ -98,6 +98,12 @@ hook_stops_answering_2026_08_09:
   default_preserved_differently: 'the as_built note below says WriteFailure is what a caller delegates to; it is now FailureResponse, and a caller raising a refusal of its own still answers in one shape rather than reimplementing five status codes'
   acceptance_reread: a caller answers with its own error page by not sending the Response it was handed, rather than by taking over a writer
   a_constraint_this_dissolves: 'the third constraint below — a hook that panics or writes nothing must not leave the response uncommitted — cannot arise once the hook cannot write'
+hook_takes_a_context_2026_08_10:
+  was: 'OnFailure(r *http.Request, failure Failure)'
+  now: 'OnFailure(ctx context.Context, failure Failure)'
+  why: a log line and a span want the trace, the deadline, and what the caller's middleware put there, and none of them want the transport; every use of the parameter this module or its docs ever showed was r.Context()
+  what_it_unblocks: the field means the same thing on a backend whose request type is not *http.Request, so requirement:transport-port-surface no longer has to port a callback to port an entry
+  caller_migration: one signature edit; a body already reading r.Context() drops the call
 related:
   - policy:problem-details
   - api:write-error

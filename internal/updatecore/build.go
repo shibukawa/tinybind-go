@@ -1,4 +1,4 @@
-package htmlupdate
+package updatecore
 
 import (
 	"crypto/rand"
@@ -59,8 +59,8 @@ func processID() string {
 	return "dev-" + base64.RawURLEncoding.EncodeToString(raw[:])
 }
 
-// buildID returns the configured identity, or the running binary's.
-func (o Options) buildID() string {
+// Build returns the configured identity, or the running binary's.
+func (o Options) Build() string {
 	if o.BuildID != "" {
 		return o.BuildID
 	}

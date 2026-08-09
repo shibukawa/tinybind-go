@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/internal/updatecore"
 )
 
 // This package writes bytes and nothing else. It sets no header and no status on
@@ -71,14 +72,24 @@ func (resp Response) WriteTo(w http.ResponseWriter) (int64, error) {
 	return int64(written), err
 }
 
+// ApplyTo copies a computed header set onto a response, adding rather than
+// replacing so a caller's own values survive.
+func ApplyTo(header http.Header, w http.ResponseWriter) {
+	target := w.Header()
+	for name, values := range header {
+		for _, value := range values {
+			target.Add(name, value)
+		}
+	}
+}
+
 // NotModified reports whether the request already holds this answer, by
 // comparing its If-None-Match against the entity tag this response carries.
 //
 // Answering it is the caller's: a 304 is a cache policy decision, and this
 // package no longer makes one. A response with no entity tag is never a match.
 func (resp Response) NotModified(r *http.Request) bool {
-	etag := resp.Header.Get("ETag")
-	return etag != "" && matchesETag(r.Header.Get("If-None-Match"), etag)
+	return updatecore.Response(resp).NotModified(reader(r))
 }
 
 // Headers is what a response to this request must carry, for the entries that
@@ -89,30 +100,7 @@ func (resp Response) NotModified(r *http.Request) bool {
 // and the live marker from the composition. Pass the wrappers and leaf a render
 // entry will be given; pass none and the live marker is omitted.
 func (o Options) Headers(r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) http.Header {
-	negotiated := o.Negotiate(r)
-	header := http.Header{}
-	for _, name := range o.varyOn(negotiated.Mode) {
-		header.Add("Vary", name)
-	}
-	header.Set("Content-Type", o.contentTypeFor(negotiated.Mode))
-	if negotiated.Mode != ModeDocument {
-		header.Set(o.renderHeader(), renderToken(negotiated.Mode, negotiated.Version))
-	}
-	if leaf.Present() && htmlbind.HasLiveBlock(wrappers, leaf) {
-		header.Set(o.liveHeader(), "1")
-	}
-	return header
-}
-
-// ApplyTo copies a computed header set onto a response, adding rather than
-// replacing so a caller's own values survive.
-func ApplyTo(header http.Header, w http.ResponseWriter) {
-	target := w.Header()
-	for name, values := range header {
-		for _, value := range values {
-			target.Add(name, value)
-		}
-	}
+	return o.core().Headers(reader(r), wrappers, leaf)
 }
 
 // RedrawHeaders names the Vary axes a URL that answers redraws depends on,
@@ -125,44 +113,7 @@ func ApplyTo(header http.Header, w http.ResponseWriter) {
 // whether or not this request was a redraw, which is why they are computable
 // without deciding.
 func (o Options) RedrawHeaders(r *http.Request) http.Header {
-	header := http.Header{}
-	for _, name := range o.varyOn(ModeRedraw) {
-		header.Add("Vary", name)
-	}
-	return header
-}
-
-// varyOn names the request headers a response in this mode depends on.
-//
-// The render and build headers are always there: without the first a shared
-// cache can hand a delta body to a browser asking for a page, and without the
-// second it can hand one build's markup to another build's client. A redraw and
-// a sequence read more, and a page and its redraw share a URL, so two components
-// redrawing on one page would otherwise be a single cache entry.
-func (o Options) varyOn(mode Mode) []string {
-	switch mode {
-	case ModeRedraw:
-		return []string{o.renderHeader(), o.buildHeader(), o.kindHeader(), o.instanceHeader()}
-	case ModeSequence:
-		return []string{o.renderHeader(), o.sequenceAddressHeader()}
-	default:
-		return []string{o.renderHeader(), o.buildHeader()}
-	}
-}
-
-// contentTypeFor names the body a buffered entry writes in each mode.
-//
-// A live request reaching a buffered entry is answered with the document, since
-// that entry cannot hold a delivery stream open, so it takes the document type
-// rather than the stream one. StreamHeaders is what an entry that can hold one
-// uses instead.
-func (o Options) contentTypeFor(mode Mode) string {
-	switch mode {
-	case ModeNavigation, ModeRedraw, ModeSequence:
-		return "application/json; charset=utf-8"
-	default:
-		return "text/html; charset=utf-8"
-	}
+	return o.core().RedrawHeaders(reader(r))
 }
 
 // StreamHeaders is Headers for a streamed navigation, whose body is a record
@@ -173,26 +124,11 @@ func (o Options) contentTypeFor(mode Mode) string {
 // response claims to be has to be what it is, or a proxy substitution stops
 // being detectable.
 func (o Options) StreamHeaders(r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) http.Header {
-	return o.streamHeaders(r, wrappers, leaf, false)
+	return o.core().StreamHeaders(reader(r), wrappers, leaf)
 }
 
 // LiveHeaders is StreamHeaders for the entry that does hold subscriptions open,
 // so a live request keeps the live mode rather than being downgraded.
 func (o Options) LiveHeaders(r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) http.Header {
-	return o.streamHeaders(r, wrappers, leaf, true)
-}
-
-func (o Options) streamHeaders(r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, servesLive bool) http.Header {
-	header := o.Headers(r, wrappers, leaf)
-	negotiated := o.Negotiate(r)
-	switch negotiated.Mode {
-	case ModeNavigation:
-		header.Set("Content-Type", o.streamContentType())
-	case ModeLive:
-		header.Set("Content-Type", o.streamContentType())
-		if !servesLive {
-			header.Set(o.renderHeader(), renderToken(ModeNavigation, negotiated.Version))
-		}
-	}
-	return header
+	return o.core().LiveHeaders(reader(r), wrappers, leaf)
 }

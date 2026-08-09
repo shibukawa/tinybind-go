@@ -13,7 +13,7 @@ configuration:
   special_type_identity: package path + type name + generator role
   model: data:generator-options
 defaults:
-  calls: Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows, configbind.Bind, error constructors
+  calls: Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, WriteStream, ScanRows, configbind.Bind, error constructors
   routes: net/http package registrars and net/http.ServeMux methods
   special_types: httpbind.File
 behavior:

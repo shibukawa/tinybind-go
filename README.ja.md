@@ -90,36 +90,34 @@ type SearchRequest struct {
 ### ストリーミング（理想 API）
 
 ```go
-stream, err := httpbind.NewStream[ChatEvent](w, r)
-if err != nil {
-    httpbind.WriteError(w, r, err)
-    return
-}
-defer stream.Close()
-
-_ = stream.Write(ChatEvent{Type: "delta", Delta: "hi"})
-_ = stream.Write(ChatEvent{Type: "done"})
+httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
+    if err := s.Write(ChatEvent{Type: "delta", Delta: "hi"}); err != nil {
+        return err
+    }
+    return s.Write(ChatEvent{Type: "done"})
+})
 ```
 
 - **`Write` は何度でも呼べる**（インクリメンタルなイベント送出）。
-- 形式は `NewStream` で一度だけ決定（`?stream=` → `Accept` → `User-Agent` → 既定 **NDJSON**）。
+- 形式はストリームが開くときに一度だけ決定（`?stream=` → `Accept` → `User-Agent` → 既定 **NDJSON**）。
+- ストリームを閉じるのはエントリ側なので、コールバックが途中で失敗しても JSON array の末尾 `]` は書かれます。
 - 形式:
   - **SSE** — `text/event-stream`
   - **NDJSON / JSONL** — `application/x-ndjson`（1 行 1 オブジェクト。**JSON 配列ではない**）
-  - **JSON array** — `application/json` の `[obj1,obj2,...]`（末尾の `]` は `Close` が書く）
+  - **JSON array** — `application/json` の `[obj1,obj2,...]`（末尾の `]` はストリームを閉じるときに書かれる）
 - 削除済みの `WriteNDJSON` / `WriteSSE` は使わない。
 
 ## パッケージ構成
 
 | パス | 役割 |
 |------|------|
-| `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / NewStream / OpenAPI 配信 / SwaggerUI |
+| `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / WriteStream / OpenAPI 配信 / SwaggerUI |
 | `jsonbind/` | 単独の DecodeJSON / EncodeJSON。`net/http` と `database/sql` を import しない |
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
 | `dynamobind/` | `tinygodriver/nosql/dynamodb` 上の DynamoDB item runtime。`net/http` も `database/sql` も import しない |
 | `firestorebind/` | `tinygodriver/nosql/datastore` 上の Firestore（Datastore mode）entity runtime。`net/http` も `database/sql` も import しない |
 | `generator/` | フィールド計画に基づくバインダ／ライタ + OpenAPI 3.1 埋め込み生成 |
-| `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`NewStream`、エラー） |
+| `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`WriteStream`、エラー） |
 | `templates/htmlbind/` | 型付きで文脈安全な HTML template compiler |
 | `templates/sqlbind/` | 型付き parameterized SQL template compiler |
 | `templates/firestorebind/` | 型付き Firestore アクセスパターン宣言（`.tb.firestore`） |
@@ -285,7 +283,7 @@ go generate ./examples/demo
 go run ./examples/demo
 # http://localhost:8080/       インデックス + ブラウザ向けストリーム demo
 # http://localhost:8080/docs/  Swagger UI
-# http://localhost:8080/chat   NewStream（SSE / NDJSON / JSON array 自動）
+# http://localhost:8080/chat   WriteStream（SSE / NDJSON / JSON array 自動）
 ```
 
 curl 例の詳細は [`examples/demo/README.md`](examples/demo/README.md) を参照してください。
@@ -388,7 +386,7 @@ experiment を有効にした strip 済み wasm ビルドは、同じプログ�
 |------|------|
 | ツールチェイン | プロジェクト基準は TinyGo 0.41.1 + Go 1.26.x |
 | js/wasm HTTP | TinyGo 0.41.1 + Go 1.26.x は `net/http/roundtrip_js.go` 内で失敗するため、HTTP 不要の WASM では `jsonbind` を使う |
-| ストリーミング | `NewStream` はホストの `go test` を推奨。TinyGo 行列は未整備 |
+| ストリーミング | `WriteStream` はホストの `go test` を推奨。TinyGo 行列は未整備 |
 | ServeMux | `DefaultOptions` は `net/http.ServeMux` と `tinygodriver/httpmux.ServeMux` の両方を探索。TinyGo で Go 1.22 のメソッド・ワイルドカードルーティングを使う場合は `httpmux` を利用 |
 | Multipart `File` | `httpbind.File`（`payload`）で対応。サイズ/MIME の `check` は未対応。ボディ上限のデフォルトは **1 MiB**（`SetMaxMultipartBodyBytes`） |
 | SQLマッピング | `ScanRows` と生成SQLスキャナはホストGo向けで、TinyGoビルドから除外 |

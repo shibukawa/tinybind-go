@@ -374,21 +374,16 @@ type ChatEvent struct {
 }
 
 func chat(w http.ResponseWriter, r *http.Request) {
-	stream, err := httpbind.NewStream[ChatEvent](w, r)
-	if err != nil {
-		httpbind.WriteError(w, r, err)
-		return
-	}
-	defer stream.Close()
-
-	if err := stream.Write(ChatEvent{Type: "delta", Delta: "hello"}); err != nil {
-		return
-	}
-	_ = stream.Write(ChatEvent{Type: "done"})
+	httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
+		if err := s.Write(ChatEvent{Type: "delta", Delta: "hello"}); err != nil {
+			return err
+		}
+		return s.Write(ChatEvent{Type: "done"})
+	})
 }
 ```
 
-ハンドラーはワイヤ形式を一度も名指ししていません。形式を選ぶのは `NewStream` で、次の順に一度だけ決まります。
+ハンドラーはワイヤ形式を一度も名指ししていません。形式はストリームが開くときに、次の順で一度だけ決まります。
 
 1. `?stream=`
 2. `Accept` ヘッダー
@@ -410,7 +405,7 @@ curl -H 'Accept: application/json' http://localhost:8080/chat
 
 ## OpenAPI と Swagger UI
 
-ジェネレーターは、発見したルート、`Bind` の型、`Write` / `WriteStatus` / `NewStream` の型、HTTP エラーを OpenAPI に反映します。
+ジェネレーターは、発見したルート、`Bind` の型、`Write` / `WriteStatus` / `WriteStream` の型、HTTP エラーを OpenAPI に反映します。
 
 生成が package 単位であることが、この仕組みを組み立て可能にしています。framework package では health check などの組み込み route を一度だけ生成し、モジュラモノリスの各 package はそれぞれの route を生成する。それらの package を import すると fragment が登録され、`httpbind` が deterministic に1つの文書へ統合します。同じ path/method の競合は error です。名前は同じでも形の違う schema には、代わりに package-qualified な component 名が割り当てられます。
 

@@ -344,9 +344,10 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 
 func (e *goEmitter) emitImports() {
 	e.b.WriteString("import (\n")
-	// context reaches generated code through an await boundary's bindings, and
-	// through any synchronous external whose implementation declared one.
-	if e.c.usesAwait() || e.usesSyncRenderContext() {
+	// context reaches generated code through an await boundary's bindings,
+	// through any synchronous external whose implementation declared one, and
+	// through a redraw registration, whose Render takes one it does not read.
+	if e.c.usesAwait() || e.usesSyncRenderContext() || e.c.usesReloadable() {
 		e.b.WriteString("\t\"context\"\n")
 	}
 	// strings is used only by the generated record JSON encoders; every other
@@ -359,9 +360,6 @@ func (e *goEmitter) emitImports() {
 	}
 	if e.c.usesKind(kindURL) || e.c.usesReloadable() {
 		e.b.WriteString("\t\"net/url\"\n")
-	}
-	if e.c.usesReloadable() {
-		e.b.WriteString("\t\"net/http\"\n")
 	}
 	e.b.WriteString("\n\t\"github.com/shibukawa/tinybind-go/htmlbind\"\n")
 	if e.usesBoundary() {

@@ -17,17 +17,17 @@ Sample app that exercises the main library features end-to-end.
 | OpenAPI 3.1 embed | `/openapi.json` |
 | godoc as OpenAPI docs | handler / struct / field comments → `summary`, `description` |
 | Swagger UI | `/docs/` |
-| **Streaming ideal API** | `POST /chat` via `NewStream[T]` + multi `Write` |
+| **Streaming ideal API** | `POST /chat` via `WriteStream[T]` + multi `Write` |
 
 ## Streaming model
 
 ```go
-stream, err := httpbind.NewStream[ChatEvent](w, r)
-if err != nil { ... }
-defer stream.Close()
-
-_ = stream.Write(ChatEvent{Type: "delta", Delta: "hi"})
-_ = stream.Write(ChatEvent{Type: "done"})
+httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
+    if err := s.Write(ChatEvent{Type: "delta", Delta: "hi"}); err != nil {
+        return err
+    }
+    return s.Write(ChatEvent{Type: "done"})
+})
 ```
 
 ### Format selection (automatic)
@@ -42,8 +42,8 @@ _ = stream.Write(ChatEvent{Type: "done"})
 | 3 | curl / wget / httpie | NDJSON |
 | 4 | default | NDJSON |
 
-`Write` is **safe to call many times**. Headers/status are sent only in `NewStream`.  
-JSON array mode needs `defer stream.Close()` so the trailing `]` is written.
+`Write` is **safe to call many times**. Headers and status are sent once, when the stream opens.  
+The entry closes the stream, so JSON array mode gets its trailing `]` even when the callback fails halfway.
 
 **NDJSON/JSONL ≠ JSON array**: JSONL is one object per line; JSON array is a single `[obj1,obj2]` body.
 
@@ -107,7 +107,7 @@ curl -sSN -X POST 'http://localhost:8080/chat' \
 ```
 examples/demo/
   main.go
-  handlers.go                 # routes + NewStream chat
+  handlers.go                 # routes + WriteStream chat
   index.tb.html               # typed, context-safe HTML template
   index_script.go             # JavaScript passed as trusted script content
   types.go                    # includes ServerConfig (configbind)

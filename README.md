@@ -89,19 +89,17 @@ Response structs commonly use standard `json:"..."` names for encoding; request 
 ### Streaming (ideal API)
 
 ```go
-stream, err := httpbind.NewStream[ChatEvent](w, r)
-if err != nil {
-    httpbind.WriteError(w, r, err)
-    return
-}
-defer stream.Close()
-
-_ = stream.Write(ChatEvent{Type: "delta", Delta: "hi"})
-_ = stream.Write(ChatEvent{Type: "done"})
+httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
+    if err := s.Write(ChatEvent{Type: "delta", Delta: "hi"}); err != nil {
+        return err
+    }
+    return s.Write(ChatEvent{Type: "done"})
+})
 ```
 
 - **`Write` can be called many times** (incremental events).
-- Format is chosen once in `NewStream` from `?stream=`, `Accept`, `User-Agent`, then default **NDJSON**.
+- Format is chosen once when the stream opens, from `?stream=`, `Accept`, `User-Agent`, then default **NDJSON**.
+- The entry closes the stream, so the trailing `]` of the JSON array framing is written even when the callback fails halfway.
 - Formats:
   - **SSE** — `text/event-stream`
   - **NDJSON / JSONL** — `application/x-ndjson` (one object per line; *not* a JSON array)
@@ -112,13 +110,13 @@ _ = stream.Write(ChatEvent{Type: "done"})
 
 | Path | Role |
 |------|------|
-| `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / NewStream / OpenAPI serve / SwaggerUI |
+| `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / WriteStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
 | `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
 | `firestorebind/` | Firestore Datastore-mode entity runtime over `tinygodriver/nosql/datastore`; does not import `net/http` or `database/sql` |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
-| `parser/` | Route/handler discovery (`Bind`, `Write`, `NewStream`, errors) |
+| `parser/` | Route/handler discovery (`Bind`, `Write`, `WriteStream`, errors) |
 | `templates/htmlbind/` | Typed, context-safe HTML template compiler |
 | `templates/sqlbind/` | Typed, parameterized SQL template compiler |
 | `templates/firestorebind/` | Typed Firestore access-pattern declarations (`.tb.firestore`) |
@@ -375,7 +373,7 @@ go generate ./examples/demo
 go run ./examples/demo
 # http://localhost:8080/       index + browser stream demo
 # http://localhost:8080/docs/  Swagger UI
-# http://localhost:8080/chat   NewStream (SSE / NDJSON / JSON array auto)
+# http://localhost:8080/chat   WriteStream (SSE / NDJSON / JSON array auto)
 ```
 
 See [`examples/demo/README.md`](examples/demo/README.md) for full curl recipes.
@@ -514,7 +512,7 @@ Verified with **TinyGo 0.41.1 + Go 1.26.x**.
 |-------|------------|
 | Toolchain | Project baseline is TinyGo 0.41.1 + Go 1.26.x |
 | js/wasm HTTP | TinyGo 0.41.1 + Go 1.26.x fails inside `net/http/roundtrip_js.go`; use `jsonbind` for HTTP-free WASM code |
-| Streaming | Prefer host `go test` for `NewStream`; not fully TinyGo-matrixed |
+| Streaming | Prefer host `go test` for `WriteStream`; not fully TinyGo-matrixed |
 | ServeMux | `DefaultOptions` discovers both `net/http.ServeMux` and `tinygodriver/httpmux.ServeMux`; use `httpmux` for Go 1.22 method and wildcard routing under TinyGo |
 | Multipart `File` | Supported via `httpbind.File` (`payload`); size/MIME `check` rules deferred. Body cap defaults to **1 MiB** (`SetMaxMultipartBodyBytes`) |
 | SQL mapping | `ScanRows` and generated SQL scanners target host Go and are excluded from TinyGo builds |

@@ -177,7 +177,7 @@ func (e *goEmitter) emitReloadable(component *TemplateDecl, params, kind string)
 	e.b.WriteString("// Its parameters arrive from the caller, so it authorizes them itself.\n")
 	fmt.Fprintf(&e.b, "const %sKind = %s\n\n", name, strconv.Quote(kind))
 	fmt.Fprintf(&e.b, "var %sReloadable = htmlupdate.Reloadable{\n\tKindID: %sKind,\n", name, name)
-	e.b.WriteString("\tRender: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {\n")
+	e.b.WriteString("\tRender: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {\n")
 	fmt.Fprintf(&e.b, "\t\tvar params %s\n\t\tparams.%s = instanceID\n", params, goPublicName(reloadableIDParameter))
 	for _, parameter := range component.Parameters {
 		if parameter.Name == reloadableIDParameter {

@@ -3,7 +3,7 @@ id: concept:streaming
 type: concept
 title: Typed Streaming
 ---
-Streaming uses a writable Stream[T] obtained from NewStream; handlers call Write repeatedly for each event.
+Streaming uses a writable Stream[T] the runtime hands to a callback; handlers call Write repeatedly for each event.
 
 ```yaml
 api: api:new-stream
@@ -12,13 +12,13 @@ not:
   - WriteNDJSON batch helper
   - WriteSSE batch helper
 handler_shape: |
-  stream, err := httpbind.NewStream[ChatEvent](w, r)
+  httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error { ... })
   if err != nil { ... }
   defer stream.Close()
   _ = stream.Write(ChatEvent{Type: "delta", Delta: "hi"})
   _ = stream.Write(ChatEvent{Type: "done"})
 service_note: |
-  Preferred handler-side API is NewStream + Write.
+  The handler-side API is WriteStream + Write; the held NewStream entry was removed 2026-08-10, see api:new-stream.
   Returning Stream[T] from a pure service function remains a future convenience
   if generation wires it to the same runtime writer.
 formats:

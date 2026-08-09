@@ -33,26 +33,37 @@ func init() {
 	})
 }
 
-func TestNewStream_MultipleWrites_NDJSON(t *testing.T) {
+// The held-stream entry is gone, so these drive the callback instead. What each
+// case actually asserts is the negotiated format and the bytes it framed, and
+// neither of those moved: the entry opens the stream exactly where the removed
+// one did.
+func streamCase(t *testing.T, req *http.Request, body func(*httpbind.Stream[evt]) error) (*httptest.ResponseRecorder, httpbind.StreamFormat) {
+	t.Helper()
 	rec := httptest.NewRecorder()
+	var format httpbind.StreamFormat
+	httpbind.WriteStream(rec, req, func(s *httpbind.Stream[evt]) error {
+		format = s.Format()
+		if body == nil {
+			return nil
+		}
+		return body(s)
+	})
+	return rec, format
+}
+
+func TestWriteStream_MultipleWrites_NDJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.Header.Set("User-Agent", "curl/8.4.0")
 
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
+	rec, format := streamCase(t, req, func(s *httpbind.Stream[evt]) error {
+		if err := s.Write(evt{Type: "a", N: 1}); err != nil {
+			return err
+		}
+		return s.Write(evt{Type: "b", N: 2})
+	})
+	if format != httpbind.StreamNDJSON {
+		t.Fatalf("format %q", format)
 	}
-	if s.Format() != httpbind.StreamNDJSON {
-		t.Fatalf("format %q", s.Format())
-	}
-	if err := s.Write(evt{Type: "a", N: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Write(evt{Type: "b", N: 2}); err != nil {
-		t.Fatal(err)
-	}
-	_ = s.Close()
-
 	if !strings.Contains(rec.Header().Get("Content-Type"), "ndjson") {
 		t.Fatalf("ctype %q", rec.Header().Get("Content-Type"))
 	}
@@ -66,50 +77,40 @@ func TestNewStream_MultipleWrites_NDJSON(t *testing.T) {
 	}
 }
 
-func TestNewStream_AcceptSSE(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteStream_AcceptSSE(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.Header.Set("Accept", "text/html, text/event-stream, application/json")
 
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rec, format := streamCase(t, req, func(s *httpbind.Stream[evt]) error {
+		_ = s.Write(evt{Type: "x", N: 1})
+		return s.Write(evt{Type: "y", N: 2})
+	})
 	// first matching stream media type: text/html ignored, then event-stream
-	if s.Format() != httpbind.StreamSSE {
-		t.Fatalf("format %q", s.Format())
+	if format != httpbind.StreamSSE {
+		t.Fatalf("format %q", format)
 	}
-	_ = s.Write(evt{Type: "x", N: 1})
-	_ = s.Write(evt{Type: "y", N: 2})
-	_ = s.Close()
 	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("ctype %q", rec.Header().Get("Content-Type"))
 	}
-	body := rec.Body.String()
-	if strings.Count(body, "data: ") != 2 {
+	if body := rec.Body.String(); strings.Count(body, "data: ") != 2 {
 		t.Fatalf("sse events: %s", body)
 	}
 }
 
-func TestNewStream_JSONArray_AcceptJSON(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteStream_JSONArray_AcceptJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
 	req.Header.Set("Accept", "application/json")
 
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Format() != httpbind.StreamJSONArray {
-		t.Fatalf("format %q", s.Format())
+	rec, format := streamCase(t, req, func(s *httpbind.Stream[evt]) error {
+		_ = s.Write(evt{Type: "a", N: 1})
+		return s.Write(evt{Type: "b", N: 2})
+	})
+	if format != httpbind.StreamJSONArray {
+		t.Fatalf("format %q", format)
 	}
 	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
 		t.Fatalf("ctype %q", rec.Header().Get("Content-Type"))
 	}
-	_ = s.Write(evt{Type: "a", N: 1})
-	_ = s.Write(evt{Type: "b", N: 2})
-	_ = s.Close()
-
 	body := rec.Body.String()
 	var got []evt
 	if err := json.Unmarshal([]byte(body), &got); err != nil {
@@ -127,92 +128,73 @@ func TestNewStream_JSONArray_AcceptJSON(t *testing.T) {
 	}
 }
 
-func TestNewStream_JSONArray_EmptyClose(t *testing.T) {
-	rec := httptest.NewRecorder()
+// The entry closes the stream, so an empty producer still terminates the array
+// document. That is the defect the held shape allowed: a caller who forgot the
+// defer sent an unterminated body with a 200 on it.
+func TestWriteStream_JSONArray_EmptyClose(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat?stream=json", nil)
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
+	rec, format := streamCase(t, req, nil)
+	if format != httpbind.StreamJSONArray {
+		t.Fatalf("format %q", format)
 	}
-	if s.Format() != httpbind.StreamJSONArray {
-		t.Fatalf("format %q", s.Format())
-	}
-	_ = s.Close()
 	if rec.Body.String() != "[]" {
 		t.Fatalf("body %q", rec.Body.String())
 	}
 }
 
-func TestNewStream_JSONArray_QueryOverridesUA(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteStream_JSONArray_QueryOverridesUA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat?stream=array", nil)
 	req.Header.Set("User-Agent", "curl/8.0")
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Format() != httpbind.StreamJSONArray {
-		t.Fatalf("format %q", s.Format())
+	if _, format := streamCase(t, req, nil); format != httpbind.StreamJSONArray {
+		t.Fatalf("format %q", format)
 	}
 }
 
-func TestNewStream_JSONL_NotArray(t *testing.T) {
+func TestWriteStream_JSONL_NotArray(t *testing.T) {
 	// JSONL/NDJSON must stay line-delimited, not a JSON array.
-	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/chat?stream=jsonl", nil)
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
+	rec, format := streamCase(t, req, func(s *httpbind.Stream[evt]) error {
+		return s.Write(evt{Type: "a", N: 1})
+	})
+	if format != httpbind.StreamNDJSON {
+		t.Fatalf("format %q want ndjson", format)
 	}
-	if s.Format() != httpbind.StreamNDJSON {
-		t.Fatalf("format %q want ndjson", s.Format())
-	}
-	_ = s.Write(evt{Type: "a", N: 1})
-	_ = s.Close()
-	body := rec.Body.String()
-	if strings.HasPrefix(strings.TrimSpace(body), "[") {
+	if body := rec.Body.String(); strings.HasPrefix(strings.TrimSpace(body), "[") {
 		t.Fatalf("jsonl must not be array: %q", body)
 	}
 }
 
-func TestNewStream_QueryParamOverridesUA(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteStream_QueryParamOverridesUA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat?stream=sse", nil)
 	req.Header.Set("User-Agent", "curl/8.0")
-
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Format() != httpbind.StreamSSE {
-		t.Fatalf("format %q", s.Format())
+	if _, format := streamCase(t, req, nil); format != httpbind.StreamSSE {
+		t.Fatalf("format %q", format)
 	}
 }
 
-func TestNewStream_BrowserUA(t *testing.T) {
-	rec := httptest.NewRecorder()
+func TestWriteStream_BrowserUA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chat", nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/120.0.0.0")
-
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Format() != httpbind.StreamSSE {
-		t.Fatalf("format %q want sse", s.Format())
+	if _, format := streamCase(t, req, nil); format != httpbind.StreamSSE {
+		t.Fatalf("format %q want sse", format)
 	}
 }
 
-func TestNewStream_WriteAfterClose(t *testing.T) {
-	rec := httptest.NewRecorder()
+// Closing inside the producer is allowed and the entry's own Close after it is
+// a no-op, so a producer that terminates early cannot produce two endings.
+func TestWriteStream_WriteAfterClose(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	s, err := httpbind.NewStream[evt](rec, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = s.Close()
-	if err := s.Write(evt{Type: "x"}); err == nil {
-		t.Fatal("expected error after close")
+	rec, _ := streamCase(t, req, func(s *httpbind.Stream[evt]) error {
+		if err := s.Close(); err != nil {
+			return err
+		}
+		if err := s.Write(evt{Type: "x"}); err == nil {
+			t.Error("expected error after close")
+		}
+		return nil
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
 	}
 }
 

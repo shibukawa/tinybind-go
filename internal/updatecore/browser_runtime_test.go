@@ -1,4 +1,4 @@
-package htmlupdate_test
+package updatecore_test
 
 import (
 	"os"

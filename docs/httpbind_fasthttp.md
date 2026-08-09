@@ -21,6 +21,9 @@ find out, and the last section of this guide is about that.
 - Route registration on a fasthttp router, from the same `net/http`
   registrations discovery already reads
 - The same OpenAPI document; it derives from the field plan, not the transport
+- The whole partial-update surface, including the streamed and live renders —
+  see [the section below](#partial-updates-on-fasthttp) for the one behavioural
+  difference
 
 What does not change is the source you maintain. There is one authoring form,
 and it is the net/http one.
@@ -125,8 +128,9 @@ On fasthttp the callback runs after your handler returns, so an error inside it
 has no way back to handler code. Both transports therefore route it to the
 handler you install with `SetStreamErrorHandler`, and both close the stream for
 you — which is what keeps a JSON array document terminated when the callback
-fails halfway through. `NewStream` still exists and is deprecated; it has no
-fasthttp transcription.
+fails halfway through. The held-stream entry is gone rather than
+deprecated: one that still compiled would be a call site with no fasthttp
+counterpart, found at deploy rather than at build.
 
 **Some capabilities are gone.** fasthttp implements no HTTP/2. Under TinyGo it
 cannot terminate TLS either, so put a terminator in front. TinyGo is supported
@@ -177,6 +181,90 @@ else refuses:
 
 Every refusal prints the position of the occurrence rather than of the
 declaration, and the remedy that clears it.
+
+## Partial updates on fasthttp
+
+The update surface splits by what it needs from the transport, and the larger
+half carries over unchanged.
+
+Everything that reads a request and returns a `Response` you send works: the
+action pair, the redraw, the sequence, `Negotiate`, the CSRF reads, and every
+header computation. Your handler is the same handler — `options.WantsUpdate(r)`
+becomes `options.WantsUpdate(ctx)`, and nothing else about the branch moves.
+
+```go
+func addToCart(w http.ResponseWriter, r *http.Request) {
+    if !options.WantsUpdate(r) {
+        htmlupdate.Redirect(w, r, "/cart", http.StatusSeeOther)
+        return
+    }
+    answer, err := options.WriteUpdate(r, updates)
+    if err != nil {
+        httpbind.WriteError(w, r, err)
+        return
+    }
+    _, _ = answer.WriteTo(w)
+}
+```
+
+Use `htmlupdate.Redirect` rather than `http.Redirect`. It is the same call —
+it delegates straight to the standard library on net/http — but fasthttp
+redirects through a method on its context, and a rewrite that turns a function
+call into a method call is not something the transform does. A handler calling
+`http.Redirect` is refused by name.
+
+Two things need saying about layout.
+
+Your `Options` value has to be built inside a handler, or declared in a tagged
+file pair. It is the one type each backend redeclares, and a package-level `var`
+is a declaration rather than a function, so the transform does not rewrite it
+and the tag excludes the file it lives in.
+
+Your `Registry` does not have that problem, and neither do the component
+registrations generation emits. A `Registry`, a `Reloadable`, an `Update` and a
+`Failure` are one type on both backends, so a helper building one lives in an
+untagged file and is compiled by both halves.
+
+### The streaming entries take a callback
+
+`OpenStream` and `OpenLiveStream` are gone. `WriteStream` and `WriteLiveStream`
+replace them, and they take the producer rather than handing a stream back:
+
+```go
+options.WriteStream(w, r, head, func(stream *htmlupdate.DeltaStream) error {
+    stream.Replace("feed", markup, entry)
+    return nil
+})
+```
+
+The reason is fasthttp: it writes a streamed body from a callback that runs
+*after* your handler returned, so a stream you hold across statements has no
+transcription there. Two things fall out of the shape that are worth having on
+either backend — the entry closes the stream whether or not your producer
+succeeded, so a forgotten `Close` can no longer send a truncated response, and
+an error you return is reported in band and then sent to
+`SetStreamErrorHandler` instead of being discarded.
+
+`Render`, `RenderStream`, `RenderStreamAsync` and `RenderLiveStream` keep their
+signatures. Everything each of them reads from the request is read before the
+first record, so a failure before that is still an ordinary error you can turn
+into a status; after it, the status is committed and the failure travels in the
+terminator.
+
+One difference is real and you should know it before you rely on live delivery.
+**fasthttp has no per-request cancellation** — its `Done` channel closes on
+server shutdown and nothing else. On net/http a live stream ends promptly when
+the client disconnects, because the request context is cancelled. On fasthttp a
+departed client is noticed when a record fails to write, so the stream ends at
+its next delivery instead; a subscription that never delivers again holds its
+resources until the server stops. Pass a context carrying your own bound if that
+matters.
+
+For the same reason, a `*fasthttp.RequestCtx` handed to `RenderLiveStream` as
+its cancellation context is replaced with one carrying the shutdown signal. A
+rewritten handler always does this — the transform collapses `r` and
+`r.Context()` to the same identifier — and the value is pooled, so reading it
+after the handler returned would read another request.
 
 ## What is not done yet
 

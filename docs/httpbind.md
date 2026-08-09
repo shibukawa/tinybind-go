@@ -374,21 +374,16 @@ type ChatEvent struct {
 }
 
 func chat(w http.ResponseWriter, r *http.Request) {
-	stream, err := httpbind.NewStream[ChatEvent](w, r)
-	if err != nil {
-		httpbind.WriteError(w, r, err)
-		return
-	}
-	defer stream.Close()
-
-	if err := stream.Write(ChatEvent{Type: "delta", Delta: "hello"}); err != nil {
-		return
-	}
-	_ = stream.Write(ChatEvent{Type: "done"})
+	httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
+		if err := s.Write(ChatEvent{Type: "delta", Delta: "hello"}); err != nil {
+			return err
+		}
+		return s.Write(ChatEvent{Type: "done"})
+	})
 }
 ```
 
-The handler never names a wire format. `NewStream` selects one, once, in this order:
+The handler never names a wire format. The stream selects one when it opens, in this order:
 
 1. `?stream=`
 2. `Accept`
@@ -410,7 +405,7 @@ Always use `defer stream.Close()`. For the JSON array format, `Close` is what wr
 
 ## OpenAPI and Swagger UI
 
-The generator reflects discovered routes, `Bind` types, `Write` / `WriteStatus` / `NewStream` types, and HTTP errors in OpenAPI.
+The generator reflects discovered routes, `Bind` types, `Write` / `WriteStatus` / `WriteStream` types, and HTTP errors in OpenAPI.
 
 Generation is package-local, which is what makes it composable. A framework package can generate built-in routes such as health checks once, while each modular-monolith package generates its own; importing those packages registers their fragments, and `httpbind` merges them deterministically into one document. Conflicting path/method operations are errors. Schemas that share a name but not a shape receive package-qualified component names instead.
 

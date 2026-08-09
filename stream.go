@@ -55,11 +55,19 @@ type Stream[T any] = bindcore.Stream[T]
 // instead. Close runs either way, which is what keeps a JSON array document
 // terminated when fn fails halfway through it.
 func WriteStream[T any](w http.ResponseWriter, r *http.Request, fn func(*Stream[T]) error) {
-	s, err := NewStream[T](w, r)
-	if err != nil {
-		WriteError(w, r, err)
+	if w == nil {
+		WriteError(w, r, BadRequest(Problem{Code: "stream", Message: "nil ResponseWriter"}))
 		return
 	}
+	// The format is negotiated once, and the headers and status go out here
+	// rather than at the first Write, so everything that could change the status
+	// has happened before fn sees anything.
+	format := NegotiateStreamFormat(r)
+	for _, h := range bindcore.StreamHeaders(format) {
+		w.Header().Set(h.Name, h.Value)
+	}
+	w.WriteHeader(http.StatusOK)
+	s := bindcore.NewStream[T](w, format)
 	ferr := fn(s)
 	cerr := s.Close()
 	if ferr == nil {
@@ -80,24 +88,6 @@ func WriteStream[T any](w http.ResponseWriter, r *http.Request, fn func(*Stream[
 func SetStreamErrorHandler(fn func(error)) { bindcore.SetStreamErrorHandler(fn) }
 
 func reportStreamError(err error) { bindcore.ReportStreamError(err) }
-
-// NewStream negotiates transport format from the request, writes response
-// headers and 200 once, and returns a stream for incremental Write calls.
-//
-// Deprecated: use [WriteStream]. A caller-held stream has no fasthttp
-// transcription, and it makes the trailing ']' of the JSON array framing
-// depend on the caller remembering to defer Close.
-func NewStream[T any](w http.ResponseWriter, r *http.Request) (*Stream[T], error) {
-	if w == nil {
-		return nil, BadRequest(Problem{Code: "stream", Message: "nil ResponseWriter"})
-	}
-	format := NegotiateStreamFormat(r)
-	for _, h := range bindcore.StreamHeaders(format) {
-		w.Header().Set(h.Name, h.Value)
-	}
-	w.WriteHeader(http.StatusOK)
-	return bindcore.NewStream[T](w, format), nil
-}
 
 // NegotiateStreamFormat selects SSE, NDJSON, or JSON array using:
 //  1. ?stream= query

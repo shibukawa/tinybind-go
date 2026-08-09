@@ -40,18 +40,37 @@ runtime_calls:
 transport_slots_2026_08_08:
   status: implemented
   shape: CallPattern carries a TransportSlots value naming the writer and request argument indices, set through the WriterArgument and RequestArgument options
-  defaults: Bind declares request 0; Write, WriteStatus, NewStream and WriteStream declare writer 0 and request 1
+  defaults: Bind declares request 0; Write, WriteStatus and WriteStream declare writer 0 and request 1
   scoped: slots attach only for the HTTP runtime path, because the canonical call names are spelled once per runtime package and a same-named function elsewhere takes no transport
   validated: a slot index cannot be negative, the two cannot name one argument, and an argument cannot both be dropped and supply a value or type role
   queried_by: TransportSlots.Drops, which is what the rewriter asks per argument
+method_calls_2026_08_10:
+  status: implemented
+  was: the pattern index skipped every method target and keyed on package and name, so a registered method was invisible to the transform and a handler calling one was refused
+  now: a method is keyed by its receiver as well, as packagePath.(receiverPackage.ReceiverType).Name
+  why_the_receiver_is_in_the_key: 'the update surface has Options.Headers and Response.WriteTo in one package, and they drop different arguments; a key without the receiver would let either pattern answer for the other'
+  alias_receivers: a method reached through a type alias resolves to the type the alias names, which is what lets one registration cover a receiver both runtimes spell the same way
+  reached_by: the update entries of decision:update-core-shared-leaf, which are methods on Options and on Response rather than package functions
 transitive_calls:
   rule: a call to another admitted function drops the same arguments, matching that function's rewritten signature
 selectors:
   policy: an enumerated table; a selector absent from it refuses the function rather than receiving a guessed equivalent
   seed:
     - "r.Context() -> ctx, valid because RequestCtx satisfies context.Context"
+  seed_caveat_2026_08_10:
+    found: 'RequestCtx.Done returns ctx.s.done, which the fork closes only when the server shuts down; there is no per-request cancellation on this transport'
+    consequence: 'the rewrite is type-correct and narrower than it reads. r.Context() is cancelled when the client disconnects; the rewritten ctx is cancelled when the server stops'
+    who_notices: 'anything reading cancellation out of the rewritten context — a cache store, a context-taking external, a render passed htmlbind.WithContext'
+    bounded_for_buffered_entries: a redraw or an action render completes inside the handler, so the window in which the difference could matter is the render itself
+    unbounded_for_the_live_path: requirement:fasthttpbind-parity-scope records this as the reason live termination is a design question rather than a transcription
+    not_fixable_here: no selector rewrite can manufacture a signal the transport does not have; a per-request cancellation would have to come from the fork
   growth: each addition is a named entry with its own justification, so the table's size is the visible measure of how much net/http semantics the transform claims to reproduce
   deliberately_absent: r.Method, r.URL, r.Header, r.RemoteAddr, r.TLS, and http.SetCookie; each has a plausible fasthttp spelling and a semantic difference worth deciding one at a time rather than in a batch
+  redirect_answered_by_a_pair_2026_08_10:
+    problem: 'http.Redirect cannot be a selector rewrite or a slot drop, because the other backend spells a redirect as a method on its context and this table rewrites argument lists rather than turning a function call into a method call'
+    why_it_could_not_be_left: 'htmlupdate.WantsUpdate exists to create exactly one branch — apply the update, or redirect — so an unredirectable handler makes the ported entry unusable in its documented shape'
+    answer: htmlupdate.Redirect and fasthttpupdate.Redirect, one registered pair delegating to http.Redirect and to RequestCtx.Redirect
+    generalizes: a selector with no transportable spelling is answered by a same-named pair, not by growing this table
 imports:
   rule: the generated file's imports are derived from the rewritten body, not copied from the source file
   runtime_path: the fasthttp runtime package is imported under the httpbind alias, per decision:backend-build-tag-mode, so no call selector in the body changes

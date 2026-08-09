@@ -3,7 +3,7 @@ id: rule:stream-content-negotiation
 type: rule
 title: Stream Content Negotiation
 ---
-NewStream selects SSE, NDJSON/JSONL, or JSON array from stream query, Accept, User-Agent, then default.
+The stream entry selects SSE, NDJSON/JSONL, or JSON array from stream query, Accept, User-Agent, then default.
 
 ```yaml
 formats:

@@ -1,44 +1,17 @@
 package htmlupdate
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
-	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
-// Update is one region an action response rewrites.
-//
-// TargetID must match the id the rendered root element carries, because the
-// browser locates the region by that id and the replacement has to keep it.
-type Update struct {
-	TargetID string
-	Fragment htmlbind.Fragment
-}
-
-// Replace pairs a target element id with the fragment that replaces it.
-func Replace(targetID string, fragment htmlbind.Fragment) Update {
-	return Update{TargetID: targetID, Fragment: fragment}
-}
-
-// WantsUpdate reports whether the caller can apply an update response.
+// WantsUpdate reports whether this request can be answered with the regions an
+// action changed, rather than with a redirect.
 //
 // An ordinary form submission cannot, so a handler branches on this and
 // redirects instead, which is what keeps a page working without JavaScript.
-func (o Options) WantsUpdate(r *http.Request) bool {
-	mode, _, ok := parseRender(r.Header.Get(o.renderHeader()))
-	if !ok || mode != modeAction {
-		return false
-	}
-	// A page from another build cannot be handed regions this one rendered. It
-	// is the only compatibility axis this package judges, because the client
-	// belongs to the caller and so does its wire version.
-	return r.Header.Get(o.buildHeader()) == o.buildID()
-}
-
-const modeAction = "action"
+func (o Options) WantsUpdate(r *http.Request) bool { return o.core().WantsUpdate(reader(r)) }
 
 // WriteUpdate answers a mutating request with the regions it changed, so one
 // round trip both performs the action and refreshes the page.
@@ -53,7 +26,8 @@ const modeAction = "action"
 // fails outright — which is this entry's own headline case, since rewriting a
 // form with its validation errors is what it exists for.
 func (o Options) WriteUpdate(r *http.Request, updates []Update, options ...htmlbind.Option) (Response, error) {
-	return o.WriteUpdateStatus(r, http.StatusOK, updates, options...)
+	resp, err := o.core().WriteUpdate(reader(r), updates, options...)
+	return Response(resp), err
 }
 
 // WriteUpdateStatus is WriteUpdate with an explicit status, so a failed
@@ -62,56 +36,14 @@ func (o Options) WriteUpdate(r *http.Request, updates []Update, options ...htmlb
 // The browser applies an update response whatever the status says, because
 // rendering the failure is the point.
 func (o Options) WriteUpdateStatus(r *http.Request, status int, updates []Update, options ...htmlbind.Option) (Response, error) {
-	body := deltaResponse{}
-	// An action can reveal a component the document never carried: a validation
-	// summary, a panel that was not there before. Its stylesheet is not in the
-	// live head, and markup landing before the sheet does is the flash of
-	// unstyled content the navigation delta added this field to prevent.
-	seen := map[string]bool{}
-	// Resolved once rather than per region: the options are the same for every
-	// one, and the request's context leads so a caller may still override it.
-	render := o.renderOptions(append([]htmlbind.Option{htmlbind.WithContext(r.Context())}, options...))
-	for _, update := range updates {
-		var out strings.Builder
-		if err := htmlbind.Render(&out, update.Fragment, render...); err != nil {
-			// Nothing is written yet, so the caller can still choose an error
-			// response.
-			return Response{}, err
-		}
-		for _, tag := range update.Fragment.Head() {
-			// Two regions declaring one stylesheet emit one tag, which is the
-			// htmlbind.MergeHead rule applied across the written set.
-			if tag == "" || seen[tag] {
-				continue
-			}
-			seen[tag] = true
-			body.Head = append(body.Head, tag)
-		}
-		body.Operations = append(body.Operations, deltaOperation{
-			Kind: delta.OpReplace, ID: update.TargetID, HTML: out.String(),
-		})
-	}
-	return o.actionResponse(status, body)
+	resp, err := o.core().WriteUpdateStatus(reader(r), status, updates, options...)
+	return Response(resp), err
 }
 
 // WriteNavigate tells the browser to leave the page, which is how an action
 // that changed where the user belongs stays correct without guessing which
 // regions to rewrite.
 func (o Options) WriteNavigate(url string) (Response, error) {
-	return o.actionResponse(http.StatusOK, deltaResponse{Navigate: url})
-}
-
-func (o Options) actionResponse(status int, body deltaResponse) (Response, error) {
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return Response{}, err
-	}
-	return Response{
-		Status: status,
-		Header: http.Header{
-			"Content-Type":   []string{"application/json; charset=utf-8"},
-			o.renderHeader(): []string{modeAction},
-		},
-		Body: encoded,
-	}, nil
+	resp, err := o.core().WriteNavigate(url)
+	return Response(resp), err
 }

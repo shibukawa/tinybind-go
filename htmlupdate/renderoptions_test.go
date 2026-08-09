@@ -76,7 +76,7 @@ func formRegistry(t *testing.T, plan *htmlbind.Plan[formParams]) *htmlupdate.Reg
 	}
 	registry.Register(htmlupdate.Reloadable{
 		KindID: kind,
-		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
 			link, err := url.Parse(values.Get("link"))
 			if err != nil {
 				return htmlbind.Fragment{}, err
@@ -228,7 +228,7 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 	registry := &htmlupdate.Registry{}
 	registry.Register(htmlupdate.Reloadable{
 		KindID: "Ctx@0001",
-		Render: func(r *http.Request, instanceID string, _ url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, instanceID string, _ url.Values) (htmlbind.Fragment, error) {
 			return htmlbind.Bind(plan, formParams{ID: instanceID}), nil
 		},
 	})

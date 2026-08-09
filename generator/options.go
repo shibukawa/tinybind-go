@@ -393,6 +393,7 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 			patterns = append(patterns, withHTTPTransportSlots(path, canonicalRuntimeCalls(path))...)
 		}
 		if len(o.RuntimePackages.Set) > 0 {
+			patterns = append(patterns, htmlupdateTransportOnlyCalls()...)
 			patterns = append(patterns, ConfigBindCall(
 				Function(configbindImportPath, "Bind"),
 				GenericType("config", 0), Argument("prefix", 0),
@@ -432,7 +433,7 @@ func withHTTPTransportSlots(path string, patterns []CallPattern) []CallPattern {
 		case "Bind":
 			// func Bind[T](r *http.Request) (T, error)
 			RequestArgument(0)(&patterns[i])
-		case "Write", "WriteStatus", "NewStream", "WriteStream":
+		case "Write", "WriteStatus", "WriteStream":
 			// (w, r) leads, and whatever follows keeps its place.
 			WriterArgument(0)(&patterns[i])
 			RequestArgument(1)(&patterns[i])
@@ -475,7 +476,6 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		RequestBindCall(Function(path, "Bind"), GenericType("request", 0)),
 		ResponseWriteCall(Function(path, "Write"), GenericType("response", 0)),
 		ResponseWriteStatusCall(Function(path, "WriteStatus"), GenericType("response", 0), Argument("status", 2)),
-		StreamCreateCall(Function(path, "NewStream"), GenericType("stream", 0)),
 		StreamCreateCall(Function(path, "WriteStream"), GenericType("stream", 0)),
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),

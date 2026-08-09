@@ -135,6 +135,20 @@ The same applies to anything you carry across the seam. Two definitions that
 agree today are two chances to disagree later, and the failure is silent: an
 `errors.As` that stops matching, a `Problem` that no longer unwraps.
 
+You will probably want a richer application-facing problem value than
+`Problem` — a status, a title, fields, a cause — and naming yours `Problem` too
+puts two different types with one name in front of your users. Put yours in a
+leaf both your runtimes alias, which is the move made here for `FieldError`, and
+the name means one thing whichever backend a user built against.
+
+The update surface is split the same way and is worth reading as the worked
+example: `htmlupdate` and `fasthttpupdate` redeclare only `Options` and
+`Response`, because those need methods, and alias everything else from one core.
+The payoff is concrete — a `Registry`, a `Reloadable` and an `Update` are one
+type across both backends, so the code building them needs no build tag at all.
+Each shell converts with `updatecore.Options(o)`, so a field added on one side
+and not the other stops compiling rather than drifting.
+
 ## Choosing the router
 
 `RouterTarget` names the package, qualifier, type, registration function and

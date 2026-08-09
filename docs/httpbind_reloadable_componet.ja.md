@@ -585,8 +585,8 @@ if ok && answer.Failure != nil && answer.Failure.Kind == htmlupdate.FailureUnkno
 `options.OnFailure` は応答せず観測だけをします。レスポンスを差し替えるかどうかに関わらず、ログ行とスパンは残したいからです。
 
 ```go
-options.OnFailure = func(r *http.Request, f htmlupdate.Failure) {
-    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+options.OnFailure = func(ctx context.Context, f htmlupdate.Failure) {
+    logger.ErrorContext(ctx, "redraw failed", "kind", f.Kind, "err", f.Err)
 }
 ```
 

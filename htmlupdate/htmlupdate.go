@@ -8,75 +8,130 @@
 // The transport concerns live here rather than in htmlbind, because that
 // package stays free of net/http so generated template code keeps working on
 // TinyGo and WebAssembly targets.
+//
+// What each entry reads from a request lives in internal/updatecore, so the
+// second transport runtime answers the same wire contract rather than agreeing
+// with this one. This package is the net/http half: it wraps a *http.Request in
+// the reader that half takes, and owns everything that writes — the document
+// and delta renders, the record streams, and the runtime asset handler.
 package htmlupdate
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/htmlbind/delta"
+	"github.com/shibukawa/tinybind-go/internal/updatecore"
 )
 
-// DefaultHeaderPrefix names the request and response headers.
-const DefaultHeaderPrefix = "X-Tinybind"
-
-// DefaultPathPrefix is the URL namespace holding every framework-owned
-// endpoint. Keeping them under one prefix means a deployment can route, cache,
-// or protect the whole surface with one rule.
-const DefaultPathPrefix = "/_tb"
-
-// DefaultDataAttributePrefix names the attributes the protocol puts in a
-// document. It matches the generator's own default, because the two have to
-// agree: one writes the attributes and the other reads them.
-const DefaultDataAttributePrefix = "tb"
-
-// DefaultGlobalName is what the browser runtime is installed under.
-const DefaultGlobalName = "tinybind"
+// The wire contract and everything derived from it are declared once, in
+// internal/updatecore, and aliased here. A caller sees one of each type
+// whichever runtime it builds against, which is what keeps a Failure raised on
+// one side inspectable on the other. Options and Response are the exceptions:
+// each runtime redeclares them so its entries can be methods, and converts.
 
 // Mode is the rendering a request asked for.
-type Mode int
+type Mode = updatecore.Mode
 
 const (
 	// ModeDocument is the complete HTML document. It is what a request without
 	// a usable render header gets, including one from an incompatible client.
-	ModeDocument Mode = iota
+	ModeDocument = updatecore.ModeDocument
 	// ModeNavigation returns only the changed boundaries of the same route.
-	ModeNavigation
+	ModeNavigation = updatecore.ModeNavigation
 	// ModeLive returns the deliveries of the same route's live boundaries, on a
 	// response held open for as long as the subscriptions live.
-	//
-	// It is its own mode rather than a navigation held open because the two
-	// differ in duration and in termination: a navigation ends when the route has
-	// been described, a live response ends when every source finishes or when the
-	// server reaches a lifetime bound. Sharing one name meant a deployment could
-	// not route, time out, or bound them separately, and a served-mode log could
-	// not tell an hours-long subscription from ordinary navigation traffic.
-	ModeLive
+	ModeLive = updatecore.ModeLive
 	// ModeRedraw returns one registered component's subtree, addressed by the
 	// kind and instance headers rather than by the URL path.
-	//
-	// It is a request mode so a caller can answer a redraw at any URL it likes.
-	// Usually that is the page the component sits on, where the redraw inherits
-	// the page's own authorization rather than needing a second path pattern kept
-	// in step with the one protecting the page — two rules that must agree and
-	// that nothing forces to agree.
-	ModeRedraw
+	ModeRedraw = updatecore.ModeRedraw
 	// ModeSequence returns the static half of one fragment, addressed by a
 	// digest of its own content.
-	//
-	// It is the one response in this package that is not per user: a sequence
-	// derives from the template rather than from a request, so it is the only
-	// one that can be public, immutable, and held by a shared cache.
-	ModeSequence
+	ModeSequence = updatecore.ModeSequence
 )
 
+// Negotiated is what a request asked for, after validation.
+type Negotiated = updatecore.Negotiated
+
+// Update is one region an action rewrote.
+type Update = updatecore.Update
+
+// Replace rewrites the region addressed by targetID with fragment.
+func Replace(targetID string, fragment htmlbind.Fragment) Update {
+	return updatecore.Replace(targetID, fragment)
+}
+
+// FailureKind names why an update endpoint could not answer.
+type FailureKind = updatecore.FailureKind
+
 const (
-	modeNavigation = "navigation"
-	modeLive       = "live"
+	// FailureMalformedRequest is a redraw that named no component.
+	FailureMalformedRequest = updatecore.FailureMalformedRequest
+	// FailureUnknownComponent is a kind this deployment does not publish.
+	FailureUnknownComponent = updatecore.FailureUnknownComponent
+	// FailureArgumentsTooLarge is a query past the configured bound.
+	FailureArgumentsTooLarge = updatecore.FailureArgumentsTooLarge
+	// FailureInvalidArguments is a query the generated decoder refused.
+	FailureInvalidArguments = updatecore.FailureInvalidArguments
+	// FailureRenderFailed is a component that could not render.
+	FailureRenderFailed = updatecore.FailureRenderFailed
 )
+
+// Failure is one request an update endpoint could not answer. It satisfies
+// error and unwraps to the cause, so it goes straight to a logger or a span.
+type Failure = updatecore.Failure
+
+// Reloadable is one component published as a redraw endpoint.
+type Reloadable = updatecore.Reloadable
+
+// Registry holds the components a deployment publishes for redraw.
+type Registry = updatecore.Registry
+
+// Asset is one static file this package requires a page to load.
+type Asset = updatecore.Asset
+
+// RuntimeConfig is what the browser runtime reads to learn its own names.
+type RuntimeConfig = updatecore.RuntimeConfig
+
+// QueryError is a redraw argument the generated decoder refused.
+type QueryError = updatecore.QueryError
+
+// The naming defaults. Each is shared with the generator, which writes what
+// these read back.
+const (
+	// DefaultHeaderPrefix names the request and response headers.
+	DefaultHeaderPrefix = updatecore.DefaultHeaderPrefix
+	// DefaultPathPrefix is the URL namespace of the endpoints this package owns.
+	DefaultPathPrefix = updatecore.DefaultPathPrefix
+	// DefaultDataAttributePrefix names the attributes the protocol puts in a
+	// document.
+	DefaultDataAttributePrefix = updatecore.DefaultDataAttributePrefix
+	// DefaultGlobalName is what the browser runtime is installed under.
+	DefaultGlobalName = updatecore.DefaultGlobalName
+	// DefaultRuntimeFileName names the served runtime file.
+	DefaultRuntimeFileName = updatecore.DefaultRuntimeFileName
+	// DefaultCSRFFieldName is the hidden field generated forms carry.
+	DefaultCSRFFieldName = updatecore.DefaultCSRFFieldName
+	// DefaultCSRFHeaderName is where the runtime puts the token.
+	DefaultCSRFHeaderName = updatecore.DefaultCSRFHeaderName
+	// DefaultMaxManifestBytes bounds the validators a request may carry.
+	DefaultMaxManifestBytes = updatecore.DefaultMaxManifestBytes
+	// DefaultMaxQueryBytes bounds the arguments a redraw may carry.
+	DefaultMaxQueryBytes = updatecore.DefaultMaxQueryBytes
+	// DefaultStreamContentType marks a delta delivered as a record stream.
+	DefaultStreamContentType = updatecore.DefaultStreamContentType
+)
+
+// BuildID identifies the running binary, so anything that could change
+// rendering invalidates client state.
+var BuildID = updatecore.BuildID
+
+// ErrCSRFMissing reports an unsafe request carrying no token at all.
+var ErrCSRFMissing = updatecore.ErrCSRFMissing
+
+// ErrCSRFMismatch reports a token that is not the session's.
+var ErrCSRFMismatch = updatecore.ErrCSRFMismatch
 
 // Options configure one set of update endpoints.
 type Options struct {
@@ -179,469 +234,35 @@ type Options struct {
 	// span, which a caller wants on every refusal whether or not it changes the
 	// answer — and which are otherwise lost, since a status alone cannot say
 	// whether a page was stale or a render failed.
-	OnFailure func(r *http.Request, failure Failure)
-}
-
-// DefaultMaxManifestBytes bounds the validators a request may carry. Beyond it
-// the hints are dropped, which costs bytes in the response instead of risking a
-// proxy rejecting the request.
-const DefaultMaxManifestBytes = 8 << 10
-
-func (o Options) renderHeader() string { return o.prefix() + "-Render" }
-
-func (o Options) manifestHeader() string { return o.prefix() + "-Manifest" }
-
-func (o Options) buildHeader() string { return o.prefix() + "-Build" }
-
-func (o Options) prefix() string {
-	if o.HeaderPrefix == "" {
-		return DefaultHeaderPrefix
-	}
-	return o.HeaderPrefix
-}
-
-// pathPrefix returns the endpoint namespace without a trailing slash.
-func (o Options) pathPrefix() string {
-	if o.PathPrefix == "" {
-		return DefaultPathPrefix
-	}
-	return "/" + strings.Trim(o.PathPrefix, "/")
-}
-
-func (o Options) maxManifestBytes() int {
-	if o.MaxManifestBytes == 0 {
-		return DefaultMaxManifestBytes
-	}
-	return o.MaxManifestBytes
-}
-
-// renderOptions carries the naming these options configure into every htmlbind
-// entry this package drives, so the placeholder element, the boundary
-// identifiers, and the instance attributes are one naming system rather than
-// two. Caller options follow, so a caller can still override.
-// sequenceHeader names the request header a client sets to say it can walk a
-// sequence tree, so a response may send values instead of markup.
-//
-// It is a capability rather than a list of held addresses: the choice between a
-// fragment and its values is a heuristic, since values a client cannot resolve
-// cost it one fetch and a fragment where values would have done costs a few
-// bytes. Neither is wrong, so no per-address bookkeeping travels.
-func (o Options) sequenceHeader() string { return o.prefix() + "-Sequences" }
-
-// wantsSequences reports whether this request said it can walk sequences.
-func (o Options) wantsSequences(r *http.Request) bool {
-	return r != nil && r.Header.Get(o.sequenceHeader()) != ""
-}
-
-// operationBody writes one operation, in whichever half the client can use.
-func (o Options) operationBody(operation delta.Operation, sequences bool) deltaOperation {
-	body := deltaOperation{
-		Kind: operation.Kind, ID: operation.InstanceID,
-		Boundaries: operation.Boundaries,
-	}
-	if sendsValues(sequences, operation) {
-		body.Seq, body.Values = operation.Sequence, operation.Values
-		return body
-	}
-	body.HTML = operation.HTML
-	return body
-}
-
-// sendsValues decides which half of a fragment travels, for every path that
-// sends one.
-//
-// Values replace the markup only when they are smaller. A fragment of two
-// elements costs more as an address plus its values than as the markup itself,
-// because the address is per-operation overhead and there is almost no static
-// text to save; a list row is exactly that shape, and its parent — a hundred
-// hole frames — is the opposite one. Choosing per fragment is what keeps the
-// split from ever being a loss.
-//
-// It is one function because the buffered path applied the size test and the
-// streamed path did not, so the claim held on one path and not on its sibling —
-// and the streamed path is the one every navigation goes through. That is the
-// third defect of this shape: a rule applied on one path and not the other. A
-// predicate with one home is what stops there being a fourth.
-func sendsValues(sequences bool, operation delta.Operation) bool {
-	if !sequences || operation.Sequence == "" {
-		return false
-	}
-	size := len(operation.Sequence)
-	for _, value := range operation.Values {
-		size += len(value)
-	}
-	return size < len(operation.HTML)
-}
-
-func (o Options) renderOptions(caller []htmlbind.Option) []htmlbind.Option {
-	owned := []htmlbind.Option{
-		htmlbind.WithBoundaryPrefix(o.dataAttributePrefix()),
-		// Seeding every validator with the build identity is what keeps two
-		// builds from producing comparable digests. Negotiate already answers a
-		// build mismatch with a complete document before any validator is read,
-		// so this matters where the build header was dropped in transit.
-		htmlbind.WithValidatorTag(o.buildID()),
-	}
-	return append(owned, caller...)
-}
-
-func (o Options) dataAttributePrefix() string {
-	if o.DataAttributePrefix == "" {
-		return DefaultDataAttributePrefix
-	}
-	return o.DataAttributePrefix
-}
-
-func (o Options) globalName() string {
-	if o.GlobalName == "" {
-		return DefaultGlobalName
-	}
-	return o.GlobalName
-}
-
-func (o Options) maxQueryBytes() int {
-	if o.MaxQueryBytes == 0 {
-		return DefaultMaxQueryBytes
-	}
-	return o.MaxQueryBytes
-}
-
-func (o Options) streamContentType() string {
-	if o.StreamContentType == "" {
-		return DefaultStreamContentType
-	}
-	return o.StreamContentType
-}
-
-// Negotiated is what a request asked for, after validation.
-type Negotiated struct {
-	Mode Mode
-	// Version is whatever the client wrote after "v=" in the render header, or
-	// zero when it wrote none. This package neither defines it nor compares it:
-	// the browser client belongs to the caller, so the caller owns its wire
-	// version and what a mismatch means. It is carried so a caller that does
-	// version its wire can read it, and it is echoed back on the response.
 	//
-	// The compatibility axis this package still operates is the build identity,
-	// whose value Options.BuildID already makes the caller's.
-	Version int
-	// Known holds the validators the client already has. It is empty on a
-	// client's first update, which simply yields a larger delta.
-	Known delta.Manifest
+	// It takes the request's context rather than the request. A log line and a
+	// span both want the trace, the deadline, and whatever the caller's own
+	// middleware put there, and none of them want the transport; taking the
+	// narrower value is also what lets this field mean the same thing on a
+	// backend whose request type is not *http.Request.
+	OnFailure func(ctx context.Context, failure Failure)
 }
+
+// core is these options as the transport-free half reads them.
+//
+// It is a conversion rather than a copy, so the two declarations cannot drift:
+// a field added on one side and not the other stops this line from compiling,
+// which is the only guard a duplicated struct needs.
+func (o Options) core() updatecore.Options { return updatecore.Options(o) }
 
 // Negotiate resolves how a request must be answered.
 //
 // Anything unrecognized resolves to ModeDocument rather than to an error: a
 // stale client, a truncated header, and a proxy that dropped a header must all
-// still produce a working page. That is a total function on the mode name
-// rather than a version comparison, so it holds with no version at all.
-func (o Options) Negotiate(r *http.Request) Negotiated {
-	name, version, ok := parseRender(r.Header.Get(o.renderHeader()))
-	if !ok {
-		return Negotiated{Mode: ModeDocument}
-	}
-	var mode Mode
-	switch name {
-	case modeNavigation:
-		mode = ModeNavigation
-	case modeLive:
-		mode = ModeLive
-	case modeRedraw:
-		mode = ModeRedraw
-	case modeSequence:
-		mode = ModeSequence
-	default:
-		return Negotiated{Mode: ModeDocument}
-	}
-	// A render request must stay side-effect free, which is also why it needs
-	// no CSRF token: a GET that changes nothing cannot be forged into an
-	// action. A non-GET arriving in this mode is a client error, not a delta.
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return Negotiated{Mode: ModeDocument}
-	}
-	// A sequence is asked for by an address that digests its own content, so a
-	// build mismatch cannot make it wrong: either this process has that exact
-	// tree or it does not. Gating it on the build would forfeit the one thing
-	// this response uniquely has, which is that a shared cache may hold it
-	// across builds and across users.
-	if mode == ModeSequence {
-		return Negotiated{Mode: mode, Version: version}
-	}
-	// A page rendered by another build holds state this binary cannot vouch
-	// for: a template it does not have, a function that behaves differently, a
-	// runtime that renders differently. None of that is visible in a validator,
-	// so the build is compared instead of guessed at.
-	if r.Header.Get(o.buildHeader()) != o.buildID() {
-		return Negotiated{Mode: ModeDocument}
-	}
-	encoded := r.Header.Get(o.manifestHeader())
-	if len(encoded) > o.maxManifestBytes() {
-		encoded = ""
-	}
-	return Negotiated{Mode: mode, Version: version, Known: DecodeManifest(encoded)}
-}
+// still produce a working page.
+func (o Options) Negotiate(r *http.Request) Negotiated { return o.core().Negotiate(reader(r)) }
 
-// renderToken is the value a response echoes for one mode.
-//
-// The version is the one the request carried, not one this package chose. A
-// caller versioning its own wire sees its own number come back; a caller that
-// versions nothing gets a bare mode name, because inventing a number here would
-// be this package versioning a contract it no longer owns.
-func renderToken(mode Mode, version int) string {
-	return modeName(mode) + versionSuffix(version)
-}
+// Validate reports a configuration this package cannot serve.
+func (o Options) Validate() error { return o.core().Validate() }
 
-// modeName is exhaustive on purpose, and a mode it does not know panics rather
-// than resolving to something.
-//
-// The default arm this replaces returned navigation, so ModeSequence — added
-// after the arm was written — echoed navigation on every sequence response. A
-// client enforcing the echo, which is where a proxy-substituted body is
-// detected, discarded every tree it fetched; an operation that had arrived as
-// values then had no markup to fall back to, and the navigation degraded to a
-// complete document. The only trace was that pages got bigger.
-//
-// A default arm turns a missing case into a wrong claim. The panic is
-// unreachable — Negotiate resolves anything unrecognized to ModeDocument — so it
-// is here to make the next mode a failure at its first test rather than a
-// response quietly claiming to be something else.
-func modeName(mode Mode) string {
-	switch mode {
-	case ModeDocument, ModeNavigation:
-		return modeNavigation
-	case ModeLive:
-		return modeLive
-	case ModeRedraw:
-		return modeRedraw
-	case ModeSequence:
-		return modeSequence
-	}
-	panic("htmlupdate: no name for render mode " + strconv.Itoa(int(mode)))
-}
-
-// versionSuffix writes back what the request claimed, and nothing when it
-// claimed nothing.
-func versionSuffix(version int) string {
-	if version == 0 {
-		return ""
-	}
-	return ";v=" + strconv.Itoa(version)
-}
-
-// parseRender reads a render header of the form "navigation;v=1" or a bare
-// "navigation".
-//
-// The version part is optional because it is the caller's field: a client that
-// does not version its wire writes the mode alone, and a malformed version is
-// read as none rather than as a reason to refuse. Refusing would cost the page
-// its update for a field this package does not interpret.
-func parseRender(value string) (mode string, version int, ok bool) {
-	name, rest, found := strings.Cut(value, ";")
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", 0, false
-	}
-	if !found {
-		return name, 0, true
-	}
-	digits, found := strings.CutPrefix(strings.TrimSpace(rest), "v=")
-	if !found {
-		return name, 0, true
-	}
-	version, err := strconv.Atoi(strings.TrimSpace(digits))
-	if err != nil {
-		return name, 0, true
-	}
-	return name, version, true
-}
-
-// DecodeManifest reads the compact validator list a client sends back. The
-// encoding is "id:frame" or "id:frame:children" separated by commas, which stays
-// inside one header and needs no escaping because every part is an opaque token.
-//
-// The third part is what lets a list say its rows moved without its parent being
-// replaced. It is absent for a boundary containing no nested boundary, which is
-// most of them, and a pair with only two parts still reads.
-func DecodeManifest(encoded string) delta.Manifest {
-	var manifest delta.Manifest
-	for _, entry := range strings.Split(encoded, ",") {
-		id, rest, found := strings.Cut(entry, ":")
-		if !found || id == "" {
-			continue
-		}
-		frame, rest, _ := strings.Cut(rest, ":")
-		if frame == "" {
-			continue
-		}
-		childrenValidator, parent, _ := strings.Cut(rest, ":")
-		manifest.Instances = append(manifest.Instances, delta.Instance{
-			ID: id, ParentID: parent, FrameValidator: frame, ChildrenValidator: childrenValidator,
-		})
-	}
-	return manifest
-}
+// DecodeManifest reads the compact validator list a client sends back.
+func DecodeManifest(encoded string) delta.Manifest { return updatecore.DecodeManifest(encoded) }
 
 // EncodeManifest renders the validator list a client sends back. It exists so a
 // test, and any non-browser client, can produce exactly what the runtime does.
-func EncodeManifest(manifest delta.Manifest) string {
-	var out strings.Builder
-	for _, instance := range manifest.Instances {
-		if out.Len() > 0 {
-			out.WriteByte(',')
-		}
-		out.WriteString(instance.ID)
-		out.WriteByte(':')
-		out.WriteString(instance.FrameValidator)
-		if instance.ChildrenValidator != "" || instance.ParentID != "" {
-			out.WriteByte(':')
-			out.WriteString(instance.ChildrenValidator)
-		}
-		if instance.ParentID != "" {
-			out.WriteByte(':')
-			out.WriteString(instance.ParentID)
-		}
-	}
-	return out.String()
-}
-
-// deltaResponse is the JSON body of a navigation or action response.
-//
-// It carries no version field. Nothing compared the one it used to carry, and a
-// field nothing compares is not a version but a constant every response asks the
-// wire for and every client ignores. A caller versioning its own wire adds its
-// own field beside this shape.
-type deltaResponse struct {
-	Operations []deltaOperation `json:"ops"`
-	Manifest   []deltaInstance  `json:"manifest,omitempty"`
-	// Head is the merged head of the new composition, sent so the client can
-	// install what a newly reachable component contributed before its markup
-	// lands and flashes unstyled.
-	Head []string `json:"head,omitempty"`
-	// Navigate asks the browser to leave the page, which an action uses when
-	// it changed where the user belongs.
-	Navigate string `json:"navigate,omitempty"`
-	// Live says the composition this response describes owns a live boundary, so
-	// a client that applied it should open a live request. It is the handoff
-	// marker of rule:stream-termination-marker on the buffered path.
-	//
-	// Absent means no live boundary, and a page that has none is what it was
-	// before this field existed: a client that reads no marker issues no
-	// speculative request and costs the server no page execution.
-	Live bool `json:"live,omitempty"`
-}
-
-func encodeJSON(w http.ResponseWriter, body deltaResponse) error {
-	return json.NewEncoder(w).Encode(body)
-}
-
-type deltaOperation struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	HTML string `json:"html"`
-	// Boundaries names the nested boundaries appearing as holes in HTML.
-	//
-	// A hole whose id also carries an operation in this response is filled from
-	// it; one that does not is a region the client already holds, and it moves
-	// that live node in rather than recreating it — which is what keeps the
-	// focus, the form values, and the media state inside it. Without the list a
-	// missing fragment would be indistinguishable from a truncated response.
-	Boundaries []string `json:"boundaries,omitempty"`
-	// Seq addresses this fragment's static half and Values are the varying half
-	// a client walks it with. They replace HTML for a client that said it can
-	// walk sequences, because the statics then travel once per client instead of
-	// once per render.
-	Seq    string   `json:"seq,omitempty"`
-	Values []string `json:"values,omitempty"`
-}
-
-type deltaInstance struct {
-	ID    string `json:"id"`
-	Frame string `json:"frame"`
-	// Children digests the nested boundary ids, so a later request can say a
-	// list reordered without its parent being replaced to express it. Absent for
-	// a boundary containing no nested boundary, which is most of them.
-	Children string `json:"children,omitempty"`
-	// Parent names the enclosing boundary, so a region that disappears can be
-	// attributed to the boundary that will report the survivors. Absent for an
-	// outermost boundary.
-	Parent string `json:"parent,omitempty"`
-}
-
-// Render answers one request with either a complete document or a delta.
-//
-// It always sets Vary, because a cache that served a delta body to a document
-// request would hand a browser a page of JSON. The caller keeps every other
-// response concern, as elsewhere in this module.
-func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
-	negotiated := o.Negotiate(r)
-	if negotiated.Mode == ModeNavigation {
-		return renderDelta(w, r, o, negotiated, wrappers, leaf, options)
-	}
-	// This entry buffers, so it cannot hold a delivery stream open. A live
-	// request reaching it is answered with the document, which is the same
-	// fallback every unrecognized condition takes and leaves the client with a
-	// working page rather than an error.
-	//
-	// The document render collects so every boundary carries its instance
-	// attribute; without them a later delta could not find its targets.
-	_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
-	return err
-}
-
-// liveHeader names the response header saying whether this composition owns a
-// live boundary.
-func (o Options) liveHeader() string { return o.prefix() + "-Live" }
-
-// kindHeader and instanceHeader name the component a redraw addresses.
-//
-// They are headers rather than path segments so a redraw can be answered at any
-// URL, which is what lets a caller serve one from the page the component sits
-// on. There the redraw inherits the page's own authorization; on a reserved path
-// it needs a second path pattern kept in step with the first, and nothing forces
-// two such rules to agree.
-//
-// They are headers rather than query parameters because the generated decoder
-// treats an unknown parameter name as an error, so a query-carried kind and
-// instance would reserve two names an author could then not declare.
-func (o Options) kindHeader() string { return o.prefix() + "-Kind" }
-
-func (o Options) instanceHeader() string { return o.prefix() + "-Instance" }
-
-// markLive writes the handoff marker for a chain that owns a live boundary, so
-// a client knows whether a live request is worth issuing at all.
-//
-// A live request re-executes the route, its layouts, and its page, so a client
-// that cannot tell a live page from a static one pays a full page execution per
-// screen that never had a live boundary. The marker is therefore a cost control
-// rather than tidiness, and it is written on every mode: a browser loading the
-// document reads the header, and a client that arrived by delta reads the body
-// field, because a delta reuses the shell and never sees this response's head.
-//
-// Nothing is written when the chain owns no live boundary, so a page that had
-// none is byte-identical to what it was before the marker existed.
-func renderDelta(w http.ResponseWriter, r *http.Request, o Options, negotiated Negotiated, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options []htmlbind.Option) error {
-	sequences := o.wantsSequences(r)
-	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...)
-	if err != nil {
-		// Nothing has been written yet, so the caller can still choose a status
-		// and serve an ordinary error page.
-		return err
-	}
-	body := deltaResponse{}
-	for _, operation := range diff.Operations {
-		body.Operations = append(body.Operations, o.operationBody(operation, sequences))
-	}
-	for _, instance := range diff.Manifest.Instances {
-		body.Manifest = append(body.Manifest, deltaInstance{
-			ID: instance.ID, Frame: instance.FrameValidator,
-			Children: instance.ChildrenValidator, Parent: instance.ParentID,
-		})
-	}
-	body.Head = diff.Head
-	// A navigation can arrive at a route whose composition owns a live boundary,
-	// and the client reused its document shell, so this body is the only place
-	// that can tell it so.
-	body.Live = htmlbind.HasLiveBlock(wrappers, leaf)
-	return encodeJSON(w, body)
-}
+func EncodeManifest(manifest delta.Manifest) string { return updatecore.EncodeManifest(manifest) }

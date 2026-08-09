@@ -1,25 +1,6 @@
 package htmlupdate
 
-import (
-	"crypto/subtle"
-	"errors"
-	"net/http"
-)
-
-// A CSRF token reaches this package by two channels, because a browser has two.
-// The runtime puts it in a header on everything it fetches; a form carries it in
-// the hidden field htmlbind generated, because a form cannot set a header and
-// has to submit with scripting disabled.
-//
-// What is here is the reading half only. Creating the token, storing it in a
-// session, and destroying it at logout are the caller's: this package has no
-// session and would be claiming the largest thing it has so far declined.
-
-// ErrCSRFMissing reports an unsafe request carrying no token at all.
-var ErrCSRFMissing = errors.New("htmlupdate: request carries no CSRF token")
-
-// ErrCSRFMismatch reports a token that is not the session's.
-var ErrCSRFMismatch = errors.New("htmlupdate: CSRF token does not match the session")
+import "net/http"
 
 // CSRFToken reads the token a request carries, header first and form body
 // second.
@@ -31,24 +12,7 @@ var ErrCSRFMismatch = errors.New("htmlupdate: CSRF token does not match the sess
 //
 // Reading the field consumes the request body through ParseForm, as any handler
 // reading a form does.
-func (o Options) CSRFToken(r *http.Request) string {
-	if token := r.Header.Get(o.csrfHeader()); token != "" {
-		return token
-	}
-	return r.PostFormValue(o.csrfField())
-}
-
-// DefaultCSRFFieldName is the hidden field generated forms carry. It matches the
-// generator's own default, because the two have to agree: one writes the field
-// and the other reads it.
-const DefaultCSRFFieldName = "_csrf"
-
-func (o Options) csrfField() string {
-	if o.CSRFFieldName == "" {
-		return DefaultCSRFFieldName
-	}
-	return o.CSRFFieldName
-}
+func (o Options) CSRFToken(r *http.Request) string { return o.core().CSRFToken(reader(r)) }
 
 // VerifyCSRF compares what a request carries against the session's token.
 //
@@ -63,15 +27,5 @@ func (o Options) csrfField() string {
 // worth having: the two defenses fail for unrelated reasons, which is the point
 // of running both.
 func (o Options) VerifyCSRF(r *http.Request, expected string) error {
-	if expected == "" {
-		return ErrCSRFMissing
-	}
-	token := o.CSRFToken(r)
-	if token == "" {
-		return ErrCSRFMissing
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
-		return ErrCSRFMismatch
-	}
-	return nil
+	return o.core().VerifyCSRF(reader(r), expected)
 }

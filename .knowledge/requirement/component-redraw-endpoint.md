@@ -116,6 +116,13 @@ delivered:
   transport: the endpoint, its registry, path parsing, query size bound, and the browser redraw call
   generation: the reloadable modifier, its diagnostics, the typed query decoder, the id and kind attributes, and the registration value
   decoding: a missing, undecodable, or repeated parameter is an error rather than a zero value, because a caller supplies them
+render_takes_a_context_2026_08_10:
+  was: 'Reloadable.Render(r *http.Request, instanceID string, values url.Values)'
+  now: 'Reloadable.Render(ctx context.Context, instanceID string, values url.Values)'
+  the_parameter_was_dead: the emitter declared it and no generated body read it, and neither did any registration in this module; the whole redraw input is the instance id and the query values, which is what the concept always said
+  authorization_unaffected: a component authorizing its own inputs needs the caller's session identity, and that arrives through the context its middleware populated; the request carried it only as a container
+  generated_file: 'imports context instead of net/http, and the parameter is emitted as _ because nothing generated reads it'
+  what_it_unblocks: 'Redraw was the only entry of requirement:transport-port-surface read_only whose contract named a transport type in a field, so this is what makes that group portable rather than only its parameter lists'
 open_questions:
   - whether an enum parameter should be checked against its members at decode time rather than accepted as any string
   - policy:html-update-csrf-protection applicability, given a side-effect-free GET with ambient credentials

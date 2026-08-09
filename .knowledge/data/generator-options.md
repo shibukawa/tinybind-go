@@ -56,7 +56,7 @@ options:
   HeadMarkerAttribute: proposed requirement:client-managed-head ownership marker written onto merged head contributions at generation time; empty uses the module default
   DisableFeatures: rule:generator-feature-disable
 runtime_package_expansion:
-  functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, NewStream, ScanRows]
+  functions: [Bind, Write, WriteStatus, DecodeJSON, EncodeJSON, WriteStream, ScanRows]
   dynamobind: [Load, Store, StoreReturning, Remove, RemoveReturning, Update, QueryPage, Query, Scan, StoreAll, LoadAll] under github.com/shibukawa/tinybind-go/dynamobind, per api:dynamobind-operations
   rule: non-nil Calls.Set replaces all RuntimePackages expansion; CallRegistry.Options merges base expansion and registered wrappers into one explicit Calls snapshot
 wrapper_package:

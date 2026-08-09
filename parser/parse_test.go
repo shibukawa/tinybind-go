@@ -124,21 +124,6 @@ func TestParsePackage_representativeSamples(t *testing.T) {
 				t.Fatalf("stream response: resp=%q stream=%q", rt.Response, rt.Stream)
 			}
 		},
-		"stream_newstream": func(t *testing.T, r *parser.Result) {
-			if len(r.Routes) != 1 {
-				t.Fatalf("routes: %d", len(r.Routes))
-			}
-			rt := r.Routes[0]
-			if rt.Method != "POST" || rt.Path != "/chat" {
-				t.Fatalf("method/path: %s %s", rt.Method, rt.Path)
-			}
-			if rt.Stream != "ChatEvent" || !strings.Contains(rt.Response, "Stream[ChatEvent]") {
-				t.Fatalf("NewStream discovery: resp=%q stream=%q", rt.Response, rt.Stream)
-			}
-			if rt.Request != "ChatRequest" {
-				t.Fatalf("request: %s", rt.Request)
-			}
-		},
 		"stream_writestream": func(t *testing.T, r *parser.Result) {
 			if len(r.Routes) != 1 {
 				t.Fatalf("routes: %d", len(r.Routes))

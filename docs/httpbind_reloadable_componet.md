@@ -584,8 +584,8 @@ if ok && answer.Failure != nil && answer.Failure.Kind == htmlupdate.FailureUnkno
 `options.OnFailure` observes rather than answers, so the log line and the span happen whether or not you change the response:
 
 ```go
-options.OnFailure = func(r *http.Request, f htmlupdate.Failure) {
-    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+options.OnFailure = func(ctx context.Context, f htmlupdate.Failure) {
+    logger.ErrorContext(ctx, "redraw failed", "kind", f.Kind, "err", f.Err)
 }
 ```
 

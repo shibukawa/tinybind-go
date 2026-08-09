@@ -21,6 +21,8 @@ fasthttp のコードは書きません。[httpbind.ja.md](httpbind.ja.md) に�
   `net/http` の登録
 - 同じ OpenAPI 文書。これはフィールド計画から出るもので、トランスポートには
   依存しません
+- 部分更新の面のすべて。ストリーミングとライブの描画を含みます。挙動が一点だけ
+  異なるので[後述](#fasthttp-での部分更新)します
 
 保守するソースは変わりません。書く形は1つで、それは net/http の形です。
 
@@ -126,8 +128,9 @@ fasthttp ではこのコールバックがハンドラーの復帰後に走る�
 エラーはハンドラーのコードへ戻る道がありません。だから両方のトランスポートが
 `SetStreamErrorHandler` で登録したハンドラーへ渡します。ストリームを閉じるのも
 両方ともランタイム側です。これが、コールバックが途中で失敗したときも JSON array
-文書が閉じている理由です。`NewStream` は残っていますが deprecated で、fasthttp
-への転写がありません。
+文書が閉じている理由です。保持型のエントリは deprecated ではなく削除しました。
+コンパイルが通るまま残っていると、fasthttp 側に対応物のない呼び出し箇所が
+ビルド時ではなくデプロイ時に見つかることになるからです。
 
 **使えなくなる機能があります。** fasthttp は HTTP/2 を実装していません。TinyGo の
 下では TLS 終端もできないので、前段に置いてください。TinyGo はパッケージが
@@ -175,6 +178,87 @@ context に対応します。`_` への代入も問題ありません。それ�
 | `inherited` | 呼び先が拒否されただけ。チェーンが実際の該当箇所を名指しする |
 
 どの拒否にも、それを解消する remedy が付きます。
+
+## fasthttp での部分更新
+
+更新の面は、トランスポートに何を要求するかで二つに割れます。そして大きいほうは
+そのまま移ります。
+
+リクエストを読んで `Response` を返すものはすべて動きます。アクションの2つ、
+再描画、シーケンス、`Negotiate`、CSRF の読み取り、ヘッダー計算のすべてです。
+ハンドラーは同じハンドラーのままで、`options.WantsUpdate(r)` が
+`options.WantsUpdate(ctx)` になるだけ。分岐の構造は動きません。
+
+```go
+func addToCart(w http.ResponseWriter, r *http.Request) {
+    if !options.WantsUpdate(r) {
+        htmlupdate.Redirect(w, r, "/cart", http.StatusSeeOther)
+        return
+    }
+    answer, err := options.WriteUpdate(r, updates)
+    if err != nil {
+        httpbind.WriteError(w, r, err)
+        return
+    }
+    _, _ = answer.WriteTo(w)
+}
+```
+
+`http.Redirect` ではなく `htmlupdate.Redirect` を使ってください。net/http では
+標準ライブラリにそのまま委譲する同じ呼び出しですが、fasthttp のリダイレクトは
+コンテキストのメソッドで、関数呼び出しをメソッド呼び出しに変える書き換えは
+transform の守備範囲外です。`http.Redirect` を呼ぶハンドラーは名指しで拒否
+されます。
+
+配置について2点あります。
+
+`Options` の値はハンドラーの中で組み立てるか、タグ付きのファイル対で宣言して
+ください。これは各バックエンドが再宣言する唯一の型で、パッケージレベルの `var`
+は関数ではなく宣言なので transform は書き換えず、それが置かれたファイルはタグに
+除外されます。
+
+`Registry` にその問題はありません。生成されるコンポーネント登録も同様です。
+`Registry`、`Reloadable`、`Update`、`Failure` は両バックエンドで同一の型なので、
+それらを組み立てるヘルパーはタグなしのファイルに置けば両方からコンパイル
+されます。
+
+### ストリーム系はコールバックを取ります
+
+`OpenStream` と `OpenLiveStream` は削除しました。代わりが `WriteStream` と
+`WriteLiveStream` で、ストリームを返すのではなくプロデューサを受け取ります。
+
+```go
+options.WriteStream(w, r, head, func(stream *htmlupdate.DeltaStream) error {
+    stream.Replace("feed", markup, entry)
+    return nil
+})
+```
+
+理由は fasthttp です。ストリーミングボディはハンドラーが**戻った後**に走る
+コールバックから書かれるので、文をまたいで保持するストリームはあちらに翻訳
+できません。この形から落ちてくる利点が両バックエンドで二つあります。プロデューサ
+が成功したかどうかに関わらずエントリがストリームを閉じるので、`Close` の
+書き忘れが切り詰められたレスポンスを送ることはもうありません。そして返した
+エラーは in-band で報告された上で `SetStreamErrorHandler` に届き、捨てられません。
+
+`Render`、`RenderStream`、`RenderStreamAsync`、`RenderLiveStream` の署名は
+そのままです。それぞれがリクエストから読むものはすべて最初のレコードより前に
+読まれるので、そこまでの失敗はステータスに変換できる通常のエラーのままです。
+その後はステータスが確定しているので、失敗はターミネータに乗ります。
+
+一点だけ実挙動が違うので、ライブ配信に依存する前に知っておいてください。
+**fasthttp にリクエスト単位のキャンセルはありません**。`Done` チャネルが閉じる
+のはサーバのシャットダウン時だけです。net/http ではクライアント切断でリクエスト
+コンテキストが cancel されるためライブストリームは即座に終わりますが、fasthttp
+では切断はレコードの書き込み失敗で気づくので、終了は次の配信時になります。以後
+一度も配信しない購読はサーバが止まるまでリソースを保持します。上限が必要なら
+それを持つコンテキストを渡してください。
+
+同じ理由で、`RenderLiveStream` にキャンセル用として渡された
+`*fasthttp.RequestCtx` は、シャットダウンのシグナルを持つコンテキストに置き換え
+られます。書き換えられたハンドラーは必ずこうなり（transform は `r` と
+`r.Context()` を同じ識別子に畳みます）、その値はプール由来なので、ハンドラーが
+戻った後に読むと別のリクエストを読むことになります。
 
 ## まだ出来ていないこと
 

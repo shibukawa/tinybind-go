@@ -1,28 +1,21 @@
 package htmlupdate
 
 import (
-	"crypto/sha256"
-	_ "embed"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/shibukawa/tinybind-go/internal/updatecore"
 )
 
-//go:embed runtime.js
-var runtimeSource string
-
-// runtimeETag identifies the runtime bytes, so the asset URL can be immutably
-// cacheable and a deploy still invalidates it.
-var runtimeETag = func() string {
-	sum := sha256.Sum256([]byte(runtimeSource))
-	return base64.RawURLEncoding.EncodeToString(sum[:8])
-}()
+// The runtime asset is transport-free everywhere except here: its bytes, its
+// digest, its URL, and the script tag carrying its configuration are all
+// computed in internal/updatecore, and this file is the net/http way to serve
+// them. A second backend serves the same Asset from its own handler.
 
 // RuntimeVersion is the content identity of the browser runtime. It appears in
 // the runtime path so a new build gets a new URL.
-func RuntimeVersion() string { return runtimeETag }
+func RuntimeVersion() string { return updatecore.RuntimeVersion() }
 
 // RuntimeSource is the browser runtime this package implements.
 //
@@ -39,96 +32,18 @@ func RuntimeVersion() string { return runtimeETag }
 // it is given, so one asset serves every deployment and merging it needs no
 // build step. RuntimeConfig produces that configuration; the file installs
 // createPartialUpdateRuntime for a caller constructing an instance directly.
-func RuntimeSource() []byte { return []byte(runtimeSource) }
-
-// Asset is one static file this package requires a page to load.
-//
-// The module decides what the bytes are and what identifies them; the caller
-// decides where they are served, under what name, and with what cache policy.
-type Asset struct {
-	// Source is the file's content.
-	Source []byte
-	// Version is the content digest. Two builds with the same digest are the
-	// same file, and a changed digest is a changed URL.
-	Version string
-	// ContentType is the media type the file must be served as.
-	ContentType string
-	// FileName is the name this package would serve it under, which a caller
-	// serving it elsewhere may ignore.
-	FileName string
-}
+func RuntimeSource() []byte { return updatecore.RuntimeSource() }
 
 // RuntimeAsset is the browser runtime as a static asset, for a caller that
 // serves its own files.
-func (o Options) RuntimeAsset() Asset {
-	return Asset{
-		Source:      RuntimeSource(),
-		Version:     runtimeETag,
-		ContentType: runtimeContentType,
-		FileName:    o.runtimeFileName() + "." + runtimeETag + ".js",
-	}
-}
-
-const runtimeContentType = "text/javascript; charset=utf-8"
-
-// DefaultRuntimeFileName names the served runtime file.
-const DefaultRuntimeFileName = "tinybind"
-
-func (o Options) runtimeFileName() string {
-	if o.RuntimeFileName == "" {
-		return DefaultRuntimeFileName
-	}
-	return o.RuntimeFileName
-}
-
-func (o Options) serveRuntime() bool { return o.ServeRuntime && !o.CallerOwnsRuntime }
-
-// RuntimeConfig is what the browser runtime reads to learn its own names.
-//
-// It is exported because a framework merging the runtime into its own asset
-// builds the same object and passes it to the factory directly, rather than
-// reproducing the field names from the JavaScript.
-type RuntimeConfig struct {
-	// Build is the identity of the binary that rendered the page.
-	Build string `json:"build"`
-	// Attr is the data-attribute prefix, which names the instance attribute the
-	// runtime locates by and the preserve and ignore markers authors write.
-	Attr string `json:"attr"`
-	// Header is the header namespace the render, manifest, and build headers
-	// are derived from.
-	Header string `json:"header"`
-	// Global is the name the runtime instance is installed under. Empty
-	// installs nothing, which is what a caller using only the factory wants.
-	Global string `json:"global"`
-	// CSRFHeader is the header the runtime puts the token in. It is not derived
-	// from Header, because X-CSRF-Token is a name every framework already
-	// recognizes rather than one this module owns.
-	CSRFHeader string `json:"csrfHeader,omitempty"`
-	// CSRF is the session's token. It is empty for a deployment that turned the
-	// token off, and then the runtime sends no header, so a page without one is
-	// byte-identical to what it was before this existed.
-	//
-	// A token in a data attribute is readable by script, which is the same
-	// exposure the hidden field in every form already has. It is not what
-	// protects against XSS: script that runs in the page can act as the user
-	// whether or not it can read this.
-	CSRF string `json:"csrf,omitempty"`
-}
+func (o Options) RuntimeAsset() Asset { return o.core().RuntimeAsset() }
 
 // RuntimeConfig is the configuration matching these options, so the server and
 // the browser cannot disagree about a name.
 //
 // It carries no CSRF token: a token belongs to a session and these options
 // belong to the process. Use RuntimeConfigFor to add one.
-func (o Options) RuntimeConfig() RuntimeConfig {
-	return RuntimeConfig{
-		Build:      o.buildID(),
-		Attr:       o.dataAttributePrefix(),
-		Header:     o.prefix(),
-		Global:     o.globalName(),
-		CSRFHeader: o.csrfHeader(),
-	}
-}
+func (o Options) RuntimeConfig() RuntimeConfig { return o.core().RuntimeConfig() }
 
 // RuntimeConfigFor is RuntimeConfig carrying this session's CSRF token, so the
 // runtime sends it on every request it issues.
@@ -138,43 +53,13 @@ func (o Options) RuntimeConfig() RuntimeConfig {
 // carry the same value, which is what a header carrying exactly one value
 // requires of the token: one per session.
 func (o Options) RuntimeConfigFor(csrfToken string) RuntimeConfig {
-	config := o.RuntimeConfig()
-	config.CSRF = csrfToken
-	return config
-}
-
-// DefaultCSRFHeaderName is where the runtime puts the token. Unlike the render
-// and manifest headers it does not follow HeaderPrefix, because this one is a
-// name middleware already looks for rather than a namespace this module owns.
-const DefaultCSRFHeaderName = "X-CSRF-Token"
-
-func (o Options) csrfHeader() string {
-	if o.CSRFHeaderName == "" {
-		return DefaultCSRFHeaderName
-	}
-	return o.CSRFHeaderName
+	return o.core().RuntimeConfigFor(csrfToken)
 }
 
 // RuntimePath is the URL the browser runtime is served from. The version
 // segment makes the response immutable, which is why the handler may set a long
 // max-age.
-func (o Options) RuntimePath() string {
-	return o.pathPrefix() + "/runtime/" + o.runtimeFileName() + "." + runtimeETag + ".js"
-}
-
-// RuntimeHandler serves the browser runtime.
-//
-// A caller owning the runtime serves its own asset and never calls this; see
-// Options.CallerOwnsRuntime and RuntimeSource.
-func (o Options) RuntimeHandler() http.Handler {
-	modified := time.Time{}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", runtimeContentType)
-		w.Header().Set("ETag", `"`+runtimeETag+`"`)
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		http.ServeContent(w, r, o.runtimeFileName()+".js", modified, strings.NewReader(runtimeSource))
-	})
-}
+func (o Options) RuntimePath() string { return o.core().RuntimePath() }
 
 // ScriptTag is the element loading the runtime, ready to place at the end of a
 // document body.
@@ -185,31 +70,24 @@ func (o Options) RuntimeHandler() http.Handler {
 //
 // A caller owning the runtime gets an empty string: a tag pointing at an asset
 // this build does not serve is worse than no tag at all.
-func (o Options) ScriptTag() string { return o.scriptTag(o.RuntimeConfig()) }
+func (o Options) ScriptTag() string { return o.core().ScriptTag() }
 
 // ScriptTagFor is ScriptTag carrying this session's CSRF token, which is what a
 // handler that renders forms uses.
-func (o Options) ScriptTagFor(csrfToken string) string {
-	return o.scriptTag(o.RuntimeConfigFor(csrfToken))
-}
+func (o Options) ScriptTagFor(csrfToken string) string { return o.core().ScriptTagFor(csrfToken) }
 
-func (o Options) scriptTag(config RuntimeConfig) string {
-	if !o.serveRuntime() {
-		return ""
-	}
-	encoded, err := json.Marshal(config)
-	if err != nil {
-		// Every field is a string, so this cannot fail; a nil config would
-		// silently disable updates, which is the one outcome worth a panic.
-		panic("htmlupdate: cannot encode the runtime configuration: " + err.Error())
-	}
-	return `<script src="` + htmlAttrEscape(o.RuntimePath()) +
-		`" data-config="` + htmlAttrEscape(string(encoded)) + `" defer></script>`
-}
-
-func htmlAttrEscape(value string) string {
-	replacer := strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;", "<", "&lt;", ">", "&gt;")
-	return replacer.Replace(value)
+// RuntimeHandler serves the browser runtime.
+//
+// A caller owning the runtime serves its own asset and never calls this; see
+// Options.CallerOwnsRuntime and RuntimeSource.
+func (o Options) RuntimeHandler() http.Handler {
+	modified := time.Time{}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", updatecore.RuntimeContentType)
+		w.Header().Set("ETag", `"`+updatecore.RuntimeVersion()+`"`)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		http.ServeContent(w, r, o.core().RuntimeBaseName()+".js", modified, strings.NewReader(string(updatecore.RuntimeSource())))
+	})
 }
 
 // Router is what Mount installs on.
@@ -234,7 +112,7 @@ type Router interface {
 // The asset is registered only when this build serves it; see
 // Options.ServeRuntime.
 func (o Options) Mount(router Router) {
-	if o.serveRuntime() {
-		router.Handle("GET "+o.pathPrefix()+"/runtime/", o.RuntimeHandler())
+	if o.core().ServesRuntime() {
+		router.Handle("GET "+o.core().PathNamespace()+"/runtime/", o.RuntimeHandler())
 	}
 }

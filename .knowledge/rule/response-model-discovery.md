@@ -9,20 +9,18 @@ Response models are discovered from the generic type argument of httpbind.Write[
 detection_calls:
   - "httpbind.Write[T](w, r, value)"
   - "httpbind.WriteStatus[T](w, r, status, value)"
-  - "httpbind.NewStream[T](w, r)"
 ordinary_example: "httpbind.Write[CreateUserResponse](w, r, output)"
 status_example: "httpbind.WriteStatus[CreateUserResponse](w, r, http.StatusCreated, output)"
 streaming_example: |
-  stream, err := httpbind.NewStream[ChatEvent](w, r)
+  httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error { ... })
   _ = stream.Write(ChatEvent{...})
 model_source: generic type argument T
-streaming_type: "httpbind.Stream[EventType] via NewStream[EventType]"
+streaming_type: "httpbind.Stream[EventType] via WriteStream[EventType]"
 symbol_identity: rule:go-types-symbol-identity
 must_be:
   - github.com/shibukawa/tinybind-go.Write
   - github.com/shibukawa/tinybind-go.WriteStatus
-  - github.com/shibukawa/tinybind-go.NewStream
-reject: same-named Write/NewStream from other packages
+reject: same-named Write/WriteStream from other packages
 alias_ok: true
 openapi_status: rule:openapi-success-status
 related:

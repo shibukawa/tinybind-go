@@ -49,7 +49,7 @@ func TestDefaultsDeclareTransportSlots(t *testing.T) {
 		t.Errorf("Bind declares a writer slot; it takes no writer")
 	}
 
-	for _, name := range []string{"Write", "WriteStatus", "NewStream", "WriteStream"} {
+	for _, name := range []string{"Write", "WriteStatus", "WriteStream"} {
 		pattern, ok := patterns[httpbindPath+"."+name]
 		if !ok {
 			t.Fatalf("no default pattern for %s", name)
@@ -67,16 +67,126 @@ func TestDefaultsDeclareTransportSlots(t *testing.T) {
 	}
 }
 
+// htmlupdatePath is the second package whose declarations take a transport. It
+// is named here rather than inferred, so adding a third stays a decision.
+const htmlupdatePath = "github.com/shibukawa/tinybind-go/htmlupdate"
+
 // The canonical names are spelled once per runtime package, so a same-named
 // function in a runtime with no transport must not inherit the claim.
 func TestNonHTTPRuntimesDeclareNoTransportSlots(t *testing.T) {
+	carriesTransport := map[string]bool{httpbindPath: true, htmlupdatePath: true}
 	for _, pattern := range mustOptions(t).Calls.Set {
-		if pattern.Target.Function == nil || pattern.Target.Function.PackagePath == httpbindPath {
+		if pattern.Target.Function == nil || carriesTransport[pattern.Target.Function.PackagePath] {
 			continue
 		}
 		if pattern.Transport.Declared() {
 			t.Errorf("%s.%s declares a transport slot",
 				pattern.Target.Function.PackagePath, pattern.Target.Function.Name)
+		}
+	}
+}
+
+// Every update entry the transform may rewrite has to declare where its
+// transport sits, or the rewritten call keeps an argument the fasthttp
+// signature does not have. The render and stream entries are absent on purpose:
+// they write as they go, so a handler calling one is refused rather than
+// rewritten into a call that does not exist.
+func TestUpdateEntriesDeclareTransportSlots(t *testing.T) {
+	methods := map[string]generator.CallPattern{}
+	functions := map[string]generator.CallPattern{}
+	for _, pattern := range mustOptions(t).Calls.Set {
+		if m := pattern.Target.Method; m != nil && m.PackagePath == htmlupdatePath {
+			methods[m.ReceiverType+"."+m.Name] = pattern
+		}
+		if f := pattern.Target.Function; f != nil && f.PackagePath == htmlupdatePath {
+			functions[f.Name] = pattern
+		}
+	}
+
+	for _, name := range []string{
+		"WantsUpdate", "Negotiate", "Redraw", "WriteUpdate", "WriteUpdateStatus",
+		"Sequence", "CSRFToken", "VerifyCSRF",
+		"Headers", "RedrawHeaders", "StreamHeaders", "LiveHeaders",
+	} {
+		pattern, ok := methods["Options."+name]
+		if !ok {
+			t.Errorf("no default pattern for Options.%s", name)
+			continue
+		}
+		if got := slot(t, name+" request", pattern.Transport.Request); got != 0 {
+			t.Errorf("Options.%s request slot = %d, want 0", name, got)
+		}
+		if pattern.Transport.Writer != nil {
+			t.Errorf("Options.%s declares a writer slot; it writes nothing", name)
+		}
+	}
+
+	if pattern, ok := methods["Response.WriteTo"]; !ok {
+		t.Error("no default pattern for Response.WriteTo")
+	} else if got := slot(t, "WriteTo writer", pattern.Transport.Writer); got != 0 {
+		t.Errorf("Response.WriteTo writer slot = %d, want 0", got)
+	}
+
+	if pattern, ok := methods["Response.NotModified"]; !ok {
+		t.Error("no default pattern for Response.NotModified")
+	} else if got := slot(t, "NotModified request", pattern.Transport.Request); got != 0 {
+		t.Errorf("Response.NotModified request slot = %d, want 0", got)
+	}
+
+	// ApplyTo takes the header set it copies from first, so its writer is the
+	// second argument and the first has to survive the rewrite.
+	if pattern, ok := functions["ApplyTo"]; !ok {
+		t.Error("no default pattern for ApplyTo")
+	} else {
+		if got := slot(t, "ApplyTo writer", pattern.Transport.Writer); got != 1 {
+			t.Errorf("ApplyTo writer slot = %d, want 1", got)
+		}
+		if pattern.Transport.Drops(0) {
+			t.Error("ApplyTo drops its header argument, which is ordinary data")
+		}
+	}
+
+	// The writing entries lead with the writer and the request, so both collapse
+	// and whatever follows keeps its place.
+	for _, name := range []string{"Render", "RenderStream", "WriteStream", "WriteLiveStream"} {
+		pattern, ok := methods["Options."+name]
+		if !ok {
+			t.Errorf("no default pattern for Options.%s", name)
+			continue
+		}
+		if got := slot(t, name+" writer", pattern.Transport.Writer); got != 0 {
+			t.Errorf("Options.%s writer slot = %d, want 0", name, got)
+		}
+		if got := slot(t, name+" request", pattern.Transport.Request); got != 1 {
+			t.Errorf("Options.%s request slot = %d, want 1", name, got)
+		}
+	}
+
+	// These two take the caller's cancellation first, and it must survive the
+	// rewrite: on fasthttp the delivery outlives the handler, so a context that
+	// was dropped as if it were transport would leave nothing able to bound it.
+	for _, name := range []string{"RenderStreamAsync", "RenderLiveStream"} {
+		pattern, ok := methods["Options."+name]
+		if !ok {
+			t.Errorf("no default pattern for Options.%s", name)
+			continue
+		}
+		if got := slot(t, name+" writer", pattern.Transport.Writer); got != 1 {
+			t.Errorf("Options.%s writer slot = %d, want 1", name, got)
+		}
+		if got := slot(t, name+" request", pattern.Transport.Request); got != 2 {
+			t.Errorf("Options.%s request slot = %d, want 2", name, got)
+		}
+		if pattern.Transport.Drops(0) {
+			t.Errorf("Options.%s drops its context argument, which bounds the delivery", name)
+		}
+	}
+
+	// The held-stream shape is gone rather than deprecated: a call site that
+	// still compiled would be one with no counterpart, discovered at runtime.
+	for _, name := range []string{"OpenStream", "OpenLiveStream"} {
+		if _, ok := methods["Options."+name]; ok {
+			t.Errorf("Options.%s is declared, but the held-stream shape was removed", name)
 		}
 	}
 }

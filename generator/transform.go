@@ -70,7 +70,8 @@ type TransformOptions struct {
 func DefaultTransformOptions() TransformOptions {
 	return TransformOptions{
 		ImportRewrites: map[string]string{
-			httpbindImportPath: fasthttpbindImportPath,
+			httpbindImportPath:   fasthttpbindImportPath,
+			htmlupdateImportPath: fasthttpupdateImportPath,
 		},
 		ContextType:   "*fasthttp.RequestCtx",
 		ContextImport: fasthttpImportPath,

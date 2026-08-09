@@ -28,7 +28,7 @@ tinybind_calls_only:
     - Write
     - WriteStatus
     - WriteError
-    - NewStream
+    - WriteStream
     - DecodeJSON
     - EncodeJSON
 

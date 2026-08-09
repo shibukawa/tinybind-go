@@ -20,11 +20,12 @@ runtime_work:
     count: 26 exported declarations taking a request or a response writer
     request_side: Bind, ReadBody, Queries, QueryValue, PathValue, HeaderValue, CookieValue, IsJSONRequest, IsFormRequest, IsMultipartRequest, ParseMultipartMap, ReadJSONObject, ParseFormMap, RegisterBind
     response_side: Write, WriteStatus, WriteError, WriteJSON, WriteJSONBytes, RegisterWrite
-    stream: NewStream and NegotiateStreamFormat, which decision:stream-callback-shape reshapes into api:write-stream
+    stream: WriteStream and NegotiateStreamFormat, per decision:stream-callback-shape; the held NewStream entry was removed 2026-08-10
     api_docs: OpenAPIJSON and SwaggerUI
   htmlupdate:
     count: 14 exported declarations; the package is the partial-update, redraw, and live surface end to end
     surface: WantsUpdate, Negotiate, WriteUpdate, WriteUpdateStatus, WriteNavigate, WriteFailure, Render, RenderStream, RenderStreamAsync, RenderLiveStream, Redraw, OpenStream, OpenLiveStream, CSRFToken, VerifyCSRF, RuntimeHandler, and Mount
+    superseded_by: done_2026_08_10_update_surface and done_2026_08_10_writing_half below; the whole surface is carried, and OpenStream and OpenLiveStream no longer exist under those names
     note: a root-package port does not carry this, and a downstream unified update runtime stops at the boundary without it
     already_recorded: requirement:fasthttpbind-parity-scope defers this, and the recordWriter http.Flusher field is why
 analysis_work:
@@ -60,6 +61,25 @@ sequencing:
     shared: the error model, problem-document derivation, multipart limits and FileFromHeader all come from bindcore, so error bytes match by construction rather than by two implementations agreeing
     verified: parity tests compare bind results, JSON field access, form parsing, WriteJSONBytes and four WriteError cases against the net/http runtime; a mutation check confirms the pooled-body copy test fails when the copy is removed
     not_yet: the stream entry, which waits on decision:stream-callback-shape
+  done_2026_08_10_update_surface:
+    what: the read-only half of htmlupdate, as internal/updatecore behind two shells; see decision:update-core-shared-leaf
+    holds: WantsUpdate, Negotiate, Redraw, WriteUpdate, WriteUpdateStatus, WriteNavigate, Sequence, CSRFToken, VerifyCSRF, Headers, RedrawHeaders, StreamHeaders, LiveHeaders, FailureResponse, the query decoders, the manifest codec and the runtime asset
+    sending_half_included: Response.WriteTo, Response.NotModified and ApplyTo, without which an entry computing an answer could not send it
+    added: Redirect, as a registered pair, because WantsUpdate exists to create the branch that takes one
+    still_here_at_the_time: Render, RenderStream, RenderStreamAsync, RenderLiveStream, OpenStream, OpenLiveStream and the recordWriter; done_2026_08_10_writing_half closes this
+    corrects_the_count_below: 'the htmlupdate row says a root-package port does not carry this; it is now carried, and what is left is the six writing entries rather than fourteen'
+    known_gap:
+      what: 'a package-level var of type Options'
+      why: a var is a declaration and not a function, so the transform does not rewrite it and the build tag excludes the file it lives in
+      remedy_today: declare it in a tagged file pair, or build it inside the handler
+      remedy_available: extend the transform to rewrite the imports of an authored file that only names rewritten packages, which is a change to its model rather than to this table
+  done_2026_08_10_writing_half:
+    what: the streamed and live renders, closing the port
+    shape: the callback entry of decision:stream-callback-shape, extended to htmlupdate; OpenStream and OpenLiveStream are gone and WriteStream and WriteLiveStream replace them on both transports
+    record_writer: takes an io.Writer and duck-types Flush and Flush error, so the http.Flusher field that made it transport-bound is gone
+    plan_then_run: everything read from a request is captured before the response opens, which is what lets one loop run from a fasthttp body stream writer
+    render_reclassified: Options.Render never flushed and needed no inversion; see requirement:fasthttpbind-parity-scope
+    residual: fasthttp has no per-request cancellation, so a live stream ends on a failed write rather than on a disconnect
   blocked_on_release:
     fact: the fasthttp fork is unreleased; it is 9 commits ahead of origin/main on the local tinygodriver checkout and absent from every tag through v1.1.12
     workaround: a gitignored go.work supplies it for local development

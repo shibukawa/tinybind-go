@@ -2,285 +2,115 @@ package htmlupdate
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
-	"github.com/shibukawa/tinybind-go/htmlbind/delta"
+	"github.com/shibukawa/tinybind-go/internal/updatecore"
 )
 
-// DefaultStreamContentType marks a delta delivered as a record stream. One JSON
-// record per line, which is the framing the module already uses for streamed
-// values. Options.StreamContentType overrides it.
-const DefaultStreamContentType = "application/x-ndjson; charset=utf-8"
-
-// record is one line of a streamed delta.
+// The streaming half. Every entry here decides what it can while it still owns
+// the request, opens the response, and writes records; nothing is handed back
+// to the caller half-open.
 //
-// Each operation carries its own manifest entry, because a trailing manifest
-// cannot be written before the operations it describes. That is also why the
-// stream ends with an explicit terminator: a client that stops receiving has no
-// other way to tell a finished render from a truncated one.
-// It carries no version field, for the reason deltaResponse carries none: the
-// browser client belongs to the caller, so the caller owns its wire version.
-type record struct {
-	Record string `json:"r"`
-	// head fields
-	Head []string `json:"head,omitempty"`
-	// Build identifies the binary that opened this stream. A client reconnecting
-	// into a redeployed server would otherwise apply deliveries addressed at a
-	// document it is no longer showing; reading it from the first record means a
-	// client that consumes records without inspecting response headers can still
-	// tell, and reload instead.
-	Build string `json:"build,omitempty"`
-	// operation fields
-	Kind  string `json:"kind,omitempty"`
-	ID    string `json:"id,omitempty"`
-	HTML  string `json:"html,omitempty"`
-	Frame string `json:"frame,omitempty"`
-	// Boundaries names the holes in HTML. One that also arrives as an operation
-	// is filled from it; one that does not is retained from the DOM the client
-	// already has, which is what keeps the state inside it.
-	Boundaries []string `json:"boundaries,omitempty"`
-	// Children digests the nested boundary ids of the instance this record names,
-	// and Parent names the boundary enclosing it. With the frame they are the
-	// whole of a manifest entry, so a client rebuilding one from a stream returns
-	// what the next request is compared against rather than two thirds of it.
-	Children string `json:"children,omitempty"`
-	Parent   string `json:"parent,omitempty"`
-	// Seq and Values are the fragment split into its static and varying halves,
-	// sent in place of HTML to a client that walks sequences.
-	Seq    string   `json:"seq,omitempty"`
-	Values []string `json:"values,omitempty"`
-	// terminator and directive fields
-	Navigate string `json:"navigate,omitempty"`
-	Error    string `json:"error,omitempty"`
-	// Reason names which of the endings this is, because a bare close cannot
-	// say. See the end* constants.
-	Reason string `json:"reason,omitempty"`
-	// RetryMillis is the server's own hint for how long to wait before
-	// reconnecting. A client's backoff can only react to a failure; the server
-	// is the only party that knows it is shedding load or rolling a deploy, and
-	// can spread the return before anything fails. Zero leaves the delay to the
-	// client.
-	RetryMillis int `json:"retryMs,omitempty"`
-}
-
-const (
-	recordHead  = "head"
-	recordOp    = "op"
-	recordAwait = "await"
-	recordEnd   = "end"
-)
-
-// The terminator reasons. A stream ends from its source, from a server bound,
-// or from the client aborting; only the first two need a record, and the two of
-// them mean opposite things to a client's retry policy.
-//
-// The first three end a document-side stream and answer "is more coming, and
-// from where"; the last two end a live stream and answer "should I come back".
-const (
-	// endFinal is a navigation that produced everything it will ever produce.
-	// The client must issue no live request.
-	endFinal = "final"
-	// endLivePending is a navigation whose composition owns live boundaries, so
-	// a live request is expected. It is the handoff marker on the streamed path.
-	endLivePending = "live_pending"
-	// endFailed is a sequence that ended on an unrecovered failure. Nothing more
-	// is coming and a committed fallback will not be replaced by this response.
-	endFailed = "failed"
-	// endDone is a live stream whose every source finished. The client stops and
-	// does not reconnect.
-	endDone = "done"
-	// endRetry is a live stream the server closed healthy: a lifetime bound, a
-	// shutdown, a rebalance. The client is expected to reconnect promptly, and
-	// must not spend a backoff attempt on it, because a rollover is not a
-	// failure and treating it as one stalls a working screen every time the
-	// server rotates a connection.
-	endRetry = "retry"
-)
+// That shape is not a net/http preference. fasthttp writes a streamed body from
+// a callback that runs after the handler returned, so a stream a handler holds
+// across statements has no transcription there. One authored form that works on
+// both is worth more than an entry point that reads slightly better on one, and
+// the callback also closes two failures the held form allowed: a producer that
+// forgets to close writes a truncated stream, and a write error it discards is
+// invisible.
 
 // DeltaStream is an open record stream a producer writes boundary completions
 // to as they settle.
 //
-// It exists so the transport and the producer stay separate. A synchronous
-// delta drives it today; an asynchronous render sequence drives it by calling
-// Replace once per completion, which makes wiring one in a call rather than a
-// redesign.
-type DeltaStream struct {
-	writer *recordWriter
-	closed bool
-	// ending is the reason Close writes. It is set at open time from the mode,
-	// so a producer that only calls Close still terminates correctly, and moved
-	// by ExpectLive or Retry when the producer knows better.
-	ending string
-}
+// It is the same type on both transports, deliberately. A wrapper renaming so
+// much as one method would make the two handler bodies differ by more than
+// their signature line, and the source transform rewrites signatures and
+// argument lists — not method names.
+type DeltaStream = updatecore.DeltaStream
 
-// OpenStream commits the response and writes the head record.
+// ManifestEntry is what a client stores for one instance beside its markup: the
+// validator of the region's own bytes, the digest of its nested boundary ids,
+// and the boundary enclosing it.
+type ManifestEntry = updatecore.ManifestEntry
+
+// StreamPlan is what a stream entry decided before it committed. A caller sees
+// one only when it drives the delivery itself.
+type StreamPlan = updatecore.StreamPlan
+
+// WriteStream opens a record stream, runs fn against it, and closes it.
 //
-// Everything that could change the status has to be decided before this call,
-// because after it the status is fixed and a failure can only be reported in
-// band through Fail.
-func (o Options) OpenStream(w http.ResponseWriter, head []string) *DeltaStream {
-	return o.openStream(w, ModeNavigation, 0, head)
+// The stream is closed whether or not fn returns an error, so a producer cannot
+// leave a client holding a truncated response. fn's error is reported in band
+// through the terminator, because the response committed when the head record
+// went out and the status can no longer change.
+//
+// head is the merged head of the composition, written as the first record so a
+// stylesheet lands before the markup that needs it. The response headers are the
+// caller's: take them from [Options.StreamHeaders] before calling.
+func (o Options) WriteStream(w http.ResponseWriter, r *http.Request, head []string, fn func(*DeltaStream) error) {
+	o.writeStream(w, updatecore.StreamPlan{
+		Mode: ModeNavigation, Version: o.Negotiate(r).Version, Head: head,
+	}, fn)
 }
 
-// OpenLiveStream commits a delivery stream: the same records on the same
-// framing, in the live mode rather than the navigation one.
+// WriteLiveStream is WriteStream for a delivery stream: the same records on the
+// same framing, in the live mode rather than the navigation one.
 //
 // The difference a caller sees is the ending. A navigation stream closes final,
 // having described the route; a live stream closes done when every source
 // finished, or retry when the server closed a healthy response at a lifetime
 // bound. A client keys its retry policy on that rather than on the fact that
 // the stream ended.
-func (o Options) OpenLiveStream(w http.ResponseWriter, head []string) *DeltaStream {
-	return o.openStream(w, ModeLive, 0, head)
+func (o Options) WriteLiveStream(w http.ResponseWriter, r *http.Request, head []string, fn func(*DeltaStream) error) {
+	o.writeStream(w, updatecore.StreamPlan{
+		Mode: ModeLive, Live: true, Version: o.Negotiate(r).Version, Head: head,
+	}, fn)
 }
 
-// openStream commits the response. version is the one the request claimed, so
-// the echoed token carries the caller's own number back rather than one this
-// package invented; zero writes a bare mode name.
-func (o Options) openStream(w http.ResponseWriter, mode Mode, version int, head []string) *DeltaStream {
-	ending := endFinal
-	if mode == ModeLive {
-		ending = endDone
+func (o Options) writeStream(w http.ResponseWriter, plan updatecore.StreamPlan, fn func(*DeltaStream) error) {
+	stream := o.core().OpenStream(w, plan)
+	err := fn(stream)
+	if err != nil {
+		stream.Fail(err.Error())
 	}
-	stream := &DeltaStream{writer: newRecordWriter(w), ending: ending}
-	stream.writer.write(record{Record: recordHead, Head: head, Build: o.buildID()})
-	return stream
-}
-
-// ExpectLive marks this stream's terminator as handing off to a live request,
-// which a navigation does when the route it just described owns a live
-// boundary.
-//
-// Without it a client either opens a speculative live request on every
-// navigation — one full page execution per screen that will never deliver
-// anything — or the caller hardcodes which routes are live.
-func (s *DeltaStream) ExpectLive() {
-	if s.ending == endFinal {
-		s.ending = endLivePending
+	if cerr := stream.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		updatecore.ReportStreamError(err)
 	}
 }
 
-// Replace writes one settled boundary, the validator it produced, and the
-// nested boundaries appearing as holes in its markup.
+// Render answers one request with either a complete document or a delta.
 //
-// A hole whose id also arrives as an operation on this stream is filled from it;
-// one that does not is a region the client already holds and moves in. The list
-// is what separates the two, since nothing in the markup does.
-func (s *DeltaStream) Replace(instanceID, html string, entry ManifestEntry, boundaries ...string) {
-	s.writer.write(record{
-		Record: recordOp, Kind: delta.OpReplace, ID: instanceID, HTML: html,
-		Frame: entry.Frame, Children: entry.Children, Parent: entry.Parent,
-		Boundaries: boundaries,
-	})
-}
-
-// ManifestEntry is what a client stores for one instance beside its markup: the
-// validator of the region's own bytes, the digest of its nested boundary ids,
-// and the boundary enclosing it. All three travel on every operation record,
-// because a client rebuilding its manifest from a stream has no other source for
-// them and the next request is compared against all three.
-type ManifestEntry struct {
-	Frame    string
-	Children string
-	Parent   string
-}
-
-// Children writes a boundary whose own markup is unchanged and whose nested
-// boundaries are now these, in this order.
+// It always sets Vary, because a cache that served a delta body to a document
+// request would hand a browser a page of JSON. The caller keeps every other
+// response concern, as elsewhere in this module.
 //
-// It carries no markup, which is the point: appending one row to a list costs
-// the list of ids rather than the list of holes. A client keeps what the list
-// keeps, moving what moved, drops what it omits, and fills what arrives as its
-// own operation in the same response.
-func (s *DeltaStream) Children(instanceID string, entry ManifestEntry, boundaries ...string) {
-	s.writer.write(record{
-		Record: recordOp, Kind: delta.OpChildren, ID: instanceID,
-		Frame: entry.Frame, Children: entry.Children, Parent: entry.Parent,
-		Boundaries: boundaries,
-	})
+// It buffers, so it holds nothing open and reports every failure as an ordinary
+// error. A live request reaching it is answered with the document, which is the
+// same fallback every unrecognized condition takes and leaves the client with a
+// working page rather than an error.
+func (o Options) Render(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
+	return o.core().Render(w, reader(r), wrappers, leaf, options)
 }
 
-// ReplaceValues is Replace for a client that walks sequences: the fragment
-// travels as the address of its static half and the values that fill it, so the
-// statics cost one response per client rather than one per render.
-func (s *DeltaStream) ReplaceValues(instanceID, sequence string, values []string, entry ManifestEntry, boundaries ...string) {
-	s.writer.write(record{
-		Record: recordOp, Kind: delta.OpReplace, ID: instanceID,
-		Seq: sequence, Values: values,
-		Frame: entry.Frame, Children: entry.Children, Parent: entry.Parent,
-		Boundaries: boundaries,
-	})
-}
-
-// Unchanged restates a boundary's validator without markup, so the client can
-// rebuild its whole manifest from what it received.
-func (s *DeltaStream) Unchanged(instanceID string, entry ManifestEntry) {
-	s.writer.write(record{
-		Record: recordOp, ID: instanceID,
-		Frame: entry.Frame, Children: entry.Children, Parent: entry.Parent,
-	})
-}
-
-// Settled writes an await boundary that finished after the initial pass.
+// RenderStream answers a navigation with a record stream instead of one
+// buffered body, so each region applies as soon as it is written.
 //
-// It addresses a placeholder inside a region the client already installed,
-// which is a different namespace from an instance id, so it is its own record
-// kind rather than an operation with a surprising target.
-func (s *DeltaStream) Settled(boundaryID string, html []byte) {
-	s.writer.write(record{Record: recordAwait, ID: boundaryID, HTML: string(html)})
-}
-
-// Sent reports whether an instance already appeared, so a producer emitting
-// completions out of order does not restate one it already wrote.
-func (s *DeltaStream) Sent(instanceID string) bool {
-	_, ok := s.writer.seen[instanceID]
-	return ok
-}
-
-// Fail reports a failure that happened after the response committed. The status
-// is already sent, so this is the only way to say so.
-func (s *DeltaStream) Fail(message string) {
-	s.writer.write(record{Record: recordEnd, Reason: endFailed, Error: message})
-	s.closed = true
-}
-
-// Retry closes a healthy stream the server chose to end: a lifetime bound, a
-// shutdown, a rebalance. The client reconnects promptly instead of backing off,
-// because nothing failed.
-//
-// after is the server's own hint for how long to wait. Zero leaves the delay to
-// the client, which is the right answer for an ordinary rollover; a server
-// shedding load or rolling a deploy is the only party that knows to spread the
-// return, so it is the only one that can fill this in.
-//
-// Calling it on a navigation stream is a mistake this package does not guard
-// against, because a navigation has nothing to reconnect to; it is here for the
-// live path, where a bare close cannot mean stop.
-func (s *DeltaStream) Retry(after time.Duration) error {
-	if !s.closed {
-		s.writer.write(record{Record: recordEnd, Reason: endRetry, RetryMillis: int(after.Milliseconds())})
-		s.closed = true
+// Everything that could change the status is decided before the first record,
+// because writing it commits the response. After that a failure can only be
+// reported in band.
+func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
+	plan, err := o.core().PlanBufferedStream(reader(r), wrappers, leaf, options)
+	if err != nil {
+		return err
 	}
-	return s.writer.err
-}
-
-// Close writes the terminator. Without it the client treats the stream as
-// truncated and discards its manifest, so a producer must always reach here.
-//
-// The terminator names which ending this is: a navigation says whether a live
-// request should follow, and a live stream says whether the client should come
-// back. A close with no reason would make a healthy lifetime rollover
-// indistinguishable from a fault, so a client would back off on both and stall a
-// working screen every time the server rotates a connection.
-func (s *DeltaStream) Close() error {
-	if !s.closed {
-		s.writer.write(record{Record: recordEnd, Reason: s.ending})
-		s.closed = true
+	if !plan.Streams() {
+		return o.core().RenderDocument(w, plan, wrappers, leaf)
 	}
-	return s.writer.err
+	return o.core().RunBufferedStream(o.core().OpenStream(w, plan), plan)
 }
 
 // RenderStreamAsync answers a navigation with a record stream that also carries
@@ -298,186 +128,31 @@ func (o Options) RenderStreamAsync(ctx context.Context, w http.ResponseWriter, r
 	return o.renderStream(ctx, w, r, false, wrappers, leaf, options)
 }
 
-// RenderLiveStream is RenderStreamAsync for a chain holding live sources: in the
-// live mode it keeps every subscription open and writes each delivery as it
-// arrives.
+// RenderLiveStream answers a live request by holding the response open for as
+// long as the composition's subscriptions live.
 //
-// The mode is what decides. A navigation asks what this route looks like now, so
-// a live boundary settles in place and the response ends; a live request asks for
-// the deliveries, so the response stays open. Serving both from one entry is what
-// keeps the reconnect path and the render path the same code — the reason a
-// reconnect needs no cursor, no event log, and no replay.
-//
-// Reconnecting after a dropped stream is the same request again. Nothing has to
-// be resumed, because a live delivery carries the whole state of its region
-// rather than an increment, so a missed one costs nothing and boundary ids are
-// reproduced by position.
+// It is the only entry that keeps subscriptions open. Everything else that
+// reaches a live request answers it as a navigation and terminates, so a client
+// learns at once that this route delivers nothing.
 func (o Options) RenderLiveStream(ctx context.Context, w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
 	return o.renderStream(ctx, w, r, true, wrappers, leaf, options)
 }
 
-// renderStream is the body behind both streaming entries. serveLive says whether
-// this caller answers the live mode at all; the request says whether it asked to.
 func (o Options) renderStream(ctx context.Context, w http.ResponseWriter, r *http.Request, serveLive bool, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options []htmlbind.Option) error {
-	negotiated := o.Negotiate(r)
-	sequences := o.wantsSequences(r)
-	if negotiated.Mode == ModeDocument {
-		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
-		return err
-	}
-	live := serveLive && negotiated.Mode == ModeLive
-	if live {
-		// Only the live mode keeps subscriptions open. A navigation that did so
-		// would never terminate, because a live source has no settle.
-		options = append(options, htmlbind.WithLiveSubscriptions())
-	}
-	// The head is known before the first record, so a stylesheet a newly
-	// reachable component brought is installed before its markup arrives.
-	head, err := delta.DeltaStreamHead(wrappers, leaf, o.renderOptions(options)...)
+	plan, err := o.core().PlanStream(reader(r), serveLive, wrappers, leaf, options)
 	if err != nil {
 		return err
 	}
-	var stream *DeltaStream
-	if live {
-		stream = o.openStream(w, ModeLive, negotiated.Version, head)
-	} else {
-		stream = o.openStream(w, ModeNavigation, negotiated.Version, head)
-		if htmlbind.HasLiveBlock(wrappers, leaf) {
-			stream.ExpectLive()
-		}
+	if !plan.Streams() {
+		return o.core().RenderDocument(w, plan, wrappers, leaf)
 	}
-	for item, err := range delta.RenderDeltaStream(ctx, o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...) {
-		if err != nil {
-			// The response committed with the head record, so the status cannot
-			// change and the failure has to travel in band.
-			stream.Fail(err.Error())
-			return stream.Close()
-		}
-		switch {
-		case item.Completion != nil:
-			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
-		case item.Operation == nil:
-			// Nothing to write.
-		case item.Operation.Kind == delta.OpChildren:
-			// A children operation carries no markup by design, so it has to be
-			// recognised by its kind. Deciding by whether markup is present put
-			// it in the unchanged shape on a navigation — leaving an appended row
-			// with nowhere to go — and dropped it entirely on the live path,
-			// where an unchanged boundary is deliberately silent.
-			stream.Children(item.Operation.InstanceID, entryOf(item), item.Operation.Boundaries...)
-		case item.Operation.Kind == delta.OpReplace:
-			if sendsValues(sequences, *item.Operation) {
-				stream.ReplaceValues(item.Operation.InstanceID, item.Operation.Sequence,
-					item.Operation.Values, entryOf(item), item.Operation.Boundaries...)
-			} else {
-				stream.Replace(item.Operation.InstanceID, item.Operation.HTML, entryOf(item),
-					item.Operation.Boundaries...)
-			}
-		case live:
-			// A live client already holds this boundary from the document render,
-			// and its manifest is not rebuilt from a delivery stream. Restating a
-			// validator it is not going to replace buys nothing, so an unchanged
-			// boundary costs no record here.
-		default:
-			stream.Unchanged(item.Operation.InstanceID, entryOf(item))
-		}
-	}
-	// A cancelled context ends the sequence silently, and on the live path that
-	// is almost always the server going away: a shutdown, a rolling deploy, a
-	// request the caller bounded. Closing it done would tell the client every
-	// source finished and it should stop, so a deploy would leave every open
-	// screen frozen until somebody reloaded. Closing it retry says what actually
-	// happened.
-	//
-	// The client aborting its own request lands here too, and writing the record
-	// costs nothing there: nobody is reading it.
-	if live && ctx.Err() != nil {
-		return stream.Retry(0)
-	}
-	return stream.Close()
+	return o.core().RunStream(ctx, o.core().OpenStream(w, plan), plan, wrappers, leaf)
 }
 
-// RenderStream answers a navigation with a record stream instead of one
-// buffered body, so each region applies as soon as it is written.
+// SetStreamErrorHandler installs the destination for stream failures raised
+// after the response committed.
 //
-// Everything that could change the status is decided before the first record,
-// because writing it commits the response. After that a failure can only be
-// reported in band.
-func (o Options) RenderStream(w http.ResponseWriter, r *http.Request, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, options ...htmlbind.Option) error {
-	negotiated := o.Negotiate(r)
-	if negotiated.Mode != ModeNavigation {
-		_, err := delta.CollectChain(w, o.Key, wrappers, leaf, o.renderOptions(options)...)
-		return err
-	}
-	// Rendering happens before the first byte, so a failure here is still an
-	// ordinary error the caller can turn into a status.
-	diff, err := delta.RenderDelta(o.Key, negotiated.Known, wrappers, leaf, o.renderOptions(options)...)
-	if err != nil {
-		return err
-	}
-	stream := o.openStream(w, ModeNavigation, negotiated.Version, diff.Head)
-	if htmlbind.HasLiveBlock(wrappers, leaf) {
-		stream.ExpectLive()
-	}
-	entries := map[string]ManifestEntry{}
-	for _, instance := range diff.Manifest.Instances {
-		entries[instance.ID] = ManifestEntry{
-			Frame: instance.FrameValidator, Children: instance.ChildrenValidator,
-			Parent: instance.ParentID,
-		}
-	}
-	for _, operation := range diff.Operations {
-		// By kind, not by whether markup happens to be present: writing a
-		// children operation as a replace would have emptied the region rather
-		// than reordering it, since a children operation carries no markup.
-		if operation.Kind == delta.OpChildren {
-			stream.Children(operation.InstanceID, entries[operation.InstanceID], operation.Boundaries...)
-			continue
-		}
-		stream.Replace(operation.InstanceID, operation.HTML, entries[operation.InstanceID], operation.Boundaries...)
-	}
-	for _, instance := range diff.Manifest.Instances {
-		if stream.Sent(instance.ID) {
-			continue
-		}
-		stream.Unchanged(instance.ID, entries[instance.ID])
-	}
-	return stream.Close()
-}
-
-// entryOf is the manifest entry a streamed record carries beside its operation.
-func entryOf(item delta.DeltaRecord) ManifestEntry {
-	return ManifestEntry{Frame: item.Frame, Children: item.Children, Parent: item.Parent}
-}
-
-// recordWriter serializes records and flushes each one, so a boundary reaches
-// the browser as soon as it is written rather than when the response ends.
-type recordWriter struct {
-	w       http.ResponseWriter
-	encoder *json.Encoder
-	flusher http.Flusher
-	seen    map[string]struct{}
-	err     error
-}
-
-func newRecordWriter(w http.ResponseWriter) *recordWriter {
-	flusher, _ := w.(http.Flusher)
-	return &recordWriter{w: w, encoder: json.NewEncoder(w), flusher: flusher, seen: map[string]struct{}{}}
-}
-
-func (rw *recordWriter) write(item record) {
-	if rw.err != nil {
-		return
-	}
-	if item.ID != "" {
-		rw.seen[item.ID] = struct{}{}
-	}
-	if rw.err = rw.encoder.Encode(item); rw.err != nil {
-		return
-	}
-	// A writer that cannot flush still produces correct output, only without
-	// progressive delivery.
-	if rw.flusher != nil {
-		rw.flusher.Flush()
-	}
-}
+// A stream that has written its head record cannot answer with a status, so an
+// error from a producer has nowhere to go but a log. It is installed once for
+// the process and covers both transports.
+func SetStreamErrorHandler(fn func(error)) { updatecore.SetStreamErrorHandler(fn) }

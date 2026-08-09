@@ -76,10 +76,10 @@ func DefaultConfig() Config {
 	}
 	for name, operation := range map[string]CallOperation{
 		"Bind": CallRequestBind, "Write": CallResponseWrite,
-		"WriteStatus": CallResponseWriteStatus, "NewStream": CallStreamCreate,
-		// The callback entry that replaces NewStream. Its element type is
-		// usually inferred from the closure rather than spelled, so discovery
-		// reaches it through the recorded instantiation.
+		"WriteStatus": CallResponseWriteStatus,
+		// The stream entry takes a callback, and its element type is usually
+		// inferred from the closure rather than spelled, so discovery reaches it
+		// through the recorded instantiation.
 		"WriteStream": CallStreamCreate,
 	} {
 		pattern := CallPattern{

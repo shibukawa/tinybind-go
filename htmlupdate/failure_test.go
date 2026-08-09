@@ -1,6 +1,7 @@
 package htmlupdate_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -65,7 +66,7 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 			// response it computed, so a caller substituting its own error page
 			// writes that instead of what it was handed, and this is for the log
 			// line and the span a caller wants on every refusal either way.
-			opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) {
+			opts.OnFailure = func(_ context.Context, failure htmlupdate.Failure) {
 				seen = append(seen, failure)
 			}
 			recorder := httptest.NewRecorder()
@@ -107,12 +108,12 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	var seen htmlupdate.Failure
 	opts := options
-	opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) { seen = failure }
+	opts.OnFailure = func(_ context.Context, failure htmlupdate.Failure) { seen = failure }
 	registry := &htmlupdate.Registry{}
 	broken := errors.New("upstream unavailable")
 	if err := registry.Register(htmlupdate.Reloadable{
 		KindID: "Broken@0001",
-		Render: func(*http.Request, string, url.Values) (htmlbind.Fragment, error) {
+		Render: func(context.Context, string, url.Values) (htmlbind.Fragment, error) {
 			return htmlbind.Fragment{}, broken
 		},
 	}); err != nil {
@@ -178,7 +179,7 @@ func TestFailureNamesTheRefusedParameter(t *testing.T) {
 	registry := &htmlupdate.Registry{}
 	if err := registry.Register(htmlupdate.Reloadable{
 		KindID: "Typed@0001",
-		Render: func(_ *http.Request, id string, values url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, id string, values url.Values) (htmlbind.Fragment, error) {
 			var page int
 			if err := htmlupdate.QueryInt(values, "page", &page); err != nil {
 				return htmlbind.Fragment{}, err
@@ -219,7 +220,7 @@ func TestFailureBodyOmitsTheCause(t *testing.T) {
 	registry := &htmlupdate.Registry{}
 	if err := registry.Register(htmlupdate.Reloadable{
 		KindID: "Leaky@0001",
-		Render: func(*http.Request, string, url.Values) (htmlbind.Fragment, error) {
+		Render: func(context.Context, string, url.Values) (htmlbind.Fragment, error) {
 			return htmlbind.Fragment{}, errors.New("dial tcp 10.0.0.5:5432: connection refused")
 		},
 	}); err != nil {

@@ -63,6 +63,67 @@ func TestRewriteProducesTheFasthttpShape(t *testing.T) {
 	}
 }
 
+// The update surface reaches a handler as methods on Options and on Response,
+// which a pattern index keyed by package and name alone could not tell apart.
+// This is the test that the receiver is part of the key: Options.Headers and
+// Response.WriteTo differ only in it, and drop different arguments.
+func TestRewriteCollapsesTheUpdateEntries(t *testing.T) {
+	got := string(rewriteFixture(t, "transform_rewrite").Source)
+
+	for _, want := range []string{
+		"func updateAction(ctx *fasthttp.RequestCtx)",
+		"func updatePage(ctx *fasthttp.RequestCtx)",
+		`htmlupdate "github.com/shibukawa/tinybind-go/fasthttpupdate"`,
+		// the request drops out of every read-only entry
+		"options.WantsUpdate(ctx)",
+		`options.VerifyCSRF(ctx, "session-token")`,
+		"options.WriteUpdate(ctx, []htmlupdate.Update{",
+		"options.Redraw(ctx, registry)",
+		"options.Sequence(ctx)",
+		"options.Negotiate(ctx).Mode",
+		"options.RedrawHeaders(ctx)",
+		"options.Headers(ctx, nil, htmlbind.Fragment{})",
+		// the writer drops out of the sending half
+		"answer.WriteTo(ctx)",
+		"answer.NotModified(ctx)",
+		// ApplyTo keeps its first argument, which is data rather than transport
+		"htmlupdate.ApplyTo(answer.Header, ctx)",
+		"htmlupdate.ApplyTo(options.RedrawHeaders(ctx), ctx)",
+		// and the branch WantsUpdate exists to create
+		`htmlupdate.Redirect(ctx, "/cart", http.StatusSeeOther)`,
+		// the streaming entries take a callback, so both transport arguments
+		// drop and the producer body is untouched
+		`options.WriteStream(ctx, []string{"<title>Feed</title>"}, func(stream *htmlupdate.DeltaStream) error {`,
+		"stream.Replace(\"feed\", `<main id=\"feed\">one</main>`, htmlupdate.ManifestEntry{Frame: \"f1\"})",
+		// the caller's cancellation is not a transport value and keeps its place
+		"options.RenderLiveStream(ctx, ctx, nil, htmlbind.Fragment{})",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated source missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// The producer body has to survive the rewrite unchanged. It is the reason the
+// stream type is one type rather than two that match: a wrapper renaming a
+// single method would put a difference here, and this transform moves signature
+// lines and argument lists, not method names.
+func TestRewriteLeavesTheProducerBodyAlone(t *testing.T) {
+	authored, err := os.ReadFile(filepath.Join("..", "testdata", "transform_rewrite", "update.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(rewriteFixture(t, "transform_rewrite").Source)
+
+	const producer = "\t\tstream.Replace(\"feed\", `<main id=\"feed\">one</main>`, htmlupdate.ManifestEntry{Frame: \"f1\"})\n\t\treturn nil\n"
+	if !strings.Contains(string(authored), producer) {
+		t.Fatalf("the fixture no longer contains the producer body this asserts on")
+	}
+	if !strings.Contains(got, producer) {
+		t.Errorf("the producer body changed in the rewrite:\n%s", got)
+	}
+}
+
 // net/http is dropped because the transport types were its only use, not
 // because the transform deletes it on sight. This fixture also reads
 // http.StatusAccepted, so the import has to survive; a rewrite that removed it

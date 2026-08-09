@@ -1,6 +1,7 @@
 package htmlupdate_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -48,7 +49,7 @@ func cardRegistry(t *testing.T) *htmlupdate.Registry {
 	registry := &htmlupdate.Registry{}
 	registry.Register(htmlupdate.Reloadable{
 		KindID: cardKind,
-		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
 			page, err := strconv.Atoi(values.Get("page"))
 			if err != nil {
 				return htmlbind.Fragment{}, errors.New("page must be an integer")
@@ -390,7 +391,7 @@ func styledRegistry(t *testing.T) *htmlupdate.Registry {
 		KindID: styledKind,
 		Head:   styledHead,
 		Assets: []htmlbind.Asset{styledAsset},
-		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
 			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID, Count: 1}), nil
 		},
 	}); err != nil {
@@ -440,7 +441,7 @@ func TestRegistryPublishesWhatARedrawRequires(t *testing.T) {
 		// share a bundle. It must appear once.
 		Head:   styledHead,
 		Assets: []htmlbind.Asset{styledAsset},
-		Render: func(r *http.Request, instanceID string, values url.Values) (htmlbind.Fragment, error) {
+		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
 			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID}), nil
 		},
 	}); err != nil {

@@ -3,6 +3,7 @@ package htmlupdate_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -155,19 +156,28 @@ func TestStreamFallsBackToTheDocument(t *testing.T) {
 	}
 }
 
+// streamRequest is a navigation request, which is all WriteStream reads from
+// one: the version it echoes in the terminator.
+func streamRequest() *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	request.Header.Set("X-Tinybind-Render", "navigation")
+	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
+	return request
+}
+
 // A producer drives the stream directly, which is the seam an asynchronous
 // render sequence plugs into: it writes each boundary as it settles and closes.
 func TestProducerDrivesTheStream(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	stream := options.OpenStream(recorder, []string{"<title>Live</title>"})
-	stream.Replace("c1", `<main id="c1">first</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
-	if !stream.Sent("c1") {
-		t.Fatal("a written instance must be reported as sent")
-	}
-	stream.Unchanged("c2", htmlupdate.ManifestEntry{Frame: "f2"})
-	if err := stream.Close(); err != nil {
-		t.Fatal(err)
-	}
+	options.WriteStream(recorder, streamRequest(), []string{"<title>Live</title>"},
+		func(stream *htmlupdate.DeltaStream) error {
+			stream.Replace("c1", `<main id="c1">first</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
+			if !stream.Sent("c1") {
+				t.Error("a written instance must be reported as sent")
+			}
+			stream.Unchanged("c2", htmlupdate.ManifestEntry{Frame: "f2"})
+			return nil
+		})
 	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("want head, two operations, and a terminator, got %q", lines)
@@ -188,12 +198,13 @@ func TestProducerDrivesTheStream(t *testing.T) {
 // reported in band and still terminates the stream.
 func TestProducerReportsLateFailureInBand(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	stream := options.OpenStream(recorder, nil)
-	stream.Replace("c1", `<main id="c1">partial</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
-	stream.Fail("boundary failed")
-	if err := stream.Close(); err != nil {
-		t.Fatal(err)
-	}
+	// The callback's error is what reports a late failure now: the entry writes
+	// the terminator, so a producer cannot leave a truncated stream behind.
+	options.WriteStream(recorder, streamRequest(), nil,
+		func(stream *htmlupdate.DeltaStream) error {
+			stream.Replace("c1", `<main id="c1">partial</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
+			return errors.New("boundary failed")
+		})
 	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
 	var last map[string]any
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {

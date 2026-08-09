@@ -89,12 +89,25 @@ type transformAnalyzer struct {
 func indexCallPatterns(patterns []CallPattern) map[string]CallPattern {
 	out := map[string]CallPattern{}
 	for _, pattern := range patterns {
-		if pattern.Target.Function == nil {
+		if f := pattern.Target.Function; f != nil {
+			out[f.PackagePath+"."+f.Name] = pattern
 			continue
 		}
-		out[pattern.Target.Function.PackagePath+"."+pattern.Target.Function.Name] = pattern
+		if m := pattern.Target.Method; m != nil {
+			out[methodPatternKey(m.PackagePath, m.ReceiverPackagePath, m.ReceiverType, m.Name)] = pattern
+		}
 	}
 	return out
+}
+
+// methodPatternKey names a method by its receiver as well as by its own name.
+//
+// A bare package-and-name key cannot tell two methods apart, and it cannot tell
+// a method from a function either: the update surface has Options.Headers and
+// Response.WriteTo in one package, and a key that dropped the receiver would let
+// either pattern answer for the other and drop the wrong argument.
+func methodPatternKey(packagePath, receiverPackagePath, receiverType, name string) string {
+	return packagePath + ".(" + receiverPackagePath + "." + receiverType + ")." + name
 }
 
 func (a *transformAnalyzer) collectCandidates() {
@@ -330,8 +343,33 @@ func (a *transformAnalyzer) patternFor(obj types.Object) (CallPattern, bool) {
 	if !ok || fn.Pkg() == nil {
 		return CallPattern{}, false
 	}
+	if key, ok := receiverKey(fn); ok {
+		pattern, found := a.patterns[key]
+		return pattern, found
+	}
 	pattern, ok := a.patterns[fn.Pkg().Path()+"."+fn.Name()]
 	return pattern, ok
+}
+
+// receiverKey is the pattern key for a method call, and reports false for a
+// package function.
+//
+// A method on an alias resolves to the type the alias names, which is what
+// makes one registration cover a receiver both runtimes spell the same way.
+func receiverKey(fn *types.Func) (string, bool) {
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return "", false
+	}
+	t := sig.Recv().Type()
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return "", false
+	}
+	return methodPatternKey(fn.Pkg().Path(), named.Obj().Pkg().Path(), named.Obj().Name(), fn.Name()), true
 }
 
 func (a *transformAnalyzer) localCallee(obj types.Object) (*TransformCandidate, bool) {
