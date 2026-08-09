@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/token"
 	"sort"
+
+	"github.com/shibukawa/tinybind-go/parser"
 )
 
 // The net/http source is the authored form and the fasthttp source is derived
@@ -52,6 +54,12 @@ type TransformOptions struct {
 	// Calls are the recognized calls whose transport arguments are dropped.
 	// Empty uses the canonical set for the default runtime packages.
 	Calls []CallPattern
+
+	// ReportOnly lists what a transformed build would refuse and writes
+	// nothing. Adoption is all-or-nothing per decision:backend-build-tag-mode,
+	// so an application needs to see the whole cost before committing to the
+	// migration rather than one refusal at a time after it.
+	ReportOnly bool
 }
 
 // DefaultTransformOptions targets the fasthttp runtime this module ships.
@@ -170,6 +178,30 @@ func (r TransformRefusal) Error() string {
 	}
 	if remedy := kind.Remedy(); remedy != "" {
 		out += "  remedy: " + remedy + "\n"
+	}
+	return out
+}
+
+// Diagnostics renders the refusals the way the rest of the generator reports
+// what it could not analyze, so a report-only run rides the same rail as
+// --check instead of inventing a second one.
+func (rs TransformRefusals) Diagnostics() []parser.Diagnostic {
+	out := make([]parser.Diagnostic, 0, len(rs))
+	for _, r := range rs {
+		message := string(r.Kind) + ": " + r.Function + " " + r.Detail
+		for _, hop := range r.Chain {
+			message += "; " + hop.Position.String() + " " + hop.Detail
+		}
+		if remedy := r.Kind.Remedy(); remedy != "" {
+			message += "; remedy: " + remedy
+		}
+		out = append(out, parser.Diagnostic{
+			File:    r.Position.Filename,
+			Line:    r.Position.Line,
+			Column:  r.Position.Column,
+			Reason:  parser.ReasonOther,
+			Message: message,
+		})
 	}
 	return out
 }

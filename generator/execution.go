@@ -29,6 +29,9 @@ type GenerateRequest struct {
 	// retains it.
 	SQLDialect     string
 	ConfigBindName string
+	// TransportName is the generated transport output file. Empty uses the
+	// default; it is written only when Options.Transform selects a backend.
+	TransportName string
 	// DynamoName is the DynamoDB item codec output file.
 	DynamoName string
 	// DynamoQueryName is the generated DynamoDB query output file.
@@ -93,8 +96,11 @@ type GenerateResult struct {
 	// DepsPath is the recorded read set, written only when a transform reported
 	// reading something. The next run verifies it before trusting its own skip,
 	// because a file read by a transform is not otherwise a hashed input.
-	DepsPath    string
-	Diagnostics []parser.Diagnostic
+	DepsPath string
+	// TransportPath is the derived other-transport source, written only when a
+	// backend is selected.
+	TransportPath string
+	Diagnostics   []parser.Diagnostic
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
 	Cached bool
@@ -111,7 +117,7 @@ func (result GenerateResult) Paths() []string {
 	if result.DepsPath != "" {
 		paths = append(paths, result.DepsPath)
 	}
-	for _, path := range []string{result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.TransportPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -124,7 +130,7 @@ func (result GenerateResult) Paths() []string {
 // Go and its name already records the hash of its bytes.
 func (result GenerateResult) goPaths() []string {
 	paths := make([]string, 0, 6)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.TransportPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -180,6 +186,12 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 		diagnostics, err := parser.CheckPackageWithConfig(request.Dir, normalized.parserConfig)
 		return GenerateResult{Diagnostics: diagnostics}, err
 	}
+	// A report-only transform run answers "what would this cost" without
+	// writing anything, and without failing: the refusals are the answer.
+	if options.Transform != nil && options.Transform.ReportOnly {
+		diagnostics, err := New(options).reportTransform(newPackageLoad(request.Dir))
+		return GenerateResult{Diagnostics: diagnostics}, err
+	}
 
 	outDir := request.Out
 	if outDir == "" {
@@ -222,6 +234,13 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 			return GenerateResult{}, fmt.Errorf("generate mapping: %w", err)
 		}
 		result.BinderPath = ""
+	}
+	if err := ctx.Err(); err != nil {
+		return GenerateResult{}, err
+	}
+	result.TransportPath, err = runner.generateTransport(load, request.Out, request.TransportName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate transport: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err

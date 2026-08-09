@@ -56,6 +56,17 @@ flow:
       action: emit the same OpenAPI fragment as the net/http run, since it derives from the field plan and not from the transport
       refs:
         - concept:openapi-generation
+  wired_2026_08_08:
+    selection: Options.Transform, nil by default, so a run that does not ask for a backend is byte-identical to one predating the feature
+    phase: transportArtifacts, between the binder and configbind phases, sharing the one type check
+    output: one package-wide file, tinybind_transport_gen.go, because the transform closes over the call graph and a handler's helper may be authored elsewhere
+    refusal: stops the run and writes nothing, since decision:backend-build-tag-mode leaves no adapter and a partial emit would serve fewer routes silently
+    report_only: TransformOptions.ReportOnly returns the refusals as parser diagnostics, writes nothing and exits zero, riding the same rail as --check
+    cli: "-backend fasthttp, -transport-name, -transport-report"
+    stamp: the transport file joins Paths and goPaths, so it is stamped and cache-checked with the rest; the stamp comment sits above the build constraint and the file still compiles
+  not_yet_wired:
+    - the fasthttp binder and writer emission, which needs the emitter's signature line parameterized the way routetree already is
+    - the route registration and the per-route body limit hook of rule:fasthttpbind-body-limit-mapping
   outputs:
     net_http: unchanged; the authored files and their existing generated companions
     fasthttp: one tagged file set per package, compiled only under the fasthttp tag

@@ -122,6 +122,15 @@ type Options struct {
 	// overriding it must use a browser runtime built for the same prefix,
 	// because the runtime hardcodes it rather than discovering it.
 	DataAttributePrefix string
+	// Transform selects the source transform and names its target backend. Nil
+	// generates the authored net/http backend alone, which is the default and
+	// what keeps a run predating this feature byte-identical.
+	//
+	// Set it to DefaultTransformOptions() for the fasthttp backend this module
+	// ships, or to a value carrying your own ImportRewrites for a framework
+	// providing the same helper names over the other transport.
+	Transform *TransformOptions
+
 	// GeneratedHeaders names header prefixes, beside this module's own, whose
 	// files every discovery pass must skip. A framework generating with tinybind
 	// and branding its output writes a header nothing here recognizes on its own,

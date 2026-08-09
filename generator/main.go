@@ -35,6 +35,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	sqlContextOnlyAPI := flags.Bool("sql-context-only-api", false, "publish only the Context-resolved SQL API under the declared name")
 	dynamoParameterAPI := flags.Bool("dynamo-parameter-api", false, "give generated DynamoDB queries a dynamobind.Handle parameter instead of resolving one from the Context")
 	firestoreParameterAPI := flags.Bool("firestore-parameter-api", false, "give generated Firestore queries a firestorebind.Handle parameter instead of resolving one from the Context")
+	backend := flags.String("backend", "", "derive a second transport from the net/http source: \"fasthttp\", or empty for none")
+	transportName := flags.String("transport-name", defaultTransportOut, "derived transport output file name")
+	transportReport := flags.Bool("transport-report", false, "list what the selected backend would refuse, write nothing, and exit 0")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
@@ -58,6 +61,21 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 
 	options.DataAttributePrefix = *dataAttributePrefix
 
+	switch *backend {
+	case "":
+		if *transportReport {
+			fmt.Fprintln(stderr, "generate: -transport-report needs -backend")
+			return 2
+		}
+	case "fasthttp":
+		transform := DefaultTransformOptions()
+		transform.ReportOnly = *transportReport
+		options.Transform = &transform
+	default:
+		fmt.Fprintf(stderr, "generate: unknown -backend %q; the only derived backend is \"fasthttp\"\n", *backend)
+		return 2
+	}
+
 	result, err := New(options).GeneratePackage(ctx, GenerateRequest{
 		Dir: *dir, Out: *out, Name: *name,
 		OpenAPI: *openapi, OpenAPIName: *openapiName,
@@ -70,10 +88,18 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 		Check:               *check, GenerateAll: *generateAll, Force: *force, SQLContextAPI: *sqlContextAPI,
 		SQLContextOnlyAPI:  *sqlContextOnlyAPI,
 		DynamoParameterAPI: *dynamoParameterAPI, FirestoreParameterAPI: *firestoreParameterAPI,
+		TransportName: *transportName,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "generate: %v\n", err)
 		return 1
+	}
+	if *transportReport {
+		for _, diagnostic := range result.Diagnostics {
+			fmt.Fprintln(stderr, diagnostic.String())
+		}
+		fmt.Fprintf(stdout, "%d handler(s) would be refused by the %s backend\n", len(result.Diagnostics), *backend)
+		return 0
 	}
 	if *check {
 		for _, diagnostic := range result.Diagnostics {

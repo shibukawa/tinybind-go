@@ -41,6 +41,9 @@ const (
 	// ArtifactDerivedAsset is a file a reference hook transform produced from an
 	// authored source the template points at.
 	ArtifactDerivedAsset ArtifactKind = "derived_asset"
+	// ArtifactTransport is the other transport's copy of the package's
+	// handlers, derived from the authored net/http source.
+	ArtifactTransport ArtifactKind = "transport"
 )
 
 // ArtifactDestination says where an artifact is written, because a stylesheet
@@ -123,6 +126,14 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, fmt.Errorf("generate mapping: %w", err)
 	}
 	artifacts = append(artifacts, binding...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	transport, err := runner.transportArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate transport: %w", err)
+	}
+	artifacts = append(artifacts, transport...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -476,6 +487,50 @@ func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
 		})
 	}
 	return artifacts, nil
+}
+
+// transportArtifactBase names the generated transport file. It is package-wide
+// rather than per-source, because the transform closes over the call graph and
+// a handler's helper may be authored in another file.
+const transportArtifactBase = "tinybind_transport"
+
+// transportArtifacts derives the other transport's handlers from the authored
+// source. It runs only when a backend is selected, so a default run produces
+// byte-identical output to one predating the feature.
+//
+// A refusal stops the run. decision:backend-build-tag-mode leaves no adapter,
+// so there is nowhere for an untransformable handler to go, and emitting the
+// rest would produce a package that silently serves fewer routes.
+func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.Transform == nil {
+		return nil, nil
+	}
+	pkg, err := load.get()
+	if err != nil {
+		return nil, err
+	}
+	plan, err := AnalyzeTransform(pkg, *g.Options.Transform)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.Refusals) > 0 {
+		return nil, plan.Refusals
+	}
+	if len(plan.Admitted) == 0 {
+		return nil, nil
+	}
+	out, err := RewriteTransform(pkg, plan, *g.Options.Transform)
+	if err != nil {
+		return nil, err
+	}
+	return []Artifact{{
+		Kind:        ArtifactTransport,
+		Destination: DestinationGoPackage,
+		OutputBase:  transportArtifactBase,
+		Extension:   ExtensionGo,
+		PackageName: pkg.Name,
+		Content:     out.Source,
+	}}, nil
 }
 
 func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {
