@@ -151,7 +151,11 @@ func register() {
 		t.Fatal(err)
 	}
 	assertTypeUsage(t, plan, "Request", generator.UsageBind)
-	assertTypeUsage(t, plan, "Response", generator.UsageWrite)
+	// Response is written through the write-status wrapper, which serializes
+	// via jsonbind, so it carries the encoder like a stream event does.
+	assertTypeUsage(t, plan, "Response", generator.UsageWrite|generator.UsageEncodeJSON)
+	// PlainResponse only goes through the plain write wrapper, which uses the
+	// registered writer, so it stays write-only.
 	assertTypeUsage(t, plan, "PlainResponse", generator.UsageWrite)
 	assertTypeUsage(t, plan, "Event", generator.UsageWrite|generator.UsageEncodeJSON)
 	assertTypeUsage(t, plan, "Decoded", generator.UsageDecodeJSON)
