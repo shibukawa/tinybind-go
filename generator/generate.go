@@ -37,13 +37,13 @@ const defaultTransportOut = "tinybind_transport_gen.go"
 
 // generateTransport writes the other transport's copy of the package handlers.
 // It writes nothing, and reports no error, when no backend is selected.
-func (g *Generator) generateTransport(load *packageLoad, outDir, outName string) (string, error) {
+func (g *Generator) generateTransport(load *packageLoad, outDir, outName string) (string, []string, error) {
 	if g.Options.Transform == nil {
-		return "", nil
+		return "", nil, nil
 	}
-	artifacts, err := g.transportArtifacts(load)
+	artifacts, warnings, err := g.transportArtifacts(load)
 	if err != nil || len(artifacts) == 0 {
-		return "", err
+		return "", warnings, err
 	}
 	if outDir == "" {
 		outDir = load.dir
@@ -52,17 +52,17 @@ func (g *Generator) generateTransport(load *packageLoad, outDir, outName string)
 		outName = defaultTransportOut
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return "", err
+		return "", warnings, err
 	}
 	path := filepath.Join(outDir, outName)
 	if err := os.WriteFile(path, artifacts[0].Content, 0o644); err != nil {
-		return "", err
+		return "", warnings, err
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return path, nil
+		return path, warnings, nil
 	}
-	return abs, nil
+	return abs, warnings, nil
 }
 
 // generate is Generate over a package the run already loaded.

@@ -4,9 +4,9 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [reloadable components](docs/httpbind_reloadable_componet.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md)
 
-Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md).
+Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md) and, if your users will build against fasthttp, [the fasthttp backend for framework owners](docs/httpbind_fasthttp_frameworkowner.md).
 
 Define request/response structs once. The generator emits type-specific binders and writers, so the same model covers **JSON, form, multipart, and query** (plus path / header / cookie via tags). Responses adapt to the client **`Accept`** (and streaming negotiation where used). From the same analysis it also **generates OpenAPI 3.1** (JSON), kept in sync with binders and writers, with **godoc comments carried into `summary` / `description`**. Route registration is discovered by **static analysis of real `net/http` styles** (`HandleFunc`, `Handle`, method values, wrappers, and so on)—not by a separate DSL.
 

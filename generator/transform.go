@@ -201,7 +201,7 @@ func (r TransformRefusal) Error() string {
 func (rs TransformRefusals) Diagnostics() []parser.Diagnostic {
 	out := make([]parser.Diagnostic, 0, len(rs))
 	for _, r := range rs {
-		message := string(r.Kind) + ": " + r.Function + " " + r.Detail
+		message := r.Function + " " + r.Detail
 		for _, hop := range r.Chain {
 			message += "; " + hop.Position.String() + " " + hop.Detail
 		}
@@ -209,10 +209,12 @@ func (rs TransformRefusals) Diagnostics() []parser.Diagnostic {
 			message += "; remedy: " + remedy
 		}
 		out = append(out, parser.Diagnostic{
-			File:    r.Position.Filename,
-			Line:    r.Position.Line,
-			Column:  r.Position.Column,
-			Reason:  parser.ReasonOther,
+			File:   r.Position.Filename,
+			Line:   r.Position.Line,
+			Column: r.Position.Column,
+			// The classification goes in Reason, where a consumer looks for it,
+			// rather than being repeated in the prose.
+			Reason:  string(r.Kind),
 			Message: message,
 		})
 	}
