@@ -546,8 +546,12 @@ func usageForCallOperation(operation CallOperation) Usage {
 	switch operation {
 	case OperationRequestBind:
 		return UsageBind
-	case OperationResponseWrite, OperationResponseWriteStatus:
+	case OperationResponseWrite:
 		return UsageWrite
+	case OperationResponseWriteStatus:
+		// WriteStatus serializes through jsonbind.EncodeJSON, so a
+		// write-status call site needs the encoder registered too.
+		return UsageWrite | UsageEncodeJSON
 	case OperationStreamCreate:
 		// Stream.Write encodes events through the jsonbind codec registry,
 		// so stream event types need their encoder registered too.

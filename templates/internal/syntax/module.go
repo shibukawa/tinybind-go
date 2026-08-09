@@ -534,7 +534,10 @@ func (p *moduleParser) skipSpaceAndComments() error {
 		if strings.HasPrefix(p.source[p.pos:], "//") {
 			if end := strings.IndexByte(p.source[p.pos:], '\n'); end >= 0 {
 				p.recordComment(start, p.pos+end, false, newlines)
-				p.pos += end + 1
+				// Leave the terminating newline for the whitespace scan above,
+				// so a blank line after a line comment is counted like one
+				// after a block comment and BlankBefore stays comparable.
+				p.pos += end
 				continue
 			}
 			p.recordComment(start, len(p.source), false, newlines)
