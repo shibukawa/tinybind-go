@@ -156,12 +156,6 @@ func TestBothTagConfigurationsCompile(t *testing.T) {
 		t.Fatalf("read output: %v", err)
 	}
 	for _, entry := range entries {
-		// The route registration names a third-party router the application
-		// supplies, not a dependency of this module, so it cannot join a build
-		// here. Its content is checked as text instead.
-		if entry.Name() == defaultRoutesOut {
-			continue
-		}
 		source, err := os.ReadFile(filepath.Join(out, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
@@ -201,7 +195,7 @@ func TestRouteRegistrationIsGenerated(t *testing.T) {
 	}
 	for _, want := range []string{
 		"//go:build fasthttp",
-		`router "github.com/fasthttp/router"`,
+		`router "github.com/shibukawa/tinygodriver/fasthttprouter"`,
 		"func RegisterRoutes(r *router.Router)",
 		// A named parameter is spelled the same by both routers, so the
 		// discovered pattern carries over untouched.

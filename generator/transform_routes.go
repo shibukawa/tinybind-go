@@ -39,15 +39,17 @@ type RouterTarget struct {
 	CatchAllSuffix string
 }
 
-// DefaultRouterTarget targets github.com/fasthttp/router.
+// DefaultRouterTarget targets the fasthttp/router fork that tinygodriver
+// carries beside its fasthttp fork.
 //
-// Its Import is the upstream router. An application building against the
-// TinyGo-capable fasthttp fork needs a router built against the same fork,
-// because a handler taking one RequestCtx is not a handler taking the other;
-// point Import at that one instead.
+// It has to be that one rather than upstream: a handler taking the fork's
+// RequestCtx is not a handler taking valyala/fasthttp's, so the upstream router
+// will not accept generated code. An application on upstream fasthttp points
+// Import at github.com/fasthttp/router instead; the two share an API and a
+// pattern syntax, so nothing else in the target changes.
 func DefaultRouterTarget() RouterTarget {
 	return RouterTarget{
-		Import:         "github.com/fasthttp/router",
+		Import:         "github.com/shibukawa/tinygodriver/fasthttprouter",
 		Qualifier:      "router",
 		Type:           "*router.Router",
 		RegisterFunc:   "RegisterRoutes",

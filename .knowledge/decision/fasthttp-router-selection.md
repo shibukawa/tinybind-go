@@ -6,7 +6,7 @@ title: The Router Is The Application's Choice, And The Fork Constrains It
 Generated route registration names a router the application supplies, defaulting to fasthttp/router, whose patterns already match the discovered ones — but whose handler type is upstream fasthttp's and therefore not the fork's.
 
 ```yaml
-status: implemented with a blocked default, 2026-08-08
+status: implemented and compiling, 2026-08-08
 requested: user, 2026-08-08, naming github.com/fasthttp/router
 why_registration_is_generated_at_all: fasthttp has no router, so nothing installs a route unless something emits the call
 what_transfers_untouched:
@@ -31,12 +31,17 @@ resolutions:
     shape: fasthttpbind imports valyala/fasthttp instead of the fork
     gains: the router and the rest of the ecosystem, by type identity rather than by porting
     costs: TinyGo no longer compiles, which decision:fasthttpbind-tinygo-not-first-class still requires even after dropping every other TinyGo obligation
-  status: undecided; the generated registration is written and correct under either, since only the import path differs
+  resolved_2026_08_08:
+    taken: vendor_the_router; tinygodriver v1.2.1 carries fasthttprouter beside its fasthttp fork, built against the fork's RequestCtx
+    default_now: github.com/shibukawa/tinygodriver/fasthttprouter
+    unchanged_by_it: the API and the pattern syntax are upstream's, so an application on upstream fasthttp points Import at github.com/fasthttp/router and nothing else in the target moves
+    verified: the generated registration now joins the -tags fasthttp build of the fixture and compiles, which the text-only check could not establish
+    module_note: go mod tidy does not look inside testdata, so the router is named in a generator test file to keep it in go.mod; it is a test dependency of this module, and an application generating code records it in its own
 what_was_built_meanwhile:
   configurable: RouterTarget names the import, qualifier, type, registration function and catch-all spelling
   default: fasthttp/router, as asked
   reason_it_is_configuration: this module should not decide which third-party package an application depends on, the same reason the import rewrites are configuration
-  untested_gap: the emitted registration is checked as text and not compiled, because the router cannot join a build here until the blocker above is resolved
+  now_compiled: the emitted registration joins the fixture's tagged build alongside the handlers and binders
 related:
   - decision:fasthttpbind-tinygo-not-first-class
   - decision:backend-build-tag-mode

@@ -76,7 +76,8 @@ flow:
     emitted: a registration function installing every discovered route, in its own tagged file
     router: named by decision:fasthttp-router-selection, defaulting to fasthttp/router
     patterns: carried over unchanged, because both spell a named parameter {name}; only the catch-all moves
-    blocked: the default router takes upstream fasthttp's handler type, which the fork's is not; see that decision for the two ways out
+    router_default: tinygodriver/fasthttprouter, the fork carrying upstream's API against the fork's RequestCtx
+    verified: the registration compiles as part of the fixture's tagged build, with the handlers and the binders
   not_yet_wired:
     - the per-route body limit hook of rule:fasthttpbind-body-limit-mapping
   outputs:
