@@ -6,8 +6,15 @@ title: Transform Rewrite Table
 The substitutions that turn an admitted net/http function into its fasthttp form: one context replaces both transport values, transport slots drop from every recognized call, and only enumerated selectors are rewritten.
 
 ```yaml
-status: proposed 2026-08-08
+status: implemented 2026-08-08
 applies_to: functions admitted by rule:transform-eligibility
+as_built:
+  entry: RewriteTransform over the analysis plan, returning the generated source and the layout warnings
+  mechanism: position-keyed textual edits over the original bytes, not a mutated syntax tree, so comments and formatting survive and the loaded AST stays usable by the other phases that share one type check
+  uniform_collapse_rule: in a signature and in a call alike, the first transport position becomes the context and the remaining ones are deleted with their separator; Bind, Write, WriteStatus and a transitive local call all follow it
+  context_identifier: chosen per function, avoiding names the function already uses, so a handler with its own ctx is not shadowed
+  imports: derived from the references that survive the edits, which is why net/http drops out when the transport types were its only use and stays when a status constant still reads it
+  verified: the emitted source is compiled with -tags fasthttp against the real runtime, and the authored half is compiled untagged in the same test
 signature:
   rule: the writer and request parameters collapse into one context parameter in the first transport position; other parameters keep their order and types
   examples:

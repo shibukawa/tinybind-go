@@ -20,6 +20,12 @@ import_rewrite:
   example: 'import httpbind "github.com/shibukawa/tinybind-go/fast"'
   effect: call selectors in a rewritten body are untouched, so the transform's work on a recognized call reduces to dropping the transport arguments
   gain: the two import paths cost nothing at the call site, which was the only argument the single-package model had left
+file_granularity_2026_08_08:
+  found: while implementing the rewriter
+  fact: a build tag excludes a whole file, so an authored file holding a transport handler beside a type, const or var declaration cannot be tagged !fasthttp without taking those with it, and both tags need them
+  consequence: transport handlers belong in files containing nothing else, which is a real constraint on application layout rather than a style preference
+  enforced: the rewriter reports every authored file mixing the two, naming the declarations that would be lost
+  same_rule_upstream: decision:framework-tag-boundary reaches this from the other direction, keeping a framework's tagged layer thin
 why_tags_are_still_needed:
   reason: the authored handler and its generated counterpart are the same function name in the same application package, so one of them must be excluded or Go reports a redeclaration
   scope: application files only; no library file lives behind a tag

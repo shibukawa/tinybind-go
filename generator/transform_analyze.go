@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -23,8 +24,21 @@ type TransformCandidate struct {
 	// transportIndexes are the same parameters as flattened positions, which is
 	// what a caller's argument list is matched against.
 	transportIndexes map[int]bool
+	transportFields  []*ast.Field
+	file             *ast.File
 	objects          map[types.Object]bool
 	calls            map[string]bool
+	// edits are the rewrites this function needs, recorded while classifying,
+	// because that is where the type information says what each occurrence is.
+	edits []sourceEdit
+}
+
+// sourceEdit replaces a byte range of the original file. Rewriting as text
+// rather than as a mutated AST keeps comments and formatting, and keeps the
+// loaded package's syntax tree usable by the other generator phases.
+type sourceEdit struct {
+	start, end int
+	text       string
 }
 
 // TransformPlan is the analysis result: what can be rewritten and what cannot.
@@ -93,6 +107,7 @@ func (a *transformAnalyzer) collectCandidates() {
 			candidate := &TransformCandidate{
 				Name:             fn.Name.Name,
 				Decl:             fn,
+				file:             file,
 				transportIndexes: map[int]bool{},
 				objects:          map[types.Object]bool{},
 				calls:            map[string]bool{},
@@ -106,6 +121,7 @@ func (a *transformAnalyzer) collectCandidates() {
 				for _, name := range names {
 					if a.isTransportType(field.Type) {
 						candidate.transportIndexes[index] = true
+						candidate.transportFields = append(candidate.transportFields, field)
 						if name != nil {
 							candidate.TransportParams = append(candidate.TransportParams, name.Name)
 							if obj := a.info.Defs[name]; obj != nil {
@@ -150,6 +166,7 @@ func (a *transformAnalyzer) classify() {
 		// ordinary runtime calls, and looking only at those would admit the
 		// capture that is the actual problem.
 		forced := map[*ast.Ident]TransformRefusal{}
+		handledSelectors := map[*ast.SelectorExpr]bool{}
 
 		// A transport value captured by a closure outlives the statement that
 		// created it, so the whole literal is refused rather than inspected.
@@ -179,17 +196,34 @@ func (a *transformAnalyzer) classify() {
 				for _, rhs := range node.Rhs {
 					if id, ok := stripIdent(rhs); ok && a.isTransportIdent(candidate, id) {
 						accounted[id] = true
+						candidate.edits = append(candidate.edits, a.substitute(id, contextPlaceholder))
 					}
 				}
 			case *ast.CallExpr:
+				// A rewritten selector that is itself a call replaces the whole
+				// call: r.Context() becomes ctx, not ctx().
+				if sel, ok := node.Fun.(*ast.SelectorExpr); ok {
+					if id, ok := stripIdent(sel.X); ok && a.isTransportIdent(candidate, id) {
+						if replacement, found := a.options.RequestSelectorRewrites[sel.Sel.Name]; found {
+							accounted[id] = true
+							handledSelectors[sel] = true
+							candidate.edits = append(candidate.edits, a.substitute(node, expandContext(replacement)))
+							return true
+						}
+					}
+				}
 				a.classifyCall(candidate, node, accounted, classified)
 			case *ast.SelectorExpr:
+				if handledSelectors[node] {
+					return true
+				}
 				id, ok := stripIdent(node.X)
 				if !ok || !a.isTransportIdent(candidate, id) {
 					return true
 				}
-				if _, ok := a.options.RequestSelectorRewrites[node.Sel.Name]; ok {
+				if replacement, found := a.options.RequestSelectorRewrites[node.Sel.Name]; found {
 					accounted[id] = true
+					candidate.edits = append(candidate.edits, a.substitute(node, expandContext(replacement)))
 					return true
 				}
 				classified[id] = a.refuse(candidate.Name, RefusalUnknownSelector, node,
@@ -245,22 +279,50 @@ func (a *transformAnalyzer) classifyCall(candidate *TransformCandidate, call *as
 	if isLocal {
 		candidate.calls[callee.Name] = true
 	}
+	// Both halves of the transport collapse into one value, so the first
+	// transport argument becomes the context and the rest disappear. The rule
+	// is the same for a runtime call and for a call into a function this pass
+	// is also rewriting, because both signatures collapse the same way.
+	seenTransportArg := false
 	for index, arg := range call.Args {
 		id, ok := stripIdent(arg)
 		if !ok || !a.isTransportIdent(candidate, id) {
 			continue
 		}
-		if hasPattern && pattern.Transport.Drops(index) {
-			accounted[id] = true
+		dropped := hasPattern && pattern.Transport.Drops(index)
+		if !dropped && isLocal && callee.transportIndexes[index] {
+			dropped = true
+		}
+		if !dropped {
+			classified[id] = a.refuse(candidate.Name, RefusalUnknownCall, arg,
+				"passes "+id.Name+" to "+describeCallee(obj, call)+", whose transport arguments are undeclared")
 			continue
 		}
-		if isLocal && callee.transportIndexes[index] {
-			accounted[id] = true
+		accounted[id] = true
+		if !seenTransportArg {
+			seenTransportArg = true
+			candidate.edits = append(candidate.edits, a.substitute(arg, contextPlaceholder))
 			continue
 		}
-		classified[id] = a.refuse(candidate.Name, RefusalUnknownCall, arg,
-			"passes "+id.Name+" to "+describeCallee(obj, call)+", whose transport arguments are undeclared")
+		// Delete from the end of the previous argument, which takes the comma
+		// with it. There is always a previous one: the first was kept above.
+		candidate.edits = append(candidate.edits, sourceEdit{
+			start: a.offset(call.Args[index-1].End()),
+			end:   a.offset(arg.End()),
+		})
 	}
+}
+
+// contextPlaceholder stands in for the context identifier, whose final spelling
+// is chosen per function once the names it already uses are known.
+const contextPlaceholder = "\x00ctx\x00"
+
+func (a *transformAnalyzer) offset(pos token.Pos) int {
+	return a.fset.Position(pos).Offset
+}
+
+func (a *transformAnalyzer) substitute(node ast.Node, text string) sourceEdit {
+	return sourceEdit{start: a.offset(node.Pos()), end: a.offset(node.End()), text: text}
 }
 
 func (a *transformAnalyzer) patternFor(obj types.Object) (CallPattern, bool) {
@@ -358,6 +420,12 @@ func (a *transformAnalyzer) plan() *TransformPlan {
 	}
 	sortRefusals(plan.Refusals)
 	return plan
+}
+
+// expandContext resolves the "$ctx" stand-in a rewrite entry uses into the
+// placeholder the rewriter later replaces with the chosen identifier.
+func expandContext(replacement string) string {
+	return strings.ReplaceAll(replacement, "$ctx", contextPlaceholder)
 }
 
 func allBlank(exprs []ast.Expr) bool {
