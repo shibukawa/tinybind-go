@@ -213,6 +213,13 @@ func (r *transformRewriter) checkLayout(plan *TransformPlan) []string {
 	for file, funcs := range byFile {
 		var shared []string
 		for _, decl := range file.Decls {
+			// A declaration that names net/http is transport-bound and is meant
+			// to disappear with the tag: the wiring that builds a ServeMux is
+			// replaced by the generated registration, not needed beside it.
+			// Only a declaration both builds need is a problem.
+			if r.namesNetHTTP(decl) {
+				continue
+			}
 			switch d := decl.(type) {
 			case *ast.GenDecl:
 				if d.Tok.String() != "import" {
@@ -345,4 +352,22 @@ func dedupe(values []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// namesNetHTTP reports whether the declaration references the transport
+// package, which makes it safe to exclude with the tag.
+func (r *transformRewriter) namesNetHTTP(decl ast.Decl) bool {
+	found := false
+	ast.Inspect(decl, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok || found {
+			return !found
+		}
+		if pkgName, ok := r.pkg.TypesInfo.Uses[id].(*types.PkgName); ok &&
+			pkgName.Imported().Path() == "net/http" {
+			found = true
+		}
+		return !found
+	})
+	return found
 }

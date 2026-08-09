@@ -72,8 +72,13 @@ flow:
     file_split: selecting a backend tags the existing binder file !fasthttp and adds tinybind_fasthttp_gen.go; the transport-free half is duplicated into both rather than split out, because only one ever compiles
     why_the_split_is_needed: a generated init registering a net/http binder is reachable by construction, which is exactly the reachability rule:transport-dead-code-elimination warns about
     verified: one authored package generates two builds and each compiles on its own, tagged and untagged, in one test
+  routes_wired_2026_08_08:
+    emitted: a registration function installing every discovered route, in its own tagged file
+    router: named by decision:fasthttp-router-selection, defaulting to fasthttp/router
+    patterns: carried over unchanged, because both spell a named parameter {name}; only the catch-all moves
+    blocked: the default router takes upstream fasthttp's handler type, which the fork's is not; see that decision for the two ways out
   not_yet_wired:
-    - the route registration and the per-route body limit hook of rule:fasthttpbind-body-limit-mapping
+    - the per-route body limit hook of rule:fasthttpbind-body-limit-mapping
   outputs:
     net_http: unchanged; the authored files and their existing generated companions
     fasthttp: one tagged file set per package, compiled only under the fasthttp tag

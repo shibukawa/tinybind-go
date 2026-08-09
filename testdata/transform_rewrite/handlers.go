@@ -35,3 +35,12 @@ func cancelAware(w http.ResponseWriter, r *http.Request) {
 	}
 	httpbind.WriteStatus[CreateUserResponse](w, r, http.StatusAccepted, CreateUserResponse{})
 }
+
+// register is the net/http wiring. It takes no transport value, so it is not a
+// transform candidate: the tag excludes this whole file from a fasthttp build
+// and the generated registration replaces it.
+func register(mux *http.ServeMux) {
+	mux.HandleFunc("POST /users", createUser)
+	mux.HandleFunc("GET /users/{id}", cancelAware)
+	mux.HandleFunc("GET /files/{rest...}", cancelAware)
+}

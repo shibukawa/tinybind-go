@@ -51,6 +51,10 @@ type TransformOptions struct {
 	// reproduce, and a general rule would hide that.
 	RequestSelectorRewrites map[string]string
 
+	// Router names the router the generated route registration installs on.
+	// The zero value uses DefaultRouterTarget.
+	Router RouterTarget
+
 	// Calls are the recognized calls whose transport arguments are dropped.
 	// Empty uses the canonical set for the default runtime packages.
 	Calls []CallPattern
@@ -71,6 +75,7 @@ func DefaultTransformOptions() TransformOptions {
 		ContextType:   "*fasthttp.RequestCtx",
 		ContextImport: fasthttpImportPath,
 		ContextName:   "ctx",
+		Router:        DefaultRouterTarget(),
 		RequestSelectorRewrites: map[string]string{
 			// RequestCtx satisfies context.Context, so the request's context is
 			// the context. This is the whole enumerated set today.
@@ -97,6 +102,14 @@ func (o TransformOptions) normalized() (TransformOptions, error) {
 			return o, fmt.Errorf("generator: transform import rewrite for %q maps to itself", from)
 		}
 	}
+	if o.Router.Import == "" {
+		o.Router = DefaultRouterTarget()
+	}
+	router, err := o.Router.normalized()
+	if err != nil {
+		return o, err
+	}
+	o.Router = router
 	if o.Calls == nil {
 		patterns, err := DefaultOptions().callPatterns()
 		if err != nil {

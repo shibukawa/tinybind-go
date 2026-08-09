@@ -156,6 +156,12 @@ func TestBothTagConfigurationsCompile(t *testing.T) {
 		t.Fatalf("read output: %v", err)
 	}
 	for _, entry := range entries {
+		// The route registration names a third-party router the application
+		// supplies, not a dependency of this module, so it cannot join a build
+		// here. Its content is checked as text instead.
+		if entry.Name() == defaultRoutesOut {
+			continue
+		}
 		source, err := os.ReadFile(filepath.Join(out, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
@@ -177,5 +183,70 @@ func TestBothTagConfigurationsCompile(t *testing.T) {
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Errorf("build with tags %q failed: %v\n%s", tags, err, output)
 		}
+	}
+}
+
+func TestRouteRegistrationIsGenerated(t *testing.T) {
+	transform := DefaultTransformOptions()
+	result, _, err := generateInto(t, "transform_rewrite", &transform)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if result.RoutesPath == "" {
+		t.Fatal("no route registration was written")
+	}
+	source, err := os.ReadFile(result.RoutesPath)
+	if err != nil {
+		t.Fatalf("read routes: %v", err)
+	}
+	for _, want := range []string{
+		"//go:build fasthttp",
+		`router "github.com/fasthttp/router"`,
+		"func RegisterRoutes(r *router.Router)",
+		// A named parameter is spelled the same by both routers, so the
+		// discovered pattern carries over untouched.
+		`r.Handle("GET", "/users/{id}", cancelAware)`,
+		`r.Handle("POST", "/users", createUser)`,
+		// The catch-all is the one segment shape that moves.
+		`r.Handle("GET", "/files/{rest:*}", cancelAware)`,
+	} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("route registration missing %q:\n%s", want, source)
+		}
+	}
+}
+
+// Which router an application depends on is its choice, not this module's.
+func TestRouterTargetIsConfigurable(t *testing.T) {
+	transform := DefaultTransformOptions()
+	transform.Router = RouterTarget{
+		Import:         "example.com/fw/mux",
+		Qualifier:      "mux",
+		Type:           "mux.Router",
+		RegisterFunc:   "Wire",
+		CatchAllSuffix: ":*",
+	}
+	result, _, err := generateInto(t, "transform_rewrite", &transform)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	source, err := os.ReadFile(result.RoutesPath)
+	if err != nil {
+		t.Fatalf("read routes: %v", err)
+	}
+	for _, want := range []string{`mux "example.com/fw/mux"`, "func Wire(r mux.Router)"} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("missing %q:\n%s", want, source)
+		}
+	}
+}
+
+// A router with no catch-all spelling gets an error rather than a guess.
+func TestCatchAllWithoutAnEquivalentIsRefused(t *testing.T) {
+	transform := DefaultTransformOptions()
+	transform.Router.CatchAllSuffix = ""
+	if _, _, err := generateInto(t, "transform_rewrite", &transform); err == nil ||
+		!strings.Contains(err.Error(), "catch-all") {
+		t.Errorf("error = %v, want it to name the catch-all pattern", err)
 	}
 }

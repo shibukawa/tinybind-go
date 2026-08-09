@@ -150,6 +150,56 @@ func (g *Generator) generateFastBinders(load *packageLoad, outDir, outName strin
 	return abs, nil
 }
 
+// defaultRoutesOut is the derived backend's route registration.
+const defaultRoutesOut = "tinybind_routes_gen.go"
+
+// generateRoutes writes the function installing the discovered routes on the
+// caller's router. fasthttp has no router of its own, so the application picks
+// one and the generated code names whichever TransformOptions.Router says.
+func (g *Generator) generateRoutes(load *packageLoad, outDir, outName string) (string, error) {
+	if g.Options.Transform == nil {
+		return "", nil
+	}
+	transform, err := g.Options.Transform.normalized()
+	if err != nil {
+		return "", err
+	}
+	pkg, err := load.get()
+	if err != nil {
+		return "", err
+	}
+	normalized, err := g.Options.normalized()
+	if err != nil {
+		return "", err
+	}
+	result, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	if err != nil {
+		return "", err
+	}
+	src, err := emitRouteRegistration(pkg, result.Routes, transform.Router, fasthttpTarget())
+	if err != nil || src == nil {
+		return "", err
+	}
+	if outDir == "" {
+		outDir = load.dir
+	}
+	if outName == "" {
+		outName = defaultRoutesOut
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(outDir, outName)
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path, nil
+	}
+	return abs, nil
+}
+
 // reportTransform lists what a transformed build would refuse, writing nothing
 // and failing on nothing but a load error. The refusals are the report.
 func (g *Generator) reportTransform(load *packageLoad) ([]parser.Diagnostic, error) {

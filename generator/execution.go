@@ -34,6 +34,8 @@ type GenerateRequest struct {
 	TransportName string
 	// FastBindersName is the selected backend's binder and writer output file.
 	FastBindersName string
+	// RoutesName is the selected backend's route registration output file.
+	RoutesName string
 	// DynamoName is the DynamoDB item codec output file.
 	DynamoName string
 	// DynamoQueryName is the generated DynamoDB query output file.
@@ -104,7 +106,9 @@ type GenerateResult struct {
 	TransportPath string
 	// FastBindersPath is the selected backend's binders and writers.
 	FastBindersPath string
-	Diagnostics     []parser.Diagnostic
+	// RoutesPath is the selected backend's route registration.
+	RoutesPath  string
+	Diagnostics []parser.Diagnostic
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
 	Cached bool
@@ -121,7 +125,7 @@ func (result GenerateResult) Paths() []string {
 	if result.DepsPath != "" {
 		paths = append(paths, result.DepsPath)
 	}
-	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -134,7 +138,7 @@ func (result GenerateResult) Paths() []string {
 // Go and its name already records the hash of its bytes.
 func (result GenerateResult) goPaths() []string {
 	paths := make([]string, 0, 6)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.FastBindersPath, result.TransportPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -249,6 +253,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.FastBindersPath, err = runner.generateFastBinders(load, request.Out, request.FastBindersName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate transport binders: %w", err)
+	}
+	result.RoutesPath, err = runner.generateRoutes(load, request.Out, request.RoutesName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate transport routes: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
