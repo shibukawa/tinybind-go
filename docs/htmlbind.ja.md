@@ -1163,8 +1163,10 @@ export component Sidebar(userId: string, tone: Tone): html {
 }
 ```
 
-`ttl` は必須で、生成時に解釈されます。不正な duration はリクエスト時ではなくビルド
-時に失敗します。
+`ttl` は生成時に解釈されるので、不正な duration はリクエスト時ではなくビルド時に
+失敗します。`ttl` を書くことが「保存する」という指定でもあります。`ttl` のない注釈は
+スコープを宣言するだけで何も保存しません。これは後述の
+[キャッシュスコープ](#キャッシュスコープ)で扱います。
 
 キャッシュはテンプレートの書き換えではなく運用上の選択です。呼び出し側がストアを
 渡すまで、何も保存されません。
@@ -1185,9 +1187,77 @@ err := htmlbind.Render(w, Page(params), htmlbind.WithCache(pageCache))
 編集、その component が描画する内容の編集は、いずれも別のキーになります。再生成した
 コードが古い出力を読むことはありません。
 
-宣言されたパラメータでないものはキーから見えません。リクエスト識別子、認可、ロケール、
-ヘッダに依存する内容は、パラメータとして渡すか、その component をキャッシュしないで
-ください。
+宣言されたパラメータでないものはキーから見えません。例外が一つだけあり、private な
+component のキーにはレンダーのスコープ値も入ります。これが
+[キャッシュスコープ](#キャッシュスコープ)です。ロケールなど、スコープ値が覆わない
+ものは、パラメータとして渡すか、その component をキャッシュしないでください。
+
+### キャッシュスコープ
+
+レスポンスは、何も言われなければ private です。どこにも注釈のないチェーンは private を
+報告し、`scope: "public"` だけがその唯一のオプトアウトです。
+
+```go
+if htmlbind.IsPrivate(wrappers, leaf) {
+	w.Header().Set("Cache-Control", "private, no-store")
+}
+```
+
+読んでも何も描画しないので、ヘッダは最初のボディバイトより前に決められます。4 階層下の
+private な component が描画されるのはヘッダを確定したずっと後なので、この順序が要ります。
+
+既定が非対称なのは意図的です。実際にはユーザごとなのに共有扱いにした component は、
+ある読み手の出力を別の読み手に配ります。逆の間違いはキャッシュミス 1 回で済みます。
+さらに、誰にも見えないものを覆えます。`context.Context` からリクエスト識別子を読む Go
+関数を呼ぶ component は、コンパイラが行えるどの検査からも共有可能に見えます。
+
+状態は 3 つあり、周囲の `public` 表明に対する態度で分かれます。
+
+| 書いたもの | 報告 | 周囲の `public` に対して |
+| --- | --- | --- |
+| 何も書かない | private | 継承する |
+| `@cache(scope: "private")` | private | 生成時に拒否する |
+| `@cache(scope: "public")` | 共有 | — |
+
+保存する `@cache(ttl: "5m")` に `scope` を書かなければ private 宣言になり、キーは
+読み手ごとに分かれます。値は `WithCacheScope` で渡します。
+
+```go
+err := htmlbind.Render(w, Page(params),
+	htmlbind.WithCache(pageCache), htmlbind.WithCacheScope(accountID))
+```
+
+値は不透明です。エントリが属する読み手を識別できるものを渡してください。こちらは何も
+解釈しません。**渡さなければ private な component は何も保存しません。** 空のスコープで
+書かれたエントリは、private の札を下げた共有エントリになってしまうので、ミスにするのが
+意図的な答えです。
+
+layout にも `ttl` なしで付けられます。slot の持ち主は保存できないので `ttl` は生成
+エラーになり、適格性の条件はどれも適用されません。認証済み layout に 1 つ書けば、その
+下の全ページを覆えます。
+
+```text
+@cache(scope: "private")
+export component AuthLayout(children: html): html {
+<html>...<slot required /></html>
+}
+```
+
+チェーンでは、private がどこにあっても勝ちます。`public` 宣言はいちばん外側の
+メンバーに書かないとレスポンス全体を覆えません。ラッパーはその下の全部を含みますが、
+内側のメンバーは自分を包んでいるマークアップについて何も言えないからです。
+
+`PrivateSource` は、チェーンを private にした宣言の component 名を返します。共有される
+はずだと思っていた作者に見せるのはこれです。
+
+ストアの大きさはこれに合わせてください。private な component はスコープごとに 1
+エントリを持つので、共有キー向けに決めたエントリ上限が読み手の数だけ分割されます。
+`NewMemoryCache` は挿入順に近い順序で追い出すため、上限が小さすぎると緩やかに劣化する
+のではなくスラッシングします。
+
+呼び出しグラフが private 宣言に届く component に `scope: "public"` を書くと、スコープを
+書いた位置で生成エラーになります。宣言のない component は表明を妨げません。妨げたら、
+何一つ public にできなくなります。
 
 ### 独自ストアを渡す
 
@@ -1356,8 +1426,11 @@ profile.tb.html:12:8: html:url requires url, got string
 - `external async` の関数を `await` の束縛以外の場所で呼んだ
 - `async` なパラメータ／フィールドを `await` の束縛以外の場所で読んだ
 - `await` ブロックに `fallback` 節を書かなかった
-- `html` または `async` パラメータを持つ component や、`await` 境界に到達する
-  component に `@cache` を付けた
+- `async` パラメータを持つ、`await` 境界に到達する、あるいは document head を持つ
+  component の `@cache` に `ttl` を書いた
+- slot の持ち主の `@cache` に `ttl` を書いた（保存しないため）
+- `@cache` に `ttl` も `scope` も書かなかった（何も言っていないため）
+- 呼び出しグラフが private 宣言に届く component に `@cache(scope: "public")` を書いた
 - JavaScript や CSS が挿入の形と衝突した
   → [`<script>` と `<style>` の中の波括弧](#script-と-style-の中の波括弧)
 

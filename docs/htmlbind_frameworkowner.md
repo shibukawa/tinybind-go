@@ -536,9 +536,11 @@ built the same markup as a trusted string.
 Three things follow from a declared provider, and all three are derived rather
 than declared, so a registration cannot disagree with itself:
 
-- **It is per-request.** A component reaching one cannot be `@cache`d — a stored
-  body would serve one visitor's token to the next, which is a security failure
-  rather than a staleness bug. The exclusion follows the call graph.
+- **It is per-request.** A component reaching one cannot store its output — a
+  stored body would serve one visitor's token to the next, which is a security
+  failure rather than a staleness bug. The exclusion follows the call graph, and
+  it refuses the `ttl` rather than the annotation, so such a component may still
+  declare its scope.
 - **It needs a context.** Rendering with none fails naming the element, rather
   than rendering the absence of a value.
 - **The provider may fail.** During the initial pass that is before the response
@@ -776,10 +778,11 @@ one thing the token costs:
 
 ### Split a cached list from an uncached form
 
-**A component rendering an unsafe form cannot be `@cache`d.** A stored body would
+**A component rendering an unsafe form cannot be stored.** A stored body would
 serve one session's token to whoever asked next, which is a security failure
 rather than a staleness bug, so it is a generation error and it follows the call
-graph.
+graph. It refuses the `ttl`, not the annotation: such a component may still carry
+`@cache(scope: ...)` to declare what its output belongs to.
 
 The composition this pushes you toward is the right one anyway: cache the list
 that came from the database, leave the form uncached, and make them two

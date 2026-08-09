@@ -1264,8 +1264,10 @@ export component Sidebar(userId: string, tone: Tone): html {
 }
 ```
 
-The `ttl` argument is required and is parsed at generation time, so a malformed
-duration fails the build rather than a request.
+The `ttl` argument is parsed at generation time, so a malformed duration fails
+the build rather than a request. Writing one is also what asks for storage: an
+annotation without a `ttl` declares scope and stores nothing, which is covered in
+[Cache scope](#cache-scope) below.
 
 Caching is a deployment choice, not a template rewrite: nothing is stored until a
 caller supplies a store.
@@ -1286,9 +1288,83 @@ plan, and a canonical encoding of every declared parameter. Changing a
 parameter, editing the template, or editing anything the component renders all
 produce a different key, so regenerated code can never read stale output.
 
-Anything that is not a declared parameter is invisible to the key. Request
-identity, authorization, locale, and headers must be passed in as parameters, or
-the component must not be cached.
+Anything that is not a declared parameter is invisible to the key, with one
+exception: a private component's key also carries the render's scope value, which
+is what [Cache scope](#cache-scope) is for. Locale and anything else the scope
+value does not cover must be passed in as a parameter, or the component must not
+be cached.
+
+### Cache scope
+
+Every response is private unless something says otherwise. A chain with no
+annotation anywhere reports private, and `scope: "public"` is the only opt-out:
+
+```go
+if htmlbind.IsPrivate(wrappers, leaf) {
+	w.Header().Set("Cache-Control", "private, no-store")
+}
+```
+
+Reading it renders nothing, so the header is decided before the first body byte —
+which matters because a private component four levels down renders long after the
+headers are committed.
+
+The default is asymmetric on purpose. A component treated as shared that is
+actually per-reader serves one reader's output to another; the opposite mistake
+costs a cache miss. It also covers what nothing can see: a component calling a Go
+function that reads request identity out of a `context.Context` looks shared to
+every check the compiler can make.
+
+Three states, and they differ in what they do to a `public` assertion made around
+them:
+
+| Written | Reports | Effect on a surrounding `public` |
+| --- | --- | --- |
+| nothing | private | inherits it |
+| `@cache(scope: "private")` | private | refuses it at generation |
+| `@cache(scope: "public")` | shared | — |
+
+A storing `@cache(ttl: "5m")` with no `scope` declares private, so its key is
+per-reader. Supply the value with `WithCacheScope`:
+
+```go
+err := htmlbind.Render(w, Page(params),
+	htmlbind.WithCache(pageCache), htmlbind.WithCacheScope(accountID))
+```
+
+The value is opaque — pass whatever identifies the reader an entry belongs to,
+and nothing here interprets it. **Without it a private component stores nothing.**
+An entry written under an empty scope would be a shared entry wearing a private
+label, so a miss is the deliberate answer.
+
+A layout may carry the annotation too, without a `ttl`. It stores nothing — a
+slot owner never can — so a `ttl` there is a generation error, and none of the
+eligibility rules apply to it. One declaration on an authenticated layout covers
+every page beneath it:
+
+```text
+@cache(scope: "private")
+export component AuthLayout(children: html): html {
+<html>...<slot required /></html>
+}
+```
+
+Over a chain, private wins wherever it sits. A `public` declaration has to be on
+the outermost member to cover the response, because a wrapper contains everything
+below it while an inner member says nothing about the markup wrapped around it.
+
+`PrivateSource` names the component whose declaration made a chain private, which
+is what to print when an author expected shared output and did not get it.
+
+Size the store for it. A private component holds one entry per scope, so an entry
+cap chosen for shared keys is now divided among your readers — `NewMemoryCache`
+evicts in approximate insertion order, so an undersized cap thrashes rather than
+degrading gently.
+
+`scope: "public"` on a component whose call graph reaches a declared private one
+is a generation error, reported at the position the scope was written. An
+undeclared component never blocks the assertion — if it did, nothing could ever
+be public.
 
 ### Supplying your own store
 
@@ -1463,8 +1539,12 @@ Common causes include:
 - Calling an `external async` function outside an `await` binding
 - Reading an `async` parameter or field anywhere but an `await` binding
 - Writing an `await` block with no `fallback` clause
-- Annotating a component with `@cache` when it declares an `html` or `async`
-  parameter, or reaches an `await` boundary
+- Giving `@cache` a `ttl` on a component that declares an `async` parameter,
+  reaches an `await` boundary, or owns the document head
+- Giving `@cache` a `ttl` on a slot owner, which stores nothing
+- Writing `@cache` with neither a `ttl` nor a `scope`, which says nothing
+- Declaring `@cache(scope: "public")` on a component whose call graph reaches a
+  declared private one
 - Writing JavaScript or CSS that collides with a template insertion shape; see
   [Braces inside `<script>` and `<style>`](#braces-inside-script-and-style)
 
