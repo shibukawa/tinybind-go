@@ -26,6 +26,11 @@ func Write[T any](ctx *fasthttp.RequestCtx, value T) error {
 // For status 204 No Content, the body is not written.
 func WriteStatus[T any](ctx *fasthttp.RequestCtx, status int, value T) error {
 	if status == 204 {
+		// fasthttp fills in a default Content-Type for a response that names
+		// none, and net/http sends none at all for a bodyless 204. The header
+		// set is part of what requirement:fasthttpbind-parity-scope compares,
+		// so the default is declined rather than left to differ.
+		ctx.Response.Header.SetNoDefaultContentType(true)
 		ctx.SetStatusCode(204)
 		return nil
 	}
