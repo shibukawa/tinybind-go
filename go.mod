@@ -4,6 +4,8 @@ go 1.26.0
 
 require golang.org/x/tools v0.48.0
 
+require golang.org/x/net v0.57.0 // indirect
+
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect

@@ -75,6 +75,7 @@ var staticPlan = &htmlbind.Plan[liveParams]{
 func liveServer(plan *htmlbind.Plan[liveParams], values ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaf := htmlbind.Bind(plan, liveParams{Values: values})
+		htmlupdate.ApplyTo(options.LiveHeaders(r, nil, leaf), w)
 		if err := options.RenderLiveStream(r.Context(), w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -207,7 +208,7 @@ func TestLiveStreamCarriesDeliveriesWithoutRestatingTheManifest(t *testing.T) {
 func TestRetryTerminatorNamesAHealthyClose(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	stream := options.OpenLiveStream(recorder, nil)
-	stream.Replace("c1", `<main id="c1">now</main>`, "")
+	stream.Replace("c1", `<main id="c1">now</main>`, htmlupdate.ManifestEntry{Frame: ""})
 	if err := stream.Retry(2 * time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +244,7 @@ func TestRetryTerminatorNamesAHealthyClose(t *testing.T) {
 func TestALiveRequestToANonLiveEntryTerminates(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaf := htmlbind.Bind(livePlan, liveParams{Values: []string{"one"}})
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
 		if err := options.RenderStreamAsync(r.Context(), w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -264,6 +266,7 @@ func TestCancelledLiveStreamClosesRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaf := htmlbind.Bind(livePlan, liveParams{Values: []string{"one"}})
+		htmlupdate.ApplyTo(options.LiveHeaders(r, nil, leaf), w)
 		if err := options.RenderLiveStream(ctx, w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}

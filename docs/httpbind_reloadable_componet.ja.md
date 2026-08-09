@@ -146,7 +146,7 @@ if time.Since(opened) > lifetime {
 
 `Accept` を使わないのは意図的です。共有キャッシュは `Vary: Accept` を正規化したり落としたりしますし、1つの URL は1つのキャッシュ可能なドキュメントリソースであるべきだからです。クエリパラメータも同様に避けています。正規 URL、共有される URL、ログに残る URL が変わってしまいます。
 
-すべての応答が更新ヘッダに対して `Vary` します。差分応答はドキュメント固有の validator を含むため `no-store` です。
+すべての応答が更新ヘッダに対して `Vary` します。ただしヘッダフィールドを書くのは利用側です。このパッケージが書くのはボディだけで、`Vary`・`Content-Type`・返したモードのエコー・live マーカー・`ETag` は「計算して渡す」までを担当します。差分応答は文書固有の validator を含むので `no-store` が妥当ですが、それを設定するのも利用側です。詳しくは [`httpbind_update_surface.md`](httpbind_update_surface.md) を参照してください。
 
 解釈できないもの（未知のモード、切り詰められたヘッダ、プロキシが落としたヘッダ）は、エラーではなく**完全なドキュメント**になります。この規則があるからこそ、各マイルストーンは未完成のままでも不正にはなりません。
 
@@ -163,6 +163,8 @@ if time.Since(opened) > lifetime {
 ビルド識別子はすべての validator にも混ぜ込まれるので、仮にヘッダが途中で落とされても、2つのビルドのダイジェストが一致することはありません。
 
 ヘッダ・レコード・ステータス・適合クライアントが守るべき規則を含む完全なワイヤ仕様は [更新ワイヤ契約](httpbind_update_wire_contract.md) にあります。自分でクライアントを書くならそちらを読んでください。
+
+render・redraw・action・sequence の各エントリの呼び方は [更新サーフェス](httpbind_update_surface.md) にまとめてあります。
 
 ## 差分の操作
 
@@ -253,7 +255,12 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "forbidden", http.StatusForbidden)
         return
     }
-    if options.Redraw(w, r, registry) {
+    // ページとその上の component の redraw は同じ URL を共有するので、
+    // どちらになるかに関わらずキャッシュは redraw の軸で分ける必要がある
+    htmlupdate.ApplyTo(options.RedrawHeaders(r), w)
+    if answer, ok := options.Redraw(r, registry); ok {
+        w.Header().Set("Cache-Control", "private, no-cache")
+        _, _ = answer.WriteTo(w)
         return // redraw だった。上の検査をそのまま継承している
     }
     // 通常のページ描画
@@ -262,9 +269,25 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
 
 この配置こそが要点です。パス保護はパスパターンで設定されるため、予約パスから配信する redraw は、component が置かれたページを守るパターンと**並行して**維持する専用パターンを必要とします。一致していなければならないのに、一致を強制するものが何も無い2つの規則です。ページ自身の URL なら、redraw はその保護を自動的に継承しますし、ハンドラ自身の検査の後ろに置けばミドルウェアだけでなくその検査も継承します。
 
-`Redraw` は redraw でないリクエストに対して何も書かずに `false` を返すので、同じハンドラがそのままページを返します。別ビルドが描画したページからのリクエストもその一つです。ページ URL では、古い redraw への正しい答えはそのページであり、それはどのみちこれから描画するものなので、拒否してからリロードするのではなく1往復で済みます。
+`Redraw` は redraw でないリクエストに対して空の `Response` と `false` を返すので、同じハンドラがそのままページを返します。書き込みは常に利用側が行います。このパッケージはヘッダフィールドもステータスも一切書かず、`Response.WriteTo` は「計算されたものを利用側が送る」という形です。別ビルドが描画したページからのリクエストもその一つです。ページ URL では、古い redraw への正しい答えはそのページであり、それはどのみちこれから描画するものなので、拒否してからリロードするのではなく1往復で済みます。
 
-ページ応答と redraw 応答が URL を共有することになるため、`Redraw` はどちらを返す場合でも render・build・kind・instance の各ヘッダに `Vary` を宣言します。kind と instance が無いと、1ページ上の2つの component の redraw が単一のキャッシュエントリになり、どちらにも他方のマークアップが返りうるからです。
+`Redraw` とアクション系のエントリは `htmlbind.Option` を受け取ります。ページのレンダリングに渡しているものと同じものを渡してください。渡さないと、そのコンポーネントはページの中と、ページを置き換える応答とで別の描画になります。設定した URL スキーム allowlist が届かないのでアプリ自身のスキームがブロックマーカーに潰れ、キャッシュ付きコンポーネントは毎回本体を実行し、そして unsafe form を含むコンポーネントは**そもそも描画されません** — CSRF フィールドにトークンが必要で、レンダリングの失敗は 500 になります。
+
+```go
+render := []htmlbind.Option{
+    htmlbind.WithCSRFToken(session.CSRFToken(r)),
+    htmlbind.WithCache(store),
+    htmlbind.WithURLSchemes("http", "https", "myapp"),
+}
+if answer, ok := options.Redraw(r, registry, render...); ok {
+    _, _ = answer.WriteTo(w)
+    return
+}
+```
+
+境界プレフィックスとビルド識別子は `Options` から供給されるので渡す必要がありません。リクエスト自身のコンテキストは渡したオプションより先に入るので、キャンセルされたリクエストは外部関数が始めた処理を止めます。
+
+ページ応答と redraw 応答が URL を共有することになるため、`Options.RedrawHeaders` が render・build・kind・instance の各ヘッダへの `Vary` を返します。これは分岐の**前**に適用してください。このリクエストがどちらになるかに関わらず必要だからです。kind と instance が無いと、1ページ上の2つの component の redraw が単一のキャッシュエントリになり、どちらにも他方のマークアップが返りうるからです。
 
 予約された redraw パスはもうありません。`RedrawHandler`、`RedrawPath`、`Mount` への登録は削除しました。宛先を利用者が選べないエンドポイントこそが欠陥だったのであり、2つ目のアドレッシングを生かしておくことは1つの契約に2つの形を公開することを意味するからです。
 
@@ -275,7 +298,8 @@ mux.HandleFunc("GET /internal/redraw/{kind}/{instance}", func(w http.ResponseWri
     r.Header.Set("X-Tinybind-Render", "redraw")
     r.Header.Set("X-Tinybind-Kind", r.PathValue("kind"))
     r.Header.Set("X-Tinybind-Instance", r.PathValue("instance"))
-    options.Redraw(w, r, registry)
+    answer, _ := options.Redraw(r, registry)
+    _, _ = answer.WriteTo(w)
 })
 ```
 
@@ -335,10 +359,16 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
         return
     }
     if options.WantsUpdate(r) {
-        _ = options.WriteUpdate(w,
+        answer, err := options.WriteUpdate(r, []htmlupdate.Update{
             htmlupdate.Replace("cart", CartBadge(CartBadgeParams{ID: "cart", Count: count})),
             htmlupdate.Replace("row-"+itemID, ItemRow(ItemRowParams{ID: "row-" + itemID, Item: item})),
-        )
+        }, htmlbind.WithCSRFToken(session.CSRFToken(r)))
+        if err != nil {
+            httpbind.WriteError(w, r, err)
+            return
+        }
+        w.Header().Set("Cache-Control", "no-store") // アクション応答はキャッシュしない
+        _, _ = answer.WriteTo(w)
         return
     }
     httpbind.Write(w, r, result) // そのエンドポイント本来の JSON
@@ -464,7 +494,7 @@ file input はこれら全ての例外で、選択を値から復元する手段
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。同じ接頭辞がプレースホルダ要素と境界 ID も名付けるので、`pw` を設定したプロジェクトでは境界が `data-pw-id`、プレースホルダが `<pw-boundary id="pw-1">` になります。命名体系は2つではなく1つです。属性を書くのは生成器、読むのはランタイムなので、`Options.DataAttributePrefix` にも同じ値を設定してください。
+`-data-attribute-prefix` は生成される属性の名前空間で、既定では `data-tb-id` になります。同じ接頭辞が await のマーカーと境界 ID も名付けるので、`pw` を設定したプロジェクトでは境界が `data-pw-id`、await のマーカーが `<!--pw:pw-1-->` になります。命名体系は2つではなく1つです。属性を書くのは生成器、読むのはランタイムなので、`Options.DataAttributePrefix` にも同じ値を設定してください。
 
 配信。プロトコルがドキュメントに書き込む名前はすべて設定可能で、フレームワークが所有するものは2つの名前空間の内側にあります。
 
@@ -488,6 +518,7 @@ options.Mount(mux) // ランタイムアセット。残る唯一のエンドポ�
 mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
     wrappers := []htmlbind.Wrapper{BindDocument(...), BindLayout(...)}
     leaf := Page(PageParams{Query: r.URL.Query().Get("q")})
+    htmlupdate.ApplyTo(options.Headers(r, wrappers, leaf), w)
     if err := options.Render(w, r, wrappers, leaf); err != nil {
         http.Error(w, "render failed", http.StatusInternalServerError)
     }
@@ -496,7 +527,7 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 
 全エンドポイントが1つの接頭辞の下にあるということは、ルーティング規則もキャッシュ規則もアクセス制御も1つで全体を覆えるということです。`Mount` がまとめて登録し、フレームワークが所有するものがその外に出ることはありません。
 
-`options.Render` はモードを判定し、`Vary` を設定し、ドキュメントか差分のどちらかを書きます。それ以外のレスポンスに関する判断は、このモジュールの他の部分と同じく利用者の責務のままです。
+`options.Render` はモードを判定し、ドキュメントか差分のどちらかを書きます。ヘッダは書きません。`options.Headers(r, wrappers, leaf)` が `Vary` の軸・Content-Type・返すモードのエコー・live マーカーを計算し、`htmlupdate.ApplyTo` が描画の前にそれをレスポンスへ載せます。それ以外のレスポンスに関する判断は、このモジュールの他の部分と同じく利用者の責務のままです。
 
 ランタイムは同じ接頭辞の下、内容ハッシュ付きのパスで配信されるので、恒久的にキャッシュ可能でありながらデプロイで無効化されます。読み込む要素は `options.ScriptTag()` が返し、その要素が設定一式を運ぶので、共有された1つのランタイムアセットがどんな名前の組み合わせでも再ビルドなしに動きます。バイト列には何一つ焼き込まれていません。プロトコルバージョンさえもです。
 
@@ -541,18 +572,27 @@ config := options.RuntimeConfig()         // 統合したランタイムに渡�
 
 ### 失敗を報告する
 
-再描画エンドポイントは URL を所有しているので、レスポンスを書く責任があります。ただし「失敗がどう見えるか」を決める責任はありません。
+拒否は `Failure` フィールドを持つ普通の `Response` として返ってきます。本文は RFC 9457 の problem details です。そのまま送ってもいいですし、kind を読んで自前のエラーページを送っても構いません。
 
 ```go
-options.OnFailure = func(w http.ResponseWriter, r *http.Request, f htmlupdate.Failure) {
-    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
-    problem.Write(w, r, f.Status, f.Kind.String()) // または htmlupdate.WriteFailure(w, f)
+answer, ok := options.Redraw(r, registry)
+if ok && answer.Failure != nil && answer.Failure.Kind == htmlupdate.FailureUnknownComponent {
+    problem.Write(w, r, answer.Status, answer.Failure.Kind.String())
+    return
 }
 ```
 
-拒否された再描画はすべてここに来ます。壊れたパス、公開していない kind、別ビルドのページ、大きすぎるクエリ、復号できない引数、失敗した描画のいずれについても、パッケージが書いたはずのステータスと本文、そして原因がある場合はその原因が渡ります。フックを設定しなければ、これまでどおりパッケージ自身が既定の応答を書きます。
+`options.OnFailure` は応答せず観測だけをします。レスポンスを差し替えるかどうかに関わらず、ログ行とスパンは残したいからです。
 
-再描画のレスポンスは描画結果に対する `ETag` と `private, no-cache` を持つので、変化していない領域はマークアップ全体ではなく `304` で済みます。公開してよい再描画や、別の条件を要求するプロキシがある配信では `RedrawCacheControl` でこの方針ごと差し替えられます。
+```go
+options.OnFailure = func(r *http.Request, f htmlupdate.Failure) {
+    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+}
+```
+
+拒否された再描画は両方に届きます。壊れたパス、公開していない kind、別ビルドのページ、大きすぎるクエリ、復号できない引数、失敗した描画のいずれについても、原因がある場合はその原因が渡ります。原因が本文に出ることはありません。
+
+再描画のレスポンスは描画結果に対する `ETag` を持つので、変化していない領域はマークアップ全体ではなく `304` で済ませられます。ただし済ませるかどうかは利用側の判断です。`answer.NotModified(r)` が `If-None-Match` の比較をしますが、`304` を返すことはキャッシュの決定であり、キャッシュ方針を一切書かないこのパッケージが決めることではありません。ユーザーごとの領域なら `private, no-cache` が妥当です（`no-store` は `ETag` が存在する理由である条件付きリクエストそのものを禁じてしまいます）。
 
 HTTP 層が `htmlbind` ではなく `htmlupdate` にあるのは、生成されたテンプレートコードが TinyGo や WebAssembly で動き続けられるよう、描画ランタイムを `net/http` から切り離しておくためです。
 

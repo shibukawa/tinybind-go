@@ -31,4 +31,11 @@ consumers:
   - future requirement:partial-update-boundaries and route-role markers
 non_consumers:
   async: requirement:async-external-functions keeps the `external async` keyword, because it changes the required Go signature rather than annotating behavior
+  reloadable:
+    what: requirement:component-redraw-endpoint shipped a `reloadable` modifier after export, which is the keyword_prefix form rejected above
+    found: 2026-08-08, while deciding a fourth component marker
+    settled: the modifier stays, and the line is drawn where the rejection did not reach
+    line: a modifier declares what the declaration is — its visibility, its implementation source, or an HTTP endpoint it publishes; an annotation configures how rendering behaves and carries arguments
+    reads_as: export and external state where a declaration comes from and who may see it, reloadable states that it is published, and @cache states how its output is reused
+    consequence_for_the_fourth_marker: requirement:partial-update-boundaries needs no marker at all, since reloadable now implies it, so the annotation list stays at @cache and this decision's future-consumers line is answered rather than extended
 ```

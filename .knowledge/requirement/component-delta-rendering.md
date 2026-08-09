@@ -52,5 +52,10 @@ open_questions:
   - request and response media types, deferred to requirement:render-mode-negotiation
   - validator hash length and wire compression, deferred to rule:update-validator-computation
   - maximum manifest size and compact encoding, deferred to decision:manifest-state-ownership
-  - whether retain holes ship in the first milestone or ancestor replacement is the only structural fallback
+resolved:
+  retain_holes:
+    decided: 2026-08-08, they ship; requirement:boundary-decomposed-render makes the hole the ordinary shape rather than an optimization over ancestor replacement
+    what_changed: the response decomposes at every boundary by default, so a parent fragment always carries placeholders and a hole with no fragment sent is a retain
+    ancestor_replacement: stays the fallback for a server that cannot express holes, which the data:component-delta-response clause already allows
+    shipped: 2026-08-08; every changed boundary is its own fragment and every unchanged one is retained, including a child of a changed parent, which reverses the previous selection of the topmost changed boundary carrying its subtree
 ```

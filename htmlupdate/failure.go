@@ -1,6 +1,7 @@
 package htmlupdate
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -92,11 +93,102 @@ func (f Failure) Error() string {
 // Unwrap exposes the cause, so errors.Is and errors.As reach it.
 func (f Failure) Unwrap() error { return f.Err }
 
-// WriteFailure writes the response this package writes when no caller took
-// over. It is exported so a caller that only wants to observe a failure can log
-// it and delegate the response, rather than reimplementing four status codes.
-func WriteFailure(w http.ResponseWriter, failure Failure) {
-	http.Error(w, failure.Message, failure.Status)
+// FailureResponse is the refusal this package computes, exported so a caller
+// raising one of its own — a redraw it declined before this package saw it —
+// answers in the same shape rather than reimplementing five status codes.
+//
+// The body is RFC 9457 problem details, which is this module's documented error
+// format everywhere else; the update endpoints were the only paths writing
+// plain text. The media type is what tells the two apart on the wire:
+// application/json is an update to apply, including a non-2xx one, and
+// application/problem+json is a request that produced no update at all.
+//
+// The status still directs. A client's rule — any non-2xx falls back to an
+// ordinary navigation — is unchanged, so a client that cannot read the body
+// still lands correctly; the body adds diagnosis rather than direction.
+//
+// Nothing is sent until a caller sends it: [Response.WriteTo] does that, and a
+// caller with its own error page sends that instead.
+//
+// It carries no Vary, having no Options and no request to compute one from. The
+// refusals this package produces get theirs added; a caller raising one of its
+// own adds them from [Options.RedrawHeaders] or [Options.Headers], and a
+// cacheable status makes that matter — see the note on Options.failure.
+func FailureResponse(failure Failure) Response {
+	return Response{
+		Status:  failure.Status,
+		Header:  http.Header{"Content-Type": []string{"application/problem+json"}},
+		Body:    failure.problemJSON(),
+		Failure: &failure,
+	}
+}
+
+// failure is FailureResponse for the entries, which also report the refusal
+// through the observation hook when a caller installed one and give the refusal
+// the vary axes an answer would have had.
+//
+// A refusal is a response at the same URL as everything else, and some refusals
+// are cacheable: 404 is heuristically cacheable with no Cache-Control at all, so
+// a stored redraw 404 carrying no Vary can be handed to a request for the page.
+// It reads the same headers a successful redraw reads, so it varies on the same
+// ones.
+func (o Options) failure(r *http.Request, f Failure) Response {
+	if o.OnFailure != nil {
+		o.OnFailure(r, f)
+	}
+	response := FailureResponse(f)
+	for _, name := range o.varyOn(o.Negotiate(r).Mode) {
+		response.Header.Add("Vary", name)
+	}
+	return response
+}
+
+// problemBody is the RFC 9457 shape, matching what httpbind.WriteError emits so
+// one error format reaches a client whichever entry refused the request.
+type problemBody struct {
+	Type   string        `json:"type"`
+	Title  string        `json:"title"`
+	Status int           `json:"status"`
+	Detail string        `json:"detail"`
+	Code   string        `json:"code"`
+	Errors []problemItem `json:"errors,omitempty"`
+}
+
+type problemItem struct {
+	Field    string `json:"field"`
+	Location string `json:"location"`
+	Message  string `json:"message"`
+}
+
+func (f Failure) problemJSON() []byte {
+	body := problemBody{
+		Type:   "about:blank",
+		Title:  http.StatusText(f.Status),
+		Status: f.Status,
+		// Message is a constant this package chose, never anything the request
+		// supplied, so it needs no blanking at 5xx the way a wrapped cause would.
+		// Err stays out entirely: it may name internal detail and belongs in the
+		// caller's log through the failure value, not in a response.
+		Detail: f.Message,
+		// The kind is the fact a caller branches on, so it travels as the code
+		// rather than being left for someone to infer from the status.
+		Code: f.Kind.String(),
+	}
+	var refused *QueryError
+	if errors.As(f.Err, &refused) {
+		body.Errors = []problemItem{{
+			Field:    refused.Parameter,
+			Location: "query",
+			Message:  refused.Reason,
+		}}
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		// Every field is a string or an int, so this cannot happen; falling back
+		// to the status alone keeps a refusal a refusal if it ever does.
+		return []byte(`{"type":"about:blank","status":` + strconv.Itoa(f.Status) + `}`)
+	}
+	return encoded
 }
 
 // Validate reports every option this package cannot use, so a caller running a
@@ -167,14 +259,14 @@ func validateNamePrefix(what, prefix string) error {
 		return errors.New("htmlupdate: " + what + " " + strconv.Quote(prefix) +
 			" must not end with a hyphen")
 	}
+	// The prefix now spells a comment marker as well as an attribute name, and a
+	// doubled hyphen closes a comment early: the rest of the marker would land in
+	// the document as markup. Nothing else in the naming rules rejects it.
+	if strings.Contains(prefix, "--") {
+		return errors.New("htmlupdate: " + what + " " + strconv.Quote(prefix) +
+			" must not contain a doubled hyphen, because it also spells the await boundary's comment markers")
+	}
 	return nil
 }
 
 // fail reports one failure through the caller's hook, or writes the default.
-func (o Options) fail(w http.ResponseWriter, r *http.Request, failure Failure) {
-	if o.OnFailure != nil {
-		o.OnFailure(w, r, failure)
-		return
-	}
-	WriteFailure(w, failure)
-}

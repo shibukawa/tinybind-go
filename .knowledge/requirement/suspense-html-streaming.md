@@ -76,6 +76,13 @@ no_javascript:
   alternative: the sync entry in decision:async-component-signature renders the same template settled, for callers that must serve non-JavaScript clients
 recover_omitted: decision:async-boundary-syntax ends the sequence with the unrecovered failure carrying the committed placeholder's boundary ID; the fallback stays on screen until the caller's runtime replaces the document, and the render error hook still sees the original error
 multiple_dependencies: the first failing binding of one clause decides the boundary; siblings are cancelled and not aggregated
+placeholder_position_defect_2026_08_09:
+  what: rule:boundary-placeholder-parse-position; the committed placeholder is an unknown element, so a table foster-parents it out before the table while its own fallback rows stay inside
+  worse_here_than_in_the_delta: a client settles a boundary by id, so the finished markup is written where the placeholder ended up — outside the table — and the fallback stays in the list permanently
+  no_workaround: a caller cannot rewrite a document the browser is parsing as it arrives, so unlike the delta hole this one cannot be corrected downstream
+  display_contents_was_the_wrong_defence: it keeps the placeholder out of layout, which is a rendering concern; the placeholder never reaches layout in the first place because parsing moved it
+  fixed: 2026-08-09; the fallback is bracketed by a comment pair and settling replaces the range between them, per rule:boundary-placeholder-parse-position
+  a_template_would_not_have_worked_here: it is kept in a table but does not render its content, and this concept's no_javascript case requires the committed fallback to be visible
 open_questions:
   - Content Security Policy nonce or external-script integration
   - serving the update runtime as a cacheable external module instead of an inline head script

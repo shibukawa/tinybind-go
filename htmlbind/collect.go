@@ -18,13 +18,21 @@ import (
 type Collector interface {
 	// Begin starts one render, carrying the validator tag the render options
 	// resolved. It is called once, before anything else.
+	//
+	// It used to carry the placeholder element name too, so a decomposing
+	// observer could write the same shape a progressive render writes. The two
+	// shapes are no longer the same: a hole has no content and is written as a
+	// template, while an await boundary brackets a visible fallback and is
+	// written as a comment pair. Neither is nameable by a prefix, so nothing is
+	// left to pass.
 	Begin(validatorTag string)
 	// Write observes one instruction's output, after escaping.
 	Write(value string)
 	// Open enters the boundary of one chain member: its instance ID, the
 	// component's declaration identity, the instance attribute its root
-	// element will carry, and the canonical encoding of its declared inputs.
-	Open(id, componentID, attr, input string)
+	// element will carry, the canonical encoding of its declared inputs, and
+	// the address of the static half its values are walked against.
+	Open(id, componentID, attr, input, sequence string)
 	// Close leaves the innermost open boundary.
 	Close()
 	// TakePending consumes the boundary whose root element has not yet written
@@ -32,6 +40,13 @@ type Collector interface {
 	// Only the boundary's own root consumes it, so an ordinary component
 	// nested inside cannot claim its parent's ID.
 	TakePending() (attr, id string, ok bool)
+	// Slot brackets one instruction's output, so what it wrote can be separated
+	// from the static text around it. begin opens and end closes.
+	Slot(begin bool)
+	// Choice records what the value stream needs in order to walk the sequence
+	// tree: which branch a conditional took, how many times a loop ran, and
+	// whether a called component opened a boundary or rendered inline.
+	Choice(value string)
 }
 
 // CollectChain renders like RenderChain with collect observing the render, and
@@ -79,16 +94,26 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 	if decl == nil {
 		return member
 	}
-	id := "c" + strconv.Itoa(index)
+	// A boundary that names its own instance keeps that name wherever it
+	// renders. Only a component with no name of its own is numbered by its chain
+	// position, which is the case the numbering exists for: a layout is the same
+	// member of the same chain whatever its parameters say.
+	id := decl.instance
+	if id == "" {
+		id = "c" + strconv.Itoa(index)
+	}
 	return Fragment{
-		head:     member.head,
-		hasAwait: member.hasAwait,
-		hasLive:  member.hasLive,
+		head:          member.head,
+		hasAwait:      member.hasAwait,
+		hasLive:       member.hasLive,
+		sequence:      member.sequence,
+		opensBoundary: true,
 		render: func(r *Renderer) error {
 			if r.collect == nil {
 				return member.render(r)
 			}
-			r.collect.Open(id, decl.componentID, decl.attr, decl.input())
+			r.collect.Open(id, decl.componentID, decl.attr, decl.input(),
+				member.sequenceAddress())
 			if err := member.render(r); err != nil {
 				return err
 			}

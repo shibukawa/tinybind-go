@@ -21,6 +21,18 @@ options:
     invalid: unparsable or non-positive duration is a generation error
   future: eviction, vary, and stale-while-revalidate stay unspecified rather than reserved
 eligibility:
+  single_root:
+    added: 2026-08-08 by the owner, for requirement:boundary-decomposed-render
+    rule: a cached component renders exactly one root element, as decision:update-manifest-transport already requires of an update boundary
+    why: a decomposition hole needs an element to hold the place, and an id on a stable root is what lets a parent fragment carry a placeholder for it
+    not_needed_before: the byte cache replays a range and never addressed it, so root count did not matter; it matters the moment the component becomes a hole
+    breaking: a cached component rendering several roots stops generating, which is the cost of joining the boundary set
+  no_nested_boundary:
+    decided: 2026-08-08; a cached component may not contain a nested reloadable component, and declaring one is a generation error
+    follows_from: requirement:component-output-cache opaque_unit, which makes a cached output one unit with nothing reported inside it
+    what_a_nested_boundary_would_force: its own fragment and id, and a hole in the cached output, which is structure the stored range cannot express — and it is the only thing that would have forced api:cache-store to carry structure
+    same_shape_as_await: rejected at generation with the declaration position, for the reason no_await gives; the alternative is caching a form the consumer cannot use
+    cost: a cached sidebar holding a reloadable widget has to give up the cache or move the widget out, which is the same trade await already carries
   no_html_parameters: an html parameter is a bound continuation, not a value, so it cannot enter decision:cache-key-derivation; declaring one is a generation error
   no_slots: follows from the parameter rule, so a cached component is never a requirement:chain-render-pipeline member
   no_await: the component and every component reachable from it must be free of decision:async-boundary-syntax boundaries

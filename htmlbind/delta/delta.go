@@ -24,12 +24,46 @@ type Operation struct {
 	Kind string
 	// InstanceID names the boundary the operation targets.
 	InstanceID string
-	// HTML is the boundary's complete subtree, including its root element.
+	// HTML is the boundary's own markup, including its root element, with an
+	// inert placeholder where each nested boundary sits rather than that
+	// boundary's bytes.
 	HTML string
+	// Sequence addresses this fragment's static half, and Values are the varying
+	// half a client walks it with. Together they reproduce HTML exactly, which
+	// is what lets a caller send one or the other: the statics travel once per
+	// client and the values travel per render.
+	//
+	// Both are empty for a boundary whose sequence could not be derived, which
+	// is the case a caller falls back to HTML for.
+	Sequence string
+	Values   []string
+	// Boundaries names the nested boundaries appearing as holes in HTML.
+	//
+	// It is what tells a hole to fill from one to retain: an id also carrying an
+	// operation in this response is replaced, and one that does not is a
+	// boundary the client already holds and moves its live node into. Nothing in
+	// the markup distinguishes the two, and without the list a missing fragment
+	// would be indistinguishable from a truncated response.
+	Boundaries []string
 }
 
-// OpReplace names the only operation kind this milestone produces.
-const OpReplace = "replace"
+const (
+	// OpReplace swaps a boundary's own markup, holes and all.
+	OpReplace = "replace"
+	// OpChildren says a boundary's own markup is unchanged and its nested
+	// boundaries are now these, in this order.
+	//
+	// It carries no HTML. The client reconciles what it already holds against
+	// the list: an id it holds and the list keeps stays, moving if the order
+	// moved; an id the list drops is removed; an id it does not hold arrives as
+	// its own operation in the same response.
+	//
+	// It exists because appending one row to a list is the ordinary event on a
+	// live screen, and expressing it by replacing the parent costs the whole
+	// list of holes — measured at 7,383 bytes to add one 76-byte row to a
+	// hundred, where the list of ids costs a few hundred.
+	OpChildren = "children"
+)
 
 // Delta is the result of comparing a fresh render against what the browser
 // already holds.
@@ -64,17 +98,24 @@ func RenderDelta(key []byte, known Manifest, wrappers []htmlbind.Wrapper, leaf h
 		return Delta{}, err
 	}
 	return Delta{
-		Manifest:   collect.manifest,
-		Operations: operations(collect.manifest, known, collect.contents),
-		Head:       head,
+		Manifest: collect.manifest,
+		Operations: operations(collect.manifest, known, collect.contents, collect.children,
+			collect.sequences, collect.values),
+		Head: head,
 	}, nil
 }
 
-// operations selects the topmost changed boundaries. A descendant of a replaced
-// boundary is already contained in that replacement, so sending it again would
-// both waste bytes and apply to a node that no longer exists.
-func operations(manifest, known Manifest, contents map[string]string) []Operation {
-	replaced := map[string]bool{}
+// operations sends every changed boundary as its own fragment.
+//
+// A parent's fragment holds a placeholder where each child sits rather than the
+// child's bytes, so a descendant is no longer contained in its ancestor's
+// replacement and has to be sent when it changed. The gain is the other
+// direction: an unchanged child of a changed parent is sent by nobody, and the
+// client moves the node it already holds into the hole — keeping the focus, the
+// form values, and the media state that recreating it inside the parent would
+// have destroyed.
+func operations(manifest, known Manifest, contents map[string]string, children map[string][]string,
+	sequences map[string]string, values map[string][]string) []Operation {
 	// A boundary the browser holds that this render did not produce has to be
 	// taken off the screen, and the delta has no way to say where it was: the
 	// hints carry ids and validators, not structure. Replacing the outermost
@@ -86,32 +127,74 @@ func operations(manifest, known Manifest, contents map[string]string) []Operatio
 	forceRoot := disappeared(manifest, known)
 	var ops []Operation
 	for _, instance := range manifest.Instances {
-		if replaced[instance.ParentID] {
-			replaced[instance.ID] = true
-			continue
-		}
 		before, ok := known.Find(instance.ID)
-		unchanged := ok && before.FrameValidator == instance.FrameValidator
-		if unchanged && !(forceRoot && instance.ParentID == "") {
+		root := forceRoot && instance.ParentID == ""
+		if ok && before.FrameValidator == instance.FrameValidator && !root {
+			// The component's own markup is unchanged, so its DOM stays. If its
+			// nested boundaries moved, the client is told the new order and
+			// reconciles what it holds; a parent replacement would have cost
+			// every hole in the list to express one insertion.
+			if before.ChildrenValidator != instance.ChildrenValidator {
+				ops = append(ops, Operation{
+					Kind:       OpChildren,
+					InstanceID: instance.ID,
+					Boundaries: children[instance.ID],
+				})
+			}
+			// An unchanged boundary is never sent, including one whose parent is
+			// being replaced: its hole in that replacement is what the client
+			// moves its live node into.
 			continue
 		}
-		replaced[instance.ID] = true
+		// A boundary absent from the known manifest is not unchanged by the test
+		// above, so a newly appearing region is always sent.
 		ops = append(ops, Operation{
 			Kind:       OpReplace,
 			InstanceID: instance.ID,
 			HTML:       contents[instance.ID],
+			Boundaries: children[instance.ID],
+			Sequence:   sequences[instance.ID],
+			Values:     values[instance.ID],
 		})
 	}
 	return ops
 }
 
 // disappeared reports whether the browser holds a boundary this render no
-// longer produces.
+// longer produces and nothing in the response can say so.
+//
+// A removal is covered when its parent survives with its own markup unchanged:
+// that parent's child set shrank, so it reports the survivors and the client
+// drops what the list no longer names. The test is the parent's frame rather
+// than its mere presence, because a chain member is numbered by position — a
+// shorter chain renumbers, so an id surviving can mean a different component
+// wearing the same number, whose operation says nothing about the region that
+// went.
+//
+// Everything else falls back to replacing the outermost boundary, which takes
+// the region off the screen along with everything else that moved.
 func disappeared(manifest, known Manifest) bool {
 	for _, before := range known.Instances {
-		if _, ok := manifest.Find(before.ID); !ok {
+		if _, ok := manifest.Find(before.ID); ok {
+			continue
+		}
+		if before.ParentID == "" {
+			return true
+		}
+		parent, ok := manifest.Find(before.ParentID)
+		if !ok || parent.FrameValidator != knownFrame(known, before.ParentID) {
 			return true
 		}
 	}
 	return false
+}
+
+// knownFrame is the frame the client holds for an instance, or empty when it
+// holds none — which never compares equal to a rendered one.
+func knownFrame(known Manifest, id string) string {
+	instance, ok := known.Find(id)
+	if !ok {
+		return ""
+	}
+	return instance.FrameValidator
 }

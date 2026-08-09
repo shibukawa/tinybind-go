@@ -164,6 +164,8 @@ The build identity is also mixed into every validator, so two builds can never p
 
 The full wire description — every header, every record, every status, and what a conforming client must not get wrong — is in [The update wire contract](httpbind_update_wire_contract.md). Read that if you are writing your own client.
 
+For how to call every entry — render, redraw, action, sequence — see [The update surface](httpbind_update_surface.md).
+
 ## Delta operations
 
 A delta carries the outermost changed boundaries only. A descendant of a replaced boundary is already inside that replacement, so sending it again would target a node that no longer exists.
@@ -253,7 +255,12 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "forbidden", http.StatusForbidden)
         return
     }
-    if options.Redraw(w, r, registry) {
+    // A page and the redraws of the components on it share this URL, so a cache
+    // must key on the redraw axes whichever way this request turns out.
+    htmlupdate.ApplyTo(options.RedrawHeaders(r), w)
+    if answer, ok := options.Redraw(r, registry); ok {
+        w.Header().Set("Cache-Control", "private, no-cache")
+        _, _ = answer.WriteTo(w)
         return // it was a redraw, and it inherited the check above
     }
     // ordinary page render
@@ -262,9 +269,25 @@ mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
 
 That placement is the point. Path protection is configured by path pattern, so a redraw served from a reserved path needs its own pattern maintained in parallel with the one protecting the page the component sits on — two rules that must agree and that nothing forces to agree. At the page's own URL the redraw inherits that protection automatically, and placed after the handler's own checks it inherits those too, not merely the middleware's.
 
-`Redraw` returns `false` with nothing written when the request is not a redraw, so the same handler serves the page. A request from a page another build rendered is one of those cases: at a page URL the right answer to a stale redraw is that page, which you are about to render anyway, so it costs one round trip rather than a refusal and then a reload.
+`Redraw` returns `false` and an empty `Response` when the request is not a redraw, so the same handler serves the page. Nothing is ever written until you write it: this package sets no header and no status of its own, and `Response.WriteTo` is you sending what it computed. See [`httpbind_update_surface.md`](httpbind_update_surface.md) for the whole split. A request from a page another build rendered is one of those cases: at a page URL the right answer to a stale redraw is that page, which you are about to render anyway, so it costs one round trip rather than a refusal and then a reload.
 
-Because the page response and the redraw response now share a URL, `Redraw` declares `Vary` on the render, build, kind, and instance headers whichever one it turns out to serve. Without the kind and instance there, two components redrawing on one page would be a single cache entry and either could be answered with the other's markup.
+`Redraw` and the action entries take `htmlbind.Option`s, and you should pass the same ones your page render gets. Without them a component renders one way inside its page and another in the response that replaces it: a configured URL scheme allowlist does not arrive, so an application's own scheme neutralises to the blocked marker; a cached component runs its body every time; and a component holding an unsafe form **does not render at all**, because the CSRF field needs a token and a failed render is a 500.
+
+```go
+render := []htmlbind.Option{
+    htmlbind.WithCSRFToken(session.CSRFToken(r)),
+    htmlbind.WithCache(store),
+    htmlbind.WithURLSchemes("http", "https", "myapp"),
+}
+if answer, ok := options.Redraw(r, registry, render...); ok {
+    _, _ = answer.WriteTo(w)
+    return
+}
+```
+
+The boundary prefix and the build identity are supplied from your `Options` and need no passing, and the request's own context goes in ahead of yours, so a cancelled request stops the work its externals started.
+
+Because the page response and the redraw response now share a URL, `Options.RedrawHeaders` names `Vary` on the render, build, kind, and instance headers, and you apply it before the branch — whichever one this request turns out to be. Without the kind and instance there, two components redrawing on one page would be a single cache entry and either could be answered with the other's markup.
 
 There is no reserved redraw path any more. `RedrawHandler`, `RedrawPath`, and the `Mount` registration are gone: an endpoint whose address the caller cannot choose was the defect, and keeping a second addressing alive meant publishing two shapes in one contract.
 
@@ -275,7 +298,8 @@ mux.HandleFunc("GET /internal/redraw/{kind}/{instance}", func(w http.ResponseWri
     r.Header.Set("X-Tinybind-Render", "redraw")
     r.Header.Set("X-Tinybind-Kind", r.PathValue("kind"))
     r.Header.Set("X-Tinybind-Instance", r.PathValue("instance"))
-    options.Redraw(w, r, registry)
+    answer, _ := options.Redraw(r, registry)
+    _, _ = answer.WriteTo(w)
 })
 ```
 
@@ -335,10 +359,16 @@ func addToCart(w http.ResponseWriter, r *http.Request) {
         return
     }
     if options.WantsUpdate(r) {
-        _ = options.WriteUpdate(w,
+        answer, err := options.WriteUpdate(r, []htmlupdate.Update{
             htmlupdate.Replace("cart", CartBadge(CartBadgeParams{ID: "cart", Count: count})),
             htmlupdate.Replace("row-"+itemID, ItemRow(ItemRowParams{ID: "row-" + itemID, Item: item})),
-        )
+        }, htmlbind.WithCSRFToken(session.CSRFToken(r)))
+        if err != nil {
+            httpbind.WriteError(w, r, err)
+            return
+        }
+        w.Header().Set("Cache-Control", "no-store") // an action response is never cacheable
+        _, _ = answer.WriteTo(w)
         return
     }
     httpbind.Write(w, r, result) // the endpoint's ordinary JSON
@@ -464,7 +494,7 @@ Generation:
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. The same prefix names the placeholder element and the boundary identifiers, so a project setting `pw` gets `data-pw-id` on its boundaries and `<pw-boundary id="pw-1">` for its placeholders — one naming system rather than two. Set the same value on `Options.DataAttributePrefix`, because the generator writes those attributes and the runtime reads them.
+`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. The same prefix names the await markers and the boundary identifiers, so a project setting `pw` gets `data-pw-id` on its boundaries and `<!--pw:pw-1-->` for its await markers — one naming system rather than two. Set the same value on `Options.DataAttributePrefix`, because the generator writes those attributes and the runtime reads them.
 
 Serving. Every name the protocol puts in a document is configurable, and everything the framework owns lives inside the two namespaces:
 
@@ -489,6 +519,7 @@ options.Mount(mux) // the runtime asset, which is the only endpoint left
 mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
     wrappers := []htmlbind.Wrapper{BindDocument(...), BindLayout(...)}
     leaf := Page(PageParams{Query: r.URL.Query().Get("q")})
+    htmlupdate.ApplyTo(options.Headers(r, wrappers, leaf), w)
     if err := options.Render(w, r, wrappers, leaf); err != nil {
         http.Error(w, "render failed", http.StatusInternalServerError)
     }
@@ -497,7 +528,7 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
 
 One prefix for every endpoint means one routing rule, one cache rule, and one access rule covers the whole surface. `Mount` registers them all; nothing the framework owns appears outside that prefix.
 
-`options.Render` negotiates the mode, sets `Vary`, and writes either the document or the delta. Everything else about the response stays yours, as elsewhere in this module.
+`options.Render` negotiates the mode and writes either the document or the delta. It sets no header: `options.Headers(r, wrappers, leaf)` computes the `Vary` axes, the content type, the echoed mode, and the live marker, and `htmlupdate.ApplyTo` puts them on the response before the render writes. Everything else about the response stays yours, as elsewhere in this module.
 
 The runtime is served at a content-hashed path under the same prefix, so it is immutably cacheable and a deploy invalidates it. `options.ScriptTag()` returns the element that loads it, and that element carries the whole configuration, so one shared runtime asset works for any set of names without being rebuilt. Nothing at all is compiled into the bytes — not even a protocol version.
 
@@ -540,18 +571,27 @@ The version, if you want one, is yours: add `;v=N` to the mode token and the ser
 
 ### Reporting failures
 
-The redraw endpoint has to write a response, because it owns the URL. It does not decide what a failure looks like:
+A refusal comes back as an ordinary `Response` carrying RFC 9457 problem details, with its `Failure` field set. Send it, or read the kind and send your own error page instead:
 
 ```go
-options.OnFailure = func(w http.ResponseWriter, r *http.Request, f htmlupdate.Failure) {
-    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
-    problem.Write(w, r, f.Status, f.Kind.String()) // or htmlupdate.WriteFailure(w, f)
+answer, ok := options.Redraw(r, registry)
+if ok && answer.Failure != nil && answer.Failure.Kind == htmlupdate.FailureUnknownComponent {
+    problem.Write(w, r, answer.Status, answer.Failure.Kind.String())
+    return
 }
 ```
 
-Every refused redraw arrives here — a malformed path, an unpublished kind, a page from another build, an oversized query, a rejected argument, a failed render — with the status and body the package would have written, and the underlying cause where there is one. Without a hook it writes those defaults itself, unchanged.
+`options.OnFailure` observes rather than answers, so the log line and the span happen whether or not you change the response:
 
-A redraw response carries an `ETag` over its rendered bytes and `private, no-cache`, so an unchanged region costs a `304` instead of its whole markup. `RedrawCacheControl` replaces that policy for a deployment whose redraws are public or whose proxy needs different terms.
+```go
+options.OnFailure = func(r *http.Request, f htmlupdate.Failure) {
+    logger.ErrorContext(r.Context(), "redraw failed", "kind", f.Kind, "err", f.Err)
+}
+```
+
+Every refused redraw arrives at both — a malformed path, an unpublished kind, a page from another build, an oversized query, a rejected argument, a failed render — with the underlying cause where there is one. The cause never reaches the body.
+
+A redraw response carries an `ETag` over its rendered bytes, so an unchanged region can cost a `304` instead of its whole markup. Whether it does is yours: `answer.NotModified(r)` does the `If-None-Match` comparison and you decide what to send, because a `304` is a cache decision and this package writes no cache policy. `private, no-cache` is the one worth writing for a per-user region — `no-store` would forbid the conditional request the `ETag` exists for.
 
 The HTTP layer lives in `htmlupdate` rather than `htmlbind`, because the render runtime stays free of `net/http` so generated template code keeps working on TinyGo and WebAssembly targets.
 

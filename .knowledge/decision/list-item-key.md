@@ -49,7 +49,14 @@ id_or_key:
   rule: a row that will be reloaded individually carries a decision:author-declared-boundary-id; a row that only needs matching carries a key
   no_double_writing: where an id is present it also serves as the match key, since it is already unique and stable
   reading: the choice states intent, an id meaning the row is independently addressable and a key meaning it is only matched during a patch
+resolved_2026_08_08:
+  encoding_question:
+    asked_here: whether the key participates in the static-dynamic value encoding or only in application
+    answer_for_the_shipped_design: neither; a loop row that should be addressable is written as a component call that names its own instance, and its id is composed from the item key exactly as declaration_site already prescribes
+    so: the loop-related thing a row carries is its own boundary id, and requirement:boundary-decomposed-render sends it as its own fragment, retains it when unchanged, and needs no separate key mechanism
+    what_is_left_for_a_key: pairing rows inside one fragment, which only matters to an application strategy that mutates in place; the shipped one reassembles and reparses, so it pairs nothing
+    reopens_with: requirement:structured-render-output, if the no-reparse application is ever built
 open_questions:
-  - whether an unkeyed loop inside an updatable region is a diagnostic, a warning, or silently positional
-  - whether the key participates in the static-dynamic value encoding or only in application
+  - whether an unkeyed loop inside an updatable region is a diagnostic, a warning, or silently positional; requirement:structured-render-output inline_loop_body folds in the same question for a for body written as inline markup rather than as a component call, since that one produces no unit and its rows share no skeleton
+  - whether the key participates in the static-dynamic value encoding or only in application; requirement:structured-render-output is where it becomes answerable, since a loop there is one skeleton and one value set per item and the key is what pairs a set with a row
 ```

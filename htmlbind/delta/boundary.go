@@ -25,9 +25,20 @@ type Instance struct {
 	// is a cache and diagnostic key rather than authority to skip a render.
 	InputValidator string
 	// FrameValidator digests this boundary's own rendered bytes, excluding the
-	// output of nested boundaries. A layout whose frame is unchanged can keep
-	// its DOM while its child is replaced.
+	// output of nested boundaries and the holes where they sit. A layout whose
+	// frame is unchanged can keep its DOM while its child is replaced.
 	FrameValidator string
+	// ChildrenValidator digests the ids of the nested boundaries, in order.
+	//
+	// It is separate from the frame because the two have different remedies. A
+	// changed frame means the component's own markup moved, and the parent is
+	// replaced. A changed children list means a region was inserted, removed,
+	// or reordered, and the parent's own DOM is fine — the client is told the
+	// new order and reconciles what it already holds. Folding the second into
+	// the first would make every appended list row cost the whole list.
+	//
+	// It is empty for a boundary with no nested boundary, which is most of them.
+	ChildrenValidator string
 }
 
 // Manifest is the update state of one render, in document order.
@@ -72,17 +83,33 @@ type collector struct {
 	// second, weaker copy of the same idea: it could only change when this
 	// module's wire shape changed, while a build identity also covers a changed
 	// template, a changed external function, and a changed client.
-	tag      string
+	tag string
+	// element names the placeholder a decomposing capture writes where a nested
+	// boundary sits. It is the same element a progressive render already writes
+	// for an await boundary, so a client has one hole shape to recognise.
+	element  string
 	manifest Manifest
 	stack    []*openBoundary
 	// pending holds the boundary whose root element has not yet written its
 	// instance attribute. Only the boundary's own root consumes it, so an
 	// ordinary component nested inside cannot claim its parent's ID.
 	pending *openBoundary
-	// capture records each boundary's complete subtree HTML, which a delta
-	// needs as the payload of a replace operation.
+	// capture records each boundary's own HTML, with a placeholder where each
+	// nested boundary sits rather than that boundary's bytes. A delta sends one
+	// fragment per changed boundary and leaves a hole for every child, so an
+	// unchanged child keeps the DOM it already has — and the state inside it —
+	// instead of being recreated inside its parent's replacement.
 	capture  bool
 	contents map[string]string
+	// children names the boundaries appearing as holes in each captured
+	// fragment, so a client can tell a hole it must fill from one it retains.
+	// Nothing in the markup distinguishes them.
+	children map[string][]string
+	// sequences names each fragment's static half by address.
+	sequences map[string]string
+	// values holds each fragment's varying half, in the order a client walking
+	// that fragment's sequence tree consumes them.
+	values map[string][]string
 	// scratch is reused for the string-to-bytes conversion hashing needs, so a
 	// collecting render does not allocate once per instruction. A collector is
 	// only ever driven by the one goroutine walking the plan.
@@ -93,19 +120,53 @@ type openBoundary struct {
 	// index is the instance's slot in the manifest, reserved when the boundary
 	// opens so the manifest stays in document order. A parent therefore
 	// precedes its children, which is the order a structural operation needs.
-	index   int
-	id      string
-	frame   hash.Hash
-	attr    string
-	content strings.Builder
+	index    int
+	id       string
+	frame    hash.Hash
+	attr     string
+	content  strings.Builder
+	children []string
+	sequence string
+	// values is the varying half of this fragment: one entry per slot, plus the
+	// branch a conditional took, the count a loop ran, and the shape a called
+	// component took. A client walks the sequence tree consuming these in order.
+	values []string
+	// depth and start bracket the slot being recorded. Nesting collapses: an
+	// inlined component opens one slot and the instructions inside it do not
+	// split it, because the sequence carries that component as one hole.
+	depth int
+	start int
 }
 
-func (c *collector) Begin(validatorTag string) { c.tag = validatorTag }
+func (c *collector) Begin(validatorTag string) {
+	c.tag = validatorTag
+}
 
-func (c *collector) Open(id, componentID, attr, input string) {
+func (c *collector) Open(id, componentID, attr, input, sequence string) {
 	parent := ""
 	if depth := len(c.stack); depth > 0 {
-		parent = c.stack[depth-1].id
+		enclosing := c.stack[depth-1]
+		parent = enclosing.id
+		// The child's bytes never reach the parent's fragment. What lands there
+		// instead is an inert element carrying the child's id, which a client
+		// either fills from this response or moves the node it already holds
+		// into.
+		//
+		// The hole is not hashed into the parent's frame. A frame answers "did
+		// this component's own markup change", and which children it has is a
+		// separate question with a separate answer below — because the two have
+		// different remedies. Changed markup means replacing the parent;
+		// changed children means telling the client the new order and leaving
+		// the parent's DOM alone.
+		enclosing.children = append(enclosing.children, id)
+		// The frame around a hole is identical for every one, so it stays in the
+		// static half and only the attribute name and the id travel. A hundred
+		// holes are then a hundred ids rather than a hundred copies of one
+		// element, which is the cost the split exists to remove.
+		enclosing.values = append(enclosing.values, attr, id)
+		if c.capture {
+			enclosing.content.WriteString(c.placeholder(attr, id))
+		}
 	}
 	c.manifest.Instances = append(c.manifest.Instances, Instance{
 		ID:             id,
@@ -114,10 +175,11 @@ func (c *collector) Open(id, componentID, attr, input string) {
 		InputValidator: c.digest("input", componentID+"\x00"+input),
 	})
 	state := &openBoundary{
-		index: len(c.manifest.Instances) - 1,
-		id:    id,
-		frame: hmac.New(sha256.New, c.key),
-		attr:  attr,
+		index:    len(c.manifest.Instances) - 1,
+		id:       id,
+		frame:    hmac.New(sha256.New, c.key),
+		attr:     attr,
+		sequence: sequence,
 	}
 	// Seeding with the validator tag and the component identity keeps two frames
 	// from ever comparing equal across two builds or across two components that
@@ -136,6 +198,21 @@ func (c *collector) Close() {
 	c.stack = c.stack[:depth-1]
 	c.pending = nil
 	c.manifest.Instances[state.index].FrameValidator = truncate(state.frame.Sum(nil))
+	if len(state.children) > 0 {
+		c.manifest.Instances[state.index].ChildrenValidator = c.digest("children", strings.Join(state.children, "\x00"))
+	}
+	if c.children == nil {
+		c.children = map[string][]string{}
+	}
+	c.children[state.id] = state.children
+	if c.values == nil {
+		c.values = map[string][]string{}
+	}
+	c.values[state.id] = state.values
+	if c.sequences == nil {
+		c.sequences = map[string]string{}
+	}
+	c.sequences[state.id] = state.sequence
 	if c.capture {
 		if c.contents == nil {
 			c.contents = map[string]string{}
@@ -144,22 +221,71 @@ func (c *collector) Close() {
 	}
 }
 
-// Write hashes into the innermost open boundary only, so a frame validator
-// covers the component's own markup and not its child's. Captured content works
-// the other way: a replace operation must carry the whole subtree, so every
-// enclosing boundary records the bytes too.
+// placeholder is the hole one boundary leaves in its parent's fragment.
+//
+// It is a template because a template is the one element the HTML parser keeps
+// where it was written and never renders. The element this used to write —
+// prefix-boundary, the same one a progressive render wrapped an await fallback
+// in — is unknown to the parser, and an unknown element in table context is
+// foster-parented: the parser moves it out to just before the table, so every
+// hole a table's rows leave ends up outside the table, the rows filling those
+// holes land loose on the page, and the list is left empty. Nothing reports it,
+// because the response is correct as bytes and the resulting DOM is valid.
+//
+// A template needs no display:contents, since it renders nothing to begin with,
+// and it stays an element carrying the boundary's id — so a client still finds a
+// hole by the attribute selector it already uses and still replaces one node.
+//
+// An await boundary cannot use this shape: it brackets a fallback that has to
+// stay visible, and a template's content does not render. That is why the two
+// hole shapes, deliberately identical until now, have diverged.
+func (c *collector) placeholder(attr, id string) string {
+	return `<template ` + attr + `="` + id + `"></template>`
+}
+
+// Write records into the innermost open boundary only. Both the frame validator
+// and the captured fragment stop at a nested boundary: the validator so an
+// ancestor whose own markup is unchanged compares equal while its child moves,
+// and the fragment so that child is transferred once, as itself, rather than
+// again inside every ancestor that encloses it.
 func (c *collector) Write(value string) {
 	depth := len(c.stack)
 	if depth == 0 {
 		return
 	}
+	state := c.stack[depth-1]
 	c.scratch = append(c.scratch[:0], value...)
-	c.stack[depth-1].frame.Write(c.scratch)
-	if !c.capture {
+	state.frame.Write(c.scratch)
+	if c.capture {
+		state.content.WriteString(value)
+	}
+}
+
+// Slot brackets one instruction's output inside the innermost open boundary.
+func (c *collector) Slot(begin bool) {
+	depth := len(c.stack)
+	if depth == 0 {
 		return
 	}
-	for _, state := range c.stack {
-		state.content.WriteString(value)
+	state := c.stack[depth-1]
+	if begin {
+		if state.depth == 0 {
+			state.start = state.content.Len()
+		}
+		state.depth++
+		return
+	}
+	state.depth--
+	if state.depth == 0 {
+		state.values = append(state.values, state.content.String()[state.start:])
+	}
+}
+
+// Choice records what a client needs in order to take the same path through the
+// sequence tree the render took.
+func (c *collector) Choice(value string) {
+	if depth := len(c.stack); depth > 0 {
+		c.stack[depth-1].values = append(c.stack[depth-1].values, value)
 	}
 }
 

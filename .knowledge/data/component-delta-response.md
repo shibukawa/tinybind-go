@@ -12,6 +12,14 @@ fields:
   next_manifest: data:component-update-manifest
   head_operations: requirement:delta-head-sync contributions, ordered before dependent content operations
   operations:
+    - kind: replace, or children
+      children_op:
+        shipped: 2026-08-08
+        carries: a boundary id and its new nested boundary order, and no markup
+        covers: insert, remove, and move at once, by stating the target order rather than the edits to reach it
+        why_not_three_kinds: the server would have to hold the client's previous order to diff it, and the client already holds the DOM, so naming the result is smaller to send and simpler to apply
+        emitted_when: the boundary's own frame is unchanged and its children digest is not
+        measured: appending one row to a hundred costs 365 bytes where replacing the parent cost 7,383
     - kind: replace, insert, remove, move, or replace_with_retained
       instance_id: rule:component-instance-identity
       anchor_or_parent: optional structural target
@@ -19,7 +27,15 @@ fields:
       html_template: safe HTML fragment for insertions and replacements
       retained: descendant instance IDs whose existing DOM the client moves into holes in html_template
   directives: navigate, reload, or in-band error once the response has committed
+boundary_list:
+  shipped: 2026-08-08 as the boundaries field, on the buffered body and on the stream record alike
+  added: 2026-08-08 by requirement:boundary-decomposed-render
+  what: one record per fragment naming the reloadable boundary ids inside it, declared for that fragment's scope
+  why: a hole with no fragment in the response has to read as a retain rather than as a truncation, and nothing else in the body distinguishes them
+  and: it separates the structure from the selection, so a caller may omit fragments without the response becoming ambiguous
+  static_marker: an entry may report that its boundary's subtree is entirely static, which is settled at generation time and keyed by the build identity rather than by a validator
 retain_holes:
+  now_the_ordinary_shape: 2026-08-08; a decomposed response carries placeholders at every nested boundary rather than only where an optimization applies
   purpose: replace a changed ancestor without resending or recreating unchanged descendant boundaries
   mechanism: the fragment carries an empty placeholder per retained instance; the client moves the live node in
   benefit: preserves rule:preserved-client-subtree state that wholesale ancestor replacement would destroy

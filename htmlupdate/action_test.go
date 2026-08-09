@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -20,10 +21,20 @@ type badgeParams struct {
 
 var badgeOps = htmlbind.Builder[badgeParams]{}
 
+// The boundary is what generation emits for a reloadable component: it names its
+// own instance from the declared id, so it is an update boundary wherever it
+// renders and a delta can compare the region a redraw can replace.
 var badgePlan = &htmlbind.Plan[badgeParams]{
+	Boundary: &htmlbind.Boundary[badgeParams]{
+		ComponentID: "Badge@v1",
+		Attr:        "data-tb-id",
+		Instance:    func(p badgeParams) string { return p.ID },
+		Input:       func(p badgeParams) string { return delta.CanonInt(p.Count) },
+	},
 	Ops: []htmlbind.Op[badgeParams]{
 		badgeOps.Static("<span"),
 		badgeOps.Attr("id", func(p badgeParams) (string, bool) { return htmlbind.Escape(p.ID), true }),
+		badgeOps.BoundaryAttr(),
 		badgeOps.Static(">"),
 		badgeOps.Text(func(p badgeParams) string { return strconv.Itoa(p.Count) }),
 		badgeOps.Static("</span>"),
@@ -36,6 +47,7 @@ var badgePlan = &htmlbind.Plan[badgeParams]{
 var styledPlan = &htmlbind.Plan[badgeParams]{
 	Head:        []string{`<link rel="stylesheet" href="/badge.css">`},
 	HeadSources: []string{"Badge"},
+	Boundary:    badgePlan.Boundary,
 	Ops:         badgePlan.Ops,
 }
 
@@ -45,13 +57,16 @@ var styledPlan = &htmlbind.Plan[badgeParams]{
 // action response had never carried one.
 func TestActionResponseCarriesHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	err := options.WriteUpdate(recorder,
+	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
 		htmlupdate.Replace("cart", htmlbind.Bind(styledPlan, badgeParams{ID: "cart", Count: 1})),
 		// A second region declaring the same sheet emits one tag, which is the
 		// htmlbind.MergeHead rule applied across the written set.
 		htmlupdate.Replace("mini", htmlbind.Bind(styledPlan, badgeParams{ID: "mini", Count: 1})),
-	)
+	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := answer.WriteTo(recorder); err != nil {
 		t.Fatal(err)
 	}
 	var body struct {
@@ -72,8 +87,12 @@ func TestActionResponseCarriesHead(t *testing.T) {
 // component styles gets the response it got before.
 func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	if err := options.WriteUpdate(recorder,
-		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))); err != nil {
+	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
+		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := answer.WriteTo(recorder); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(recorder.Body.String(), `"head"`) {
@@ -86,14 +105,23 @@ func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 func api(count int, status int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if options.WantsUpdate(r) {
-			_ = options.WriteUpdateStatus(w, status,
-				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count})))
+			answer, _ := options.WriteUpdateStatus(r, status, []htmlupdate.Update{
+				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count}))})
+			// The cache policy is the caller's: this package sets none.
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = answer.WriteTo(w)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 	})
+}
+
+// actionRequest is the request an action entry now takes. The two tests that
+// drive the writer directly have no handler around them, so they build one.
+func actionRequest() *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/cart/add", nil)
 }
 
 func post(t *testing.T, handler http.Handler, headers map[string]string) *http.Response {
@@ -128,9 +156,10 @@ func TestActionWithoutTheHeaderStaysOrdinary(t *testing.T) {
 // One round trip performs the action and returns the regions it changed.
 func TestActionReturnsTheChangedRegions(t *testing.T) {
 	response := post(t, api(3, http.StatusOK), actionHeader)
-	// The echo names the served mode and no version. WriteUpdate takes no
-	// request, so it has no client version to echo, and inventing one is what
-	// this package stopped doing.
+	// The echo names the served mode and no version. The action path could read
+	// the claimed version now that it takes the request, and deliberately does
+	// not: the version is the caller's field, and echoing it here would be a
+	// wire change this round did not ask for.
 	if got := response.Header.Get("X-Tinybind-Render"); got != "action" {
 		t.Fatalf("render header = %q", got)
 	}
@@ -180,7 +209,8 @@ func TestActionKeepsItsStatus(t *testing.T) {
 // which regions to rewrite.
 func TestActionCanNavigate(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = options.WriteNavigate(w, "/orders/17")
+		navigate, _ := options.WriteNavigate("/orders/17")
+		_, _ = navigate.WriteTo(w)
 	})
 	response := post(t, handler, actionHeader)
 	var body struct {

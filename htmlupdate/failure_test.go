@@ -61,16 +61,12 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			var seen []htmlupdate.Failure
 			opts := options
-			opts.OnFailure = func(w http.ResponseWriter, r *http.Request, failure htmlupdate.Failure) {
+			// The hook observes; it no longer answers. Every entry returns the
+			// response it computed, so a caller substituting its own error page
+			// writes that instead of what it was handed, and this is for the log
+			// line and the span a caller wants on every refusal either way.
+			opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) {
 				seen = append(seen, failure)
-				// A caller answering in its own format, which is the whole
-				// point of the hook.
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(failure.Status)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"title":  failure.Kind.String(),
-					"status": failure.Status,
-				})
 			}
 			recorder := httptest.NewRecorder()
 			redrawServerWith(t, opts).ServeHTTP(recorder, testCase.request)
@@ -94,8 +90,8 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 			if testCase.named && failure.KindID == "" {
 				t.Fatal("KindID is empty, so a log line cannot say what was asked for")
 			}
-			// The caller's response is what the client gets, not this
-			// package's.
+			// The response the caller sent is the one it was handed, since this
+			// test's server writes it unchanged.
 			if recorder.Code != testCase.status {
 				t.Fatalf("response status = %d, want %d", recorder.Code, testCase.status)
 			}
@@ -111,10 +107,7 @@ func TestEveryRedrawFailureReachesTheCaller(t *testing.T) {
 func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	var seen htmlupdate.Failure
 	opts := options
-	opts.OnFailure = func(w http.ResponseWriter, r *http.Request, failure htmlupdate.Failure) {
-		seen = failure
-		htmlupdate.WriteFailure(w, failure)
-	}
+	opts.OnFailure = func(r *http.Request, failure htmlupdate.Failure) { seen = failure }
 	registry := &htmlupdate.Registry{}
 	broken := errors.New("upstream unavailable")
 	if err := registry.Register(htmlupdate.Reloadable{
@@ -126,7 +119,7 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	opts.Redraw(recorder, redrawRequest("Broken@0001", "b-1", nil), registry)
+	redrawInto(recorder, opts, redrawRequest("Broken@0001", "b-1", nil), registry)
 
 	if seen.Kind != htmlupdate.FailureInvalidArguments {
 		t.Fatalf("kind = %v", seen.Kind)
@@ -134,23 +127,108 @@ func TestRedrawRenderFailureReachesTheCaller(t *testing.T) {
 	if !errors.Is(seen, broken) {
 		t.Fatalf("cause = %v, want %v reachable through errors.Is", seen.Err, broken)
 	}
-	// Delegating to WriteFailure keeps the default body, which is how a caller
-	// that only wants to observe stays out of the response's way.
+	// Sending the response as it was handed back keeps the default body, which is
+	// how a caller that only wants to observe stays out of the response's way.
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 }
 
-// A caller supplying no hook sees exactly the bytes this package wrote before
-// the hook existed.
-func TestFailureDefaultsAreUnchanged(t *testing.T) {
+// A caller supplying no hook gets this module's own error format. The update
+// endpoints were the only paths writing plain text, which left one project with
+// two error shapes depending on which entry refused the request.
+func TestFailureDefaultIsProblemDetails(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	redrawServer(t).ServeHTTP(recorder, redrawRequest(cardKind, "card-1", url.Values{"page": {"nope"}}))
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", recorder.Code)
 	}
-	if got := recorder.Body.String(); got != "invalid redraw arguments\n" {
-		t.Fatalf("body = %q", got)
+	// The media type is the discriminator: application/json is an update to
+	// apply, including a non-2xx one, and this is a request that produced none.
+	if got := recorder.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("content type = %q", got)
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+		Code   string `json:"code"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", recorder.Body.String())
+	}
+	if body.Status != http.StatusBadRequest || body.Type != "about:blank" {
+		t.Fatalf("body = %+v", body)
+	}
+	// The kind travels as the code, because a stale page and a failed render are
+	// one status to a proxy and different events to whoever is on call.
+	if body.Code != "invalid_arguments" {
+		t.Fatalf("code = %q", body.Code)
+	}
+	if body.Detail != "invalid redraw arguments" {
+		t.Fatalf("detail = %q", body.Detail)
+	}
+}
+
+// A parameter the decoder refused is reported as a field-level error naming it,
+// rather than as one line of prose a caller would have to parse. The reason
+// never quotes the value, which is attacker-supplied.
+func TestFailureNamesTheRefusedParameter(t *testing.T) {
+	registry := &htmlupdate.Registry{}
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: "Typed@0001",
+		Render: func(_ *http.Request, id string, values url.Values) (htmlbind.Fragment, error) {
+			var page int
+			if err := htmlupdate.QueryInt(values, "page", &page); err != nil {
+				return htmlbind.Fragment{}, err
+			}
+			return htmlbind.Bind(badgePlan, badgeParams{ID: id, Count: page}), nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	redrawInto(recorder, options, redrawRequest("Typed@0001", "t-1", url.Values{"page": {"nope"}}), registry)
+
+	var body struct {
+		Errors []struct {
+			Field    string `json:"field"`
+			Location string `json:"location"`
+			Message  string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", recorder.Body.String())
+	}
+	if len(body.Errors) != 1 {
+		t.Fatalf("errors = %+v, body = %s", body.Errors, recorder.Body.String())
+	}
+	got := body.Errors[0]
+	if got.Field != "page" || got.Location != "query" {
+		t.Fatalf("errors[0] = %+v", got)
+	}
+	if strings.Contains(recorder.Body.String(), "nope") {
+		t.Fatalf("the refused value was reflected back: %s", recorder.Body.String())
+	}
+}
+
+// The cause never reaches the response, whatever it says. It travels to the
+// caller on the Failure value instead, which is what the hook exists for.
+func TestFailureBodyOmitsTheCause(t *testing.T) {
+	registry := &htmlupdate.Registry{}
+	if err := registry.Register(htmlupdate.Reloadable{
+		KindID: "Leaky@0001",
+		Render: func(*http.Request, string, url.Values) (htmlbind.Fragment, error) {
+			return htmlbind.Fragment{}, errors.New("dial tcp 10.0.0.5:5432: connection refused")
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	redrawInto(recorder, options, redrawRequest("Leaky@0001", "l-1", nil), registry)
+	if strings.Contains(recorder.Body.String(), "10.0.0.5") {
+		t.Fatalf("the cause reached the response: %s", recorder.Body.String())
 	}
 }
 
@@ -164,5 +242,24 @@ func TestRedrawQueryBoundIsConfigurable(t *testing.T) {
 	redrawServerWith(t, opts).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusRequestURITooLong {
 		t.Fatalf("status = %d, want the configured bound to apply", recorder.Code)
+	}
+}
+
+// A refusal is a response at the same URL as the page, and some refusals are
+// cacheable: 404 is heuristically cacheable with no Cache-Control at all. One
+// carrying no Vary can therefore be stored and handed back to a request for the
+// page. It reads the same headers a successful redraw reads, so it varies on the
+// same ones.
+func TestARefusalCarriesTheVaryAxesAnAnswerWouldHave(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	redrawInto(recorder, options, redrawRequest("Gone@0000", "card-1", url.Values{"page": {"1"}}), &htmlupdate.Registry{})
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	vary := strings.Join(recorder.Header().Values("Vary"), ",")
+	for _, axis := range []string{"X-Tinybind-Render", "X-Tinybind-Build", "X-Tinybind-Kind", "X-Tinybind-Instance"} {
+		if !strings.Contains(vary, axis) {
+			t.Fatalf("Vary = %q, missing %s — a cache could answer a page request with this 404", vary, axis)
+		}
 	}
 }

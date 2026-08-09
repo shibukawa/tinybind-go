@@ -44,6 +44,11 @@ as_built:
   shipped: 2026-08-04
   negotiate: parses 'name;v=N' with the version optional, carries N on Negotiated, and compares nothing; an unparseable version reads as none rather than as a refusal, because refusing would cost the page its update over a field this package does not interpret
   echo: renderToken writes back the version the request claimed, and a bare mode name when it claimed none; the action and redraw paths take no request and so echo bare
+  echo_reason_expired_2026_08_08:
+    already_false_for_redraw: Redraw has taken the request since requirement:caller-addressed-redraw shipped, and echoes bare anyway, so the stated reason never described it
+    now_false_for_both: requirement:fragment-render-options gave the action entries the request too
+    behaviour_unchanged: both still echo bare, deliberately; the version is the caller's field and echoing it is a wire change no round has asked for
+    recorded_so: the choice is made on its merits rather than resting on a reason that no longer holds
   removed: htmlupdate.Version, htmlbind.ProtocolVersion, and the 'v' field from the delta body and from every stream record
   digest_tag: htmlbind.WithValidatorTag replaces the ProtocolVersion seeding in both the frame and the input digest; htmlupdate passes o.buildID() from renderOptions, so every entry gets it without a call-site change
   client: the reference runtime carries no version at all and reads the served mode through a helper that ignores any ';v=N' a caller layered on, so it conforms under a caller that versions and one that does not

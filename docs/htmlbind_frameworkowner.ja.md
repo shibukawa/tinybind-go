@@ -95,12 +95,12 @@ document - layout - page という通常の構成については、チェーン�
 て書きます。
 
 ```html
-<tb-boundary id="tb-1" style="display:contents">…fallback…</tb-boundary>
+<!--tb:tb-1-->…fallback…<!--/tb:tb-1-->
 ```
 
 この要素と ID まではモジュールの担当ですが、その「名前」は違います。
 `WithBoundaryPrefix` が要素名と ID の両方を変えるので、`pw` を渡せば
-`<pw-boundary id="pw-1">` になります。生成器がインスタンス属性を書いたときの接頭辞
+`<!--pw:pw-1-->` になります。生成器がインスタンス属性を書いたときの接頭辞
 と同じものを渡してください。揃っていないと、1つのドキュメントに命名体系が2つ入り
 ます。
 

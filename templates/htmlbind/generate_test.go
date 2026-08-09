@@ -674,6 +674,7 @@ export component Counter(id: string, page: int, label: string?): html {
 	companion := []byte(`package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -701,22 +702,52 @@ func serve(t *testing.T, query url.Values) *httptest.ResponseRecorder {
 	request.Header.Set("X-Tinybind-Instance", "counter-1")
 	// A real page carries the build it was rendered by, from its script tag.
 	request.Header.Set("X-Tinybind-Build", htmlupdate.BuildID())
-	options.Redraw(recorder, request, registry)
+	answer, ok := options.Redraw(request, registry)
+	if !ok {
+		t.Fatal("Redraw did not answer the request")
+	}
+	// This package writes no header and no status of its own, so a caller sends
+	// the answer it computed and adds its own cache policy.
+	_, _ = answer.WriteTo(recorder)
 	return recorder
 }
 
-// The rendered root carries both the author's id and the kind, so the region
-// stays addressable and redrawable after the first redraw replaced it.
+// The rendered root carries the author's id, the kind, and the instance
+// attribute, so the region stays addressable, redrawable, and comparable after
+// the first redraw replaced it.
 func TestRedrawRendersTheRegisteredComponent(t *testing.T) {
 	recorder := serve(t, url.Values{"page": {"7"}, "label": {"item"}})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body)
 	}
-	body := recorder.Body.String()
-	for _, want := range []string{` + "`" + `id="counter-1"` + "`" + `, ` + "`" + `data-tb-kind="` + "`" + `, "page 7"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("body %q is missing %q", body, want)
+	// The body is the shape every update path returns: the region's own fragment,
+	// the head its component needs, and the validator a redraw used to leave
+	// stale on the client.
+	var body struct {
+		Operations []struct {
+			ID   string ` + "`" + `json:"id"` + "`" + `
+			HTML string ` + "`" + `json:"html"` + "`" + `
+		} ` + "`" + `json:"ops"` + "`" + `
+		Manifest []struct {
+			ID    string ` + "`" + `json:"id"` + "`" + `
+			Frame string ` + "`" + `json:"frame"` + "`" + `
+		} ` + "`" + `json:"manifest"` + "`" + `
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body is not JSON: %s", recorder.Body)
+	}
+	if len(body.Operations) != 1 || body.Operations[0].ID != "counter-1" {
+		t.Fatalf("want one operation naming the instance, got %+v", body.Operations)
+	}
+	for _, want := range []string{` + "`" + `id="counter-1"` + "`" + `, ` + "`" + `data-tb-kind="` + "`" + `, ` + "`" + `data-tb-id="counter-1"` + "`" + `, "page 7"} {
+		if !strings.Contains(body.Operations[0].HTML, want) {
+			t.Fatalf("fragment %q is missing %q", body.Operations[0].HTML, want)
 		}
+	}
+	// A reloadable component is an update boundary, so its replacement returns
+	// the validator that makes the client's next delta comparable.
+	if len(body.Manifest) != 1 || body.Manifest[0].ID != "counter-1" || body.Manifest[0].Frame == "" {
+		t.Fatalf("want the instance's new validator, got %+v", body.Manifest)
 	}
 }
 

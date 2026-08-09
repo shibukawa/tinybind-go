@@ -25,6 +25,8 @@ func streamServer() http.Handler {
 			}),
 		}
 		leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+		htmlupdate.ApplyTo(options.StreamHeaders(r, wrappers, leaf), w)
+		w.Header().Set("Cache-Control", "no-store")
 		if err := options.RenderStream(w, r, wrappers, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}
@@ -68,6 +70,7 @@ func TestStreamIsFramedByHeadAndTerminator(t *testing.T) {
 	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/x-ndjson") {
 		t.Fatalf("content type = %q", got)
 	}
+	// The caller set it: this package writes no cache policy.
 	if got := response.Header.Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
@@ -157,11 +160,11 @@ func TestStreamFallsBackToTheDocument(t *testing.T) {
 func TestProducerDrivesTheStream(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	stream := options.OpenStream(recorder, []string{"<title>Live</title>"})
-	stream.Replace("c1", `<main id="c1">first</main>`, "f1")
+	stream.Replace("c1", `<main id="c1">first</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
 	if !stream.Sent("c1") {
 		t.Fatal("a written instance must be reported as sent")
 	}
-	stream.Unchanged("c2", "f2")
+	stream.Unchanged("c2", htmlupdate.ManifestEntry{Frame: "f2"})
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +189,7 @@ func TestProducerDrivesTheStream(t *testing.T) {
 func TestProducerReportsLateFailureInBand(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	stream := options.OpenStream(recorder, nil)
-	stream.Replace("c1", `<main id="c1">partial</main>`, "f1")
+	stream.Replace("c1", `<main id="c1">partial</main>`, htmlupdate.ManifestEntry{Frame: "f1"})
 	stream.Fail("boundary failed")
 	if err := stream.Close(); err != nil {
 		t.Fatal(err)
@@ -244,6 +247,7 @@ var asyncPlan = &htmlbind.Plan[asyncParams]{
 func TestStreamCarriesAwaitCompletions(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		leaf := htmlbind.Bind(asyncPlan, asyncParams{Query: r.URL.Query().Get("q")})
+		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
 		if err := options.RenderStreamAsync(r.Context(), w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)
 		}

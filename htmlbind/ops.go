@@ -3,6 +3,7 @@ package htmlbind
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -289,10 +290,7 @@ type ifOp[P any] struct {
 }
 
 func (o ifOp[P]) Exec(r *Renderer, params P) error {
-	if o.condition(params) {
-		return execOps(r, o.then, params)
-	}
-	return execOps(r, o.otherwise, params)
+	return execBranch(r, o.condition(params), o.then, o.otherwise, params)
 }
 
 // IfCtx is If for a condition that needs the render context.
@@ -306,10 +304,24 @@ type ifCtxOp[P any] struct {
 }
 
 func (o ifCtxOp[P]) Exec(r *Renderer, params P) error {
-	if o.condition(r.boundaryContext(), params) {
-		return execOps(r, o.then, params)
+	return execBranch(r, o.condition(r.boundaryContext(), params), o.then, o.otherwise, params)
+}
+
+// execBranch runs the taken branch and tells a collecting render which one it
+// was. A sequence tree carries both branches, so the choice is what lets a
+// client walk the same one the server did.
+func execBranch[P any](r *Renderer, taken bool, then, otherwise []Op[P], params P) error {
+	if r.collect != nil {
+		if taken {
+			r.collect.Choice(seqBranchThen)
+		} else {
+			r.collect.Choice(seqBranchElse)
+		}
 	}
-	return execOps(r, o.otherwise, params)
+	if taken {
+		return execOps(r, then, params)
+	}
+	return execOps(r, otherwise, params)
 }
 
 // For repeats body once per item. scope builds the body's parameter value from
@@ -345,8 +357,21 @@ type forOp[P, E, S any] struct {
 	body  []Op[S]
 }
 
+// sequenceBody exposes the loop body to the sequence walk. A loop repeats one
+// instruction list, so its static half is that list's — how many times it ran is
+// data and travels with the values.
+func (o forOp[P, E, S]) sequenceBody() []SeqNode {
+	return sequenceOf(o.body)
+}
+
 func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
-	for index, item := range o.items(params) {
+	items := o.items(params)
+	// A sequence tree carries the body once; how many times it ran is data, so a
+	// collecting render says so and a client repeats its walk that many times.
+	if r.collect != nil {
+		r.collect.Choice(strconv.Itoa(len(items)))
+	}
+	for index, item := range items {
 		if err := execOps(r, o.body, o.scope(params, item, index)); err != nil {
 			return err
 		}
@@ -402,15 +427,17 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 	}
 	coordinator := r.async
 	id := r.nextBoundaryID()
-	// display:contents keeps the placeholder out of layout, so a boundary
-	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
+	// Comment markers rather than a wrapper element, so the fallback stays where
+	// it was written: an element around it is foster-parented out of a table and
+	// separated from the rows it was wrapping. See awaitFenceOpen.
+	prefix := r.boundaryPrefix()
+	if err := r.Write(awaitFenceOpen(prefix, id)); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
+	if err := r.Write(awaitFenceClose(prefix, id)); err != nil {
 		return err
 	}
 	boundaryCtx := r.boundaryContext()
@@ -479,7 +506,7 @@ func (o componentOp[P]) Exec(r *Renderer, params P) error {
 	if !fragment.Present() {
 		return nil
 	}
-	return fragment.render(r)
+	return renderNested(r, fragment)
 }
 
 // ComponentCtx is Component for a binding that needs the render context.
@@ -496,7 +523,47 @@ func (o componentCtxOp[P]) Exec(r *Renderer, params P) error {
 	if !fragment.Present() {
 		return nil
 	}
-	return fragment.render(r)
+	return renderNested(r, fragment)
+}
+
+// renderNested renders a called component, opening an update boundary around it
+// when the component declared one of its own.
+//
+// Only a component whose boundary names its own instance opens here, which in
+// practice means a reloadable one: an author writes its id at the call site, so
+// the region is addressable and a delta can compare it. A chain member's
+// boundary names no instance — its id comes from its chain position — so a
+// layout passed through a slot does not open twice, and an ordinary component
+// call still costs the manifest nothing.
+func renderNested(r *Renderer, fragment Fragment) error {
+	decl := fragment.boundary
+	if r.collect == nil {
+		return fragment.render(r)
+	}
+	if fragment.opensBoundary {
+		// A chain member opens its own boundary as it renders, so this only says
+		// which shape the sequence takes and leaves the opening to it.
+		r.collect.Choice(seqBoundary)
+		return fragment.render(r)
+	}
+	if decl == nil || decl.instance == "" {
+		// An inlined component is opaque to the sequence: its plan is chosen by a
+		// closure the derivation cannot evaluate, so its whole output is one slot
+		// and the instructions inside it do not split it further.
+		r.collect.Choice(seqInline)
+		r.collect.Slot(true)
+		err := fragment.render(r)
+		r.collect.Slot(false)
+		return err
+	}
+	r.collect.Choice(seqBoundary)
+	r.collect.Open(decl.instance, decl.componentID, decl.attr, decl.input(),
+		fragment.sequenceAddress())
+	if err := fragment.render(r); err != nil {
+		return err
+	}
+	r.collect.Close()
+	return nil
 }
 
 // Slot inserts a bound slot argument. When the argument is absent the fallback
@@ -512,11 +579,23 @@ type slotOp[P any] struct {
 }
 
 func (o slotOp[P]) Exec(r *Renderer, params P) error {
-	fragment := o.value(params)
+	return execSlot(r, o.value(params), o.fallback, params)
+}
+
+// execSlot renders a filled slot the way a called component is rendered — it is
+// one, arriving through a parameter rather than through a call — or falls back
+// to the default content, which is ordinary instructions of this component's own.
+func execSlot[P any](r *Renderer, fragment Fragment, fallback []Op[P], params P) error {
 	if !fragment.Present() {
-		return execOps(r, o.fallback, params)
+		if r.collect != nil {
+			r.collect.Choice(seqBranchElse)
+		}
+		return execOps(r, fallback, params)
 	}
-	return fragment.render(r)
+	if r.collect != nil {
+		r.collect.Choice(seqBranchThen)
+	}
+	return renderNested(r, fragment)
 }
 
 // SlotCtx is Slot for a value that needs the render context. It is also what an
@@ -533,11 +612,7 @@ type slotCtxOp[P any] struct {
 }
 
 func (o slotCtxOp[P]) Exec(r *Renderer, params P) error {
-	fragment := o.value(r.boundaryContext(), params)
-	if !fragment.Present() {
-		return execOps(r, o.fallback, params)
-	}
-	return fragment.render(r)
+	return execSlot(r, o.value(r.boundaryContext(), params), o.fallback, params)
 }
 
 // MergedHead writes every chain member's head contributions. The document
@@ -669,15 +744,17 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 	}
 	coordinator := r.async
 	id := r.nextBoundaryID()
-	// display:contents keeps the placeholder out of layout, so a boundary
-	// cannot change how its fallback or its replacement is positioned.
-	if err := r.Write(`<` + r.boundaryElement() + ` id="` + id + `" style="display:contents">`); err != nil {
+	// Comment markers rather than a wrapper element, so the fallback stays where
+	// it was written: an element around it is foster-parented out of a table and
+	// separated from the rows it was wrapping. See awaitFenceOpen.
+	prefix := r.boundaryPrefix()
+	if err := r.Write(awaitFenceOpen(prefix, id)); err != nil {
 		return err
 	}
 	if err := execOps(r, o.fallback, params); err != nil {
 		return err
 	}
-	if err := r.Write(`</` + r.boundaryElement() + `>`); err != nil {
+	if err := r.Write(awaitFenceClose(prefix, id)); err != nil {
 		return err
 	}
 	keepOpen := coordinator.liveMode()
