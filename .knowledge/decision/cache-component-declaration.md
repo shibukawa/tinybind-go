@@ -16,11 +16,19 @@ shape: |
   export component Sidebar(userId: string): html { ... }
 options:
   ttl:
-    required: true
+    required: for storage; writing one is what asks for it, and decision:cache-scope-declaration modes makes an annotation without one a scope declaration that stores nothing
+    forbidden: on a slot owner or shell, which cannot store, so a duration there describes an expiry that cannot happen
     form: Go duration string parsed at generation time
     invalid: unparsable or non-positive duration is a generation error
-  future: eviction, vary, and stale-while-revalidate stay unspecified rather than reserved
+  scope: decision:cache-scope-declaration; private or public, defaulting to private on a storing component
+  vary:
+    settled: 2026-08-09; not unspecified after all
+    what_was_already_true: a component reaching a builtin element backed by a provider is refused, over the call graph, at the declaration position
+    so: a component whose output depends on a request property is ineligible rather than mis-keyed, which is the stronger of the two forms decision:cache-scope-seams offered
+    remaining: an element declaring Vary with no Provider is a registration question, not a cache one
+  future: eviction and stale-while-revalidate stay unspecified rather than reserved
 eligibility:
+  applies_to: the storing mode only; decision:cache-scope-declaration eligibility_is_about_storage gives the reason each condition below has none once nothing is stored
   single_root:
     added: 2026-08-08 by the owner, for requirement:boundary-decomposed-render
     rule: a cached component renders exactly one root element, as decision:update-manifest-transport already requires of an update boundary
@@ -34,7 +42,9 @@ eligibility:
     same_shape_as_await: rejected at generation with the declaration position, for the reason no_await gives; the alternative is caching a form the consumer cannot use
     cost: a cached sidebar holding a reloadable widget has to give up the cache or move the widget out, which is the same trade await already carries
   no_html_parameters: an html parameter is a bound continuation, not a value, so it cannot enter decision:cache-key-derivation; declaring one is a generation error
-  no_slots: follows from the parameter rule, so a cached component is never a requirement:chain-render-pipeline member
+  no_slots:
+    rule: follows from the parameter rule, so a component that stores is never a requirement:chain-render-pipeline member
+    narrowed: 2026-08-09; it was read as barring `@cache` from a layout outright, which decision:cache-scope-seams found is what made the round's own chain-union example unwritable
   no_await: the component and every component reachable from it must be free of decision:async-boundary-syntax boundaries
   no_shell: a cached component cannot own the document head, because requirement:head-merging output depends on the chain rather than on parameters
 await_rationale:
@@ -49,5 +59,8 @@ execution:
 acceptance:
   - two renders with equal parameters inside the TTL run the body once
   - a changed parameter, a changed plan, or an expired entry re-runs the body
-  - an html parameter, an await boundary, or a document head in a cached component fails generation
+  - an html parameter, an await boundary, or a document head in a storing component fails generation
+  - a ttl written on a layout fails generation
+  - an annotation carrying neither ttl nor scope fails generation
+  - an annotation with no ttl stores nothing and computes no key, wherever it sits
 ```

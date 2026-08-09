@@ -26,7 +26,8 @@ safety:
   - never cache errors or partial output
   - preserve rule:template-context-safety at insertion; cached bytes were context-checked when produced
   - cache only output whose complete dependency set is represented by the key
-  - request, authorization, locale, and header-derived variation must be explicit parameters or the component must not be cached
+  - per-user variation is covered by the decision:cache-scope-declaration prefix; locale and any other axis the scope value does not cover must be an explicit parameter or the component must not be cached
+  - a request property a builtin element declares makes the component ineligible rather than mis-keyed
 concurrency:
   misses: concurrent misses each render; the runtime does not coalesce, so a store that wants single-flight implements it
   reason: coalescing inside the runtime would tie one request's cancellation to another request's render
