@@ -271,7 +271,8 @@ func TestCachedComponentRunsOncePerKey(t *testing.T) {
 	store := htmlbind.NewMemoryCache(16)
 	render := func(tone string) string {
 		var output bytes.Buffer
-		if err := htmlbind.Render(&output, renderBadgeFragment(tone), htmlbind.WithCache(store)); err != nil {
+		if err := htmlbind.Render(&output, renderBadgeFragment(tone),
+			htmlbind.WithCache(store), htmlbind.WithCacheScope("reader-1")); err != nil {
 			t.Fatal(err)
 		}
 		return output.String()
@@ -290,6 +291,85 @@ func TestCachedComponentRunsOncePerKey(t *testing.T) {
 	}
 	if store.Len() != 2 {
 		t.Fatalf("changed input stored %d entries, want 2", store.Len())
+	}
+}
+
+// Badge carries a bare @cache, which declares private, so the same parameters
+// have to land in a separate entry per scope. Serving one reader the other's
+// entry is the failure the default exists to prevent.
+func TestPrivateComponentKeysPerScope(t *testing.T) {
+	reset()
+	store := htmlbind.NewMemoryCache(16)
+	render := func(scope string) string {
+		var output bytes.Buffer
+		if err := htmlbind.Render(&output, renderBadgeFragment("solid"),
+			htmlbind.WithCache(store), htmlbind.WithCacheScope(scope)); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	render("reader-1")
+	if store.Len() != 1 {
+		t.Fatalf("one scope stored %d entries, want 1", store.Len())
+	}
+	render("reader-2")
+	if store.Len() != 2 {
+		t.Fatalf("a second scope stored %d entries total, want 2", store.Len())
+	}
+	// The second render of a scope already seen reuses that scope's entry.
+	render("reader-1")
+	if store.Len() != 2 {
+		t.Fatalf("a repeated scope stored %d entries total, want 2", store.Len())
+	}
+}
+
+// The fallback rather than the design. An entry written under an empty scope
+// would be a shared entry wearing a private label, so a miss is the answer.
+func TestPrivateComponentWithNoScopeStoresNothing(t *testing.T) {
+	reset()
+	store := htmlbind.NewMemoryCache(16)
+	var scoped, unscoped bytes.Buffer
+	if err := htmlbind.Render(&unscoped, renderBadgeFragment("solid"), htmlbind.WithCache(store)); err != nil {
+		t.Fatal(err)
+	}
+	if store.Len() != 0 {
+		t.Fatalf("a private component with no scope stored %d entries, want 0", store.Len())
+	}
+	// Storing nothing must not change what the reader sees.
+	if err := htmlbind.Render(&scoped, renderBadgeFragment("solid"),
+		htmlbind.WithCache(store), htmlbind.WithCacheScope("reader-1")); err != nil {
+		t.Fatal(err)
+	}
+	if scoped.String() != unscoped.String() {
+		t.Fatalf("an unstored render differs from a stored one:\n%q\n%q", unscoped.String(), scoped.String())
+	}
+}
+
+// The declaration folds over the call graph, so a component that merely calls a
+// private one is private too, and reading it renders nothing.
+func TestPrivateDeclarationFoldsOverTheCallGraph(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fragment htmlbind.Fragment
+		want     bool
+	}{
+		{"declares it", renderBadgeFragment("solid"), true},
+		{"calls a component that declares it", Profile(ProfileParams{Id: "1"}), true},
+		{"declares nothing anywhere", Shell(ShellParams{}), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.fragment.IsPrivate(); got != tc.want {
+				t.Fatalf("IsPrivate() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// An undeclared component reports private by default but names no source;
+	// only a declaration can be pointed at.
+	if source := Profile(ProfileParams{Id: "1"}).PrivateSource(); source != "Badge" {
+		t.Fatalf("PrivateSource() = %q, want %q", source, "Badge")
+	}
+	if source := Shell(ShellParams{}).PrivateSource(); source != "" {
+		t.Fatalf("an undeclared fragment named %q as its source, want none", source)
 	}
 }
 

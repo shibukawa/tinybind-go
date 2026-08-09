@@ -79,14 +79,17 @@ var planSilentOpsAwait3RecoverOps = htmlbind.Builder[planSilentOpsAwait3Recover]
 var planBadgeOps = htmlbind.Builder[renderBadgeParams]{}
 
 var planBadgeCache = htmlbind.CachePolicy[renderBadgeParams]{
-	ID:  "pages/input.txt:Badge:4b86c256396c2d7a",
-	TTL: 300000000000, // 5m0s
-	Key: func(p renderBadgeParams) string { return _tinybindKeyUser(p.User) + htmlbind.KeyString[string](p.Tone) },
+	ID:     "pages/input.txt:Badge:4b86c256396c2d7a",
+	TTL:    300000000000, // 5m0s
+	Scoped: true,
+	Key:    func(p renderBadgeParams) string { return _tinybindKeyUser(p.User) + htmlbind.KeyString[string](p.Tone) },
 }
 
 var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
-	Head:  nil,
-	Cache: &planBadgeCache,
+	Head:            nil,
+	DeclaresPrivate: true,
+	PrivateSource:   "Badge",
+	Cache:           &planBadgeCache,
 	Ops: []htmlbind.Op[renderBadgeParams]{
 		planBadgeOps.Static(" <span"),
 		planBadgeOps.Attr("class", func(p renderBadgeParams) (string, bool) { return "badge " + htmlbind.Escape(p.Tone), true }),
@@ -119,9 +122,11 @@ var planProfileBoundary = &htmlbind.Boundary[ProfileParams]{
 }
 
 var planProfilePlan = &htmlbind.Plan[ProfileParams]{
-	Head:          nil,
-	Boundary:      planProfileBoundary,
-	HasAwaitBlock: true,
+	Head:            nil,
+	Boundary:        planProfileBoundary,
+	HasAwaitBlock:   true,
+	DeclaresPrivate: true,
+	PrivateSource:   "Badge",
 	Ops: []htmlbind.Op[ProfileParams]{
 		planProfileOps.Static(" <section"),
 		planProfileOps.BoundaryAttr(),
@@ -194,9 +199,11 @@ var planPageBoundary = &htmlbind.Boundary[PageParams]{
 }
 
 var planPagePlan = &htmlbind.Plan[PageParams]{
-	Head:          nil,
-	Boundary:      planPageBoundary,
-	HasAwaitBlock: true,
+	Head:            nil,
+	Boundary:        planPageBoundary,
+	HasAwaitBlock:   true,
+	DeclaresPrivate: true,
+	PrivateSource:   "Badge",
 	Ops: []htmlbind.Op[PageParams]{
 		planPageOps.Static(" <main"),
 		planPageOps.BoundaryAttr(),

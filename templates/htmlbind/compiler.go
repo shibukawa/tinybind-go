@@ -90,9 +90,32 @@ type functionSig struct {
 }
 
 // cachePolicy is the validated form of a component's cache annotation.
+//
+// The annotation does two separable things, and which ones it does is decided by
+// the ttl argument alone: writing one asks for storage, and omitting one leaves
+// a declaration of scope and nothing else. That is why a layout can carry the
+// annotation at all — it can never store, so a duration on one would describe an
+// expiry that cannot happen.
 type cachePolicy struct {
+	// ttl is zero when the annotation only declares scope.
 	ttl time.Duration
+	// public is the declared scope. False is private, which is the default,
+	// because a component that is actually shared costs a miss when it is
+	// treated as per-reader and serves one reader's output to another when the
+	// mistake runs the other way.
+	public bool
+	// pos is where the scope was declared, for the diagnostic a refused public
+	// assertion prints.
+	pos Position
 }
+
+// stores reports whether this annotation asks for output to be stored, which is
+// what every decision:cache-component-declaration eligibility rule is about.
+func (p *cachePolicy) stores() bool { return p != nil && p.ttl > 0 }
+
+// stores is the componentInfo form, tolerating an absent component so a caller
+// walking declarations does not repeat the nil check.
+func (i *componentInfo) stores() bool { return i != nil && i.cache.stores() }
 
 type componentInfo struct {
 	decl   *TemplateDecl
@@ -387,18 +410,46 @@ func (c *compiler) applyAnnotations(info *componentInfo, declaration *TemplateDe
 	return nil
 }
 
-// cacheAnnotation reads @cache(ttl: "5m"). The TTL is required and parsed here,
-// so a malformed duration is reported with its own position instead of failing
-// at run time.
+// cacheAnnotation reads @cache(ttl: "5m", scope: "public"). The ttl is parsed
+// here so a malformed duration is reported with its own position instead of
+// failing at run time, and its presence is what decides whether the annotation
+// stores anything at all.
 func (c *compiler) cacheAnnotation(declaration *TemplateDecl, annotation Annotation) (*cachePolicy, error) {
 	for _, argument := range annotation.Args {
-		if argument.Name != "ttl" {
+		if argument.Name != "ttl" && argument.Name != "scope" {
 			return nil, c.error(argument.Pos, "unknown @cache argument "+argument.Name)
 		}
 	}
-	argument, ok := annotation.Argument("ttl")
-	if !ok {
-		return nil, c.error(annotation.Pos, "@cache requires a ttl argument, for example @cache(ttl: \"5m\")")
+	policy := &cachePolicy{pos: annotation.Pos}
+	scope, hasScope := annotation.Argument("scope")
+	if hasScope {
+		switch scope.Value {
+		case "private":
+		case "public":
+			policy.public = true
+		default:
+			return nil, c.error(scope.Pos, "@cache scope is not private or public: "+scope.Value)
+		}
+		policy.pos = scope.Pos
+	}
+	argument, hasTTL := annotation.Argument("ttl")
+	if !hasTTL {
+		// Without a ttl the annotation stores nothing, so it has to be declaring
+		// a scope or it says nothing at all.
+		if !hasScope {
+			return nil, c.error(annotation.Pos, "@cache needs a ttl to store output or a scope to declare one, for example @cache(ttl: \"5m\") or @cache(scope: \"private\")")
+		}
+		// A declaration is not a cache, so none of the eligibility rules below
+		// apply to it: each exists because bytes are stored.
+		return policy, nil
+	}
+	// A component that cannot store cannot be given a duration, because the
+	// duration would describe an expiry that never happens. A slot owner is the
+	// case that matters: a layout carries the annotation to declare scope over
+	// the chain beneath it, and nothing about that stores.
+	if slot := c.htmlParameter(declaration); slot != nil {
+		return nil, c.error(argument.Pos, "component "+declaration.Name+" cannot declare a @cache ttl, because the html parameter "+
+			slot.Name+" makes it a slot owner and a slot owner stores nothing; drop the ttl to declare scope alone")
 	}
 	ttl, err := time.ParseDuration(argument.Value)
 	if err != nil {
@@ -407,15 +458,11 @@ func (c *compiler) cacheAnnotation(declaration *TemplateDecl, annotation Annotat
 	if ttl <= 0 {
 		return nil, c.error(argument.Pos, "@cache ttl must be positive")
 	}
-	// An html parameter is a bound continuation rather than a value, so it
-	// cannot take part in the cache key.
+	policy.ttl = ttl
 	for _, parameter := range declaration.Parameters {
 		t, err := c.resolveType(parameter.Type)
 		if err != nil {
 			return nil, err
-		}
-		if t.kind == kindHTML {
-			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the html parameter "+parameter.Name)
 		}
 		// Stored bytes stand in for a fresh render, and a pending value belongs
 		// to the one request that started it, so it can be neither part of the
@@ -424,7 +471,22 @@ func (c *compiler) cacheAnnotation(declaration *TemplateDecl, annotation Annotat
 			return nil, c.error(parameter.Pos, "cached component "+declaration.Name+" cannot declare the async parameter "+parameter.Name+"; a pending value belongs to one request")
 		}
 	}
-	return &cachePolicy{ttl: ttl}, nil
+	return policy, nil
+}
+
+// htmlParameter returns the component's first html parameter, which is what
+// makes it a slot owner, or nil when it declares none.
+func (c *compiler) htmlParameter(declaration *TemplateDecl) *Parameter {
+	for i, parameter := range declaration.Parameters {
+		t, err := c.resolveType(parameter.Type)
+		if err != nil {
+			continue
+		}
+		if t.kind == kindHTML {
+			return &declaration.Parameters[i]
+		}
+	}
+	return nil
 }
 
 // validateCachedComponents rejects the cases where stored bytes could not stand
@@ -437,6 +499,26 @@ func (c *compiler) validateCachedComponents() error {
 		}
 		info := c.components[component.Name]
 		if info == nil || info.cache == nil {
+			continue
+		}
+		// A public assertion is about the subtree beneath it, so a declared
+		// private component inside that subtree contradicts it. An undeclared one
+		// does not: it inherits the assertion, and refusing it would leave nothing
+		// publishable. The refusal is a generation error rather than a silent
+		// downgrade because the source says public and a reviewer reads the source.
+		if info.cache.public {
+			if owner := c.reachesDeclaredPrivate(component.Name, map[string]bool{}); owner != "" {
+				where := "it"
+				if owner != component.Name {
+					where = owner
+				}
+				return c.error(info.cache.pos, "component "+component.Name+" cannot declare @cache scope public; "+
+					where+" declares private, and a public assertion covers everything it renders")
+			}
+		}
+		// Everything below is about output that is stored. An annotation with no
+		// ttl stores nothing, so none of it has a premise.
+		if !info.cache.stores() {
 			continue
 		}
 		if info.shell {
@@ -463,6 +545,41 @@ func (c *compiler) validateCachedComponents() error {
 		}
 	}
 	return nil
+}
+
+// reachesDeclaredPrivate returns the first component in the call graph that
+// declared its scope private, and empty when none does.
+//
+// It walks the same graph as reachesAwait and reads a different bit, which is
+// what makes the public assertion affordable to check. Only an explicit
+// declaration counts: an undeclared component inherits whatever is asserted
+// around it, so treating it as private would make nothing publishable.
+func (c *compiler) reachesDeclaredPrivate(name string, seen map[string]bool) string {
+	if seen[name] {
+		return ""
+	}
+	seen[name] = true
+	info, ok := c.components[name]
+	if !ok {
+		return ""
+	}
+	if info.cache != nil && !info.cache.public {
+		return name
+	}
+	for _, called := range c.calledComponents(info) {
+		if owner := c.reachesDeclaredPrivate(called, seen); owner != "" {
+			return owner
+		}
+	}
+	return ""
+}
+
+// declaresPrivate reports whether this component or anything it calls declared
+// private, and names the component that did. It is the emitted form of
+// reachesDeclaredPrivate, and it folds upward for the reason head contributions
+// do: a private component's bytes end up inside whatever renders it.
+func (c *compiler) declaresPrivate(name string) string {
+	return c.reachesDeclaredPrivate(name, map[string]bool{})
 }
 
 // reachesPerRequest returns the first component in the call graph writing a

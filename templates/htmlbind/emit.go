@@ -274,6 +274,18 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if e.c.reachesLive(component.Name, map[string]bool{}) != "" {
 		await += "\tHasLiveBlock: true,\n"
 	}
+	// The scope declarations, written only when something declared one, so a
+	// project declaring none regenerates byte for byte. Private folds over the
+	// call graph because a private component's bytes end up inside whatever
+	// renders it; public stays where it was written, because asserting a subtree
+	// is shared says nothing about the markup wrapped around it.
+	cacheScope := ""
+	if source := e.c.declaresPrivate(component.Name); source != "" {
+		cacheScope = "\tDeclaresPrivate: true,\n\tPrivateSource: " + strconv.Quote(source) + ",\n"
+	}
+	if info.cache != nil && info.cache.public {
+		cacheScope += "\tDeclaresPublic: true,\n"
+	}
 	// The Slots field is written only for a component that declares an html
 	// parameter, so every other component keeps its previous output byte for
 	// byte. It reaches the components a caller handed in, whose head the binder
@@ -292,10 +304,11 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		check = fmt.Sprintf("\tCheck: func(%s %s) error {\n%s\n\t\treturn nil\n\t},\n",
 			receiverIdent, params, indentBlock(strings.Join(e.checks, "\n"), "\t"))
 	}
-	// The Cache field is written only for a cached component, so the generated
-	// output of every other component is unchanged.
+	// The Cache field is written only for a component that stores. An annotation
+	// with no ttl declares scope and nothing else, so it emits the bits above and
+	// no policy at all.
 	cache := ""
-	if info.cache != nil {
+	if info.cache.stores() {
 		cache = fmt.Sprintf("\tCache: &%sCache,\n", prefix)
 		if err := e.emitCachePolicy(component, prefix, params, head, ops); err != nil {
 			return err
@@ -314,8 +327,8 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s%s%s%s%s\tOps: %s,\n}\n\n",
-		prefix, params, head, headSources, assets, vary, boundaryField, await, slots, check, cache, indentBlock(ops, "\t"))
+	fmt.Fprintf(&e.b, "var %sPlan = &htmlbind.Plan[%s]{\n\tHead: %s,\n%s%s%s%s%s%s%s%s%s\tOps: %s,\n}\n\n",
+		prefix, params, head, headSources, assets, vary, boundaryField, await, cacheScope, slots, check, cache, indentBlock(ops, "\t"))
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
@@ -374,8 +387,15 @@ func (e *goEmitter) emitCachePolicy(component *TemplateDecl, prefix, params, hea
 	if len(parts) > 0 {
 		key = strings.Join(parts, " + ")
 	}
-	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n\tKey: func(%s %s) string { return %s },\n}\n\n",
-		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, receiverIdent, params, key)
+	// Scoped is written only for a private component, so a public one keeps the
+	// key it had before scoping existed. Private is the default, so this is the
+	// line most cached components now carry.
+	scoped := ""
+	if !info.cache.public {
+		scoped = "\tScoped: true,\n"
+	}
+	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n%s\tKey: func(%s %s) string { return %s },\n}\n\n",
+		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, scoped, receiverIdent, params, key)
 	return nil
 }
 
@@ -485,7 +505,11 @@ func (e *goEmitter) collectCacheRecords() []valueType {
 		if !ok {
 			continue
 		}
-		if info := e.c.components[component.Name]; info == nil || info.cache == nil {
+		// Only a component that stores has a key, so only its parameters need
+		// encoders. A declaring component has none — and a declaring layout's
+		// html parameter has no encoding at all, which is the case that would
+		// otherwise reach a walk that cannot describe it.
+		if info := e.c.components[component.Name]; !info.stores() {
 			continue
 		}
 		for _, parameter := range component.Parameters {

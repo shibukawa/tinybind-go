@@ -860,10 +860,12 @@ component Bad(): html {<p>x</p>}`,
 			"unknown annotation @memo",
 		},
 		{
-			"cache without a ttl",
+			// A ttl asks for storage and a scope declares one. An annotation with
+			// neither says nothing at all, which is the only case left to refuse.
+			"cache with neither a ttl nor a scope",
 			`@cache()
 component Bad(): html {<p>x</p>}`,
-			"@cache requires a ttl argument",
+			"@cache needs a ttl to store output or a scope to declare one",
 		},
 		{
 			"cache with an unparsable ttl",
@@ -872,10 +874,13 @@ component Bad(): html {<p>x</p>}`,
 			"@cache ttl is not a duration",
 		},
 		{
-			"cache with a slot parameter",
+			// A slot owner may carry the annotation to declare scope, but never a
+			// ttl: it stores nothing, so a duration would name an expiry that
+			// cannot happen.
+			"cache ttl on a slot owner",
 			`@cache(ttl: "5m")
 component Bad(children: html): html {<p><slot required /></p>}`,
-			"cannot declare the html parameter children",
+			"a slot owner stores nothing; drop the ttl to declare scope alone",
 		},
 		{
 			"cached component owning an await boundary",

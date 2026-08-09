@@ -13,15 +13,18 @@ import (
 // Generated code returns one from Bind<Name> for a component with a children
 // parameter.
 type Wrapper struct {
-	head        []string
-	headSources []string
-	assets      []Asset
-	vary        []string
-	boundary    *boundary
-	hasAwait    bool
-	hasLive     bool
-	validate    func() error
-	render      func(*Renderer, Fragment) error
+	head            []string
+	headSources     []string
+	assets          []Asset
+	vary            []string
+	boundary        *boundary
+	hasAwait        bool
+	hasLive         bool
+	declaresPrivate bool
+	declaresPublic  bool
+	privateSource   string
+	validate        func() error
+	render          func(*Renderer, Fragment) error
 	// sequence derives this component's static half, as it does on a Fragment.
 	sequence func() *Sequence
 }
@@ -39,13 +42,16 @@ func (w Wrapper) Validate() error {
 // which field the unnamed slot binds to.
 func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment)) Wrapper {
 	wrapper := Wrapper{
-		head:        plan.Head,
-		headSources: plan.HeadSources,
-		assets:      plan.Assets,
-		vary:        plan.Vary,
-		boundary:    bindBoundary(plan.Boundary, params),
-		hasAwait:    plan.HasAwaitBlock,
-		hasLive:     plan.HasLiveBlock,
+		head:            plan.Head,
+		headSources:     plan.HeadSources,
+		assets:          plan.Assets,
+		vary:            plan.Vary,
+		boundary:        bindBoundary(plan.Boundary, params),
+		hasAwait:        plan.HasAwaitBlock,
+		hasLive:         plan.HasLiveBlock,
+		declaresPrivate: plan.DeclaresPrivate,
+		declaresPublic:  plan.DeclaresPublic,
+		privateSource:   plan.PrivateSource,
 		render: func(r *Renderer, children Fragment) error {
 			local := params
 			setChildren(&local, children)
@@ -65,10 +71,12 @@ func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment))
 	folded := foldSlots(Fragment{
 		head: wrapper.head, headSources: wrapper.headSources, assets: wrapper.assets,
 		vary: wrapper.vary, hasAwait: wrapper.hasAwait, hasLive: wrapper.hasLive,
+		declaresPrivate: wrapper.declaresPrivate, privateSource: wrapper.privateSource,
 	}, plan.Slots, params)
 	wrapper.head, wrapper.headSources, wrapper.assets = folded.head, folded.headSources, folded.assets
 	wrapper.vary = folded.vary
 	wrapper.hasAwait, wrapper.hasLive = folded.hasAwait, folded.hasLive
+	wrapper.declaresPrivate, wrapper.privateSource = folded.declaresPrivate, folded.privateSource
 	return wrapper
 }
 
@@ -100,8 +108,13 @@ var ErrNilWrapper = errors.New("htmlbind: chain contains an unset wrapper")
 type Option func(*renderOptions)
 
 type renderOptions struct {
-	ctx         context.Context
-	cache       CacheStore
+	ctx   context.Context
+	cache CacheStore
+	// cacheScope prefixes the key of every component declared private, so one
+	// key yields a separate entry per scope. It is opaque here: the caller
+	// supplies whatever identifies the reader, and this package never learns
+	// what it means.
+	cacheScope  string
 	report      func(error)
 	timeout     time.Duration
 	concurrency int
@@ -192,6 +205,20 @@ func WithValidatorTag(tag string) Option {
 // one process from sharing entries through package state.
 func WithCache(store CacheStore) Option {
 	return func(o *renderOptions) { o.cache = store }
+}
+
+// WithCacheScope supplies the value prefixed to the key of every component
+// declared private, so the same parameters yield a separate entry per scope.
+//
+// The value is opaque: pass whatever identifies the reader a private entry
+// belongs to, and this package never interprets it. It is framed into the key
+// like any other value, so a scope value cannot spell out another key.
+//
+// Without it a private component stores nothing. That is deliberate: an entry
+// written under an empty scope is a shared entry wearing a private label, and a
+// miss is preferable to serving one reader's output to the next.
+func WithCacheScope(scope string) Option {
+	return func(o *renderOptions) { o.cacheScope = scope }
 }
 
 // WithContext supplies the context for the synchronous entries, which take no

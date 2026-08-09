@@ -35,12 +35,28 @@ type CachePolicy[P any] struct {
 	TTL time.Duration
 	// Key appends the canonical encoding of every declared parameter.
 	Key func(P) string
+	// Scoped marks a component declared private, whose key is prefixed with the
+	// render's scope value so one key yields a separate entry per reader.
+	//
+	// It is the default for a declared cache: a component that is actually
+	// shared says so with scope: "public", because the cost of getting that
+	// wrong is a miss and the cost of the other mistake is one reader's output
+	// served to another.
+	Scoped bool
 }
 
-// cacheKey joins the plan fingerprint with the encoded parameters. Both parts
-// are framed, so no parameter value can spell out another component's key.
-func (c *CachePolicy[P]) cacheKey(params P) string {
-	return KeyString(c.ID) + c.Key(params)
+// cacheKey joins the scope, the plan fingerprint, and the encoded parameters.
+// Every part is framed, so no value can spell out another component's key.
+//
+// The scope is prepended rather than appended so entries for one reader share a
+// prefix, which a store that organizes by key range can use. A public component
+// passes an empty scope and gets no prefix at all, which is what keeps its key
+// identical to the one it had before scoping existed.
+func (c *CachePolicy[P]) cacheKey(scope string, params P) string {
+	if !c.Scoped {
+		return KeyString(c.ID) + c.Key(params)
+	}
+	return KeyString(scope) + KeyString(c.ID) + c.Key(params)
 }
 
 // Framing rule for the helpers below: every value is written as its byte

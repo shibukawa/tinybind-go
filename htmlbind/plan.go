@@ -81,6 +81,32 @@ type Plan[P any] struct {
 	// needs the runtime that applies boundaries, and whether this screen has
 	// anything that will keep updating after the document finishes.
 	HasLiveBlock bool
+	// DeclaresPrivate reports whether this component, or any component it calls,
+	// declared its output per-reader. Generation computes it over the call graph
+	// as HasAwaitBlock is, because a private component's bytes end up inside
+	// whatever renders it.
+	//
+	// It exists so a caller can put a cache policy on the wire before the first
+	// body byte. A private component four levels down renders long after the
+	// header is committed, so anything computed during a render would be
+	// available only on the buffered branch — and a response's cache policy would
+	// then depend on whether streaming was on.
+	DeclaresPrivate bool
+	// DeclaresPublic reports whether this component declared its output shared.
+	//
+	// Unlike DeclaresPrivate it does not fold over the call graph, because the
+	// declaration is an assertion about this component and what it renders rather
+	// than a property it inherits from a caller. Generation refuses the assertion
+	// when the call graph beneath it reaches a declared private component, so a
+	// plan carrying this bit has already been checked.
+	DeclaresPublic bool
+	// PrivateSource names the component whose declaration set DeclaresPrivate, so
+	// a caller that has to explain a private response can say which component to
+	// change. It is empty when nothing declared it.
+	//
+	// It is the courtesy HeadSources provides for a head contribution, for the
+	// same reason: the answer is useless without the position.
+	PrivateSource string
 	// Slots returns the fragments this component's parameters carry, in
 	// declaration order. Generation emits it for a component with an html
 	// parameter and leaves it nil for every other, which is most of them.
@@ -140,7 +166,13 @@ func (p *Plan[P]) Exec(r *Renderer, params P) error {
 // renders into an isolated buffer and publishes it. Publishing after the whole
 // subtree renders is what keeps a failed render from storing partial output.
 func (p *Plan[P]) execCached(r *Renderer, params P) error {
-	key := p.Cache.cacheKey(params)
+	// A private component with no scope value stores nothing. An entry written
+	// under an empty scope would be a shared entry wearing a private label, and
+	// this is the one case where rendering normally is the whole answer.
+	if p.Cache.Scoped && r.opts.cacheScope == "" {
+		return execOps(r, p.Ops, params)
+	}
+	key := p.Cache.cacheKey(r.opts.cacheScope, params)
 	ctx := r.context()
 	if cached, ok := r.opts.cache.Get(ctx, key); ok {
 		_, err := r.w.Write(cached)
@@ -212,8 +244,15 @@ type Fragment struct {
 	boundary    *boundary
 	hasAwait    bool
 	hasLive     bool
-	validate    func() error
-	render      func(*Renderer) error
+	// declaresPrivate and declaresPublic carry the two cache scope declarations.
+	// They are separate bits rather than one tri-state because they fold
+	// differently: private unions from everything this fragment contains, and
+	// public stays where it was written.
+	declaresPrivate bool
+	declaresPublic  bool
+	privateSource   string
+	validate        func() error
+	render          func(*Renderer) error
 	// opensBoundary marks a fragment that opens its own boundary when it renders,
 	// which a chain member does. Without it a slot holding one would be recorded
 	// as an inlined component while a boundary opened inside it, and the values
@@ -228,15 +267,18 @@ type Fragment struct {
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func Bind[P any](plan *Plan[P], params P) Fragment {
 	fragment := Fragment{
-		head:        plan.Head,
-		headSources: plan.HeadSources,
-		assets:      plan.Assets,
-		vary:        plan.Vary,
-		boundary:    bindBoundary(plan.Boundary, params),
-		hasAwait:    plan.HasAwaitBlock,
-		hasLive:     plan.HasLiveBlock,
-		render:      func(r *Renderer) error { return plan.Exec(r, params) },
-		sequence:    plan.Sequence,
+		head:            plan.Head,
+		headSources:     plan.HeadSources,
+		assets:          plan.Assets,
+		vary:            plan.Vary,
+		boundary:        bindBoundary(plan.Boundary, params),
+		hasAwait:        plan.HasAwaitBlock,
+		hasLive:         plan.HasLiveBlock,
+		declaresPrivate: plan.DeclaresPrivate,
+		declaresPublic:  plan.DeclaresPublic,
+		privateSource:   plan.PrivateSource,
+		render:          func(r *Renderer) error { return plan.Exec(r, params) },
+		sequence:        plan.Sequence,
 	}
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
@@ -260,6 +302,13 @@ func foldSlots[P any](fragment Fragment, slots func(P) []Fragment, params P) Fra
 		}
 		fragment.hasAwait = fragment.hasAwait || slot.hasAwait
 		fragment.hasLive = fragment.hasLive || slot.hasLive
+		// Private unions and public does not. A component handed in through a
+		// slot renders inside this one, so its per-reader output makes this one
+		// per-reader too; its assertion that it is shared says nothing about the
+		// markup wrapped around it.
+		if slot.declaresPrivate && !fragment.declaresPrivate {
+			fragment.declaresPrivate, fragment.privateSource = true, slot.privateSource
+		}
 		fragment.head, fragment.headSources = appendHead(fragment.head, fragment.headSources, slot.head, slot.headSources)
 		// Whatever is walked for head has to be walked here too, or the same
 		// hole reopens one layer down: a slot-supplied component's script would
