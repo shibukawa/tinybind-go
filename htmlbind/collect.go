@@ -17,13 +17,15 @@ import (
 // implementation needs no locking of its own.
 type Collector interface {
 	// Begin starts one render, carrying the validator tag the render options
-	// resolved and the placeholder element name they name. It is called once,
-	// before anything else.
+	// resolved. It is called once, before anything else.
 	//
-	// The element is here because a decomposing observer writes a placeholder
-	// of its own where a nested boundary sits, and the naming a render uses is
-	// a render option it cannot otherwise see.
-	Begin(validatorTag, boundaryElement string)
+	// It used to carry the placeholder element name too, so a decomposing
+	// observer could write the same shape a progressive render writes. The two
+	// shapes are no longer the same: a hole has no content and is written as a
+	// template, while an await boundary brackets a visible fallback and is
+	// written as a comment pair. Neither is nameable by a prefix, so nothing is
+	// left to pass.
+	Begin(validatorTag string)
 	// Write observes one instruction's output, after escaping.
 	Write(value string)
 	// Open enters the boundary of one chain member: its instance ID, the
@@ -57,7 +59,7 @@ type Collector interface {
 func CollectChain(w io.Writer, collect Collector, wrappers []Wrapper, leaf Fragment, options ...Option) ([]string, error) {
 	opts := newRenderOptions(options)
 	if collect != nil {
-		collect.Begin(opts.validatorTag, boundaryElementOf(opts))
+		collect.Begin(opts.validatorTag)
 	}
 	composed, head, err := assemble(collect, wrappers, leaf)
 	if err != nil {
@@ -111,7 +113,7 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 				return member.render(r)
 			}
 			r.collect.Open(id, decl.componentID, decl.attr, decl.input(),
-				member.sequenceAddress(r.boundaryPrefix()))
+				member.sequenceAddress())
 			if err := member.render(r); err != nil {
 				return err
 			}

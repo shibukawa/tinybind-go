@@ -229,8 +229,32 @@ what_it_retires_from_this_round:
   - the emitter changes for mixed attribute values, optional attributes, and per-attribute static frames, which the span recording makes unnecessary
   kept_from_it: content-addressed static sequences and their fetch, which the slot-span tier needs in order to send the statics once
   reading: what the full split costs is the ability to apply a value without reparsing; the transfer saving comes for far less
+defects_reported_2026_08_09_against_v0_4_7:
+  found_by: the downstream framework, by opening a page; neither was reachable from a test, and both are silent
+  hole_is_foster_parented:
+    what: rule:boundary-placeholder-parse-position; the placeholder is an unknown element, so in table context the parser moves it out before the table
+    effect: every hole a table's rows leave sits outside the table, the rows filling it land loose, and the list is left empty
+    where_this_concept_was_wrong: the holes note above says a client recognises one hole shape rather than two, which was the right call and doubled the defect rather than causing it
+    verified: independently, with a tree-construction-conforming parser
+    fixed: 2026-08-09; see rule:boundary-placeholder-parse-position as_built — the hole is a template and the await marker is a comment pair, so the one shape became two
+  sequence_echo_says_navigation:
+    what: 'htmlupdate modeName has no ModeSequence case, so renderToken falls to the default and a sequence response echoes navigation'
+    introduced: v0.4.7, by routing the echo through the shared function; v0.4.6 set the literal on the entry, which is what action still does
+    effect: 'a client enforcing requirement:render-mode-negotiation — a response must claim the mode it is — discards every tree it fetches, each values-only operation has no markup to fall back to, and the navigation degrades to a complete document'
+    only_trace: pages got bigger
+    reading: the fallback invariant did its job, which is why nothing failed and nothing was visible
+  values_are_smaller_not_applied_when_streaming:
+    what: 'htmlupdate.go applies valuesAreSmaller on the buffered path and on the redraw; stream.go sends values whenever a sequence exists'
+    effect: 'the per-fragment choice this concept calls never a loss holds on one path and not on its sibling, and the streamed path is what every navigation goes through'
+    inverting_shape: this concept already names it — a list row is the fragment that costs more as an address plus values than as markup
+    reporter_position: reporting the asymmetry rather than a measured number, since the page they measured has a large changed fragment
+    same_shape_as: the children dispatch defect, and the manifest entry defect before it — a rule applied on one path and not on its sibling
+    fixed: 2026-08-09; the choice became sendsValues, one predicate both paths call, rather than a test one path performs
+    why_a_function_and_not_a_repeated_condition: three defects of this shape in three rounds; a rule with one home is what stops there being a fourth
+    test: TestTheStreamedPathAlsoSendsWhicheverIsSmaller
 constraints:
   - a boundary renders exactly one root element, per decision:update-manifest-transport, which is what makes a placeholder expressible
+  - rule:boundary-placeholder-parse-position, which the one-hole-shape choice above makes a constraint on the await placeholder too
   - rule:template-context-safety is untouched, because every fragment is produced by the ordinary render path
   - a caller that selects no fragments still receives a well-formed structure, since the boundary list stands alone
 acceptance:
@@ -251,5 +275,6 @@ related:
   - requirement:structured-render-output
   - decision:dom-application-strategy
   - rule:preserved-client-subtree
+  - rule:boundary-placeholder-parse-position
   - decision:partial-transfer-seams
 ```

@@ -50,6 +50,10 @@ if ok {
 
 > **`Vary` is a correctness control, not a preference.** A response that loses it can be handed by a shared cache to a browser asking for a page. `Headers` and `Response.Header` both compute it and `ApplyTo` and `WriteTo` both write it, so skipping it is a decision rather than an omission — but it is now a decision you can make.
 
+**`ETag` is the one header you could not compute yourself.** It digests the body this package assembles, so producing it on your side means rendering the component a second time. That is the exception to the rule above, and the reason a redraw hands you a whole `Response` instead of headers you apply first: its headers cannot exist before its body.
+
+Refusals carry their `Vary` too. A `404` is heuristically cacheable with no `Cache-Control` at all, so a refusal with no axes on it can be stored and handed back to a request for the page.
+
 ## Setting up
 
 ```go
@@ -248,10 +252,12 @@ Three record shapes, one apply path.
 **`replace`** — swap the region's markup. It carries a **hole** where each nested boundary sits, and `boundaries` names them:
 
 ```json
-{"kind":"replace","id":"panel","html":"<section …><tb-boundary data-tb-id=\"r0\" …></tb-boundary></section>","boundaries":["r0","r1"]}
+{"kind":"replace","id":"panel","html":"<section …><template data-tb-id=\"r0\"></template></section>","boundaries":["r0","r1"]}
 ```
 
 A hole whose id **also carries an operation** in this response is filled from it. A hole that does **not** is a region you already hold — lift its live node out before the swap and move it into the hole. That is what keeps the focus, the form values, and the playing media inside it.
+
+The hole is a `<template>`, which is the one element an HTML parser keeps where it was written and never renders. An unknown element would not do: in table context the parser foster-parents it out to just before the table, so every hole a table's rows leave ends up outside the table and the rows filling them land loose on the page. Parse fragments inside a `template` element for the same reason — a bare `<tr>` parsed anywhere else loses its tags.
 
 **`children`** — the region's own markup is unchanged and its nested boundaries are now these, in this order. No markup at all:
 

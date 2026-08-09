@@ -109,6 +109,11 @@ func (f Failure) Unwrap() error { return f.Err }
 //
 // Nothing is sent until a caller sends it: [Response.WriteTo] does that, and a
 // caller with its own error page sends that instead.
+//
+// It carries no Vary, having no Options and no request to compute one from. The
+// refusals this package produces get theirs added; a caller raising one of its
+// own adds them from [Options.RedrawHeaders] or [Options.Headers], and a
+// cacheable status makes that matter — see the note on Options.failure.
 func FailureResponse(failure Failure) Response {
 	return Response{
 		Status:  failure.Status,
@@ -119,12 +124,23 @@ func FailureResponse(failure Failure) Response {
 }
 
 // failure is FailureResponse for the entries, which also report the refusal
-// through the observation hook when a caller installed one.
+// through the observation hook when a caller installed one and give the refusal
+// the vary axes an answer would have had.
+//
+// A refusal is a response at the same URL as everything else, and some refusals
+// are cacheable: 404 is heuristically cacheable with no Cache-Control at all, so
+// a stored redraw 404 carrying no Vary can be handed to a request for the page.
+// It reads the same headers a successful redraw reads, so it varies on the same
+// ones.
 func (o Options) failure(r *http.Request, f Failure) Response {
 	if o.OnFailure != nil {
 		o.OnFailure(r, f)
 	}
-	return FailureResponse(f)
+	response := FailureResponse(f)
+	for _, name := range o.varyOn(o.Negotiate(r).Mode) {
+		response.Header.Add("Vary", name)
+	}
+	return response
 }
 
 // problemBody is the RFC 9457 shape, matching what httpbind.WriteError emits so
@@ -242,6 +258,13 @@ func validateNamePrefix(what, prefix string) error {
 	if strings.HasSuffix(prefix, "-") {
 		return errors.New("htmlupdate: " + what + " " + strconv.Quote(prefix) +
 			" must not end with a hyphen")
+	}
+	// The prefix now spells a comment marker as well as an attribute name, and a
+	// doubled hyphen closes a comment early: the rest of the marker would land in
+	// the document as markup. Nothing else in the naming rules rejects it.
+	if strings.Contains(prefix, "--") {
+		return errors.New("htmlupdate: " + what + " " + strconv.Quote(prefix) +
+			" must not contain a doubled hyphen, because it also spells the await boundary's comment markers")
 	}
 	return nil
 }

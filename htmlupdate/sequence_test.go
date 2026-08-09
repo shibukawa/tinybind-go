@@ -103,6 +103,20 @@ func TestSequenceIsPublicAndImmutable(t *testing.T) {
 	}
 }
 
+// A response has to claim the mode it is, because that is where a body swapped
+// by a proxy is detected. The echo went through a shared mode-name function with
+// a default arm, so a sequence response claimed to be a navigation: a client
+// enforcing the rule discarded every tree it fetched, and an operation that had
+// arrived as values had no markup left to fall back to. Nothing failed — the
+// pages just got bigger.
+func TestASequenceResponseSaysItIsASequence(t *testing.T) {
+	_, body := fetchDeltaWithSequences(t, "/search?q=go&section=Docs")
+	response := sequenceRequest(t, body.Operations[0].Seq)
+	if got := response.Header.Get("X-Tinybind-Render"); got != "sequence" {
+		t.Fatalf("X-Tinybind-Render = %q, want sequence", got)
+	}
+}
+
 // An address this process has never rendered is answered not-found, and a client
 // falls back to asking for markup. A sequence is an optimisation over something
 // still available, never a thing a screen depends on.

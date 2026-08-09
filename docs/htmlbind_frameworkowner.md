@@ -95,11 +95,11 @@ A progressive render writes each pending boundary as a placeholder holding its
 fallback:
 
 ```html
-<tb-boundary id="tb-1" style="display:contents">…fallback…</tb-boundary>
+<!--tb:tb-1-->…fallback…<!--/tb:tb-1-->
 ```
 
 That element and its id are the module's, but not its name: `WithBoundaryPrefix`
-renames both, so `pw` yields `<pw-boundary id="pw-1">`. Pass the prefix the
+renames both, so `pw` yields `<!--pw:pw-1-->`. Pass the prefix the
 generator wrote the instance attributes with, or one document carries two naming
 systems.
 

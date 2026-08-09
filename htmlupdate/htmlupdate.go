@@ -239,13 +239,7 @@ func (o Options) operationBody(operation delta.Operation, sequences bool) deltaO
 		Kind: operation.Kind, ID: operation.InstanceID,
 		Boundaries: operation.Boundaries,
 	}
-	// Values replace the markup only when they are smaller. A fragment of two
-	// elements costs more as an address plus its values than as the markup
-	// itself, because the address is per-operation overhead and there is almost
-	// no static text to save; a list row is exactly that shape, and its parent —
-	// a hundred hole frames — is the opposite one. Choosing per fragment is what
-	// keeps the split from ever being a loss.
-	if sequences && operation.Sequence != "" && valuesAreSmaller(operation) {
+	if sendsValues(sequences, operation) {
 		body.Seq, body.Values = operation.Sequence, operation.Values
 		return body
 	}
@@ -253,7 +247,25 @@ func (o Options) operationBody(operation delta.Operation, sequences bool) deltaO
 	return body
 }
 
-func valuesAreSmaller(operation delta.Operation) bool {
+// sendsValues decides which half of a fragment travels, for every path that
+// sends one.
+//
+// Values replace the markup only when they are smaller. A fragment of two
+// elements costs more as an address plus its values than as the markup itself,
+// because the address is per-operation overhead and there is almost no static
+// text to save; a list row is exactly that shape, and its parent — a hundred
+// hole frames — is the opposite one. Choosing per fragment is what keeps the
+// split from ever being a loss.
+//
+// It is one function because the buffered path applied the size test and the
+// streamed path did not, so the claim held on one path and not on its sibling —
+// and the streamed path is the one every navigation goes through. That is the
+// third defect of this shape: a rule applied on one path and not the other. A
+// predicate with one home is what stops there being a fourth.
+func sendsValues(sequences bool, operation delta.Operation) bool {
+	if !sequences || operation.Sequence == "" {
+		return false
+	}
 	size := len(operation.Sequence)
 	for _, value := range operation.Values {
 		size += len(value)
@@ -380,15 +392,32 @@ func renderToken(mode Mode, version int) string {
 	return modeName(mode) + versionSuffix(version)
 }
 
+// modeName is exhaustive on purpose, and a mode it does not know panics rather
+// than resolving to something.
+//
+// The default arm this replaces returned navigation, so ModeSequence — added
+// after the arm was written — echoed navigation on every sequence response. A
+// client enforcing the echo, which is where a proxy-substituted body is
+// detected, discarded every tree it fetched; an operation that had arrived as
+// values then had no markup to fall back to, and the navigation degraded to a
+// complete document. The only trace was that pages got bigger.
+//
+// A default arm turns a missing case into a wrong claim. The panic is
+// unreachable — Negotiate resolves anything unrecognized to ModeDocument — so it
+// is here to make the next mode a failure at its first test rather than a
+// response quietly claiming to be something else.
 func modeName(mode Mode) string {
 	switch mode {
+	case ModeDocument, ModeNavigation:
+		return modeNavigation
 	case ModeLive:
 		return modeLive
 	case ModeRedraw:
 		return modeRedraw
-	default:
-		return modeNavigation
+	case ModeSequence:
+		return modeSequence
 	}
+	panic("htmlupdate: no name for render mode " + strconv.Itoa(int(mode)))
 }
 
 // versionSuffix writes back what the request claimed, and nothing when it

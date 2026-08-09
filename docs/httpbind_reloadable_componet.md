@@ -494,7 +494,7 @@ Generation:
 //go:generate go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -data-attribute-prefix tb
 ```
 
-`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. The same prefix names the placeholder element and the boundary identifiers, so a project setting `pw` gets `data-pw-id` on its boundaries and `<pw-boundary id="pw-1">` for its placeholders — one naming system rather than two. Set the same value on `Options.DataAttributePrefix`, because the generator writes those attributes and the runtime reads them.
+`-data-attribute-prefix` names the generated attributes, producing `data-tb-id` by default. The same prefix names the await markers and the boundary identifiers, so a project setting `pw` gets `data-pw-id` on its boundaries and `<!--pw:pw-1-->` for its await markers — one naming system rather than two. Set the same value on `Options.DataAttributePrefix`, because the generator writes those attributes and the runtime reads them.
 
 Serving. Every name the protocol puts in a document is configurable, and everything the framework owns lives inside the two namespaces:
 

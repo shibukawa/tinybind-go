@@ -71,25 +71,38 @@ func TestOneAddressWhateverTheDataDid(t *testing.T) {
 // The hole frame is identical for every row, so it belongs to the static half.
 // Leaving it in the values would make a hundred holes a hundred copies of one
 // element, which is the cost the whole split exists to remove.
+//
+// The measurement is what the values do as rows are added, not what fraction of
+// one render they are. A fraction measures the frame's length: the frame used to
+// be a 67-byte custom element and is now a 35-byte template, so the same correct
+// behaviour moved the ratio and failed a threshold. What the property actually
+// says is that a row adds its identity to the values and nothing else.
 func TestHoleFramesAreStatic(t *testing.T) {
-	rows := make([]row, 30)
-	for i := range rows {
-		rows[i] = row{ID: "row-" + strings.Repeat("x", i+1), Text: "t"}
+	valuesFor := func(count int) []string {
+		rows := make([]row, count)
+		for i := range rows {
+			rows[i] = row{ID: "row-" + strconv.Itoa(i), Text: "t"}
+		}
+		result := render(t, delta.Manifest{}, panel{ID: "panel", Title: "Inbox", Rows: rows})
+		parent, ok := find(result.Operations, panelID)
+		if !ok {
+			t.Fatal("no operation for the panel")
+		}
+		return parent.Values
 	}
-	result := render(t, delta.Manifest{}, panel{ID: "panel", Title: "Inbox", Rows: rows})
-	parent, ok := find(result.Operations, panelID)
-	if !ok {
-		t.Fatal("no operation for the panel")
+	ten, twenty := valuesFor(10), valuesFor(20)
+	// Three entries per hole: whether the call opened a boundary or rendered
+	// inline, the attribute name, and the id. The attribute travels because a
+	// boundary declares its own, so it is not knowable from the plan the
+	// sequence was derived from; the frame around it is not in the list at all.
+	if added := len(twenty) - len(ten); added != 30 {
+		t.Fatalf("ten more rows added %d values, want 30 — the frame is travelling per row", added)
 	}
-	values := strings.Join(parent.Values, "")
-	if strings.Contains(values, "style=\"display:contents\"") {
-		t.Fatalf("the hole frame travels with the values: %q", values)
-	}
-	// The markup is dominated by the frames; the values are the ids and nothing
-	// else of consequence.
-	if len(values) >= len(parent.HTML)/2 {
-		t.Fatalf("values are %d bytes against %d of markup, so the split bought nothing",
-			len(values), len(parent.HTML))
+	joined := strings.Join(twenty, "")
+	for _, frame := range []string{"<template", "</template", "display:contents"} {
+		if strings.Contains(joined, frame) {
+			t.Fatalf("the hole frame travels with the values: %q", joined)
+		}
 	}
 }
 
