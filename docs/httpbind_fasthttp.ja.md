@@ -288,7 +288,75 @@ options.WriteStream(w, r, head, func(stream *htmlupdate.DeltaStream) error {
 `r.Context()` を同じ識別子に畳みます）、その値はプール由来なので、ハンドラーが
 戻った後に読むと別のリクエストを読むことになります。
 
+## ページツリーを fasthttp で
+
+ファイルシステムのルートツリーを生成するのは上の transform ではなく `routetree`
+です。生成物は transform の入力ではなく出力だからで、だからトランスポートを選ぶ
+のはエミッターの側です。設定は1回の呼び出しにまとまっています。
+
+```go
+files, err := routetree.Generate(routetree.GenerateOptions{
+    Config:      routetree.Config{Root: "pages", ImportBase: "example.com/app/pages"},
+    RootPackage: "pages",
+    Emitter:     routetree.NewFastHTTPEmitter(""), // "" は tinygodriver のフォーク
+})
+```
+
+これが3つのことを同時に切り替えます。3つの設定ではなく1回の呼び出しである理由が
+ここにあります —— デコーダーは `*fasthttp.RequestCtx` を取ってランタイムのアクセ
+サ経由で読み、登録されるハンドラーは引数が2つではなく1つになり、rung 3 の `Load`
+は net/http ではなく fasthttp のシグネチャで認識されます。
+
+生成される `Register` はルーターをインターフェースで受け取ります。fasthttp は
+ルーターを持たず、このモジュールが代わりに選ぶこともしないからです。
+
+```go
+func Register(mux interface {
+    HandleFunc(string, func(*fasthttp.RequestCtx))
+}, options ...htmlbind.Option)
+```
+
+そのメソッドさえ持っていれば満たせます。出力に `NewServeMux` はありません。
+組み立てる相手のルーターが存在しないからです。
+
+既定ではパターンは書かれたまま届きます —— Go 1.22 の綴りで、`{$}` も含めてです。
+別の構文を読むルーターを使うなら、それを宣言してください。この2つの形はそういう
+ルーターに**拒否されるのではなく誤読される**からです。`{rest...}` は `rest...`
+という名前のパラメーターに、`{$}` は `$` という名前のパラメーターに見えるので、
+ルートは黙って別の場所に登録されます。
+
+```go
+e := routetree.NewFastHTTPEmitter("")
+e.Symbols.CatchAllSuffix = ":*" // {rest...} が {rest:*} になります
+e.Symbols.RootPattern = "/"     // /{$} の代わりに
+```
+
+これ以外のセグメントは、ここで出会ったどのルーターも `{name}` と綴るので、他は
+動きません。生成される `Routes` テーブルは両方を持ちます。`Pattern` は登録した
+綴りで、`Path` はファイルシステムが宣言したアドレスです。サイトマップは `Path`
+から作ってください。ルーターのキャッチオール綴りは URL ではないからです。
+
+このモジュールが vendor しているルーターに手を伸ばすなら1点。
+`tinygodriver/fasthttprouter` は上の `mux` にそのままは使えません。
+`"GET /path"` を取る `HandleFunc` ではなく `GET` / `POST` / `Handle` を宣言して
+いるので、ページツリーは小さなアダプター越しに届きます —— そのアダプターが、
+上の綴り設定を適用する場所です。
+
+フォークではなく upstream を使っているなら、パッケージを明示してください。
+`routetree.NewFastHTTPEmitter("github.com/valyala/fasthttp")` です。
+
+挙動の差がひとつ。net/http では `context.Context` で始まる型付き `Load` は
+`r.Context()` を受け取りますが、こちらではリクエスト値そのものを受け取ります。
+`*fasthttp.RequestCtx` が `context.Context` だからです。そのコンテキストが
+キャンセルされるのはクライアント切断時ではなくサーバー停止時で、これは書き換え
+テーブルが `r.Context()` について記録しているのと同じ差です。
+
 ## まだ出来ていないこと
+
+コマンドラインの `-backend fasthttp` が動かすのは transform であって `routetree`
+ではありません。ページツリーの生成はどちらのトランスポートでもライブラリ API で、
+net/http 側にもフラグはありません。上のエミッターを渡して `routetree.Generate`
+を呼んでください。
 
 ルート単位のボディ上限は移りません。`http.MaxBytesHandler` は1つのハンドラーを
 縛りますが、fasthttp はサーバーを縛ります。ルート単位の上限を復元するヘッダー

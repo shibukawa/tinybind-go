@@ -41,6 +41,7 @@ channel_adapters:
   cost: a few lines per adapter, accepted because the adapter is where the service's own close and cancellation convention belongs
 failure_delivery:
   model: a yielded non-nil error is a delivery of a failure, not the end of the source; the sequence ending is the only terminal signal
+  third_kind: proposed decision:signal-in-the-error-slot makes the error slot carry a signal as well, classified ahead of this path, so a yielded error is one of failure, signal, or cancellation rather than one of failure or cancellation
   transient: the boundary renders the decision:live-boundary-syntax recover subtree from data:async-render-error, and a later value replaces it with primary content again
   terminal: the sequence returning leaves whatever the boundary last rendered and ends the subscription
   no_recover_clause: the decision:async-boundary-syntax omitted_recover rule applies per delivery, so the failure leaves the boundary and reaches the caller, and the subscription ends

@@ -20,20 +20,20 @@ type RouteParams struct {
 // An unparsable value produces an error rather than a zero value.
 func DecodeRoute(r *http.Request) (RouteParams, error) {
 	var out RouteParams
-	query := r.URL.Query()
-	rawID := r.PathValue("id")
+	query := httpbind.Queries(r)
+	rawID := httpbind.PathValue(r, "id")
 	if rawID == "" {
 		return out, httpbind.BadRequest(httpbind.Problem{Code: "missing_path_parameter", Message: "missing path parameter id"})
 	}
 	out.ID = rawID
-	if raw := query.Get("page"); raw != "" {
+	if raw, _ := httpbind.QueryLookup(query, "page"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil {
 			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter page is not a valid int"}, err)
 		}
 		out.Page = v
 	}
-	if raw := query.Get("verbose"); raw != "" {
+	if raw, _ := httpbind.QueryLookup(query, "verbose"); raw != "" {
 		v, err := strconv.ParseBool(raw)
 		if err != nil {
 			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter verbose is not a valid bool"}, err)

@@ -55,12 +55,21 @@ type Analysis struct {
 //     filesystem already knows; anything else the handler reads itself.
 //
 // Every problem found is reported, so one run surfaces more than the first.
+//
+// It recognizes the net/http rung 3 signature. Use [AnalyzeWith] for a tree
+// whose handlers are written against another transport.
 func Analyze(route Route) (Analysis, error) {
+	return AnalyzeWith(route, DefaultHandlerShape())
+}
+
+// AnalyzeWith is [Analyze] against a named rung 3 signature. A zero shape uses
+// [DefaultHandlerShape].
+func AnalyzeWith(route Route, shape HandlerShape) (Analysis, error) {
 	component, err := PageComponent(route.PageFile)
 	if err != nil {
 		return Analysis{}, err
 	}
-	fn, err := InspectLogic(route.LogicFile)
+	fn, err := InspectLogicWith(route.LogicFile, shape)
 	if err != nil {
 		return Analysis{}, err
 	}

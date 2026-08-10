@@ -59,6 +59,12 @@ sections:
       - a response whose request was aborted is never applied, even when its bytes already arrived, because the client owns its own apply queue
     why_it_is_the_whole_fix: with the abort discipline complete, no ordering field is needed; without it stated, two implementations pick different halves and only one of them is safe
     concrete_case_it_closes: a search box redrawing per keystroke, where the shorter query answers last and leaves the region showing its result under the longer query's input
+  signal_records:
+    written: 2026-08-11, by concept:signal-channel
+    states: the data:signal record kind, the name grammar and reserved prefix, and the requirement:client-signal-dispatch obligations, which are registration before dispatch, table-only resolution, ignoring an unknown name, and treating the payload as data
+    obligation_seven: table-only name resolution, stated separately in the normative list because it is the one rule whose violation reintroduces code execution
+    still_owed: the requirement:runtime-lifecycle-signals reserved set and the moment each fires, which is client behavior with no wire form and therefore has nowhere else to be written
+    why_it_belongs_here: it is a client obligation with no code a reader can check, which is the shape mostly_assembly.exception already names
   live_marker_has_three_carriers:
     what: the live response header from markLive, the live field renderDelta sets on a buffered delta, and ExpectLive on a stream
     load_bearing: the header for a document response, which has no JSON body to carry it

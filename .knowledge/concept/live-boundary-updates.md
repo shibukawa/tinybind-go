@@ -45,6 +45,7 @@ extensions:
   - requirement:live-boundary-rendering
   - requirement:live-boundary-resume
   - requirement:live-boundary-lifecycle
+  - concept:signal-channel
 gaps_found_downstream:
   round: decision:live-integration-seams, reported 2026-07-31 by a framework running the shipped live runtime
   items:

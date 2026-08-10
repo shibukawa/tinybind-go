@@ -117,9 +117,77 @@ func optionalPathError(name, declared string, catchAll bool) string {
 		name, declared)
 }
 
+// HandlerShape is the rung 3 signature a page function is recognized by: the
+// transport package it names and the parameter types it takes from that
+// package.
+//
+// It is configuration rather than a constant because the shape is what a
+// transport is, at this seam: net/http declares a writer and a request, and
+// fasthttp declares one value carrying both. A recognizer keyed on net/http
+// alone reads a fasthttp handler as a malformed typed page and reports a
+// signature error for a declaration that is correct.
+type HandlerShape struct {
+	// Import is the package path the parameter types come from. The check is
+	// syntactic, so the qualifier is resolved from the file's own import of this
+	// path rather than from type information.
+	Import string
+	// Types are the parameter types, in order, written without a qualifier and
+	// with a leading * where the parameter is a pointer: ResponseWriter and
+	// *Request name the net/http pair.
+	Types []string
+}
+
+// DefaultHandlerShape is the ordinary http.HandlerFunc signature.
+func DefaultHandlerShape() HandlerShape {
+	return HandlerShape{Import: "net/http", Types: []string{"ResponseWriter", "*Request"}}
+}
+
+// FastHTTPHandlerShape is the fasthttp handler signature, where one value
+// carries both halves and there is therefore one parameter rather than two.
+// transportImport names the fasthttp package; empty uses
+// [DefaultFastHTTPImport].
+func FastHTTPHandlerShape(transportImport string) HandlerShape {
+	return HandlerShape{
+		Import: orDefault(transportImport, DefaultFastHTTPImport),
+		Types:  []string{"*RequestCtx"},
+	}
+}
+
+// describeShape spells the shape the way a page author would write it, for the
+// error naming what a near-miss could have been.
+func (h HandlerShape) describeShape() string {
+	qualifier := h.Import[strings.LastIndex(h.Import, "/")+1:]
+	parts := make([]string, len(h.Types))
+	for i, typeName := range h.Types {
+		parts[i] = qualify(typeName, qualifier)
+	}
+	return "func(" + strings.Join(parts, ", ") + ")"
+}
+
+// qualify inserts the package name into an unqualified type, keeping a pointer
+// marker outside it.
+func qualify(typeName, qualifier string) string {
+	if rest, found := strings.CutPrefix(typeName, "*"); found {
+		return "*" + qualifier + "." + rest
+	}
+	return qualifier + "." + typeName
+}
+
 // InspectLogic reads one page.go and classifies its Page declaration. An empty
 // path, or a file declaring no Page, yields RungTemplateOnly.
+//
+// It recognizes the net/http rung 3 signature. Use [InspectLogicWith] for a
+// tree whose handlers are written against another transport.
 func InspectLogic(path string) (*PageFunc, error) {
+	return InspectLogicWith(path, DefaultHandlerShape())
+}
+
+// InspectLogicWith is [InspectLogic] against a named rung 3 signature. A zero
+// shape uses [DefaultHandlerShape].
+func InspectLogicWith(path string, shape HandlerShape) (*PageFunc, error) {
+	if len(shape.Types) == 0 {
+		shape = DefaultHandlerShape()
+	}
 	if path == "" {
 		return &PageFunc{Rung: RungTemplateOnly}, nil
 	}
@@ -137,7 +205,7 @@ func InspectLogic(path string) (*PageFunc, error) {
 	params := flattenFields(decl.Type.Params)
 	results := flattenFields(decl.Type.Results)
 
-	if isHandlerSignature(file, params, results) {
+	if isHandlerSignature(file, shape, params, results) {
 		fn.Rung = RungHandlerPage
 		return fn, nil
 	}
@@ -147,8 +215,8 @@ func InspectLogic(path string) (*PageFunc, error) {
 	if len(results) == 0 || results[len(results)-1].Type != "error" {
 		return nil, &Error{
 			Path: fmt.Sprintf("%s:%d", path, fn.Line),
-			Message: fmt.Sprintf("func %s must be either func(%s) (values..., error) or func(http.ResponseWriter, *http.Request); "+
-				"its last result is not error", PageFuncName, describe(params)),
+			Message: fmt.Sprintf("func %s must be either func(%s) (values..., error) or %s; "+
+				"its last result is not error", PageFuncName, describe(params), shape.describeShape()),
 		}
 	}
 	fn.Rung = RungTypedPage
@@ -258,18 +326,23 @@ func flattenFields(list *ast.FieldList) []Value {
 	return out
 }
 
-// isHandlerSignature reports the ordinary http.HandlerFunc shape. The check is
+// isHandlerSignature reports the transport's handler shape. The check is
 // syntactic because it runs before the package compiles, so it resolves the
-// net/http import name from the file rather than from type information.
-func isHandlerSignature(file *ast.File, params, results []Value) bool {
-	if len(params) != 2 || len(results) != 0 {
+// transport's import name from the file rather than from type information.
+func isHandlerSignature(file *ast.File, shape HandlerShape, params, results []Value) bool {
+	if len(params) != len(shape.Types) || len(results) != 0 {
 		return false
 	}
-	httpName, ok := importName(file, "net/http")
+	name, ok := importName(file, shape.Import)
 	if !ok {
 		return false
 	}
-	return params[0].Type == httpName+".ResponseWriter" && params[1].Type == "*"+httpName+".Request"
+	for i, typeName := range shape.Types {
+		if params[i].Type != qualify(typeName, name) {
+			return false
+		}
+	}
+	return true
 }
 
 // takesLeadingContext reports whether a typed entry point opens with a

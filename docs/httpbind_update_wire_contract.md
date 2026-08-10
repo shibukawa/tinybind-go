@@ -116,6 +116,7 @@ Every field except `ops` is optional and absent when empty. There is no version 
 | `head` | `head`, `build` | Opens the stream. Always first. |
 | `op` | `kind`, `id`, `html` or `seq`+`values`, `boundaries`, `frame`, `children`, `parent` | One boundary. No `kind` and no markup means unchanged: record the validators, apply nothing. |
 | `await` | `id`, `html` | An async boundary that settled. `id` addresses an *await marker*, not an instance. |
+| `signal` | `name`, `data` | An instruction a live source emitted. Addresses no region. See [Signals](#signals). |
 | `end` | `reason`, `error`, `retryMs` | The terminator. |
 
 `await` and `op` address different namespaces. An await id names a marker pair inside a region the client already installed; an instance id names a boundary. A client that looks one up in the other's namespace finds nothing and silently drops the update.
@@ -143,6 +144,63 @@ A stream that ends without an `end` record is **truncated**. A client must treat
 | `retry` | A live stream the server closed healthy: a lifetime bound, a shutdown, a rebalance. | Reconnect promptly. |
 
 `retry` **must not** spend a backoff attempt. Nothing failed, and treating a healthy rollover as a fault stalls a working screen every time the server rotates a connection. `retryMs`, when present, is the server's own hint; it is the only party that knows it is shedding load.
+
+## Signals
+
+A live source can say *something happened* as well as *this region now shows X*. It yields a signal in the error position of its sequence; the runtime classifies it ahead of every failure path and forwards it, and the stream carries one `signal` record:
+
+```json
+{"r":"signal","name":"app.toast","data":{"text":"saved"}}
+```
+
+`name` is a dispatch key. `data` is the payload the source encoded, or absent when the signal carries none.
+
+A signal **addresses no region**. It carries no `id`, no `frame`, no `children`, no `parent`, and no revision, because nothing on screen is being replaced. It is dispatched, not applied.
+
+**A client resolves `name` against a table it registered while the page loaded, and against nothing else.** Not `eval`, not `new Function`, not `import()`, not a lookup of a global by that name, not an attribute handler it writes. This is the whole point of the record: the set of things the server can ask for is fixed at build time and is exactly what the table holds, so a page keeps a `script-src` with neither `unsafe-eval` nor `unsafe-inline` and is still directed. The server varies the payload, never the instruction.
+
+| Situation | Client action |
+| --- | --- |
+| `name` is registered | Call it once, with the parsed payload. |
+| `name` is not registered | **Ignore it** and keep reading. A server ahead of its client is ordinary; a screen that stops over an instruction it does not understand is worse than one that misses it. |
+| The handler throws | Catch, report through your own diagnostics, keep applying. A bug in a toast handler must not stop deliveries from landing. |
+| The record is malformed | Drop it and keep reading. A signal carries no revision, so skipping one desynchronizes nothing. |
+| The request was aborted | Never dispatch, even if the bytes arrived. |
+
+**Names beginning `tb.` are reserved.** A client may register a handler for one; an application may never emit one, and the server rejects an attempt at the source. Reserved names are for notices the client's own runtime produces about itself, and a handler trusts one precisely because application data could not have forged it.
+
+**Reservation is layered.** Each layer that produces signals of its own reserves a prefix and guards it in the constructor it exports: this module holds `tb.`, a framework built on it holds its own — `pw.`, say — and an application uses what neither has taken. The module does not hold anyone else's prefix, because `NewSignal` is called at a yield site inside a source and is not render-scoped, so it can reach no configured value; a layer that owns a namespace owns the one wrapper that guards it. Dispatch is indifferent to all of this: a name is resolved by byte-for-byte lookup, so a further namespace needs no client change. A prefix constrains who may **emit**, never how a name **resolves**.
+
+Registration happens before the live request is issued. Signals are **best-effort**: they are not queued, not replayed on reconnect, and never acknowledged. An instruction that must be seen exactly once does not belong on this channel.
+
+The payload is **data**, not markup and not code. A handler that assigns it to `innerHTML`, passes it to a DOM sink that parses markup, or builds a selector or URL from it without escaping reopens the injection this record closed.
+
+### Lifecycle signals — a reference vocabulary
+
+Everything above is a signal the *server* sent. A client also knows things the server cannot see: that a completion is now in the DOM, that a live connection opened, that a document was cut off. Today an application learns those by observing the DOM or patching the runtime.
+
+The names below are a **reference vocabulary** for dispatching them through the same table, so an application registers once and does not care which side noticed. They are *suffixes*: a client dispatches them under its own reserved prefix — `pw.boundary_settled`, and so on — and reuses the suffix verbatim so one moment reads the same across implementations. `tb.` is reserved for them, and nothing in this module emits one.
+
+Implementing this set requires **no server code**. Every fact below is already on the wire.
+
+| Suffix | Fires | Carries |
+| --- | --- | --- |
+| `document_committed` | The document terminator was read. | `reason`: `final`, `live_pending`, or `failed`. |
+| `document_truncated` | Parsing finished with **no** terminator. | — |
+| `boundary_settled` | An `await` completion is in the DOM. | The await marker `id`. |
+| `live_opened` | The live stream began yielding. | Whether this was a first subscribe or a reconnect. |
+| `live_closed` | The live stream ended, by any of the three routes. | `reason`, and `retryMs` when the server sent one. |
+| `delivery_applied` | A live delivery's operations are in the DOM. | The instance `id` and its `frame` validator. |
+| `navigation_applied` | A navigation delta is applied. | The URL now displayed. |
+| `directive_received` | A `navigate` or `reload` directive arrived. | Which one, and the target for a navigate. |
+
+`document_committed` covers all three document-side terminator reasons rather than splitting into a name per outcome; `document_truncated` is the separate case because a terminator saying `failed` is a response that ended and said so, while no terminator is a response that was cut.
+
+`delivery_applied` carries the frame validator and **not** a revision: no revision exists on this wire, and specifying one would make this the single name that needs server work. A handler wants to know which region changed; ordering is the apply layer's problem, not the handler's.
+
+**Fire after applying, never before.** The use is a handler that reads or decorates what just arrived, and firing first hands it the previous DOM. `document_truncated` is the exception, describing an absence with nothing to follow.
+
+Dispatch synchronously, in record order. A signal a source emitted before a delivery then fires before that delivery's `delivery_applied`, which is the only thing that makes "highlight what just arrived" expressible.
 
 ## Sequences: sending values instead of markup
 
@@ -249,6 +307,8 @@ A conforming client must not break these, whatever else it does.
 5. **Never treat an unrecognised operation kind, record kind, or terminator reason as fatal.** Ignore what you do not know and keep the fallback available.
 
 6. **Send the CSRF token on every `action` request**, in the configured header. `navigation`, `live`, and `redraw` are side-effect-free `GET`s and need none.
+
+7. **Resolve a signal name against your own registration table and nothing else.** No `eval`, no `new Function`, no `import()`, no global lookup by name. A dynamic fallback for an unregistered name is the code execution the record exists to avoid, reached by another route.
 
 ## Checking an implementation
 

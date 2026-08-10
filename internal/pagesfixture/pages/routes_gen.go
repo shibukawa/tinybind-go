@@ -113,6 +113,10 @@ func NewServeMux(options ...htmlbind.Option) *http.ServeMux {
 
 // Routes lists what the filesystem knows about each route, so a
 // framework can build a sitemap or an inspector without a metadata format.
+//
+// Pattern is spelled for the router these routes are registered on, while Path
+// is the address the filesystem declared. They differ only where the router
+// spells a segment differently than net/http does.
 var Routes = []RouteInfo{
 	{Pattern: "GET /{$}", Path: "/", Dir: "", Params: nil},
 	{Pattern: "GET /about", Path: "/about", Dir: "about", Params: nil},
@@ -122,9 +126,11 @@ var Routes = []RouteInfo{
 
 // RouteInfo is one entry of Routes.
 type RouteInfo struct {
-	// Pattern is the stdlib ServeMux pattern the route is registered under.
+	// Pattern is what the route is registered under, spelled for the router.
 	Pattern string
-	// Path is the pattern without its method.
+	// Path is the address the filesystem declared, in net/http spelling. It is
+	// the one to build a sitemap from, because a router's own spelling of a
+	// catch-all is not a URL.
 	Path string
 	// Dir is the route directory relative to the route root.
 	Dir string

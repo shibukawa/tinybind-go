@@ -94,7 +94,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 		if _, done := actionsByDir[relDir]; done {
 			return
 		}
-		found, err := DiscoverActions(dir, relDir, pkg, importPath, emitter.ActionPrefix)
+		found, err := DiscoverActionsWith(dir, relDir, pkg, importPath, emitter.ActionPrefix, emitter.handlerShape())
 		if err != nil {
 			errs = append(errs, err)
 			actionsByDir[relDir] = nil
@@ -127,7 +127,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 		}
 		discoverActions(route.Dir, route.RelDir, route.Package, route.ImportPath)
 
-		analysis, err := Analyze(route)
+		analysis, err := AnalyzeWith(route, emitter.handlerShape())
 		if err != nil {
 			errs = append(errs, err)
 			// A failed analysis still contributes a placeholder, so route and

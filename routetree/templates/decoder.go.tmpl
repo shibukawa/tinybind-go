@@ -18,21 +18,21 @@ type {{ .ParamsType }} struct {
 
 // {{ .DecodeFunc }} reads the path and query values of {{ .Pattern }}.
 // An unparsable value produces an error rather than a zero value.
-func {{ .DecodeFunc }}(r *{{ .Symbols.HTTPAlias }}.Request) ({{ .ParamsType }}, error) {
+func {{ .DecodeFunc }}({{ .Symbols.Request }} {{ .Symbols.RequestType }}) ({{ .ParamsType }}, error) {
 	var out {{ .ParamsType }}
 {{- if .HasQuery }}
-	query := r.URL.Query()
+	query := {{ .Symbols.ErrorAlias }}.{{ .Symbols.QueryValues }}({{ .Symbols.Request }})
 {{- end }}
 {{- range .Fields }}
 {{- if .IsQuery }}
-	if raw := query.Get({{ .Key | quote }}); raw != "" {
+	if raw, _ := {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.QueryLookup }}(query, {{ .Key | quote }}); raw != "" {
 {{- template "convert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
 	}
 {{- else }}
 {{- if and (eq .Base "string") (not .Required) }}
-	out.{{ .Go }} = r.PathValue({{ .Key | quote }})
+	out.{{ .Go }} = {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.PathValue }}({{ $.Symbols.Request }}, {{ .Key | quote }})
 {{- else }}
-	raw{{ .Go }} := r.PathValue({{ .Key | quote }})
+	raw{{ .Go }} := {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.PathValue }}({{ $.Symbols.Request }}, {{ .Key | quote }})
 {{- if .Required }}
 	if raw{{ .Go }} == "" {
 		return out, {{ template "error" dict "Symbols" $.Symbols "Code" $.MissingCode "Message" .MissingMessage "Cause" "" }}

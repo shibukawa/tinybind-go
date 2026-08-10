@@ -32,6 +32,14 @@ as_built_2026_08_09:
   reason_field: the classification goes in the diagnostic's Reason, where a consumer reads it, rather than being repeated in the prose; nothing in the module switched on the previous value
   layout_warning: the mixed-file warning reaches stderr on a generating run, which it did not when first written; it is computed during the rewrite, so a package that refuses never reaches it
   docs: docs/httpbind_fasthttp.md for an application author, docs/httpbind_fasthttp_frameworkowner.md for a framework
+what_a_green_report_proves_2026_08_10:
+  reported: downstream framework survey 2026-08-10, correcting its own earlier plan and saying why the reasoning was tempting
+  the_mistaken_plan: treat a clean -transport-report run over the framework's examples as the signal that its call registration is complete
+  why_it_cannot_be: the report is green when nothing is refused, and registering a call is exactly what stops it being refused, so registration alone turns the report green whether or not anything exists to receive the rewrite
+  observed: seven of the reporter's registered calls had no counterpart on the other transport, and the report said so by saying nothing
+  what_it_does_prove: no occurrence is refused, which is the whole of its claim
+  second_check_needed: that the rewritten source compiles against the receiving package; the reporter now has one, and this module's own equivalent is the -tags fasthttp compile of rule:transform-rewrite-table as_built
+  reading_for_this_module: a framework owner's registration is a promise about a package the report never loads, so no diagnostic here can close that gap; the framework-owner guide is where the second check belongs
 acceptance:
   - a refusal names an occurrence position rather than only a declaration
   - an inherited refusal prints its chain to the original occurrence

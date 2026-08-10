@@ -1058,6 +1058,99 @@ delivery replaces them.
 Focus, scroll position, and media playback have the same exposure and no static
 rule can forbid them, so keep them out of a region that re-renders on a timer.
 
+### Signals
+
+A delivery says *this region now shows X*. Sometimes the server needs to say
+*something happened* instead: show a toast, highlight what just arrived, tell the
+client a thing it cached is stale. None of that is state, and a source that
+yielded it as state would be lying about what the region displays.
+
+A live source says it by yielding a **signal** in the error position:
+
+```go
+type Toast struct{ htmlbind.Signal }
+
+func NewToast(text string) Toast {
+	return Toast{htmlbind.NewSignal("app.toast", toastPayload{Text: text})}
+}
+
+func WatchOrders(ctx context.Context, id string) iter.Seq2[Order, error] {
+	return func(yield func(Order, error) bool) {
+		for order := range orders(ctx, id) {
+			if order.Late {
+				if !yield(Order{}, NewToast("this one is running late")) {
+					return
+				}
+			}
+			if !yield(order, nil) {
+				return
+			}
+		}
+	}
+}
+```
+
+Embedding `htmlbind.Signal` is what makes the type a signal, and it is how the
+runtime recognises one — an unexported method comes with the embed, and no type
+outside the package can have it. Embedding also supplies `Error`, so your type
+satisfies `error` without writing one.
+
+A signal is **not a failure**. It renders nothing, it does not run `recover`, it
+does not end a block that declared no `recover` clause, and it is not reported to
+the error hook. The region keeps whatever it was showing, the source is resumed,
+and the sequence carries on. It is `fs.SkipDir` reasoning: a control value in the
+one channel every layer already forwards.
+
+The payload is your own struct. It appends itself as JSON:
+
+```go
+type toastPayload struct{ Text string }
+
+func (p toastPayload) AppendJSON(dst []byte) []byte { … }
+```
+
+Encoding happens when you build the signal, so the value is fixed once yielded
+and nothing later can change what the client receives. `htmlbind.NewRawSignal`
+takes bytes you already encoded, and `htmlbind.NamedSignal` builds one with no
+payload at all.
+
+Names are dispatch keys, not code: letters, digits, `.`, `_`, `-`, starting with
+a letter, up to 64 bytes. `tb.` is reserved for the runtime's own names, and
+emitting one is rejected at the source.
+
+Ranging the live entry, a signal arrives in the error slot and is the one value
+there that does not end the sequence:
+
+```go
+for content, err := range htmlbind.RenderChainLive(ctx, io.Discard, wrappers, leaf) {
+	if err != nil {
+		if signal, ok := htmlbind.AsSignal(err); ok {
+			writeSignalRecord(w, signal.Name(), signal.Payload())
+			continue
+		}
+		return err
+	}
+	writeBoundary(w, content)
+}
+```
+
+`htmlupdate` and `fasthttpupdate` already do this: a signal becomes a `signal`
+record on the live stream, and the browser client looks the name up in a table
+the page registered at load and calls what it finds. Nothing is transferred as
+code, so a strict `script-src` with no `unsafe-eval` stays intact. See
+[the wire contract](httpbind_update_wire_contract.md) for the record and the
+client's obligations.
+
+Signals are best-effort. They are not queued while a client is away and not
+replayed on reconnect, for the same reason a missed delivery is not: the design
+holds no per-subscription backlog. An instruction that must be seen exactly once
+belongs somewhere else.
+
+The other entries have no client to dispatch to, so they drop signals rather than
+carrying them. `Render` and `RenderAsync` keep waiting for a value they can
+actually show — a signal never consumes the one delivery the document entry
+takes, and never suppresses the fallback.
+
 ### Rendering an async component
 
 `Render` blocks on the bindings and writes the settled subtree in place, so a

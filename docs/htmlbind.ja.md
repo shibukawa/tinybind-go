@@ -965,6 +965,99 @@ live な領域が描くのは入力ではなく出力です。primary の中の 
 フォーカス、スクロール位置、メディアの再生位置も同じ危険にさらされますが、静的な
 規則では禁じられません。タイマーで描き直される領域には置かないでください。
 
+### Signal
+
+配信が言えるのは「この領域は今 X を表示している」だけです。サーバーが伝えたい
+ことは、それとは限りません。トーストを出す、今届いたものを強調する、クライアント
+が持っているキャッシュが古いと教える。どれも状態ではないので、状態として yield
+すれば、その領域が何を表示しているかについて嘘をつくことになります。
+
+live ソースは、それを **signal** としてエラー位置に yield します。
+
+```go
+type Toast struct{ htmlbind.Signal }
+
+func NewToast(text string) Toast {
+	return Toast{htmlbind.NewSignal("app.toast", toastPayload{Text: text})}
+}
+
+func WatchOrders(ctx context.Context, id string) iter.Seq2[Order, error] {
+	return func(yield func(Order, error) bool) {
+		for order := range orders(ctx, id) {
+			if order.Late {
+				if !yield(Order{}, NewToast("この注文は遅延しています")) {
+					return
+				}
+			}
+			if !yield(order, nil) {
+				return
+			}
+		}
+	}
+}
+```
+
+その型を signal にしているのは `htmlbind.Signal` の埋め込みで、ランタイムが
+signal かどうかを見分けているのもそれです。埋め込みには非公開メソッドが付いて
+くるので、パッケージ外の型がそれを持つことはできません。埋め込みは `Error` も
+供給するため、自分で書かなくても `error` を満たします。
+
+signal は**失敗ではありません**。何も描かず、`recover` を走らせず、`recover` 節
+を書いていないブロックを終わらせず、エラーフックにも報告されません。領域は表示
+していたものをそのまま保ち、ソースは再開され、シーケンスは流れ続けます。
+`fs.SkipDir` と同じ考え方で、どの層も既に転送しているただ一つのチャネルに制御値
+を載せるということです。
+
+ペイロードは自分の構造体です。自分自身を JSON として追記します。
+
+```go
+type toastPayload struct{ Text string }
+
+func (p toastPayload) AppendJSON(dst []byte) []byte { … }
+```
+
+エンコードは signal を作った時点で済むので、yield した後の値は固定され、後から
+クライアントに届くものを変えることはできません。`htmlbind.NewRawSignal` は
+エンコード済みのバイト列を、`htmlbind.NamedSignal` はペイロードなしのものを
+作ります。
+
+名前はディスパッチのキーであってコードではありません。英字・数字・`.`・`_`・`-`
+で、先頭は英字、64 バイトまで。`tb.` はランタイム自身の名前用に予約されていて、
+送出しようとするとソースの時点で拒否されます。
+
+live エントリを range すると、signal はエラースロットに届きます。そこでシーケンス
+を終わらせない唯一の値です。
+
+```go
+for content, err := range htmlbind.RenderChainLive(ctx, io.Discard, wrappers, leaf) {
+	if err != nil {
+		if signal, ok := htmlbind.AsSignal(err); ok {
+			writeSignalRecord(w, signal.Name(), signal.Payload())
+			continue
+		}
+		return err
+	}
+	writeBoundary(w, content)
+}
+```
+
+`htmlupdate` と `fasthttpupdate` は既にこれを行っています。signal は live
+ストリーム上の `signal` レコードになり、ブラウザ側のクライアントはページが読み
+込み時に登録したテーブルから名前を引いて、見つかったものを呼びます。コードは
+一切転送されないので、`unsafe-eval` のない厳格な `script-src` がそのまま保てます。
+レコードとクライアントの義務は
+[ワイヤ契約](httpbind_update_wire_contract.md) を参照してください。
+
+signal はベストエフォートです。クライアントが不在の間に溜められることも、再接続
+で再送されることもありません。配信を取りこぼした場合と同じ理由で、この設計は
+購読ごとのバックログを持ちません。確実に一度だけ届く必要がある指令は、ここには
+属しません。
+
+他のエントリにはディスパッチ先のクライアントがいないので、signal は運ばれずに
+捨てられます。`Render` と `RenderAsync` は実際に表示できる値を待ち続けます。
+signal がドキュメントエントリの「最初の 1 配信」を消費することはなく、fallback
+を潰すこともありません。
+
 ### 非同期 component の描画
 
 `Render` は束縛の完了を待ち、確定した内容をその場に書き出します。`await` を含む

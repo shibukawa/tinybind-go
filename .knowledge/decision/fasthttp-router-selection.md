@@ -16,6 +16,25 @@ what_transfers_untouched:
 what_moves:
   catch_all: "{rest...} becomes {rest:*}"
   refusal: a router target declaring no catch-all spelling rejects such a route rather than guessing one
+  catch_all_value_agrees_too_2026_08_10:
+    reported: downstream framework survey 2026-08-10, as a report on the driver rather than as an ask on this module
+    doc_comment_is_wrong: fasthttprouter's package documentation shows a catch-all carrying a leading slash, with /files/LICENSE giving filepath="/LICENSE"
+    behaviour: verified against the local checkout; /files/ gives "", /files/LICENSE gives "LICENSE", /files/templates/article.html gives "templates/article.html"
+    net_http_agrees: the same values, with no leading slash, which is what makes the rewrite above a spelling change and nothing more
+    provenance: the comment is inherited from upstream httprouter, where it was accurate; the reporter wrote a test from the comment and it failed against both implementations
+    consequence_here: none for generated code, and one fewer place a rewritten route could differ; the fix belongs in the driver's doc.go
+    fixed_2026_08_10: the driver's fasthttprouter/doc.go now states the values it produces and says upstream documents otherwise, so the next reader writes a test from the behaviour rather than from the inheritance
+page_tree_registration_2026_08_10:
+  what: requirement:routetree-transport-selection emits a fasthttp page tree, and it registers on an interface rather than on this router
+  emitted: 'interface{ HandleFunc(string, func(*fasthttp.RequestCtx)) }'
+  patterns: Go 1.22 spellings reach it unchanged, '{$}' included; no catch-all rewrite runs on this path
+  reading: the two registration paths differ on purpose. The transform path targets a named router and rewrites the catch-all; the page tree names no router and defaults to writing what it discovered
+  spelling_available_2026_08_10: Symbols.CatchAllSuffix and Symbols.RootPattern let a page tree target a router reading another syntax, defaulting to net/http's markers so an unset field changes nothing
+  root_marker_matters_here_too: this decision recorded the catch-all as the only segment that moves, which held for the transform path because it registers discovered handlers; a page tree also writes '{$}' for the root, and a router reading another syntax takes that for a parameter named '$'
+  fasthttprouter_is_not_a_page_tree_router:
+    found: 2026-08-10, while settling the two targets
+    fact: it declares GET, POST and Handle rather than a HandleFunc taking "GET /path", so it cannot be a page tree's MuxType directly
+    consequence: a page tree reaches it through an adapter, as the downstream framework's own pwfast.ServeMux is; the spelling fields are what let that adapter be handed a pattern its router can parse
 the_blocker:
   fact: github.com/fasthttp/router requires github.com/valyala/fasthttp, and system:tinygodriver-fasthttp is a vendored copy rather than an alias layer
   therefore: a handler taking the fork's RequestCtx is not a fasthttp.RequestHandler, and the router will not accept one

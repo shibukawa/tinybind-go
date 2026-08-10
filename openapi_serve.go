@@ -169,9 +169,23 @@ func AssembleOpenAPI() (jsonDoc []byte, err error) {
 	return jsonDoc, nil
 }
 
+// OpenAPIDocument returns the assembled document, reusing the previous result
+// until a fragment or info registration invalidates it.
+//
+// It names no transport, so a second backend serves the document without
+// reassembling it per request: a fragment registration cannot be observed from
+// outside this package, which is what left a caller on another transport with
+// [AssembleOpenAPI] and no way to cache the result itself.
+//
+// The returned slice is shared with every other caller and must not be
+// modified.
+func OpenAPIDocument() ([]byte, error) {
+	return cachedOpenAPI()
+}
+
 // OpenAPIJSON serves the assembled OpenAPI document as application/json.
 func OpenAPIJSON(w http.ResponseWriter, r *http.Request) {
-	doc, err := cachedOpenAPI()
+	doc, err := OpenAPIDocument()
 	if err != nil {
 		WriteError(w, r, Internal(err))
 		return
