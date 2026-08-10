@@ -19,11 +19,11 @@ type RouteParams struct {
 // An unparsable value produces an error rather than a zero value.
 func DecodeRoute(r *http.Request) (RouteParams, error) {
 	var out RouteParams
-	query := r.URL.Query()
-	if raw := query.Get("topic"); raw != "" {
+	query := httpbind.Queries(r)
+	if raw, _ := httpbind.QueryLookup(query, "topic"); raw != "" {
 		out.Topic = raw
 	}
-	if raw := query.Get("page"); raw != "" {
+	if raw, _ := httpbind.QueryLookup(query, "page"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil {
 			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter page is not a valid int"}, err)

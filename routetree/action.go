@@ -65,9 +65,22 @@ func (a Action) Pattern() string { return "POST " + a.Path }
 // dir is the package directory, relDir its path relative to the route root, and
 // prefix the reserved endpoint prefix; an empty prefix uses
 // [DefaultActionPrefix].
+//
+// A server function is recognized by the same signature a rung 3 page is, so
+// this reads the net/http shape. Use [DiscoverActionsWith] for a tree whose
+// handlers are written against another transport.
 func DiscoverActions(dir, relDir, pkg, importPath, prefix string) ([]Action, error) {
+	return DiscoverActionsWith(dir, relDir, pkg, importPath, prefix, DefaultHandlerShape())
+}
+
+// DiscoverActionsWith is [DiscoverActions] against a named handler signature. A
+// zero shape uses [DefaultHandlerShape].
+func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape HandlerShape) ([]Action, error) {
 	if prefix == "" {
 		prefix = DefaultActionPrefix
+	}
+	if len(shape.Types) == 0 {
+		shape = DefaultHandlerShape()
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -103,7 +116,7 @@ func DiscoverActions(dir, relDir, pkg, importPath, prefix string) ([]Action, err
 			if !fn.Name.IsExported() || fn.Name.Name == PageFuncName {
 				continue
 			}
-			if !isHandlerSignature(file, flattenFields(fn.Type.Params), flattenFields(fn.Type.Results)) {
+			if !isHandlerSignature(file, shape, flattenFields(fn.Type.Params), flattenFields(fn.Type.Results)) {
 				continue
 			}
 			hash := ActionHash(relDir, fn.Name.Name)

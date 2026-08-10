@@ -100,6 +100,12 @@ func (c RenderCall) Chain() string {
 	return c.Wrappers
 }
 
+// Context is the expression yielding the request's context.Context, empty where
+// no request is in scope. An override needing a context writes it rather than
+// spelling a .Context() call, which is a method one transport has and the other
+// does not need.
+func (c RenderCall) Context() string { return c.Symbols.ContextOf(c.Request) }
+
 // RenderOptions is what the default render block passes: the caller's options,
 // followed by the request's context when a request is in scope.
 //
@@ -118,7 +124,7 @@ func (c RenderCall) RenderOptions() string {
 	if c.Request == "" {
 		return c.Options
 	}
-	withContext := c.Symbols.RuntimeAlias + ".WithContext(" + c.Request + ".Context())"
+	withContext := c.Symbols.RuntimeAlias + ".WithContext(" + c.Context() + ")"
 	if c.Options == "" {
 		return "[]" + c.Symbols.RuntimeAlias + ".Option{" + withContext + "}"
 	}
@@ -202,7 +208,7 @@ func (e *Emitter) composerModel(route Route, layouts []ComponentSignature) (Comp
 		WriterType:   orDefault(e.RenderWriterType, DefaultRenderWriterType),
 		RequestParam: e.RenderRequestParam,
 		Component:    PageComponentName,
-		Symbols:      e.Symbols,
+		Symbols:      e.symbols(),
 	}
 
 	// Two ancestors may share a directory base name, so selectors are made

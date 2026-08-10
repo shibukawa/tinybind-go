@@ -17,7 +17,7 @@ type RouteParams struct {
 // An unparsable value produces an error rather than a zero value.
 func DecodeRoute(r *http.Request) (RouteParams, error) {
 	var out RouteParams
-	rawID := r.PathValue("id")
+	rawID := httpbind.PathValue(r, "id")
 	if rawID == "" {
 		return out, httpbind.BadRequest(httpbind.Problem{Code: "missing_path_parameter", Message: "missing path parameter id"})
 	}

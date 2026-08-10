@@ -66,8 +66,8 @@ func TestEmitDecoderPathAndQuery(t *testing.T) {
 		"ID string",
 		"Page int",
 		"func DecodeRoute(r *http.Request) (RouteParams, error)",
-		`r.PathValue("id")`,
-		`query.Get("page")`,
+		`httpbind.PathValue(r, "id")`,
+		`httpbind.QueryLookup(query, "page")`,
 		"strconv.Atoi(raw)",
 	)
 }
@@ -77,7 +77,7 @@ func TestEmitDecoderBindsAnOptionalQueryParameter(t *testing.T) {
 
 	mustContain(t, source,
 		"Page *int",
-		`if raw := query.Get("page"); raw != ""`,
+		`if raw, _ := httpbind.QueryLookup(query, "page"); raw != ""`,
 		"strconv.Atoi(raw)",
 		"value := v",
 		"out.Page = &value",
@@ -151,7 +151,7 @@ func TestEmitDecoderCatchAllIsNotRequired(t *testing.T) {
 	route := decoderRoute("/files/{rest...}", "rest__", catchAll("rest"))
 	source := emit(t, route, []Value{{Name: "rest", Type: "string"}})
 
-	if !strings.Contains(source, `r.PathValue("rest")`) {
+	if !strings.Contains(source, `httpbind.PathValue(r, "rest")`) {
 		t.Errorf("catch-all not read:\n%s", source)
 	}
 	// An empty remainder is a legal match for {rest...}, so it must not 400.
