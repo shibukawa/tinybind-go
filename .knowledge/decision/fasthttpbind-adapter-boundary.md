@@ -10,6 +10,11 @@ status: not implemented, 2026-08-08; decision:backend-build-tag-mode removes the
 why_it_cannot_coexist_with_the_tag: a wrapped handler is wrapped so it can keep calling Bind and Write unchanged, and those symbols are tagged out of a fasthttp build; there is no arrangement in which both hold
 what_replaces_it: a refusal, per rule:transform-eligibility, reported by requirement:transform-diagnostics and fixed by the author rather than absorbed by the runtime
 kept_because: the cost analysis below is what the tag decision was weighed against, and it is the record to reread if the adapter is ever reconsidered alongside a package split, which does permit both
+confirmed_by_the_proposer_2026_08_10:
+  who: the downstream framework that proposed an adapter in the first place, in its 2026-08-10 survey
+  position: the refusal was right, because a buffering adapter preserves neither streaming nor a raw connection, so its guarantee was already holed exactly where they need it
+  added: a refusal that names the occurrence is worth more than a silent slow path, which is the reporting_required argument below arrived at from the caller's side
+  significance: the party that would have absorbed the cost of the refusal agrees with it, so nothing in this record is waiting on a second opinion
 mechanism: a RequestHandler that materializes http.Request and http.ResponseWriter over the RequestCtx and calls the existing handler
 cost:
   measured_2026_08_08: constructing the request object costs about 5.8 KB and 14 allocs on the tinybind benchmark path

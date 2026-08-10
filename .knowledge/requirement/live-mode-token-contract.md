@@ -25,6 +25,14 @@ as_built:
   open_record: the head record carries the build, which is the reporter's open record merged into the record that already opens every stream
   client_policy: the live entry sends the live token, resets the attempt count on a healthy close, backs off exponentially with jitter on a fault, reloads on a build change, and stops without retrying when the route is not served live
   not_built: the requirement:live-boundary-lifecycle bounds that would make the server emit a retry record on its own; Retry is the seam and nothing calls it yet
+entry_unused_downstream_2026_08_10:
+  reported: downstream framework survey 2026-08-10, explicitly not as an ask
+  fact: the reporting framework delivers live boundaries on both transports without calling RenderLiveStream, having tried it on the second backend and withdrawn it
+  reason: its net/http half does not call it either, because it layers admission control, a watchdog, digest suppression seeded from the client manifest, a boundary bound and render telemetry on top, none of which this entry has an equivalent for
+  what_calling_it_would_have_cost: a poorer stream on one transport than the other, with nothing in the response able to report the difference
+  their_answer: their own protocol — close reasons, watchdog, admission, keyed digest, manifest parse, record writers — moved into a leaf both their halves read, which is the move made here for the error types and then for the update types of decision:update-core-shared-leaf
+  reading_for_this_module: the entry ports cleanly and is still not what a framework serving live at scale calls; the settle items above are what would change that, and none of them is what the reporter withdrew over
+  nothing_asked: the reporter needs nothing here for it
 source:
   - downstream framework composition seam report 2026-08-02, against v0.3.1
   - requirement:live-reconnect open questions
