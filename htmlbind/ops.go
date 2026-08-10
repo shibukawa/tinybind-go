@@ -765,7 +765,7 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 	if !keepOpen {
 		firstDelivery = coordinator.opts.timeout
 	}
-	coordinator.startStream(func(ctx context.Context, emit func(Content) bool) error {
+	coordinator.startStream(func(ctx context.Context, emit func(Content) bool, emitSignal func(Signal) bool) error {
 		// The scope is deliberately not stopped when the subscription ends. A
 		// delivery's nested boundaries are cancelled because the next delivery
 		// supersedes them, and the final delivery has no next: it is the content
@@ -774,6 +774,48 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 		// holds is released when the render's own context ends.
 		delivery := &deliveryScope{}
 		return o.pump(ctx, params, firstDelivery, r.reportError, func(scope S, deliveryErr error) deliveryResult {
+			if deliveryErr != nil {
+				if ctx.Err() != nil {
+					// Expected cancellation. The boundary's current content is
+					// its final content and nothing is left to read a delivery.
+					return deliveryResult{}
+				}
+				if signal, ok := AsSignal(deliveryErr); ok {
+					// Classified ahead of everything below, so a signal never
+					// becomes an AsyncError, never renders recover, and never
+					// ends a clause that declared none.
+					//
+					// It is classified ahead of the subtree call in particular,
+					// because that call supersedes the previous delivery and
+					// cancels the nested boundaries it opened. A signal renders
+					// nothing, so it must leave the content on screen and the
+					// work behind it exactly as they are.
+					//
+					// This runs under the boundary lock, which is what orders a
+					// signal against its own source's deliveries.
+					fault := signal.fault()
+					if fault == nil {
+						// The document entry writes markup a parser is
+						// consuming and has no framing for a record, so it
+						// drops signals rather than carrying them.
+						if keepOpen && !emitSignal(signal) {
+							return deliveryResult{}
+						}
+						// keep is true whichever entry this is: the rule that
+						// stops the document entry after one render counts
+						// deliveries, and a signal is not one.
+						return deliveryResult{keep: true}
+					}
+					// A signal that was never constructed, or built with a name
+					// the client could not have dispatched, is a fault in the
+					// source. It takes the ordinary failure path so it is loud
+					// where it happens rather than dropped on the way out, and
+					// it travels as a description rather than as the malformed
+					// value, which a caller's AsSignal would classify as a
+					// signal and skip.
+					deliveryErr = &signalFaultError{err: fault}
+				}
+			}
 			var buffer bytes.Buffer
 			// The subtree renders into its own buffer, so a subscription never
 			// touches the response writer. A boundary nested in this subtree
@@ -783,11 +825,6 @@ func (o liveOp[P, S, R]) Exec(r *Renderer, params P) error {
 			sub := r.subtree(&buffer, id, delivery.next(ctx))
 			var report error
 			if deliveryErr != nil {
-				if ctx.Err() != nil {
-					// Expected cancellation. The boundary's current content is
-					// its final content and nothing is left to read a delivery.
-					return deliveryResult{}
-				}
 				report = deliveryErr
 				if o.handler == nil {
 					// Same rule as an await clause with no recover subtree:
@@ -850,6 +887,19 @@ func (o liveOp[P, S, R]) execBlocking(r *Renderer, params P) error {
 				// failure of the source, so nothing is rendered here and the
 				// caller falls back below.
 				return deliveryResult{}
+			}
+			if signal, ok := AsSignal(deliveryErr); ok {
+				fault := signal.fault()
+				if fault == nil {
+					// This entry renders in place and returns one error. There
+					// is no client reading records and no second slot to put a
+					// signal in, so it is dropped and the boundary keeps
+					// waiting for a value it can actually show. Not marking it
+					// delivered is what leaves the fallback available when a
+					// source emits signals and never a value.
+					return deliveryResult{keep: true}
+				}
+				deliveryErr = &signalFaultError{err: fault}
 			}
 			delivered = true
 			if o.handler == nil {

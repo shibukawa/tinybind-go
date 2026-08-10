@@ -34,6 +34,8 @@ coalescing:
   mechanism: the pull sequence of decision:live-external-signature blocks the source in its own yield, so intermediates are never produced rather than produced and discarded
   not_configurable: there is no delivery queue to size, because backpressure is the sequence itself
   consequence: a source whose values are individually meaningful, such as one event that must be seen, is the wrong shape for a live boundary and belongs in a source that yields the accumulated state instead
+  where_it_belongs_instead: concept:signal-channel, proposed 2026-08-10; a value that is an instruction rather than a state belongs in the error slot beside the deliveries, where requirement:live-signal-emission not_coalesced exempts it from this rule rather than reshaping it into a snapshot
+  still_true: this rule is unchanged for anything a region displays; the exemption is for a value no region displays
 suppression:
   unchanged: a rendered delivery whose content validator matches the boundary's current one sends no HTML operation
   structural: a delivery that only appends sends insert operations, per requirement:component-delta-rendering

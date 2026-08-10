@@ -239,13 +239,17 @@ type asyncCoordinator struct {
 	sem chan struct{}
 }
 
-// boundaryResult is one settled boundary, or a failure that ends the sequence:
-// a subtree that would not render, or bindings that failed in a clause with no
-// recover subtree.
+// boundaryResult is one of three things: a settled boundary, a failure that
+// ends the sequence — a subtree that would not render, or bindings that failed
+// in a clause with no recover subtree — or a signal a live source emitted,
+// which reaches the caller in the sequence's error position and ends nothing.
 type boundaryResult struct {
 	content Content
 	present bool
 	err     error
+	// signal is set when this result is a forwarded signal. It is a pointer so
+	// the three states stay distinguishable without a second flag.
+	signal *Signal
 }
 
 func newAsyncCoordinator(ctx context.Context, opts *renderOptions) *asyncCoordinator {
@@ -330,7 +334,10 @@ func (c *asyncCoordinator) stop() { c.cancel() }
 // concurrency limit does not apply either: it bounds work that finishes, and a
 // subscription that holds a slot for the life of the screen would starve every
 // await boundary behind it.
-func (c *asyncCoordinator) startStream(run func(ctx context.Context, emit func(Content) bool) error) {
+// emitSignal is the second exit: a signal reaches the caller without being a
+// delivery and without ending anything, so it needs a path of its own rather
+// than a field on Content.
+func (c *asyncCoordinator) startStream(run func(ctx context.Context, emit func(Content) bool, emitSignal func(Signal) bool) error) {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -342,7 +349,15 @@ func (c *asyncCoordinator) startStream(run func(ctx context.Context, emit func(C
 				return false
 			}
 		}
-		if err := run(c.ctx, emit); err != nil {
+		emitSignal := func(signal Signal) bool {
+			select {
+			case c.results <- boundaryResult{signal: &signal}:
+				return true
+			case <-c.ctx.Done():
+				return false
+			}
+		}
+		if err := run(c.ctx, emit, emitSignal); err != nil {
 			select {
 			case c.results <- boundaryResult{err: err}:
 			case <-c.ctx.Done():

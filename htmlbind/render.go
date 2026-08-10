@@ -398,6 +398,15 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 				if !open {
 					return
 				}
+				if result.signal != nil {
+					// A signal shares the error position with a failure and is
+					// the one value there the sequence does not end on. The
+					// caller separates them with AsSignal.
+					if !yield(Content{}, *result.signal) {
+						return
+					}
+					continue
+				}
 				if result.err != nil {
 					yield(Content{}, result.err)
 					return

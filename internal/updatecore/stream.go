@@ -60,6 +60,12 @@ type record struct {
 	// sent in place of HTML to a client that walks sequences.
 	Seq    string   `json:"seq,omitempty"`
 	Values []string `json:"values,omitempty"`
+	// signal fields. Name is the key the client looks up in the table it
+	// registered while the page loaded, and Data is the payload the source
+	// encoded. A signal addresses no boundary, so it carries no id, no
+	// validator, and no revision: it is dispatched, not applied.
+	Name string          `json:"name,omitempty"`
+	Data json.RawMessage `json:"data,omitempty"`
 	// terminator and directive fields
 	Navigate string `json:"navigate,omitempty"`
 	Error    string `json:"error,omitempty"`
@@ -75,10 +81,11 @@ type record struct {
 }
 
 const (
-	recordHead  = "head"
-	recordOp    = "op"
-	recordAwait = "await"
-	recordEnd   = "end"
+	recordHead   = "head"
+	recordOp     = "op"
+	recordAwait  = "await"
+	recordSignal = "signal"
+	recordEnd    = "end"
 )
 
 // The terminator reasons. A stream ends from its source, from a server bound,
@@ -263,6 +270,18 @@ func (s *DeltaStream) Settled(boundaryID string, html []byte) {
 	s.writer.write(record{Record: recordAwait, ID: boundaryID, HTML: string(html)})
 }
 
+// Signal writes an instruction a live source emitted beside its deliveries.
+//
+// It replaces nothing on screen, so it names no instance and advances no
+// validator. The client looks the name up in the table it registered while the
+// page loaded and calls what it finds; nothing here is code, which is what lets
+// a page keep a script-src with no unsafe-eval and still be directed.
+//
+// payload is the JSON the source already encoded, written through as it is.
+func (s *DeltaStream) Signal(name string, payload []byte) {
+	s.writer.write(record{Record: recordSignal, Name: name, Data: json.RawMessage(payload)})
+}
+
 // Sent reports whether an instance already appeared, so a producer emitting
 // completions out of order does not restate one it already wrote.
 func (s *DeltaStream) Sent(instanceID string) bool {
@@ -379,6 +398,8 @@ func (o Options) RunStream(ctx context.Context, stream *DeltaStream, plan Stream
 			return stream.writer.err
 		}
 		switch {
+		case item.Signal != nil:
+			stream.Signal(item.Signal.Name(), item.Signal.Payload())
 		case item.Completion != nil:
 			stream.Settled(item.Completion.BoundaryID, item.Completion.HTML)
 		case item.Operation == nil:

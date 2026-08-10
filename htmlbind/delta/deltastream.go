@@ -35,6 +35,10 @@ type DeltaRecord struct {
 	// Completion is an await boundary that settled, addressed by the
 	// placeholder written during the initial pass rather than by an instance id.
 	Completion *htmlbind.Content
+	// Signal is an instruction a live source emitted beside its deliveries. It
+	// addresses no boundary and replaces nothing, so it carries no validator
+	// and no operation; the client dispatches it by name.
+	Signal *htmlbind.Signal
 }
 
 // RenderDeltaStream renders the chain and yields the boundaries that changed,
@@ -90,6 +94,16 @@ func RenderDeltaStream(ctx context.Context, key []byte, known Manifest, wrappers
 		}
 		for content, err := range htmlbind.CollectChainAsync(ctx, io.Discard, collect, rendered, wrappers, leaf, options...) {
 			if err != nil {
+				// The error position carries two kinds. A signal is the one the
+				// sequence does not end on, so it is classified before the
+				// failure and passed through as its own record.
+				if signal, ok := htmlbind.AsSignal(err); ok {
+					emitted := signal
+					if !yield(DeltaRecord{Signal: &emitted}, nil) {
+						return
+					}
+					continue
+				}
 				yield(DeltaRecord{}, err)
 				return
 			}

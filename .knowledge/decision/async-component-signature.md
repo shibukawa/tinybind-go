@@ -47,6 +47,7 @@ execution:
   start: rendering begins on the first pull; the initial pass writes fallback markup and placeholders to w and flushes
   yield: one data:async-boundary-content per settled boundary in completion order
   error: yield zero Content with the error; the sequence ends
+  signal_exception: proposed decision:signal-in-the-error-slot yields zero Content with an error the sequence does not end on, so the error slot carries two kinds and the ranging caller classifies; this is the one place that decision breaks a shipped contract, and its migration section carries the cost
   stop: early consumer stop cancels remaining request-owned work through ctx
   end: sequence ends when all request-owned boundaries settle or ctx cancels
   live_exception: proposed concept:live-boundary-updates keeps this signature and lets the sequence never end, which is why decision:live-transport-boundary moves an endless sequence off the document response and onto its own request
