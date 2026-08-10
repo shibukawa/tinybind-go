@@ -836,6 +836,10 @@ decoder、どこからも名指されない型からは何も出ません。ネ�
 宣言は結果型の使用としてカウントされるので、Firestore の使用が宣言だけのパッケージでも、
 生成されたクエリが必要とする decoder は出ます。
 
+client の渡し方はどちらでもカウントされます。`StoreOn` は `Store` と同じように発見される
+ので、呼び出しごとに `Handle` を渡すパッケージでも Context 版と同じものが生成されますし、
+宣言済みクエリは Context・entity 操作は `Handle` という混在も、設定なしで見つかります。
+
 例外が 3 つあり、呼び出しの発見ではなく tag から生成されます。`Kind`、`EntityKey`、
 `EntityVersion` です。entity を読む文書化された方法は `Load(ctx, v.EntityKey())` であり、
 ランタイムは version を interface assertion で訊きます。どちらも generator が発見できる

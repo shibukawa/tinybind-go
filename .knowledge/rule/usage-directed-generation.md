@@ -19,6 +19,7 @@ mapping:
   StoreReturning: EncodeItem plus DecodeItem
   RemoveReturning: ItemKey plus DecodeItem
   item_key_exception: a type with a partitionkey tag gets ItemKey and its table definition without a discovered call, per requirement:dynamobind-generated-item-codec
+  both_client_forms: every store name above stands for its Context entry and for the Handle-taking On twin alike, per requirement:parameter-api-call-discovery; the type is still discovered from a call, and only the argument holding it moves
 closure: nested model helpers inherit only operations required by the parent
 registration: only directly used root models register public dispatch entries
 imports: derive from emitted paths; JSON-only output must not import net/http

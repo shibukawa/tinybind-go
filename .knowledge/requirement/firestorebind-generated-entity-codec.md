@@ -54,6 +54,7 @@ usage_direction:
   Store, StoreAll or a queued transaction write: EncodeEntity plus nested encoders
   Load, LoadAll, a declared query or a transaction read: DecodeEntity plus nested decoders
   key_builder: emitted from the tag, not from a discovered call, per decision:firestore-key-identity
+  both_client_forms: each name here covers the Handle-taking On twin too, per requirement:parameter-api-call-discovery
   registration: none, matching decision:dynamobind-static-dispatch; no init entry is emitted
 nested_types:
   encoding: a struct field becomes a nested entityValue, generated recursively

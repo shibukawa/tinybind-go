@@ -66,6 +66,7 @@ partial_update:
 context_client:
   where: no entry takes a client; every one resolves through TableFromContext, per decision:dynamo-context-client-api
   parameter_twin: each entry here gains an "On" form taking a Handle, per requirement:dynamo-parameter-api; the entries named above are the Context form and stay the default
+  twin_is_discovered: calling either form emits the same codec, per requirement:parameter-api-call-discovery
   table_argument: an item operation still names its table, having no declaration to read one from, and the name resolver applies to it
   failure: a Context with no client reaches the service with nothing, in every entry
 string_key_condition:

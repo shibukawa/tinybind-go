@@ -113,6 +113,113 @@ func TestDynamoUsageFollowsCallSites(t *testing.T) {
 	}
 }
 
+// dynamoHandleSource is dynamoSource with a Handle in scope, for the On entries.
+func dynamoHandleSource(body, calls string) string {
+	return dynamoSource(body, "\tvar h dynamobind.Handle\n"+calls)
+}
+
+// TestDynamoUsageFollowsHandleCallSites pins the parameter form of
+// requirement:dynamo-parameter-api against the same table the Context form is
+// pinned by. A package calling only the On entries used to read as unused: no
+// pattern named them, so the codec those very call sites require was never
+// emitted and the package could not compile.
+func TestDynamoUsageFollowsHandleCallSites(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "loadon emits the decoder, not the encoder",
+			call:    `	_, _ = dynamobind.LoadOn[Reading](ctx, h, "t", dynamodb.Key{})`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "loadallon discovers the element",
+			call:    `	_, _, _ = dynamobind.LoadAllOn[Reading](ctx, h, "t", nil)`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "queryon emits the decoder",
+			call:    `	_ = dynamobind.QueryOn[Reading](ctx, h, "t", "sensor = :s")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "querypageon emits the decoder",
+			call:    `	_, _ = dynamobind.QueryPageOn[Reading](ctx, h, "t", "sensor = :s")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "scanon emits the decoder",
+			call:    `	_ = dynamobind.ScanOn[Reading](ctx, h, "t")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "scanpageon emits the decoder",
+			call:    `	_, _ = dynamobind.ScanPageOn[Reading](ctx, h, "t")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "storeon emits the encoder, not the decoder",
+			call:    `	_ = dynamobind.StoreOn(ctx, h, "t", Reading{})`,
+			want:    []string{"func (v Reading) EncodeItem("},
+			notWant: []string{"DecodeItem"},
+		},
+		{
+			name:    "storeallon discovers the slice element",
+			call:    `	_, _ = dynamobind.StoreAllOn(ctx, h, "t", []Reading{})`,
+			want:    []string{"func (v Reading) EncodeItem("},
+			notWant: []string{"DecodeItem"},
+		},
+		{
+			name: "store returning on emits both codecs",
+			call: `	_, _, _ = dynamobind.StoreReturningOn(ctx, h, "t", Reading{})`,
+			want: []string{"func (v Reading) EncodeItem(", "func (v *Reading) DecodeItem("},
+		},
+		{
+			name:    "removeon emits the key and its table",
+			call:    `	_ = dynamobind.RemoveOn(ctx, h, "t", Reading{})`,
+			want:    []string{"func (v Reading) ItemKey(", "func ReadingTable("},
+			notWant: []string{"EncodeItem", "DecodeItem"},
+		},
+		{
+			name:    "updateon emits the key, and its value sits past the expression",
+			call:    `	_ = dynamobind.UpdateOn(ctx, h, "t", Reading{}, "SET at = :a")`,
+			want:    []string{"func (v Reading) ItemKey("},
+			notWant: []string{"EncodeItem", "DecodeItem"},
+		},
+		{
+			name:    "remove returning on emits the key and the decoder",
+			call:    `	_, _, _ = dynamobind.RemoveReturningOn(ctx, h, "t", Reading{})`,
+			want:    []string{"func (v Reading) ItemKey(", "func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+	}
+	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n\tAt int64 `dynamo:\"at\"`\n}"
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code := generateDynamo(t, dynamoHandleSource(body, test.call))
+			for _, want := range test.want {
+				if !strings.Contains(code, want) {
+					t.Errorf("missing %q in:\n%s", want, code)
+				}
+			}
+			for _, notWant := range test.notWant {
+				if strings.Contains(code, notWant) {
+					t.Errorf("unexpected %q in:\n%s", notWant, code)
+				}
+			}
+		})
+	}
+}
+
 // TestDynamoUsageReachesNestedTypes proves the closure: a nested struct gains
 // the operations its parent needs, and never a table key of its own.
 func TestDynamoUsageReachesNestedTypes(t *testing.T) {

@@ -82,6 +82,7 @@ transactions: decision:firestore-transaction-scope
 context_client:
   where: no entry takes a client; every one resolves through ClientFromContext, per decision:firestore-context-client-api
   parameter_twin: each entry here gains an "On" form taking a Handle, per requirement:firestore-parameter-api; the entries named above are the Context form and stay the default
+  twin_is_discovered: calling either form emits the same codec, per requirement:parameter-api-call-discovery
   namespace: applied by the runtime entry, so a generated key carries none
 errors:
   passthrough: errors.Is against every driver sentinel and errors.As to *datastore.Error keep working through every helper

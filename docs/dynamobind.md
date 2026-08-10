@@ -536,6 +536,11 @@ struct inherits its parent's operations. A `.tb.dynamo` declaration counts as a
 use of its result type, so a package whose only DynamoDB use is a declaration
 still gets the decoder its generated query needs.
 
+Either client form counts. `StoreOn` is discovered exactly as `Store` is, so a
+package that passes its `Handle` at every call site generates what the Context
+form generates, and a package mixing the two — declared queries on the Context,
+item operations on a `Handle` — needs no setting to be seen.
+
 The key builder is the exception: a type that declares a `partitionkey` gets
 `ItemKey` and its table definition whether or not a call needs them. The
 documented way to read an item is `Load(ctx, table, v.ItemKey())`, and using a

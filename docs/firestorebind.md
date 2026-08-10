@@ -876,6 +876,11 @@ carries none. A `.tb.firestore` declaration counts as a use of its result type,
 so a package whose only Firestore use is a declaration still gets the decoder its
 generated query needs.
 
+Either client form counts. `StoreOn` is discovered exactly as `Store` is, so a
+package that passes its `Handle` at every call site generates what the Context
+form generates, and a package mixing the two — declared queries on the Context,
+entity operations on a `Handle` — needs no setting to be seen.
+
 Three methods are the exception, emitted from the tag rather than from a
 discovered call: `Kind`, `EntityKey` and `EntityVersion`. The documented way to
 read an entity is `Load(ctx, v.EntityKey())`, and the runtime asks for a version

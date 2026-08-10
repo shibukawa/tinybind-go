@@ -35,6 +35,7 @@ runtime_entries:
   iterated: QueryOn and ScanOn, whose resolver error is yielded once with the zero value as a failed page already is
   batch: StoreAllOn and LoadAllOn
   direction: these hold the implementation and the Context entries delegate to them, per implementation_direction of decision:nosql-client-supply-modes
+  discovery: registered as CallPatterns beside the Context entries, per requirement:parameter-api-call-discovery; this requirement shipped the entries and left them undiscoverable, which is what that one repairs
 generation_option:
   name: DynamoParameterAPI
   type: bool
@@ -74,4 +75,5 @@ related:
   - requirement:dynamobind-verification
   - requirement:framework-context-bundle
   - requirement:firestore-parameter-api
+  - requirement:parameter-api-call-discovery
 ```

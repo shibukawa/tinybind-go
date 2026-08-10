@@ -513,6 +513,10 @@ go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir .
 ます。`.tb.dynamo` の宣言も結果型の使用として数えるので、DynamoDB の利用が宣言だけの
 package でも、生成されたクエリが必要とする decoder は出ます。
 
+client の渡し方はどちらでも数えます。`StoreOn` は `Store` と同じように発見されるので、
+呼び出しごとに `Handle` を渡す package でも Context 版と同じものが生成されますし、宣言済み
+クエリは Context・item 操作は `Handle` という混在も、設定なしでそのまま見つかります。
+
 key builder だけが例外で、`partitionkey` を宣言した型には、それを必要とする呼び出しが
 無くても `ItemKey` と table 定義が生成されます。item を読む標準的な書き方は
 `Load(ctx, table, v.ItemKey())` であり、method の使用は generator が発見できる呼び出し

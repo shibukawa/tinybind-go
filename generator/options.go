@@ -505,6 +505,22 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 2)),
 		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 2)),
 		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 2)),
+		// The Handle-taking twins of requirement:dynamo-parameter-api. The read
+		// side still names its type in the same type parameter, and the write
+		// side reads its value one place later, the Handle sitting between the
+		// Context and the table.
+		ItemDecodeCall(Function(path, "LoadOn"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "LoadAllOn"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "QueryOn"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "QueryPageOn"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "ScanOn"), GenericType("item", 0)),
+		ItemDecodeCall(Function(path, "ScanPageOn"), GenericType("item", 0)),
+		ItemEncodeCall(Function(path, "StoreOn"), ArgumentType("item", 3)),
+		ItemEncodeCall(Function(path, "StoreAllOn"), ArgumentType("item", 3)),
+		ItemEncodeDecodeCall(Function(path, "StoreReturningOn"), ArgumentType("item", 3)),
+		ItemKeyCall(Function(path, "RemoveOn"), ArgumentType("item", 3)),
+		ItemKeyCall(Function(path, "UpdateOn"), ArgumentType("item", 3)),
+		ItemKeyDecodeCall(Function(path, "RemoveReturningOn"), ArgumentType("item", 3)),
 	}
 	statuses := map[string]int{
 		"BadRequest": 400, "Validation": 400, "Unauthorized": 401, "Forbidden": 403,
@@ -524,6 +540,10 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 // so the AST carries it even before any codec exists. The write side takes it
 // from the value argument at index 1: the signature is (ctx, v, opts...), with
 // no table and no client, so it is one earlier than the DynamoDB equivalent.
+//
+// The Handle-taking twins of requirement:firestore-parameter-api follow the
+// same rule one place later, and the *Tx entries have no twin because the
+// receiver already carries the handle.
 func canonicalFirestoreCalls(path string) []CallPattern {
 	return []CallPattern{
 		EntityDecodeCall(Function(path, "Load"), GenericType("entity", 0)),
@@ -540,6 +560,17 @@ func canonicalFirestoreCalls(path string) []CallPattern {
 		EntityEncodeCall(Function(path, "InsertAll"), ArgumentType("entity", 1)),
 		EntityKeyCall(Function(path, "Remove"), ArgumentType("entity", 1)),
 		EntityKeyCall(Function(path, "RemoveAll"), ArgumentType("entity", 1)),
+		EntityDecodeCall(Function(path, "LoadOn"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "LoadAllOn"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "QueryOn"), GenericType("entity", 0)),
+		EntityDecodeCall(Function(path, "QueryPageOn"), GenericType("entity", 0)),
+		EntityEncodeCall(Function(path, "StoreOn"), ArgumentType("entity", 2)),
+		EntityEncodeCall(Function(path, "InsertOn"), ArgumentType("entity", 2)),
+		EntityEncodeCall(Function(path, "UpdateOn"), ArgumentType("entity", 2)),
+		EntityEncodeCall(Function(path, "StoreAllOn"), ArgumentType("entity", 2)),
+		EntityEncodeCall(Function(path, "InsertAllOn"), ArgumentType("entity", 2)),
+		EntityKeyCall(Function(path, "RemoveOn"), ArgumentType("entity", 2)),
+		EntityKeyCall(Function(path, "RemoveAllOn"), ArgumentType("entity", 2)),
 		// The transaction writes are methods, and their value is the first
 		// argument because the receiver carries the handle.
 		EntityEncodeCall(Method(path, "Store", path, "Tx"), ArgumentType("entity", 0)),

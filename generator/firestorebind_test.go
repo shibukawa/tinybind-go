@@ -114,6 +114,102 @@ func TestFirestoreUsageDirection(t *testing.T) {
 	}
 }
 
+// TestFirestoreUsageFollowsHandleCallSites pins the parameter form of
+// requirement:firestore-parameter-api. The gap it closes was the same one
+// TestDynamoUsageFollowsHandleCallSites closes, and it hid longer here because
+// the downstream scaffold carried a declaration and no Go call at all.
+func TestFirestoreUsageFollowsHandleCallSites(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "loadon emits the decoder, not the encoder",
+			call:    "\t_, _ = firestorebind.LoadOn[Reading](ctx, h, datastore.NameKey(\"Reading\", \"r\"))\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "loadallon discovers the element",
+			call:    "\t_, _, _, _ = firestorebind.LoadAllOn[Reading](ctx, h, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "queryon emits the decoder",
+			call:    "\t_ = firestorebind.QueryOn[Reading](ctx, h, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "querypageon emits the decoder",
+			call:    "\t_, _ = firestorebind.QueryPageOn[Reading](ctx, h, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "storeon emits the encoder, not the decoder",
+			call:    "\t_, _ = firestorebind.StoreOn(ctx, h, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "inserton emits the encoder",
+			call:    "\t_, _ = firestorebind.InsertOn(ctx, h, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "updateon emits the encoder",
+			call:    "\t_ = firestorebind.UpdateOn(ctx, h, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "storeallon discovers the slice element",
+			call:    "\t_, _ = firestorebind.StoreAllOn(ctx, h, []Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "insertallon discovers the slice element",
+			call:    "\t_, _ = firestorebind.InsertAllOn(ctx, h, []Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "removeon emits the key, and neither codec",
+			call:    "\t_ = firestorebind.RemoveOn(ctx, h, Reading{})\n",
+			want:    []string{"func (v Reading) EntityKey("},
+			notWant: []string{"EncodeEntity", "DecodeEntity"},
+		},
+		{
+			name:    "removeallon emits the key",
+			call:    "\t_ = firestorebind.RemoveAllOn(ctx, h, []Reading{})\n",
+			want:    []string{"func (v Reading) EntityKey("},
+			notWant: []string{"EncodeEntity", "DecodeEntity"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			code := generateFirestore(t, firestoreSource(nameKeyedReading,
+				"\tvar h firestorebind.Handle\n"+test.call))
+			for _, want := range test.want {
+				if !strings.Contains(code, want) {
+					t.Errorf("missing %q in:\n%s", want, code)
+				}
+			}
+			for _, notWant := range test.notWant {
+				if strings.Contains(code, notWant) {
+					t.Errorf("unexpected %q in:\n%s", notWant, code)
+				}
+			}
+		})
+	}
+}
+
 // The identity field is carried by the key, so it must not also be written as a
 // property; that is the difference from the DynamoDB partition key.
 func TestFirestoreIdentityIsNotAProperty(t *testing.T) {

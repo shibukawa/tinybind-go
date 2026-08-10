@@ -38,6 +38,7 @@ runtime_entries:
   item: "LoadOn[T, PT](ctx, h Handle, key datastore.Key) (T, error)", and the same shift for the rest
   keys: KeyForOn and KeysForOn, which return the key unchanged for a zero Handle exactly as the Context forms do for a Context carrying no client
   direction: these hold the implementation and the Context entries delegate to them
+  discovery: registered as CallPatterns beside the Context entries, per requirement:parameter-api-call-discovery; the key entries need none, since they carry no entity
 generation_option:
   name: FirestoreParameterAPI
   type: bool
@@ -65,4 +66,5 @@ related:
   - requirement:dynamo-parameter-api
   - decision:firestore-key-identity
   - decision:firestore-transaction-scope
+  - requirement:parameter-api-call-discovery
 ```
