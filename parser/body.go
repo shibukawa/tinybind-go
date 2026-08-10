@@ -13,6 +13,8 @@ type bodyInfo struct {
 	Request         string
 	Response        string
 	Stream          string
+	SocketIn        string
+	SocketOut       string
 	Errors          []string
 	SuccessStatuses []int
 	Diagnostics     []Diagnostic
@@ -35,7 +37,10 @@ func (p *packageParser) analyzeBody(body *ast.BlockStmt) bodyInfo {
 			return true
 		}
 
-		if pattern, configured := configuredCall(obj, p.config.Calls); configured {
+		// One call can carry more than one meaning: a socket entry names an
+		// inbound type and an outbound one, each configured as its own
+		// pattern against the same target.
+		for _, pattern := range configuredCalls(obj, p.config.Calls) {
 			typeArgs := genericTypeArgExprs(call)
 			typeArgStrs := make([]string, 0, len(typeArgs))
 			for _, a := range typeArgs {
@@ -128,12 +133,27 @@ func (p *packageParser) analyzeBody(body *ast.BlockStmt) bodyInfo {
 						statusSet[200] = struct{}{}
 					}
 				}
+			case CallSocketReceive:
+				if len(typeArgs) > typeIndex {
+					if reason := typeArgIssue(typeArgs[typeIndex]); reason != "" {
+						info.Diagnostics = append(info.Diagnostics, p.diagAt(call, reason, "WebSocket inbound type argument is not a same-package plain named type"))
+					} else if info.SocketIn == "" {
+						info.SocketIn = typeArgStrs[typeIndex]
+					}
+				}
+			case CallSocketSend:
+				if len(typeArgs) > typeIndex {
+					if reason := typeArgIssue(typeArgs[typeIndex]); reason != "" {
+						info.Diagnostics = append(info.Diagnostics, p.diagAt(call, reason, "WebSocket outbound type argument is not a same-package plain named type"))
+					} else if info.SocketOut == "" {
+						info.SocketOut = typeArgStrs[typeIndex]
+					}
+				}
 			case CallErrorResponse:
 				if pattern.ErrorName != "" {
 					errorSet[pattern.ErrorName] = struct{}{}
 				}
 			}
-			return true
 		}
 		return true
 	})

@@ -14,6 +14,8 @@ const (
 	OperationResponseWrite       CallOperation = "response_write"
 	OperationResponseWriteStatus CallOperation = "response_write_status"
 	OperationStreamCreate        CallOperation = "stream_create"
+	OperationSocketReceive       CallOperation = "socket_receive"
+	OperationSocketSend          CallOperation = "socket_send"
 	OperationJSONDecode          CallOperation = "json_decode"
 	OperationJSONEncode          CallOperation = "json_encode"
 	OperationRowsScan            CallOperation = "rows_scan"
@@ -200,6 +202,18 @@ func StreamCreateCall(target CallTarget, options ...CallPatternOption) CallPatte
 	return Call(OperationStreamCreate, target, options...)
 }
 
+// SocketReceiveCall declares the inbound half of a WebSocket entry. It is
+// paired with SocketSendCall against the same target: the two type arguments
+// run in opposite directions, so one pattern cannot stand for both.
+func SocketReceiveCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationSocketReceive, target, options...)
+}
+
+// SocketSendCall declares the outbound half of a WebSocket entry.
+func SocketSendCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationSocketSend, target, options...)
+}
+
 // JSONDecodeCall declares a standalone JSON decoder wrapper.
 func JSONDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationJSONDecode, target, options...)
@@ -310,6 +324,9 @@ func (registry *CallRegistry) Register(patterns ...CallPattern) error {
 				key = ""
 				break
 			}
+			if composeOnOneTarget(existing, pattern) {
+				continue
+			}
 			return fmt.Errorf("generator: conflicting call patterns for %s", key)
 		}
 		if key != "" {
@@ -317,6 +334,25 @@ func (registry *CallRegistry) Register(patterns ...CallPattern) error {
 		}
 	}
 	return nil
+}
+
+// composeOnOneTarget reports whether two patterns for one target are
+// complementary rather than conflicting.
+//
+// Two patterns on one target are normally a framework claiming a meaning the
+// runtime already claimed, and refusing that is what the guard above is for.
+// The socket entry is the exception, and the only one: its type arguments run
+// in opposite directions, a pattern carries a single type, and so one direction
+// per pattern is the only way to say it. The pair is admitted by naming both
+// operations rather than by relaxing the guard to any two operations, which
+// would let the framework case back in.
+func composeOnOneTarget(a, b CallPattern) bool {
+	return a.Operation != b.Operation &&
+		socketDirection(a.Operation) && socketDirection(b.Operation)
+}
+
+func socketDirection(operation CallOperation) bool {
+	return operation == OperationSocketReceive || operation == OperationSocketSend
 }
 
 // Options returns an immutable options snapshot containing defaults and wrappers.
@@ -448,7 +484,8 @@ func isScalarCallConstant(value any) bool {
 func supportedCallOperation(operation CallOperation) bool {
 	switch operation {
 	case OperationRequestBind, OperationResponseWrite, OperationResponseWriteStatus,
-		OperationStreamCreate, OperationJSONDecode, OperationJSONEncode,
+		OperationStreamCreate, OperationSocketReceive, OperationSocketSend,
+		OperationJSONDecode, OperationJSONEncode,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
@@ -470,6 +507,10 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"response"}, []string{"status"}
 	case OperationStreamCreate:
 		return []string{"stream"}, nil
+	case OperationSocketReceive:
+		return []string{"socket-in"}, nil
+	case OperationSocketSend:
+		return []string{"socket-out"}, nil
 	case OperationJSONDecode:
 		return []string{"decode"}, nil
 	case OperationJSONEncode:

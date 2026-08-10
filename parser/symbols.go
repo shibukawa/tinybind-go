@@ -33,6 +33,12 @@ const (
 	CallStreamCreate        CallOperation = "stream_create"
 	CallRouteRegister       CallOperation = "route_register"
 	CallErrorResponse       CallOperation = "error_response"
+	// A socket carries two type arguments in opposite directions, so it takes
+	// two operations against one target rather than one carrying both: a
+	// pattern holds a single TypeArgument, and the inbound type is decoded
+	// where the outbound one is encoded.
+	CallSocketReceive CallOperation = "socket_receive"
+	CallSocketSend    CallOperation = "socket_send"
 )
 
 // CallPattern maps a resolved function or method to handler-body semantics.
@@ -91,6 +97,17 @@ func DefaultConfig() Config {
 			pattern.StatusArgument = &index
 		}
 		config.Calls = append(config.Calls, pattern)
+	}
+	// The socket entry needs two patterns against one target: the type
+	// arguments run in opposite directions, so neither operation can stand for
+	// both. Like the stream entry, neither is usually spelled at the call
+	// site, so both are recovered from the recorded instantiation.
+	for _, name := range []string{"WebSocket", "WebSocketWith"} {
+		target := RouteSymbol{PackagePath: httpbindPath, Name: name}
+		config.Calls = append(config.Calls,
+			CallPattern{Target: target, Operation: CallSocketReceive, TypeArgument: 0},
+			CallPattern{Target: target, Operation: CallSocketSend, TypeArgument: 1},
+		)
 	}
 	for _, name := range []string{
 		"BadRequest", "Unauthorized", "Forbidden", "NotFound",
@@ -205,13 +222,22 @@ func isRouteRegistration(obj types.Object, symbols []RouteSymbol) bool {
 	return false
 }
 
-func configuredCall(obj types.Object, patterns []CallPattern) (CallPattern, bool) {
+// configuredCalls returns every pattern whose target is obj, in configuration
+// order.
+//
+// It yields all of them rather than the first, because one call can carry more
+// than one meaning: a socket entry names an inbound type and an outbound one,
+// and each direction is a pattern of its own. Stopping at the first match made
+// the second direction silently undiscovered — no error, no diagnostic, just a
+// missing codec at runtime.
+func configuredCalls(obj types.Object, patterns []CallPattern) []CallPattern {
+	var matched []CallPattern
 	for _, pattern := range patterns {
 		if isRouteRegistration(obj, []RouteSymbol{pattern.Target}) {
-			return pattern, true
+			matched = append(matched, pattern)
 		}
 	}
-	return CallPattern{}, false
+	return matched
 }
 
 // orderedSyntaxFiles returns package syntax files sorted by filename, excluding

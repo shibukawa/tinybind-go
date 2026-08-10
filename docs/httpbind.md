@@ -401,7 +401,82 @@ curl -N -H 'Accept: application/x-ndjson' http://localhost:8080/chat
 curl -H 'Accept: application/json' http://localhost:8080/chat
 ```
 
-Always use `defer stream.Close()`. For the JSON array format, `Close` is what writes the closing `]`.
+`WriteStream` closes the stream when your callback returns, whatever it returns. For the JSON array format, that close is what writes the trailing `]`, so a callback that fails halfway still leaves a terminated document.
+
+## WebSockets
+
+A socket is typed in both directions: `In` is what the client sends, `Out` is what you send back. Variants within a direction go in a discriminator field, the same way stream events do.
+
+```go
+type ClientMsg struct {
+	Type string `json:"type"` // "start" | "message" | "end"
+	Text string `json:"text"`
+}
+
+type ServerMsg struct {
+	Type string `json:"type"` // "ready" | "message" | "error"
+	Text string `json:"text"`
+}
+
+func chat(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r) // captured before the callback runs
+
+	_ = httpbind.WebSocket(w, r, func(s *httpbind.Socket[ClientMsg, ServerMsg]) error {
+		for {
+			in, err := s.Read()
+			if err != nil {
+				return err
+			}
+			switch in.Type {
+			case "end":
+				return nil
+			default:
+				if err := s.Write(ServerMsg{Type: "message", Text: user + ": " + in.Text}); err != nil {
+					return err
+				}
+			}
+		}
+	})
+}
+```
+
+Both type arguments are discovered from the call, so `ClientMsg` gets a generated decoder and `ServerMsg` a generated encoder — neither gets the one it does not need.
+
+**The return value is the handshake error and nothing else.** A non-nil value means the request was refused and the response — RFC 9457 Problem Details, like every other refusal here — has already been written; log it or count it, do not answer it. An error your callback returns comes after the 101 has gone out, so it reaches the handler installed with `SetStreamErrorHandler` instead.
+
+**Do not read the request inside the callback.** On the fasthttp backend the callback runs after the handler has returned. Capture what you need first, as `user` does above, and the same source compiles on both.
+
+**One reader, any number of writers.** `Read` must be called from a single goroutine. `Write` takes a lock the library's own control frames share, so a broadcast or push goroutine can call it safely — the concurrent-write ban you would hit writing against gorilla directly does not apply.
+
+The runtime owns the connection's lifecycle, and every knob has a working default:
+
+| Option | Default | What it does |
+|---|---|---|
+| `ReadLimit` | 1 MiB | Largest inbound message |
+| `IdleTimeout` | 60s | Bound placed on every read |
+| `PingInterval` | 54s | Keepalive cadence; must be shorter than `IdleTimeout` |
+| `WriteTimeout` | 10s | Bound placed on every write |
+| `Subprotocols` | none | Offered in preference order; read the result with `s.Subprotocol()` |
+| `EnableCompression` | off | permessage-deflate, which costs binary size under TinyGo |
+| `CheckOrigin` | same-host | `func(origin, host string) bool` |
+
+Change them per process with `httpbind.SetSocketDefaults`, or per endpoint with `httpbind.WebSocketWith`.
+
+The idle timeout has no "off": under TinyGo a read with no deadline cannot be interrupted by anything, so a socket left that way is a goroutine and a connection nobody can reclaim. A cross-origin handshake is refused by default — a socket that accepts any origin is CSRF with a connection attached.
+
+### Serving it under TinyGo
+
+TinyGo's own `net/http` server cannot complete an upgrade: it starts a background read before your handler and cancels it by moving the read deadline into the past, which netdev cannot do to a `recv()` already in flight. `Hijack` then blocks forever. Serve through the driver instead:
+
+```go
+ln, err := net.Listen("tcp", ":8080")
+if err != nil {
+	return err
+}
+return httpserver.Serve(ln, &http.Server{Handler: mux})
+```
+
+That is `github.com/shibukawa/tinygodriver/httpserver`, and under host Go it calls `srv.Serve(ln)` and nothing else, so the one line is correct on both compilers. If you forget it, the entry refuses the handshake with a 500 rather than hanging silently — but the fix is the line above, not the error. The fasthttp backend needs none of this.
 
 ## OpenAPI and Swagger UI
 

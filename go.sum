@@ -10,6 +10,8 @@ github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0 h1:Xuk8ma/ibJ1
 github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0/go.mod h1:7AwjWCpdPhkSmNAgUv5C7EJ4AbmjEB3r047r3DXWu3Y=
 github.com/shibukawa/tinygodriver v1.2.1 h1:og2w20bt7G7v6dTxanvvqd53TJW6WXlxY5W5u+8zLQM=
 github.com/shibukawa/tinygodriver v1.2.1/go.mod h1:XpgSe1bWT+fCA5xEEsDuTTeqkkMG5tKKPB2PgPfzXM0=
+github.com/shibukawa/tinygodriver v1.2.3 h1:ZtZjn4B3+iBh+KdIwNNKJcTPeXHV63U50zZwsWEMf14=
+github.com/shibukawa/tinygodriver v1.2.3/go.mod h1:DLwOzLMnjY7+kmpALZ+lnwv7s8sWNXT1HanLp2WIUkk=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
 github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyCJ6HpOuEn7z0Csc=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=

@@ -168,10 +168,20 @@ func (p *packageParser) tryRouteCall(call *ast.CallExpr) (Route, bool) {
 	obj := objectOf(p.info, call.Fun)
 	patternArg, handlerArg := 0, 1
 	var fixedPattern *string
-	if pattern, ok := configuredCall(obj, p.config.Calls); ok && pattern.Operation == CallRouteRegister {
+	registration := false
+	// Any matching pattern that registers a route makes this a registration.
+	// Asking only the first would miss one configured behind another meaning
+	// for the same target.
+	for _, pattern := range configuredCalls(obj, p.config.Calls) {
+		if pattern.Operation != CallRouteRegister {
+			continue
+		}
 		patternArg, handlerArg = pattern.PatternArgument, pattern.HandlerArgument
 		fixedPattern = pattern.PatternConstant
-	} else {
+		registration = true
+		break
+	}
+	if !registration {
 		return Route{}, false
 	}
 	if handlerArg < 0 || len(call.Args) <= handlerArg || fixedPattern == nil && (patternArg < 0 || len(call.Args) <= patternArg) {
@@ -219,6 +229,8 @@ func (p *packageParser) tryRouteCall(call *ast.CallExpr) (Route, bool) {
 		route.Request = info.Request
 		route.Response = info.Response
 		route.Stream = info.Stream
+		route.SocketIn = info.SocketIn
+		route.SocketOut = info.SocketOut
 		route.Errors = info.Errors
 		route.SuccessStatuses = info.SuccessStatuses
 		// Promote body-level model diagnostics onto the registration site.

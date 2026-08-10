@@ -44,6 +44,7 @@ const (
 	FeatureDecodeJSON     Feature = "decode-json"
 	FeatureEncodeJSON     Feature = "encode-json"
 	FeatureStreaming      Feature = "streaming"
+	FeatureWebSocket      Feature = "websocket"
 	FeatureScanRows       Feature = "scan-rows"
 	FeatureMultipartFile  Feature = "multipart-file"
 	// FeatureItemCodec turns off DynamoDB item codec generation entirely.
@@ -433,7 +434,7 @@ func withHTTPTransportSlots(path string, patterns []CallPattern) []CallPattern {
 		case "Bind":
 			// func Bind[T](r *http.Request) (T, error)
 			RequestArgument(0)(&patterns[i])
-		case "Write", "WriteStatus", "WriteStream":
+		case "Write", "WriteStatus", "WriteStream", "WebSocket", "WebSocketWith":
 			// (w, r) leads, and whatever follows keeps its place.
 			WriterArgument(0)(&patterns[i])
 			RequestArgument(1)(&patterns[i])
@@ -477,6 +478,12 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		ResponseWriteCall(Function(path, "Write"), GenericType("response", 0)),
 		ResponseWriteStatusCall(Function(path, "WriteStatus"), GenericType("response", 0), Argument("status", 2)),
 		StreamCreateCall(Function(path, "WriteStream"), GenericType("stream", 0)),
+		// Two patterns against one target: index 0 is decoded, index 1 is
+		// encoded, and no single operation can carry both directions.
+		SocketReceiveCall(Function(path, "WebSocket"), GenericType("socket-in", 0)),
+		SocketSendCall(Function(path, "WebSocket"), GenericType("socket-out", 1)),
+		SocketReceiveCall(Function(path, "WebSocketWith"), GenericType("socket-in", 0)),
+		SocketSendCall(Function(path, "WebSocketWith"), GenericType("socket-out", 1)),
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
 		RowsScanCall(Function(path, "ScanRows"), GenericType("row", 0)),
@@ -556,6 +563,12 @@ func usageForCallOperation(operation CallOperation) Usage {
 		// Stream.Write encodes events through the jsonbind codec registry,
 		// so stream event types need their encoder registered too.
 		return UsageWrite | UsageEncodeJSON
+	case OperationSocketReceive:
+		// Socket.Read decodes the inbound type and nothing encodes it.
+		return UsageDecodeJSON
+	case OperationSocketSend:
+		// Socket.Write encodes the outbound type and nothing decodes it.
+		return UsageEncodeJSON
 	case OperationJSONEncode:
 		return UsageEncodeJSON
 	case OperationJSONDecode:
@@ -593,6 +606,16 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureWriteStatus]
 	case OperationStreamCreate:
 		return disabled[FeatureStreaming]
+	case OperationSocketReceive:
+		// A socket's inbound half is a JSON decode, so turning off decoder
+		// emission turns it off here too. Gating on the socket feature alone
+		// would leave "disable decode-json" false for any package the socket
+		// patterns reach — which, since enabled usage is computed from the
+		// configured patterns rather than from discovered calls, is every
+		// package.
+		return disabled[FeatureWebSocket] || disabled[FeatureDecodeJSON]
+	case OperationSocketSend:
+		return disabled[FeatureWebSocket] || disabled[FeatureEncodeJSON]
 	case OperationJSONDecode:
 		return disabled[FeatureDecodeJSON]
 	case OperationJSONEncode:
@@ -610,7 +633,7 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "decode", "encode", "row", "item", "entity", "config"}
+	roles := []string{"request", "response", "stream", "socket-in", "socket-out", "decode", "encode", "row", "item", "entity", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source
@@ -631,6 +654,10 @@ func toParserCallPattern(pattern CallPattern) (parser.CallPattern, bool) {
 		operation, role = parser.CallResponseWriteStatus, "response"
 	case OperationStreamCreate:
 		operation, role = parser.CallStreamCreate, "stream"
+	case OperationSocketReceive:
+		operation, role = parser.CallSocketReceive, "socket-in"
+	case OperationSocketSend:
+		operation, role = parser.CallSocketSend, "socket-out"
 	case OperationErrorResponse:
 		operation = parser.CallErrorResponse
 	case OperationRouteRegister:

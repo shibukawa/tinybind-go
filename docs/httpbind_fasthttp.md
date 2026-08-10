@@ -132,6 +132,34 @@ fails halfway through. The held-stream entry is gone rather than
 deprecated: one that still compiled would be a call site with no fasthttp
 counterpart, found at deploy rather than at build.
 
+**WebSockets invert the same way, and cost less here.** `WebSocket` takes a
+callback on both transports, and the callback body is one piece of source:
+
+```go
+_ = httpbind.WebSocket(w, r, func(s *httpbind.Socket[ClientMsg, ServerMsg]) error {
+	for {
+		in, err := s.Read()
+		if err != nil {
+			return err
+		}
+		if err := s.Write(ServerMsg{Type: "message", Text: in.Text}); err != nil {
+			return err
+		}
+	}
+})
+```
+
+The return value is the handshake error only; anything the callback returns is
+post-101 and goes to `SetStreamErrorHandler`. As with a stream, the callback
+outlives the handler here, so it must not read the context — capture first.
+
+What fasthttp saves is the layer underneath. `RequestCtx.Hijack` is a
+synchronous handoff, so the upgrade works on TinyGo with no help. The
+`net/http` backend needs `tinygodriver/httpserver` in front of it, because
+TinyGo's own server cannot complete an upgrade at all. fasthttp closes the
+connection when the callback returns, which is exactly the callback shape's
+contract, so `KeepHijackedConns` stays off.
+
 **Some capabilities are gone.** fasthttp implements no HTTP/2. Under TinyGo it
 cannot terminate TLS either, so put a terminator in front. TinyGo is supported
 only in the sense that the package compiles; there is no size or throughput

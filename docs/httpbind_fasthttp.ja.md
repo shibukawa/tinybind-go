@@ -132,6 +132,34 @@ fasthttp ではこのコールバックがハンドラーの復帰後に走る�
 コンパイルが通るまま残っていると、fasthttp 側に対応物のない呼び出し箇所が
 ビルド時ではなくデプロイ時に見つかることになるからです。
 
+**WebSocket も同じ形で反転し、そしてこちらのほうが安く済みます。** `WebSocket` は
+両方のトランスポートでコールバックを取り、その中身は1つのソースです。
+
+```go
+_ = httpbind.WebSocket(w, r, func(s *httpbind.Socket[ClientMsg, ServerMsg]) error {
+	for {
+		in, err := s.Read()
+		if err != nil {
+			return err
+		}
+		if err := s.Write(ServerMsg{Type: "message", Text: in.Text}); err != nil {
+			return err
+		}
+	}
+})
+```
+
+戻り値はハンドシェイクのエラーだけです。コールバックが返したものは 101 の後なので
+`SetStreamErrorHandler` へ回ります。ストリームと同じくコールバックはハンドラーより
+長く生きるので、コンテキストを読んではいけません。先に取り出してください。
+
+fasthttp が節約するのは、その下の層です。`RequestCtx.Hijack` は同期的な受け渡しな
+ので、アップグレードは TinyGo でも手当てなしに動きます。`net/http` バックエンドの
+ほうは前段に `tinygodriver/httpserver` が要ります。TinyGo 自身のサーバーはそもそも
+アップグレードを完了できないからです。fasthttp はコールバックが返ると接続を閉じま
+すが、これはコールバック形の契約そのものなので `KeepHijackedConns` は off のままに
+します。
+
 **使えなくなる機能があります。** fasthttp は HTTP/2 を実装していません。TinyGo の
 下では TLS 終端もできないので、前段に置いてください。TinyGo はパッケージが
 コンパイルできるという意味でのみサポートしていて、サイズやスループットの約束は

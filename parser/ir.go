@@ -39,7 +39,9 @@ type Route struct {
 	Handler         Handler     `json:"handler"`
 	Request         string      `json:"request,omitempty"`
 	Response        string      `json:"response,omitempty"`
-	Stream          string      `json:"stream,omitempty"` // element type when response is Stream[T]
+	Stream          string      `json:"stream,omitempty"`     // element type when response is Stream[T]
+	SocketIn        string      `json:"socket_in,omitempty"`  // inbound message type of a WebSocket route
+	SocketOut       string      `json:"socket_out,omitempty"` // outbound message type of a WebSocket route
 	Errors          []string    `json:"errors,omitempty"`
 	SuccessStatuses []int       `json:"success_statuses,omitempty"` // 200 from Write, others from WriteStatus
 	Wrappers        WrapperMeta `json:"wrappers"`

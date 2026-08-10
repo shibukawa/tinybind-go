@@ -36,10 +36,15 @@ formats:
     not: JSONL
 selection: rule:stream-content-negotiation
 openapi: rule:openapi-streaming-content
+bidirectional_sibling:
+  what: concept:typed-websocket, which reads as well as writes
+  shares: the callback entry, the runtime-owned close, and the post-commit error sink
+  differs: two type arguments instead of one, one framing instead of three negotiated, and a read discipline a write-only stream never needed
 related:
   - api:new-stream
   - api:stream-write
   - rule:stream-content-negotiation
   - concept:net-http-handler
+  - concept:typed-websocket
   - system:tinybind
 ```

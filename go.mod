@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
-	github.com/shibukawa/tinygodriver v1.2.1
+	github.com/shibukawa/tinygodriver v1.2.3
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 )

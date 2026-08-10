@@ -401,7 +401,82 @@ curl -N -H 'Accept: application/x-ndjson' http://localhost:8080/chat
 curl -H 'Accept: application/json' http://localhost:8080/chat
 ```
 
-必ず `defer stream.Close()` を書いてください。JSON array 形式では、閉じ `]` を書くのが `Close` だからです。
+コールバックが何を返しても、ストリームを閉じるのは `WriteStream` です。JSON array 形式で閉じ `]` を書くのがこのクローズなので、途中で失敗したコールバックでも文書は終端されます。
+
+## WebSocket
+
+ソケットは上りと下りの両方に型が付きます。`In` がクライアントから届くもの、`Out` が返すものです。1方向の中の種類は、ストリームのイベントと同じく判別フィールドで表します。
+
+```go
+type ClientMsg struct {
+	Type string `json:"type"` // "start" | "message" | "end"
+	Text string `json:"text"`
+}
+
+type ServerMsg struct {
+	Type string `json:"type"` // "ready" | "message" | "error"
+	Text string `json:"text"`
+}
+
+func chat(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r) // コールバックが走る前に取り出しておく
+
+	_ = httpbind.WebSocket(w, r, func(s *httpbind.Socket[ClientMsg, ServerMsg]) error {
+		for {
+			in, err := s.Read()
+			if err != nil {
+				return err
+			}
+			switch in.Type {
+			case "end":
+				return nil
+			default:
+				if err := s.Write(ServerMsg{Type: "message", Text: user + ": " + in.Text}); err != nil {
+					return err
+				}
+			}
+		}
+	})
+}
+```
+
+型引数は2つとも呼び出しから発見されるので、`ClientMsg` にはデコーダーが、`ServerMsg` にはエンコーダーが生成されます。要らない方は生成されません。
+
+**戻り値はハンドシェイクのエラーだけです。** nil でない場合、リクエストは拒否され、レスポンス（この API の他の拒否と同じく RFC 9457 Problem Details）は既に書き終わっています。ログや計測に使ってください。応答してはいけません。コールバックが返したエラーは 101 送出後に起きるので、`SetStreamErrorHandler` で登録したハンドラーへ回ります。
+
+**コールバックの中でリクエストを読まないでください。** fasthttp バックエンドでは、コールバックはハンドラーが返った後に走ります。上の `user` のように先に取り出しておけば、同じソースが両方でコンパイルできます。
+
+**読み手は1つ、書き手は何個でも。** `Read` は単一のゴルーチンから呼んでください。`Write` はライブラリ自身の制御フレームと共有するロックを取るので、ブロードキャストやプッシュ用のゴルーチンから安全に呼べます。gorilla を直接使うと踏む「同時 writer 禁止」はここでは当たりません。
+
+接続のライフサイクルはランタイムが持ち、どのつまみにも実用的な既定値があります。
+
+| オプション | 既定値 | 役割 |
+|---|---|---|
+| `ReadLimit` | 1 MiB | 受信メッセージの上限 |
+| `IdleTimeout` | 60s | すべての読み込みに掛かる制限 |
+| `PingInterval` | 54s | キープアライブ間隔。`IdleTimeout` より短いこと |
+| `WriteTimeout` | 10s | すべての書き込みに掛かる制限 |
+| `Subprotocols` | なし | 優先順に提示。結果は `s.Subprotocol()` で読む |
+| `EnableCompression` | off | permessage-deflate。TinyGo ではバイナリサイズを食う |
+| `CheckOrigin` | 同一ホスト | `func(origin, host string) bool` |
+
+プロセス全体は `httpbind.SetSocketDefaults`、エンドポイント単位は `httpbind.WebSocketWith` で変えられます。
+
+アイドルタイムアウトに「無効」はありません。TinyGo ではデッドラインなしの読み込みを何者も中断できないので、そうしたソケットは誰も回収できないゴルーチンと接続になります。クロスオリジンのハンドシェイクは既定で拒否します。任意のオリジンを受けるソケットは、接続が張りっぱなしの CSRF だからです。
+
+### TinyGo での動かし方
+
+TinyGo の `net/http` サーバーはアップグレードを完了できません。ハンドラーを呼ぶ前にバックグラウンドの読み込みを始め、その取り消しを「読み込みデッドラインを過去に動かす」ことで行うのですが、netdev は実行中の `recv()` にそれを届けられません。結果として `Hijack` が永久にブロックします。ドライバー側のサーバーを使ってください。
+
+```go
+ln, err := net.Listen("tcp", ":8080")
+if err != nil {
+	return err
+}
+return httpserver.Serve(ln, &http.Server{Handler: mux})
+```
+
+`github.com/shibukawa/tinygodriver/httpserver` です。ホスト Go では `srv.Serve(ln)` を呼ぶだけなので、この1行は両方のコンパイラで正しく動きます。忘れた場合、エントリはハンドシェイクを 500 で拒否するので無言のハングにはなりませんが、直し方はエラーではなく上の1行です。fasthttp バックエンドにこの手当ては要りません。
 
 ## OpenAPI と Swagger UI
 

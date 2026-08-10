@@ -47,6 +47,23 @@ func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 	return fn(data)
 }
 
+// DecodeJSONBytes decodes one JSON value already held in memory into T.
+//
+// The reader entries above exist because an HTTP body arrives as a stream. A
+// caller that already has the whole document — a WebSocket message, say — has
+// nothing to read, and going through a reader would allocate one and copy the
+// document into a second buffer for every call.
+//
+// The limit belongs to whoever produced the bytes, so none is applied here.
+func DecodeJSONBytes[T any](data []byte) (T, error) {
+	var zero T
+	fn, ok := lookupDecoder[T]()
+	if !ok {
+		return zero, missingDecoderError()
+	}
+	return fn(data)
+}
+
 // EncodeJSON encodes v as compact JSON to w using a generated codec.
 // It does not set HTTP headers or status.
 func EncodeJSON[T any](w io.Writer, v T) error {
