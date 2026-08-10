@@ -129,3 +129,54 @@ func TestOpenAPIFragmentIdentityConflictIsReported(t *testing.T) {
 		t.Fatalf("identity error=%v", err)
 	}
 }
+
+// TestOpenAPIDocumentIsCachedAndTransportFree covers the read a second backend
+// serves from: it names no request, and it does not reassemble the document per
+// call, which is what a caller outside this package could not arrange for
+// itself because a fragment registration is not observable from there.
+func TestOpenAPIDocumentIsCachedAndTransportFree(t *testing.T) {
+	httpbind.ResetOpenAPIFragments()
+	t.Cleanup(httpbind.ResetOpenAPIFragments)
+	httpbind.RegisterOpenAPIFragment("example/test",
+		[]byte(`{"openapi":"3.1.0","info":{"title":"t","version":"0"},"paths":{}}`))
+
+	first, err := httpbind.OpenAPIDocument()
+	if err != nil {
+		t.Fatalf("OpenAPIDocument: %v", err)
+	}
+	if !strings.Contains(string(first), `"openapi": "3.1.0"`) {
+		t.Fatalf("body %s", first)
+	}
+
+	second, err := httpbind.OpenAPIDocument()
+	if err != nil {
+		t.Fatalf("OpenAPIDocument: %v", err)
+	}
+	// Same backing array, not merely equal bytes: a fresh assembly would be a
+	// new slice, so this is what tells a cache hit from a re-run.
+	if &first[0] != &second[0] {
+		t.Error("the document was reassembled rather than reused")
+	}
+
+	// A registration invalidates it, so a caller holding the entry point does
+	// not serve a stale document.
+	httpbind.RegisterOpenAPIFragment("example/second",
+		[]byte(`{"openapi":"3.1.0","info":{"title":"t","version":"0"},"paths":{"/x":{}}}`))
+	third, err := httpbind.OpenAPIDocument()
+	if err != nil {
+		t.Fatalf("OpenAPIDocument: %v", err)
+	}
+	if !strings.Contains(string(third), `"/x"`) {
+		t.Errorf("the cached document survived a registration:\n%s", third)
+	}
+}
+
+// TestOpenAPIDocumentReportsAssemblyFailure keeps the entry point honest about
+// the case api:openapi-json turns into a 500.
+func TestOpenAPIDocumentReportsAssemblyFailure(t *testing.T) {
+	httpbind.ResetOpenAPIFragments()
+	t.Cleanup(httpbind.ResetOpenAPIFragments)
+	if _, err := httpbind.OpenAPIDocument(); err == nil {
+		t.Error("a document with no fragments assembled without error")
+	}
+}
