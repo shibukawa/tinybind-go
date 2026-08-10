@@ -3,25 +3,27 @@
 package pages
 
 import (
-	"net/http"
+	"github.com/shibukawa/tinygodriver/fasthttp"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	httpbind "github.com/shibukawa/tinybind-go/fasthttpbind"
 	"github.com/shibukawa/tinybind-go/htmlbind"
-	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/about"
-	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
-	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/users/id_"
+	"github.com/shibukawa/tinybind-go/internal/fasthttppagesfixture/pages/files/rest__"
+	"github.com/shibukawa/tinybind-go/internal/fasthttppagesfixture/pages/raw"
+	"github.com/shibukawa/tinybind-go/internal/fasthttppagesfixture/pages/users/id_"
 )
 
 // Register installs every discovered route on mux.
 //
 // Options are passed to the runtime on each render, so a caller supplies its
 // per-request cache, timeout, and error hook here.
-func Register(mux *http.ServeMux, options ...htmlbind.Option) {
+func Register(mux interface {
+	HandleFunc(string, func(*fasthttp.RequestCtx))
+}, options ...htmlbind.Option) {
 	mux.HandleFunc("GET /{$}",
-		func(w http.ResponseWriter, r *http.Request) {
-			route, err := DecodeRoute(r)
+		func(ctx *fasthttp.RequestCtx) {
+			route, err := DecodeRoute(ctx)
 			if err != nil {
-				httpbind.WriteError(w, r, err)
+				httpbind.WriteError(ctx, err)
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
@@ -29,86 +31,58 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
-				httpbind.WriteError(w, r, err)
+			if err := htmlbind.RenderChain(ctx, wrappers, Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(ctx))...); err != nil {
+				httpbind.WriteError(ctx, err)
 			}
 		})
-	mux.HandleFunc("GET /about",
-		func(w http.ResponseWriter, r *http.Request) {
-			route, err := about.DecodeRoute(r)
+	mux.HandleFunc("GET /files/{rest...}",
+		func(ctx *fasthttp.RequestCtx) {
+			route, err := rest__.DecodeRoute(ctx)
 			if err != nil {
-				httpbind.WriteError(w, r, err)
+				httpbind.WriteError(ctx, err)
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			params := about.PageParams{
-				Topic: route.Topic,
-				Page:  route.Page,
+			params := rest__.PageParams{
+				Rest: route.Rest,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, about.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
-				httpbind.WriteError(w, r, err)
+			if err := htmlbind.RenderChain(ctx, wrappers, rest__.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(ctx))...); err != nil {
+				httpbind.WriteError(ctx, err)
 			}
 		})
-	mux.HandleFunc("GET /archive",
-		func(w http.ResponseWriter, r *http.Request) {
-			route, err := archive.DecodeRoute(r)
-			if err != nil {
-				httpbind.WriteError(w, r, err)
-				return
-			}
-			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageLatest, err := archive.Load(r.Context())
-			if err != nil {
-				httpbind.WriteError(w, r, err)
-				return
-			}
-			params := archive.PageParams{
-				Latest: pageLatest,
-			}
-			wrappers := []htmlbind.Wrapper{
-				BindLayout(LayoutParams{}),
-			}
-			if err := htmlbind.RenderChain(w, wrappers, archive.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
-				httpbind.WriteError(w, r, err)
-			}
-		})
+	mux.HandleFunc("GET /raw",
+		raw.Load)
 	mux.HandleFunc("GET /users/{id}",
-		func(w http.ResponseWriter, r *http.Request) {
-			route, err := id_.DecodeRoute(r)
+		func(ctx *fasthttp.RequestCtx) {
+			route, err := id_.DecodeRoute(ctx)
 			if err != nil {
-				httpbind.WriteError(w, r, err)
+				httpbind.WriteError(ctx, err)
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageName, err := id_.Load(route.ID)
+			pageName, pagePage, err := id_.Load(ctx, route.ID, route.Page)
 			if err != nil {
-				httpbind.WriteError(w, r, err)
+				httpbind.WriteError(ctx, err)
 				return
 			}
 			params := id_.PageParams{
 				Name: pageName,
+				Page: pagePage,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
-			if err := htmlbind.RenderChain(w, wrappers, id_.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
-				httpbind.WriteError(w, r, err)
+			if err := htmlbind.RenderChain(ctx, wrappers, id_.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(ctx))...); err != nil {
+				httpbind.WriteError(ctx, err)
 			}
 		})
 
 	// Server function endpoints. Each handler owns its whole response, so
 	// nothing is generated around it; registration is all there is.
 	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)
-}
-
-// NewServeMux returns a router carrying every discovered route.
-func NewServeMux(options ...htmlbind.Option) *http.ServeMux {
-	mux := http.NewServeMux()
-	Register(mux, options...)
-	return mux
 }
 
 // Routes lists what the filesystem knows about each route, so a
@@ -119,8 +93,8 @@ func NewServeMux(options ...htmlbind.Option) *http.ServeMux {
 // spells a segment differently than net/http does.
 var Routes = []RouteInfo{
 	{Pattern: "GET /{$}", Path: "/", Dir: "", Params: nil},
-	{Pattern: "GET /about", Path: "/about", Dir: "about", Params: nil},
-	{Pattern: "GET /archive", Path: "/archive", Dir: "archive", Params: nil},
+	{Pattern: "GET /files/{rest...}", Path: "/files/{rest...}", Dir: "files/rest__", Params: []string{"rest"}},
+	{Pattern: "GET /raw", Path: "/raw", Dir: "raw", Params: nil},
 	{Pattern: "GET /users/{id}", Path: "/users/{id}", Dir: "users/id_", Params: []string{"id"}},
 }
 

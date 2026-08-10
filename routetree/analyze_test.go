@@ -271,8 +271,8 @@ func TestAnalyzeFeedsTheDecoder(t *testing.T) {
 	mustContain(t, string(source),
 		"ID string",
 		"Page int",
-		`r.PathValue("id")`,
-		`query.Get("page")`,
+		`httpbind.PathValue(r, "id")`,
+		`httpbind.QueryLookup(query, "page")`,
 	)
 }
 

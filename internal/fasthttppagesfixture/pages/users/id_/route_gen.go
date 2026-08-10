@@ -3,25 +3,24 @@
 package id_
 
 import (
-	"net/http"
+	"github.com/shibukawa/tinygodriver/fasthttp"
 	"strconv"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	httpbind "github.com/shibukawa/tinybind-go/fasthttpbind"
 )
 
 // RouteParams holds the URL inputs of GET /users/{id}.
 type RouteParams struct {
-	ID      string
-	Page    int
-	Verbose bool
+	ID   string
+	Page *int
 }
 
 // DecodeRoute reads the path and query values of GET /users/{id}.
 // An unparsable value produces an error rather than a zero value.
-func DecodeRoute(r *http.Request) (RouteParams, error) {
+func DecodeRoute(ctx *fasthttp.RequestCtx) (RouteParams, error) {
 	var out RouteParams
-	query := httpbind.Queries(r)
-	rawID := httpbind.PathValue(r, "id")
+	query := httpbind.Queries(ctx)
+	rawID := httpbind.PathValue(ctx, "id")
 	if rawID == "" {
 		return out, httpbind.BadRequest(httpbind.Problem{Code: "missing_path_parameter", Message: "missing path parameter id"})
 	}
@@ -31,14 +30,8 @@ func DecodeRoute(r *http.Request) (RouteParams, error) {
 		if err != nil {
 			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter page is not a valid int"}, err)
 		}
-		out.Page = v
-	}
-	if raw, _ := httpbind.QueryLookup(query, "verbose"); raw != "" {
-		v, err := strconv.ParseBool(raw)
-		if err != nil {
-			return out, httpbind.BadRequest(httpbind.Problem{Code: "invalid_query_parameter", Message: "query parameter verbose is not a valid bool"}, err)
-		}
-		out.Verbose = v
+		value := v
+		out.Page = &value
 	}
 	return out, nil
 }

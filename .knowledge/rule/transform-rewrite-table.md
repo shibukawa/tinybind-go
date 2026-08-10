@@ -44,6 +44,11 @@ transport_slots_2026_08_08:
   scoped: slots attach only for the HTTP runtime path, because the canonical call names are spelled once per runtime package and a same-named function elsewhere takes no transport
   validated: a slot index cannot be negative, the two cannot name one argument, and an argument cannot both be dropped and supply a value or type role
   queried_by: TransportSlots.Drops, which is what the rewriter asks per argument
+  a_slot_need_not_lead_2026_08_10:
+    case: htmlupdate.ApplyTo(http.Header, http.ResponseWriter), whose transport is the second argument because the header set it copies from is ordinary data
+    registered: WriterArgument(1), and fasthttpupdate.ApplyTo takes the RequestCtx in the same position
+    downstream_note_answered: the 2026-08-10 survey named ApplyTo as the one signature that still assumes its destination, mentioned as a note rather than an ask; the pair and its slot already exist, so a rewritten handler calls it and only the argument goes
+    generalizes: the collapse rule is positional and not leading-position; a signature reads worse than it ports whenever the transport sits behind its data
 method_calls_2026_08_10:
   status: implemented
   was: the pattern index skipped every method target and keyed on package and name, so a registered method was invisible to the transform and a handler calling one was refused

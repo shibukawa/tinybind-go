@@ -61,17 +61,70 @@ type Symbols struct {
 	// interface is enough to satisfy either.
 	MuxType        string
 	MuxConstructor string
+	// CatchAllSuffix is what the router spells inside a catch-all segment where
+	// net/http spells "...", so {rest...} becomes {rest} plus this. Empty uses
+	// net/http's own marker, which leaves the pattern as discovered.
+	//
+	// RootPattern is the path the tree root registers under. Empty uses
+	// net/http's "/{$}", the exact-match marker that keeps the root from
+	// matching every path below it.
+	//
+	// Both exist because a router that does not read Go 1.22 patterns does not
+	// merely fail on these two: it reads "{rest...}" as a parameter named
+	// "rest..." and "{$}" as one named "$", so the route is silently installed
+	// somewhere else rather than rejected.
+	//
+	// Neither has an "unsupported" spelling. Unlike the transform's router
+	// target, where every field is caller-declared and an unset one is genuinely
+	// unknown, these default to a working router, so an unset field cannot be
+	// told from a router that reads Go 1.22 syntax and needs no rewrite.
+	CatchAllSuffix string
+	RootPattern    string
+	// RequestType is the type of the request value generated code receives,
+	// written verbatim. Empty spells the net/http request from HTTPAlias.
+	//
+	// It is separate from HTTPAlias because an alias reaches the spelling of a
+	// type and not its shape: a transport carrying the request and the response
+	// in one value has one parameter where net/http has two, which no renaming
+	// of the package can express.
+	RequestType string
+	// HandlerParams is the parameter list an emitted handler literal declares.
+	// Empty spells the net/http pair from HTTPAlias.
+	HandlerParams string
+	// Writer and Request are the identifiers a generated handler body uses for
+	// the response and the request. Empty uses w and r.
+	//
+	// They are the same identifier on a transport whose one value carries both,
+	// which is what collapses a runtime call's leading arguments; see
+	// [Symbols.TransportArgs].
+	Writer  string
+	Request string
+	// RequestIsContext records that the request value is itself a
+	// context.Context, as fasthttp's RequestCtx is. When false the context is
+	// read with a .Context() call, which is the net/http spelling.
+	RequestIsContext bool
 	// ErrorImport and ErrorAlias name the package providing the constructors
-	// below. An empty ErrorImport suppresses the import, which is what a
-	// template that reports errors some other way wants.
+	// below and the request accessors. An empty ErrorImport suppresses the
+	// import, which is what a template that reports errors some other way wants.
 	ErrorImport string
 	ErrorAlias  string
 	// BadRequest and Problem are selectors on ErrorAlias, naming the error value
 	// a decoder builds. WriteError is the selector a generated handler writes a
-	// failure through, taking (w, r, err).
+	// failure through, taking the transport values followed by the error.
 	BadRequest string
 	Problem    string
 	WriteError string
+	// PathValue, QueryValues, and QueryLookup are selectors on ErrorAlias naming
+	// the request accessors a generated decoder reads through.
+	//
+	// The decoder calls these rather than spelling methods on the request value
+	// because fasthttp has no path routing of its own: its PathValue reads
+	// whatever the router stored, so there is no method on the transport for a
+	// method-shaped decoder to call. Routing both transports through the runtime
+	// is what lets one decoder template serve either.
+	PathValue   string
+	QueryValues string
+	QueryLookup string
 	// StrconvImport is the package providing the scalar parsers. It is only
 	// imported when a route actually declares a non-string input.
 	StrconvImport string
@@ -97,6 +150,9 @@ func DefaultSymbols() Symbols {
 		BadRequest:    "BadRequest",
 		Problem:       "Problem",
 		WriteError:    "WriteError",
+		PathValue:     "PathValue",
+		QueryValues:   "Queries",
+		QueryLookup:   "QueryLookup",
 		StrconvImport: "strconv",
 		StrconvAlias:  "strconv",
 		RuntimeImport: defaultErrorImport + "/htmlbind",
@@ -104,11 +160,143 @@ func DefaultSymbols() Symbols {
 	}
 }
 
+// DefaultFastHTTPImport is the fasthttp package [FastHTTPSymbols] targets when
+// given none. It is the fork tinygodriver ships, because that is the one
+// fasthttpbind is built against; an application on upstream fasthttp names
+// upstream instead.
+const DefaultFastHTTPImport = "github.com/shibukawa/tinygodriver/fasthttp"
+
+// defaultFastHTTPRuntime is the runtime package the fasthttp symbols call. It
+// declares the same names as the net/http runtime, so only the import moves.
+const defaultFastHTTPRuntime = defaultErrorImport + "/fasthttpbind"
+
+// FastHTTPSymbols targets the fasthttpbind runtime this module ships.
+// transportImport names the fasthttp package; empty uses
+// [DefaultFastHTTPImport].
+//
+// The runtime is imported under the httpbind alias whichever package it is, so
+// every selector a generated body writes is the one the net/http output writes.
+// What differs is the request type, the handler parameter list, and the
+// identifier both halves collapse onto.
+//
+// MuxType is a one-method interface rather than a concrete type because
+// fasthttp ships no router: naming one here would decide which third-party
+// package an application depends on. Any router declaring HandleFunc satisfies
+// it, and MuxConstructor is empty because this package cannot build a router it
+// does not name.
+func FastHTTPSymbols(transportImport string) Symbols {
+	transportImport = orDefault(transportImport, DefaultFastHTTPImport)
+	alias := transportImport[strings.LastIndex(transportImport, "/")+1:]
+	ctxType := "*" + alias + ".RequestCtx"
+
+	symbols := DefaultSymbols()
+	symbols.HTTPImport = transportImport
+	symbols.HTTPAlias = alias
+	symbols.MuxImport = transportImport
+	symbols.MuxAlias = alias
+	symbols.MuxType = "interface{ HandleFunc(string, func(" + ctxType + ")) }"
+	symbols.MuxConstructor = ""
+	symbols.RequestType = ctxType
+	symbols.HandlerParams = "ctx " + ctxType
+	symbols.Writer = "ctx"
+	symbols.Request = "ctx"
+	symbols.RequestIsContext = true
+	symbols.ErrorImport = defaultFastHTTPRuntime
+	return symbols
+}
+
+// normalized fills the transport shape a caller left empty, spelling the
+// net/http request from HTTPAlias. It is what keeps an emitter configured
+// before these fields existed producing the output it always did.
+func (s Symbols) normalized() Symbols {
+	s.RequestType = orDefault(s.RequestType, "*"+s.HTTPAlias+".Request")
+	s.HandlerParams = orDefault(s.HandlerParams,
+		"w "+s.HTTPAlias+".ResponseWriter, r *"+s.HTTPAlias+".Request")
+	s.Writer = orDefault(s.Writer, "w")
+	s.Request = orDefault(s.Request, "r")
+	s.CatchAllSuffix = orDefault(s.CatchAllSuffix, NetHTTPCatchAllSuffix)
+	s.RootPattern = orDefault(s.RootPattern, NetHTTPRootPattern)
+	return s
+}
+
+// The pattern spellings net/http's ServeMux reads, which are the defaults.
+const (
+	NetHTTPCatchAllSuffix = "..."
+	NetHTTPRootPattern    = "/{$}"
+)
+
+// RoutePath spells one route's path for the configured router. Only the
+// catch-all marker and the tree root differ between the routers this seam has
+// met; every other segment is spelled {name} by all of them, which is why a
+// route carries over verbatim.
+func (s Symbols) RoutePath(route Route) string {
+	s = s.normalized()
+	if route.Path == "/" {
+		return s.RootPattern
+	}
+	if s.CatchAllSuffix == NetHTTPCatchAllSuffix || !strings.Contains(route.Path, "...") {
+		return route.Path
+	}
+	segments := strings.Split(route.Path, "/")
+	for i, segment := range segments {
+		if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+			continue
+		}
+		name, found := strings.CutSuffix(strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}"), "...")
+		if !found {
+			continue
+		}
+		segments[i] = "{" + name + s.CatchAllSuffix + "}"
+	}
+	return strings.Join(segments, "/")
+}
+
+// RoutePattern is [Symbols.RoutePath] with the method the tree serves, which is
+// what the registry registers under.
+func (s Symbols) RoutePattern(route Route) string { return "GET " + s.RoutePath(route) }
+
+// TransportArgs is the leading argument list of a runtime call taking both the
+// writer and the request, such as WriteError. Where one value carries both it
+// is that value written once, which is how a two-argument call on net/http
+// becomes a one-argument call on fasthttp without the template branching.
+func (s Symbols) TransportArgs() string {
+	s = s.normalized()
+	if s.Writer == s.Request {
+		return s.Writer
+	}
+	return s.Writer + ", " + s.Request
+}
+
+// ContextOf is the expression yielding the context.Context of the request value
+// named ident. A transport whose request value is already a context is that
+// value; otherwise it is read with a call.
+//
+// It takes the identifier rather than reading Request because the composer's
+// request parameter is named by [Emitter.RenderRequestParam] and need not be
+// the one a handler body uses.
+func (s Symbols) ContextOf(ident string) string {
+	if ident == "" {
+		return ""
+	}
+	if s.RequestIsContext {
+		return ident
+	}
+	return ident + ".Context()"
+}
+
 // Emitter renders generated Go source. Its zero value is not usable; build one
 // with [NewEmitter].
 type Emitter struct {
 	// Symbols are the identities the templates call.
 	Symbols Symbols
+	// HandlerShape is the rung 3 signature [Generate] recognizes. The zero value
+	// uses [DefaultHandlerShape].
+	//
+	// It sits beside Symbols rather than with the analysis entry points because
+	// both name the same transport, and a build that emitted one transport while
+	// admitting the other's handler shape would fail in generated source rather
+	// than in configuration.
+	HandlerShape HandlerShape
 	// ParamsType, DecodeFunc, and RenderFunc name the generated declarations, so
 	// a framework can publish its own vocabulary without replacing a template.
 	ParamsType   string
@@ -181,6 +369,31 @@ func NewEmitter() *Emitter {
 		ActionTableVar:   ActionTableVar,
 		tmpl:             tmpl,
 	}
+}
+
+// NewFastHTTPEmitter returns an emitter whose whole output targets fasthttp:
+// the decoder's request type, the registered handler's parameter list, and the
+// rung 3 signature discovery accepts. transportImport names the fasthttp
+// package; empty uses [DefaultFastHTTPImport].
+//
+// It exists so a backend is one call rather than two settings that must agree.
+func NewFastHTTPEmitter(transportImport string) *Emitter {
+	e := NewEmitter()
+	e.Symbols = FastHTTPSymbols(transportImport)
+	e.HandlerShape = FastHTTPHandlerShape(transportImport)
+	return e
+}
+
+// symbols is what every model carries: the caller's symbols with the transport
+// shape filled in.
+func (e *Emitter) symbols() Symbols { return e.Symbols.normalized() }
+
+// handlerShape is the rung 3 signature this emitter's transport declares.
+func (e *Emitter) handlerShape() HandlerShape {
+	if len(e.HandlerShape.Types) == 0 {
+		return DefaultHandlerShape()
+	}
+	return e.HandlerShape
 }
 
 // Parse replaces one named template. It returns an error when the text does not
@@ -405,7 +618,7 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 		DecodeFunc:  e.DecodeFunc,
 		Fields:      fields,
 		MissingCode: CodeMissingPath,
-		Symbols:     e.Symbols,
+		Symbols:     e.symbols(),
 	}
 	for _, field := range fields {
 		if field.IsQuery {
@@ -421,15 +634,14 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 // route with no scalar inputs does not import strconv.
 func (e *Emitter) decoderImports(fields []DecoderField) []Import {
 	imports := []Import{{Path: e.Symbols.HTTPImport, Alias: aliasFor(e.Symbols.HTTPImport, e.Symbols.HTTPAlias)}}
-	needsParse, needsError := false, false
+	needsParse, needsRuntime := false, false
 	for _, field := range fields {
 		if field.Parse != "" {
 			needsParse = true
-			needsError = true
 		}
-		if field.Required {
-			needsError = true
-		}
+		// Every field is read through a runtime accessor, and a required one
+		// also builds an error, so any field at all names the runtime.
+		needsRuntime = true
 	}
 	if needsParse && e.Symbols.StrconvImport != "" {
 		imports = append(imports, Import{
@@ -437,7 +649,7 @@ func (e *Emitter) decoderImports(fields []DecoderField) []Import {
 			Alias: aliasFor(e.Symbols.StrconvImport, e.Symbols.StrconvAlias),
 		})
 	}
-	if needsError && e.Symbols.ErrorImport != "" {
+	if needsRuntime && e.Symbols.ErrorImport != "" {
 		imports = append(imports, Import{
 			Path:  e.Symbols.ErrorImport,
 			Alias: aliasFor(e.Symbols.ErrorImport, e.Symbols.ErrorAlias),

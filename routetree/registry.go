@@ -77,8 +77,8 @@ type RegistryModel struct {
 // in scope here, so an override reaches it without any setting.
 func (m RegistryModel) Render(route RegistryRoute) RenderCall {
 	call := RenderCall{
-		Writer:  "w",
-		Request: "r",
+		Writer:  m.Symbols.Writer,
+		Request: m.Symbols.Request,
 		Leaf:    route.Selector + PageComponentName + "(params)",
 		Options: "options",
 		Symbols: m.Symbols,
@@ -131,7 +131,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		TableVar:       e.TableVar,
 		ActionTableVar: orDefault(e.ActionTableVar, ActionTableVar),
 		DecodeFunc:     e.DecodeFunc,
-		Symbols:        e.Symbols,
+		Symbols:        e.symbols(),
 	}
 
 	aliases := newAliasSet(rootPackage)
@@ -166,7 +166,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 	for i, route := range tree.Routes {
 		analysis := analyses[i]
 		entry := RegistryRoute{
-			Pattern: route.Pattern(),
+			Pattern: model.Symbols.RoutePattern(route),
 			Path:    route.Path,
 			RelDir:  route.RelDir,
 		}
@@ -186,7 +186,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		}
 		needsRequest = true
 
-		fields, callArgs, callResults, err := pageBinding(route, analysis)
+		fields, callArgs, callResults, err := pageBinding(route, analysis, model.Symbols)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -306,7 +306,7 @@ func groupImports(head, tail []Import) []Import {
 // At RungTemplateOnly every field comes from the decoded route. At
 // RungTypedPage the function's results supply them, and the decoded route
 // supplies the function's arguments instead.
-func pageBinding(route Route, analysis Analysis) (fields []ComposerArg, callArgs, callResults string, err error) {
+func pageBinding(route Route, analysis Analysis, symbols Symbols) (fields []ComposerArg, callArgs, callResults string, err error) {
 	component := analysis.Component
 	if analysis.Page == nil || analysis.Page.Rung != RungTypedPage {
 		for _, input := range component.Inputs {
@@ -327,8 +327,10 @@ func pageBinding(route Route, analysis Analysis) (fields []ComposerArg, callArgs
 	args := make([]string, 0, len(analysis.Page.Params)+1)
 	// The context comes first because it is not one of the decoded inputs; the
 	// generated handler holds the request, so the call site reads it from there.
+	// How it is read is the transport's business: a request value that is
+	// already a context is passed as it stands.
 	if analysis.Page.TakesContext {
-		args = append(args, "r.Context()")
+		args = append(args, symbols.ContextOf(symbols.Request))
 	}
 	for _, param := range analysis.Page.Params {
 		args = append(args, "route."+ExportedName(param.Name))
