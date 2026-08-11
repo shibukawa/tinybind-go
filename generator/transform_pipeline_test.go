@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// skipWithoutToolchain skips a test that shells out to the Go toolchain. It is
+// the in-package twin of the one in testmod_test.go, which the external test
+// package uses; the two exist because these compile checks live beside the
+// transform they exercise.
+func skipWithoutToolchain(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("short mode: this test runs the Go toolchain against a temp module")
+	}
+}
+
 func generateInto(t *testing.T, fixture string, transform *TransformOptions) (GenerateResult, string, error) {
 	t.Helper()
 	out := t.TempDir()
@@ -146,6 +157,7 @@ func TestReportOnlyOnACleanPackageSaysNothing(t *testing.T) {
 // on its own. Everything else in this file is a claim about which file was
 // written; this is the one that would catch two halves that do not fit.
 func TestBothTagConfigurationsCompile(t *testing.T) {
+	skipWithoutToolchain(t)
 	transform := DefaultTransformOptions()
 	result, out, err := generateInto(t, "transform_rewrite", &transform)
 	if err != nil {

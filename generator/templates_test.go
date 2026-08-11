@@ -13,6 +13,7 @@ import (
 )
 
 func TestGenerateTemplatesDiscoversStandardExtensions(t *testing.T) {
+	skipWithoutToolchain(t)
 	dir := t.TempDir()
 	files := map[string]string{
 		"first.tb.html": `package fixture
@@ -195,6 +196,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 }
 
 func TestGenerateTemplatesUsesCustomSQLExecutorResolver(t *testing.T) {
+	skipWithoutToolchain(t)
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "dbctx"), 0o755); err != nil {
 		t.Fatal(err)

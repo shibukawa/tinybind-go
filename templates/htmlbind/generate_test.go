@@ -65,7 +65,20 @@ func TestGenerateFixtures(t *testing.T) {
 	}
 }
 
+// skipWithoutToolchain skips a test that shells out to the Go toolchain. Those
+// tests tidy or compile a temp module against this one, which costs seconds
+// apiece and dominates this package's runtime. Short mode is the fast loop; a
+// full run skips nothing.
+func skipWithoutToolchain(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("short mode: this test runs the Go toolchain against a temp module")
+	}
+}
+
 func runGeneratedTests(t *testing.T, generated, runtimeTest []byte) {
+	t.Helper()
+	skipWithoutToolchain(t)
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

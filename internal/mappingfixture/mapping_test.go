@@ -19,6 +19,16 @@ import (
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
+// skipWithoutToolchain skips a test that shells out to the Go toolchain. Those
+// tests tidy a temp module against this one, which costs seconds apiece. Short
+// mode is the fast loop; a full run skips nothing.
+func skipWithoutToolchain(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("short mode: this test runs the Go toolchain against a temp module")
+	}
+}
+
 func TestBind_JSONAndMetadata(t *testing.T) {
 	body := `{"name":"Alice","email":"a@example.com"}`
 	req := httptest.NewRequest(http.MethodPost, "/orgs/acme/users", strings.NewReader(body))
@@ -294,6 +304,7 @@ func use() {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	skipWithoutToolchain(t)
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -611,6 +622,7 @@ func TestGenerator_EmitsTypeSpecificNoReflect(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "types.go"), src, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	skipWithoutToolchain(t)
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {

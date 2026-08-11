@@ -166,6 +166,7 @@ func TestRewriteKeepsDocComments(t *testing.T) {
 // fasthttp runtime. Everything above is a claim about text; this is the one
 // that would catch a rewrite that merely looks right.
 func TestRewrittenSourceCompiles(t *testing.T) {
+	skipWithoutToolchain(t)
 	out := rewriteFixture(t, "transform_rewrite")
 
 	dir := filepath.Join("..", "testdata", "transform_rewrite")
