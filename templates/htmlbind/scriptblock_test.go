@@ -42,8 +42,11 @@ func TestScriptBlockExtractsAndNamesItsOwner(t *testing.T) {
 	if script == nil {
 		t.Fatalf("no script asset produced: %+v", result.Assets)
 	}
-	if script.Owner != "Counter" {
-		t.Fatalf("script owner = %q, want Counter", script.Owner)
+	// The package-qualified identity, not the declared name: two components named
+	// Counter in two directories are one name and two declarations, and a caller
+	// keying a lifecycle on the short form would run one against the other.
+	if script.Owner != "pages.counter.Counter" {
+		t.Fatalf("script owner = %q, want pages.counter.Counter", script.Owner)
 	}
 	// The whole point of the block: a brace, a less-than, and a template
 	// literal are the authored language rather than template punctuation.
@@ -68,8 +71,13 @@ func TestScriptBlockExtractsAndNamesItsOwner(t *testing.T) {
 		t.Fatalf("script block leaked into rendered output:\n%s", generated)
 	}
 	// The owner reaches the runtime value a caller reads.
-	if want := `Scope: "Counter"`; !strings.Contains(generated, want) {
+	if want := `Scope: "pages.counter.Counter"`; !strings.Contains(generated, want) {
 		t.Fatalf("generated assets lack %s:\n%s", want, generated)
+	}
+	// And the same identity marks the elements, so a caller holding the asset can
+	// find the instances without a mapping and without a manifest.
+	if want := `data-tb-component=\"pages.counter.Counter\"`; !strings.Contains(generated, want) {
+		t.Fatalf("generated markup lacks the declaration marker:\n%s", generated)
 	}
 }
 
@@ -152,6 +160,47 @@ export function setup(el) { el.textContent = format(1) }
 	}
 }
 
+// The case the marker exists for. An ordinary component call opens no update
+// boundary, so it carries no instance attribute and enters no manifest — and a
+// component rendered many times inside a page is exactly that. Before the
+// marker there was nothing on those elements at all, so a caller holding an
+// asset scoped to Row could not find a single Row in the document.
+//
+// The marker is not a boundary and does not make one: it says which declaration
+// an element came from, not which instance it is. Telling two Rows apart is a
+// separate question.
+func TestScriptBlockMarksAnOrdinaryComponentCall(t *testing.T) {
+	const source = `package pages
+
+export component Row(text: string): html {
+<script component>export function setup(el) { return () => {} }</script>
+<li>{text}</li>
+}
+
+export component List(rows: string[]): html {
+<ul>{for row in rows}<Row text={row}/>{/for}</ul>
+}
+`
+	result, err := htmlbind.GenerateModule("rows.tb.html", []byte(source), htmlbind.GenerateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := string(result.GoSource)
+
+	if want := `data-tb-component=\"pages.rows.Row\"`; !strings.Contains(generated, want) {
+		t.Fatalf("Row carries no declaration marker:\n%s", generated)
+	}
+	// It rides the static markup, so it costs no instruction and no render-time
+	// work no matter how many rows there are.
+	if strings.Contains(generated, `Attr("data-tb-component"`) {
+		t.Errorf("the marker was emitted as an instruction rather than static markup:\n%s", generated)
+	}
+	// List declares no block, so it is marked by nothing.
+	if strings.Count(generated, "data-tb-component") != 1 {
+		t.Errorf("marker count = %d, want exactly one:\n%s", strings.Count(generated, "data-tb-component"), generated)
+	}
+}
+
 func TestScriptBlockDiagnostics(t *testing.T) {
 	for _, testcase := range []struct {
 		name   string
@@ -214,6 +263,21 @@ export component Counter(on: bool): html {
 }
 `,
 			want: "declares a script block inside markup",
+		},
+		{
+			// The marker naming the declaration has to live somewhere, and two
+			// roots give it no single element to live on. It is the rule a
+			// reloadable component already follows, for the same reason.
+			name: "two root elements",
+			source: `package pages
+
+export component Counter(): html {
+<script component>export function setup() {}</script>
+<div></div>
+<span></span>
+}
+`,
+			want: "must render exactly one root element",
 		},
 	} {
 		t.Run(testcase.name, func(t *testing.T) {

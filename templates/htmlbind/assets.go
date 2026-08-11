@@ -125,7 +125,13 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 			if extension != "" {
 				asset = asset.withExtension(extension, urlBase)
 			}
-			asset.Owner = component.Name
+			// The package-qualified identity rather than the declared name: two
+			// components named Counter in two route directories are one name and
+			// two declarations, and a caller keying a lifecycle on the short form
+			// would run one component's module against the other's elements. It is
+			// the same string the generated boundary marker carries, so a caller
+			// joins an asset to an element without a mapping.
+			asset.Owner = componentKind(c.packageName(), c.filename, component.Name)
 			if !seen[asset.FileName()] {
 				seen[asset.FileName()] = true
 				assets = append(assets, asset)

@@ -68,8 +68,8 @@ func TestContentHookCompilesATypeScriptBlock(t *testing.T) {
 	if strings.Contains(string(asset.Content), ": HTMLElement") {
 		t.Fatalf("written file kept the TypeScript annotation:\n%s", asset.Content)
 	}
-	if asset.Owner != "Clock" {
-		t.Fatalf("asset owner = %q, want Clock", asset.Owner)
+	if asset.Owner != "pages.clock.Clock" {
+		t.Fatalf("asset owner = %q, want pages.clock.Clock", asset.Owner)
 	}
 	// The marker describes the authored block, not the served file.
 	if strings.Contains(string(result.GoSource), "lang=") {

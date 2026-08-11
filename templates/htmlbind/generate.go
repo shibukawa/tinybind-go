@@ -237,6 +237,13 @@ type goEmitter struct {
 	// redraw endpoint, and kindConst names the constant holding its identity.
 	reloadable bool
 	kindConst  string
+	// scopeRoot is the root element of a component declaring a script block,
+	// and scopeID the declaration identity written onto it. They are separate
+	// from boundaryRoot because the marker is not a boundary: an ordinary
+	// component call opens none, and it is exactly those calls whose instances
+	// a scoped script has to find.
+	scopeRoot *ElementNode
+	scopeID   string
 	// foreignDepth mirrors the compiler's: inside SVG or MathML a hyphenated
 	// name is a standard foreign-namespace element rather than a registered one.
 	foreignDepth int

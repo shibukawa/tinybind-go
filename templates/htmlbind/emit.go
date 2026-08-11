@@ -195,11 +195,23 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	e.boundaryRoot = e.boundaryCandidate(component)
 	e.reloadable = e.c.components[component.Name].reloadable
 	e.kindConst = e.c.componentGoName(component.Name) + "Kind"
-	defer func() { e.scope, e.shell, e.boundaryRoot, e.reloadable = nil, false, nil, false }()
+	e.scopeRoot, e.scopeID = nil, ""
+	defer func() {
+		e.scope, e.shell, e.boundaryRoot, e.reloadable = nil, false, nil, false
+		e.scopeRoot, e.scopeID = nil, ""
+	}()
 	if e.c.components[component.Name].reloadable {
 		if err := e.checkReloadable(component); err != nil {
 			return err
 		}
+	}
+	if info.script != "" {
+		root := boundaryRoot(component.Body.([]Node))
+		if root == nil {
+			return e.c.error(component.Pos, "component "+component.Name+" declares a script block and must render exactly one root element, because the marker naming its declaration lives on that element")
+		}
+		e.scopeRoot = root
+		e.scopeID = componentKind(e.c.packageName(), e.c.filename, component.Name)
 	}
 
 	params := e.c.paramsGoName(component.Name)
@@ -615,6 +627,18 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 			p.op(fmt.Sprintf("Attr(%q, func(%s) (string, bool) { return %s, true })",
 				"data-"+e.prefix+"-kind", p.scope.goType, e.kindConst))
 		}
+	}
+	// The declaration marker of a scoped script. It is static markup rather than
+	// an instruction because the identity is a compile-time constant: it costs
+	// nothing per render, and unlike the instance attribute it lands on an
+	// ordinary component call, which opens no boundary and would otherwise carry
+	// nothing at all.
+	//
+	// It also lands on a render that collects nothing, so a first load — which
+	// has instances and no manifest, the manifest being a header the client
+	// sends back — still tells a client which elements belong to which script.
+	if node == e.scopeRoot {
+		p.static(` data-` + e.prefix + `-component="` + e.scopeID + `"`)
 	}
 	optOut := "data-" + e.c.attrPrefix + "-no-csrf"
 	for _, attribute := range node.Attributes {

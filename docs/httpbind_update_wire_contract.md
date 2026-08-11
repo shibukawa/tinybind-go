@@ -256,12 +256,31 @@ A component can declare a script of its own, beside its head block:
 It is extracted to a content-hashed file like any other, and its head reference is an ordinary `type="module"` tag. What is different is that the module reports **who owns it**. Each asset carries a scope:
 
 ```go
-htmlbind.Asset{ID: "…", Type: "text/javascript", URL: "/public/generated/…", Scope: "Counter"}
+htmlbind.Asset{ID: "…", Type: "text/javascript", URL: "/public/generated/…", Scope: "pages.counter.Counter"}
 ```
 
-An **empty** `Scope` is document lifetime — the file evaluates once and is never released, which is what a head contribution has always been. A **named** one is the component that declared the block, written as that component's own declared name (`Counter`) rather than the package-qualified identity generated boundary code carries in `ComponentID`. The two are different identity spaces.
+An **empty** `Scope` is document lifetime — the file evaluates once and is never released, which is what a head contribution has always been. A **named** one is the package-qualified identity of the component that declared the block. It is the same string `ComponentID` carries; the short declared name is used nowhere, because two `Counter` components in two directories are one name and two declarations.
 
-**Nothing on the wire says which component a live region is an instance of.** A manifest entry is `<instanceId>:<frame>[:<children>[:<parent>]]`, and the boundary attribute holds the instance id alone. A client holding `Scope: "Counter"` cannot ask the wire which elements are Counters. What it can key on instead is position: a chain member — a document, a layout, a page — has exactly one instance per render, so its place in the composition chain identifies it as precisely as an instance id would, which is what the chain rule below relies on. A scoped script on a component nested inside a page, which may have many instances, has nothing to key on and cannot yet be started or released per instance.
+**Every rendered instance of that component is marked with it:**
+
+```html
+<li data-tb-component="pages.counter.Counter">…</li>
+```
+
+Match `Scope` against `data-<P>-component` to find the elements an asset belongs to. The marker is static markup, not an instruction, which is what makes it dependable:
+
+- it lands on an **ordinary component call**, which opens no update boundary and therefore carries no `data-<P>-id` and appears in no manifest — and a component rendered many times inside a page is exactly that call;
+- it lands on a **first load**, which holds no manifest at all, the manifest being a header the client sends back;
+- it is in the body, so it compresses, and it is not subject to the manifest's oversize rule.
+
+**It names a declaration, not an instance.** Two `Counter` elements carry the same marker and nothing on the wire tells them apart. That is still enough to run a lifecycle, because both questions a lifecycle asks are answered locally:
+
+- *What do I start?* Every element carrying a marker that matches an asset's `Scope`.
+- *What do I release?* Whatever sits inside the region you are about to replace. A `replace` fragment stops at its nested boundaries, so at the moment an operation for instance `X` arrives, the subtree under `X` is still the one you mounted against: scan it for markers, run their teardowns, and only then apply the markup. That is what satisfies the release-before-the-markup-lands rule above, and it asks nothing of the server — which elements are about to be destroyed is something only the client can know, since it owns the apply loop.
+
+A `children` operation carries no markup and moves live nodes, so anything mounted inside one survives untouched. That is correct rather than a gap: the element did not go away.
+
+What the marker does **not** give you is a way for the *server* to address one instance — a redraw endpoint for a single `Counter`, say. That needs the component to be an update boundary, which an ordinary call does not become, and it is a different feature from the lifecycle.
 
 This module publishes the owner and **calls nothing**. What a scoped script exports, when it is started, and when it is released are the client's; the rules below are what a client must not break, not an API this module specifies.
 

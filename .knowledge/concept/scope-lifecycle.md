@@ -41,7 +41,10 @@ mechanism_status:
   declarations_are_not_named: the original finding claimed data:component-update-manifest carries component_id beside every instance_id; it does not, and its as_built records the four fields that ship
   entry_and_exit_are_reported: data:component-delta-response insert, remove, move, and replace operations name instances, so the client already learns when one arrives and when one goes
   missing_link: nothing says which script asset belongs to which component declaration; htmlbind.Asset carries ID, Type, and URL, and Fragment.Assets flattens the per-component sets the compiler already built
-  therefore: requirement:scoped-script-declaration supplies that link and it is enough for a chain member, whose one instance per render makes chain position an address; a component with many instances needs a wire field naming each instance's declaration, which is a new wire record after all
+  declarations_are_named_now: requirement:scoped-script-declaration marks every rendered instance with data-<prefix>-component, the package-qualified declaration identity, as static markup rather than a manifest field
+  therefore: the whole lifecycle is addressable for every component, an ordinary call included, because the marker does not depend on a boundary and release does not depend on naming an instance
+  release_without_an_instance_name: a delta's replace fragment stops at its nested boundaries, so the region about to be replaced is still the mounted one when the operation arrives; a caller scans it for markers and tears them down before applying, which is knowledge only the owner of the apply loop has and therefore never needed a wire field
+  what_a_marker_cannot_do: an ordinary component call opens no update boundary, so a delta never names one of its instances; that costs nothing for a lifecycle and does cost a server-driven redraw of a single instance, which stays requirement:partial-update-boundaries territory
   the_authoring_side_is_separate: requirement:component-script-block adds where an author writes the script, which is a parser change the user asked for on its own merits; the two meet at requirement:scoped-script-declaration and are otherwise independent
 responsibility_split:
   module_decides_what_a_thing_is:

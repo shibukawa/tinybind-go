@@ -12,13 +12,13 @@ source:
   - user direction 2026-08-11
   - requirement:static-asset-extraction
 review_gate: proposed
-status: shipped 2026-08-11; parser, compiler, extraction, and four diagnostics, with no runtime code at all
+status: shipped 2026-08-11; parser, compiler, extraction, the declaration marker, and five diagnostics, with no runtime code at all
 as_built:
   parser: templates/htmlbind/html.go reads a marked block verbatim through the same readRawUntilClose path a head contribution already used, gated by isComponentScriptBlock
   compiler: collectScriptBlock takes the block out of the body before any other pass sees it, so nothing downstream treats it as markup; rejectNestedScriptBlocks reports a marked block anywhere else
   extraction: templates/htmlbind/assets.go emits it through the existing newAsset path and appends its reference tag after the head contributions
   owner: the template-time Asset gained Owner, and templates/htmlbind/emit.go writes Scope onto the generated htmlbind.Asset only when it is set
-  tests: templates/htmlbind/scriptblock_test.go, over extraction, the owner, verbatim content, the module reference, import rules, and the four diagnostics
+  tests: templates/htmlbind/scriptblock_test.go, over extraction, the owner, verbatim content, the module reference, import rules, the marker on an ordinary component call, and the five diagnostics
 syntax:
   shape: |
     export component Counter(label: string): html {

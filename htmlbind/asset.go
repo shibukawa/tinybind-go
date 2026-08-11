@@ -30,18 +30,27 @@ type Asset struct {
 	// which is what a head contribution has always been. A named one binds the
 	// file to that component's live instances.
 	//
-	// The name is the component's declared name — Counter for a component
-	// written as Counter — and not the package-qualified identity the generator
-	// writes into Boundary.ComponentID for that same component. The two are
-	// different identity spaces and nothing maps one to the other.
+	// The name is the package-qualified declaration identity, pages.counter.Counter
+	// rather than Counter. It is the same string the generator writes into
+	// Boundary.ComponentID, and the same one it marks every rendered instance
+	// with as data-<prefix>-component, so a caller finds the elements an asset
+	// belongs to by matching this value against that attribute — no mapping and
+	// no second identity scheme. The short form is not used anywhere, because
+	// two components named Counter in two directories are one name and two
+	// declarations.
 	//
-	// Joining a scoped asset to a live instance is therefore not something the
-	// wire supports as it stands. A manifest entry carries the instance id, the
-	// frame validator, its children, and its parent, and no declaration
-	// identity; the boundary attribute carries the instance id alone. A caller
-	// needing the join supplies its own correspondence: position in the
-	// composition chain identifies a component with one instance per render,
-	// and a component with many instances has nothing to key on yet.
+	// The marker says which declaration an element came from, not which instance
+	// it is. It rides the static markup, so it lands on an ordinary component
+	// call, which opens no update boundary and carries no instance attribute,
+	// and on a first load, which holds no manifest because the manifest is a
+	// header the client sends back.
+	//
+	// Two instances of one component are marked identically, which is enough to
+	// run a lifecycle: a caller starts what carries the marker, and releases
+	// what sits inside the region it is about to replace, which it knows without
+	// asking because it owns the apply loop. Naming one instance to the server —
+	// redrawing a single Counter — is what needs the component to be an update
+	// boundary, and that is a different feature.
 	//
 	// The module publishes the owner and calls nothing. What a scoped script
 	// exports, when it is started, and when it is released are the caller's,
