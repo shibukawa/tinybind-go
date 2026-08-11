@@ -28,9 +28,20 @@ type Asset struct {
 	//
 	// Empty is document lifetime: the file evaluates once and is never released,
 	// which is what a head contribution has always been. A named one binds the
-	// file to that component's live instances, and the name is the same
-	// declaration identity the update manifest already carries per instance, so
-	// a caller joins an asset to a live instance with no second identity scheme.
+	// file to that component's live instances.
+	//
+	// The name is the component's declared name — Counter for a component
+	// written as Counter — and not the package-qualified identity the generator
+	// writes into Boundary.ComponentID for that same component. The two are
+	// different identity spaces and nothing maps one to the other.
+	//
+	// Joining a scoped asset to a live instance is therefore not something the
+	// wire supports as it stands. A manifest entry carries the instance id, the
+	// frame validator, its children, and its parent, and no declaration
+	// identity; the boundary attribute carries the instance id alone. A caller
+	// needing the join supplies its own correspondence: position in the
+	// composition chain identifies a component with one instance per render,
+	// and a component with many instances has nothing to key on yet.
 	//
 	// The module publishes the owner and calls nothing. What a scoped script
 	// exports, when it is started, and when it is released are the caller's,

@@ -3,7 +3,7 @@ id: requirement:scoped-script-declaration
 type: requirement
 title: Scoped Script Ownership
 ---
-Report on each asset which component declaration owns it, so a caller's runtime joins a script to the live instances it must start and stop with, using identity the manifest already carries.
+Report on each asset which component declaration owns it, so a caller's runtime can join a script to the live instances it must start and stop with.
 
 ```yaml
 priority: should
@@ -12,9 +12,9 @@ source:
   - decision:lifecycle-from-declaration-block
   - user design discussion 2026-08-11
 review_gate: proposed
-status: module half shipped 2026-08-11; the client half is the caller's by decision:client-runtime-ownership and is unwritten
+status: module half shipped 2026-08-11; the client half is the caller's by decision:client-runtime-ownership, and for a component with more than one instance it is blocked by the wire carrying no declaration identity
 as_built:
-  field: htmlbind.Asset gained Scope, documented as empty for document lifetime and the declaring component otherwise
+  field: htmlbind.Asset gained Scope, empty for document lifetime and the declaring component's declared name otherwise
   filled_by: the template-time Asset gained Owner, set by extraction from the component that declared the block
   emitted_by: templates/htmlbind/emit.go writes Scope into the generated asset literal only when it is set, so a project declaring no block regenerates byte for byte
   contract: docs/httpbind_update_wire_contract.md gained a Scoped scripts section and an eighth normative client obligation, plus a note on the head section that it only ever adds, which is why a released script cannot be one the head installed
@@ -22,15 +22,17 @@ as_built:
   not_done: the client half itself, which is the caller's
 scale: one field on htmlbind.Asset and a contract section; the authoring surface and its checks are requirement:component-script-block
 what_is_missing_today:
-  finding: 2026-08-11, verified against v0.5.3
-  already_there: the initial render writes the instance attribute, data:component-update-manifest carries component_id beside every instance_id, and data:component-delta-response reports insert, remove, move, and replace by instance
+  finding: 2026-08-11 against v0.5.3, corrected 2026-08-11 against v0.5.5
+  already_there: the initial render writes the instance attribute, and data:component-delta-response reports insert, remove, move, and replace by instance
   not_there: nothing says which asset belongs to which component declaration; htmlbind.Asset carries ID, Type, and URL, and Fragment.Assets flattens the per-component sets the compiler already built internally
-  therefore: a component-scoped lifecycle needs this one link and no new wire record, no new marker, and no new body channel
+  correction: the original finding also claimed the manifest carries component_id beside every instance_id, and it does not; data:component-update-manifest as_built records the four fields that ship, and that claim is why this requirement was scoped as needing no wire change
+  therefore: the asset link ships and covers a chain member, whose one instance per render makes chain position sufficient; a general per-instance lifecycle still needs a wire field naming each instance's declaration
 asset_field:
   added: Scope on htmlbind.Asset, beside ID, Type, and URL
   empty: document lifetime; a head contribution script, which is every script that exists today, evaluates once and is never released
-  set: the stable generated declaration identity of the component that declared the block, per requirement:component-script-block
-  pairs_with: the component_id data:component-update-manifest already carries, so a caller joins an asset to a live instance with no second identity scheme
+  set: the declared name of the component that declared the block, per requirement:component-script-block; templates/htmlbind extraction copies component.Name, so a component written as Counter reports Counter
+  not_the_boundary_identity: Boundary.ComponentID is package-qualified, templates.page.Page where Scope is Page, so the two are different identity spaces and neither derives from the other without a mapping nothing defines
+  joins_by: chain position today, which identifies a document, a layout, or a page because each has one instance per render; a component with many instances cannot be joined at all until the wire names a declaration per instance
   why_one_field: emptiness is the lifetime class and the value is the owner, and a caller needing only the class reads the same field
   unchanged: ID stays the content hash, so two components declaring identical bytes still share one file and differ by Scope
   merge: MergeAssets still deduplicates by ID; a file shared by two owners is possible because identity is content, so a caller reads Scope per member rather than per file
@@ -68,7 +70,8 @@ acceptance:
   - a chain's merged asset set is unchanged in membership and order from the same chain today
 open_questions:
   - whether the field is named Scope holding a declaration identity, or ComponentID with the lifetime class read from its emptiness, which trades a clearer name for a less direct one
-  - whether a wrapper may declare a script block, given a chain member's identity is derived by rule:component-instance-identity rather than author-declared, and whether that reaches the same manifest field
+  - whether a wrapper may declare a script block, given a chain member's identity is derived by rule:component-instance-identity rather than author-declared
+  - which identity a declaration field would carry if one is added to data:component-update-manifest, since Scope is the declared name and Boundary.ComponentID is package-qualified, and shipping the second without reconciling the first leaves the join no more possible than it is now
   - whether a lifecycle needs a way to say it wants one call per component rather than one per instance, which the singleton author will expect and the instance keying does not give
   - whether the module should reject a script block on a component the generator knows is never updateable, since nothing would ever release it, or leave that to the caller as a diagnostic
 ```

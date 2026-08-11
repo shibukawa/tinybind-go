@@ -259,7 +259,9 @@ It is extracted to a content-hashed file like any other, and its head reference 
 htmlbind.Asset{ID: "…", Type: "text/javascript", URL: "/public/generated/…", Scope: "Counter"}
 ```
 
-An **empty** `Scope` is document lifetime — the file evaluates once and is never released, which is what a head contribution has always been. A **named** one is the component declaration that owns it, and it is the same identity the manifest already carries as `component_id` on every instance. Joining an asset to a live region therefore needs no second identity scheme and nothing new on the wire.
+An **empty** `Scope` is document lifetime — the file evaluates once and is never released, which is what a head contribution has always been. A **named** one is the component that declared the block, written as that component's own declared name (`Counter`) rather than the package-qualified identity generated boundary code carries in `ComponentID`. The two are different identity spaces.
+
+**Nothing on the wire says which component a live region is an instance of.** A manifest entry is `<instanceId>:<frame>[:<children>[:<parent>]]`, and the boundary attribute holds the instance id alone. A client holding `Scope: "Counter"` cannot ask the wire which elements are Counters. What it can key on instead is position: a chain member — a document, a layout, a page — has exactly one instance per render, so its place in the composition chain identifies it as precisely as an instance id would, which is what the chain rule below relies on. A scoped script on a component nested inside a page, which may have many instances, has nothing to key on and cannot yet be started or released per instance.
 
 This module publishes the owner and **calls nothing**. What a scoped script exports, when it is started, and when it is released are the client's; the rules below are what a client must not break, not an API this module specifies.
 

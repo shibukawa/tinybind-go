@@ -63,7 +63,7 @@ subscription_record: data:live-boundary-subscription
 runtime_flow: flow:live-boundary-stream
 reuse:
   identity: rule:component-instance-identity already names an instance across two executions, which is what a resume needs
-  addressing: data:component-update-manifest already carries a per-boundary revision, and decision:response-mode-header removes the need for a handle or a continuation by keeping the render on the page's own route
+  addressing: decision:response-mode-header removes the need for a handle or a continuation by keeping the render on the page's own route; the per-boundary revision data:component-update-manifest designs is not among the fields its as_built ships, so a resume compares the frame validator that does
   comparison: requirement:component-delta-rendering already suppresses unchanged boundary HTML, which is what a periodic re-render needs to stay cheap
   operations: data:component-delta-response already expresses replace, insert, remove, and move, so an appending list needs no new wire form
   safety: rule:template-context-safety and the no-script completion guarantee of decision:client-runtime-ownership carry over unchanged

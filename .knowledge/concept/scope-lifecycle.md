@@ -35,18 +35,18 @@ what_generic_means:
   reaches: a layout through requirement:layout-reuse-boundaries chain members, a leaf fragment, and an ordinary component inside one, all through one rule
   costs_nothing_extra: rule:component-instance-identity already applies to chain members and to updateable components alike, so the generic reading rides identity that already ships
   what_it_refuses: a scope that is not a component at all, such as a hand-marked region an author wraps in an element of their own; that stays the caller's affordance and needs nothing here
-the_mechanism_already_exists:
-  finding: 2026-08-11; a component-scoped lifecycle needs no new marker, no new wire record, and no new body channel
+mechanism_status:
+  finding: 2026-08-11 against v0.5.3, corrected 2026-08-11 against v0.5.5
   instances_are_marked: the initial render writes the instance attribute into the output, per decision:update-manifest-transport
-  declarations_are_named: data:component-update-manifest carries component_id, the stable generated declaration identity, beside every instance_id
+  declarations_are_not_named: the original finding claimed data:component-update-manifest carries component_id beside every instance_id; it does not, and its as_built records the four fields that ship
   entry_and_exit_are_reported: data:component-delta-response insert, remove, move, and replace operations name instances, so the client already learns when one arrives and when one goes
   missing_link: nothing says which script asset belongs to which component declaration; htmlbind.Asset carries ID, Type, and URL, and Fragment.Assets flattens the per-component sets the compiler already built
-  therefore: the client-side ask is that one link, which is smaller than the body-contribution channel the downstream survey priced and different from the page flag it proposed
+  therefore: requirement:scoped-script-declaration supplies that link and it is enough for a chain member, whose one instance per render makes chain position an address; a component with many instances needs a wire field naming each instance's declaration, which is a new wire record after all
   the_authoring_side_is_separate: requirement:component-script-block adds where an author writes the script, which is a parser change the user asked for on its own merits; the two meet at requirement:scoped-script-declaration and are otherwise independent
 responsibility_split:
   module_decides_what_a_thing_is:
     - that a script declares a lifecycle at all, per requirement:scoped-script-declaration
-    - which component declaration owns it, matching the identity the manifest already carries
+    - which component declaration owns it, reported as that component's declared name and not as any identity the manifest carries
     - the identity of the file, unchanged from requirement:component-asset-requirements
     - the composition order, unchanged from Assets and MergeAssets, outermost first
     - the generation-time rules that make a declaration honest, chiefly the module-mode requirement of requirement:component-script-block
