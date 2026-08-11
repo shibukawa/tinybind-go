@@ -64,6 +64,33 @@ type TransformOptions struct {
 	// so an application needs to see the whole cost before committing to the
 	// migration rather than one refusal at a time after it.
 	ReportOnly bool
+
+	// GeneratedHeaders names header prefixes, beside this module's own, whose
+	// files the transform skips. It carries Options.GeneratedHeaders to a
+	// direct AnalyzeTransform caller, and a Generator fills it from there.
+	//
+	// The transform reads the whole loaded package, so a framework branding its
+	// generated output writes a header nothing here recognizes on its own, and
+	// its generated code is classified as if a user had authored it. Each entry
+	// still requires the conventional "DO NOT EDIT." ending.
+	GeneratedHeaders []string
+}
+
+// transformOptions is the configured transform carrying the generator's
+// generated-header list. A framework sets Options.GeneratedHeaders once for
+// discovery, and the transform has to skip the same files discovery does.
+//
+// Options.Transform must be set; every caller is already inside the check that
+// a backend was selected.
+func (g *Generator) transformOptions() TransformOptions {
+	options := *g.Options.Transform
+	if len(g.Options.GeneratedHeaders) > 0 {
+		merged := make([]string, 0, len(options.GeneratedHeaders)+len(g.Options.GeneratedHeaders))
+		merged = append(merged, options.GeneratedHeaders...)
+		merged = append(merged, g.Options.GeneratedHeaders...)
+		options.GeneratedHeaders = merged
+	}
+	return options
 }
 
 // DefaultTransformOptions targets the fasthttp runtime this module ships.

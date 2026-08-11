@@ -210,7 +210,7 @@ func (g *Generator) reportTransform(load *packageLoad) ([]parser.Diagnostic, err
 	if err != nil {
 		return nil, err
 	}
-	plan, err := AnalyzeTransform(pkg, *g.Options.Transform)
+	plan, err := AnalyzeTransform(pkg, g.transformOptions())
 	if err != nil {
 		return nil, err
 	}

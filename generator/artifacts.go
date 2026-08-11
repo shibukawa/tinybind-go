@@ -44,6 +44,13 @@ const (
 	// ArtifactTransport is the other transport's copy of the package's
 	// handlers, derived from the authored net/http source.
 	ArtifactTransport ArtifactKind = "transport"
+	// ArtifactTransportBinding is the derived backend's binder registry. The
+	// runtime's Bind reads a registry the generated init fills, so a package
+	// missing this file compiles and fails on the first request instead.
+	ArtifactTransportBinding ArtifactKind = "transport_binding"
+	// ArtifactTransportRoutes registers the derived handlers on the router
+	// TransformOptions.Router names.
+	ArtifactTransportRoutes ArtifactKind = "transport_routes"
 )
 
 // ArtifactDestination says where an artifact is written, because a stylesheet
@@ -134,6 +141,19 @@ func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateReque
 		return nil, fmt.Errorf("generate transport: %w", err)
 	}
 	artifacts = append(artifacts, transport...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	transportBinding, err := runner.transportBindingArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate transport binders: %w", err)
+	}
+	artifacts = append(artifacts, transportBinding...)
+	transportRoutes, err := runner.transportRoutesArtifacts(load)
+	if err != nil {
+		return nil, fmt.Errorf("generate transport routes: %w", err)
+	}
+	artifacts = append(artifacts, transportRoutes...)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -509,7 +529,8 @@ func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	plan, err := AnalyzeTransform(pkg, *g.Options.Transform)
+	transform := g.transformOptions()
+	plan, err := AnalyzeTransform(pkg, transform)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -519,7 +540,7 @@ func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, []string,
 	if len(plan.Admitted) == 0 {
 		return nil, nil, nil
 	}
-	out, err := RewriteTransform(pkg, plan, *g.Options.Transform)
+	out, err := RewriteTransform(pkg, plan, transform)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -531,6 +552,42 @@ func (g *Generator) transportArtifacts(load *packageLoad) ([]Artifact, []string,
 		PackageName: pkg.Name,
 		Content:     out.Source,
 	}}, out.LayoutWarnings, nil
+}
+
+// transportBindingArtifactBase and transportRoutesArtifactBase name the files
+// completing the derived backend, matching what GeneratePackage writes.
+const (
+	transportBindingArtifactBase = "tinybind_fasthttp"
+	transportRoutesArtifactBase  = "tinybind_routes"
+)
+
+// transportBindingArtifacts is the derived backend's half of the binder pair.
+// bindingArtifacts emits the authored net/http target alone, and a caller
+// generating through the artifact API would otherwise get handlers and routes
+// for a backend whose binders were never registered.
+func (g *Generator) transportBindingArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.Transform == nil {
+		return nil, nil
+	}
+	plan, err := analyzeLoadedPackage(load, g.Options)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.Types) == 0 {
+		return nil, nil
+	}
+	code, err := emitSelectedFor(plan, nil, fasthttpTarget())
+	if err != nil {
+		return nil, err
+	}
+	return []Artifact{{
+		Kind:        ArtifactTransportBinding,
+		Destination: DestinationGoPackage,
+		OutputBase:  transportBindingArtifactBase,
+		Extension:   ExtensionGo,
+		PackageName: plan.Package,
+		Content:     code,
+	}}, nil
 }
 
 func (g *Generator) configBindArtifacts(load *packageLoad) ([]Artifact, error) {

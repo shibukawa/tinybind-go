@@ -10,6 +10,7 @@ status: proposed 2026-08-08
 unit: one function or method declaration
 transport_typed_values: parameters and locals of type http.ResponseWriter or *http.Request, conventionally w and r
 admission_set:
+  input_files: authored source only; a file carrying a generated header is skipped per rule:generated-source-not-discovered, because the generated binder captures the request in a closure and would otherwise refuse itself on every run after the first
   seeds: every handler concept:handler-discovery finds, in all three forms of concept:handler-forms
   closure: any same-package function taking a transport-typed parameter that an admitted function calls
   reason_for_the_closure: decision:backend-build-tag-mode removes the fallback, so a refused shared helper makes the build fail rather than one route slow; a per-function pass would refuse most real handler packages, whose error and render helpers take w and r
@@ -51,6 +52,10 @@ implemented_2026_08_08:
     blank_assignment: "_ = r" discards the value and appears throughout real handlers, including this module's own; refusing it would refuse most of them, so it is admitted
     closure_precedence: a captured transport value is surrounded by ordinary recognized calls, so the capture refusal has to outrank the per-call admission or the capture is missed
     same_package_is_not_third_party: a helper in the package is a transitive candidate, so modelling an unknown call needs a genuinely external callee
+found_2026_08_11:
+  problem: generation was not idempotent; the second run refused the binder the first run wrote, and the refusal stopped every phase behind the transform, so the fasthttp binder was emitted once and never again
+  fix: skip generated files when collecting candidates, and carry Options.GeneratedHeaders into TransformOptions so a framework's own branded header is skipped too
+  also: GenerateArtifacts returned the derived handlers without the binder registry or the route registration, so an artifact-based caller could not assemble a working derived backend at all
 author_remedies:
   - move the offending work behind a function that takes neither w nor r
   - rewrite the handler in the form of decision:transport-neutral-handler, which has no transport to refuse
