@@ -6,6 +6,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/shibukawa/tinybind-go/internal/gensource"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -112,6 +113,13 @@ func methodPatternKey(packagePath, receiverPackagePath, receiverType, name strin
 
 func (a *transformAnalyzer) collectCandidates() {
 	for _, file := range a.pkg.Syntax {
+		// Generated code is this generator's output, not its input. The binder
+		// it writes reads the body lazily, so it captures the request in a
+		// closure, and classifying that as authored source would refuse a
+		// function the user cannot edit -- on the second run, never the first.
+		if gensource.IsGenerated(file, a.options.GeneratedHeaders...) {
+			continue
+		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || fn.Type.Params == nil {

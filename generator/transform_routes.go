@@ -144,3 +144,41 @@ func emitRouteRegistration(pkg *packages.Package, routes []parser.Route, target 
 	}
 	return formatted, nil
 }
+
+// transportRoutesArtifacts installs the derived handlers on the caller's
+// router. The authored net/http wiring lives in a file the build tag excludes,
+// so a package generated through the artifact API without this one compiles
+// and serves nothing.
+func (g *Generator) transportRoutesArtifacts(load *packageLoad) ([]Artifact, error) {
+	if g.Options.Transform == nil {
+		return nil, nil
+	}
+	transform, err := g.transformOptions().normalized()
+	if err != nil {
+		return nil, err
+	}
+	pkg, err := load.get()
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := g.Options.normalized()
+	if err != nil {
+		return nil, err
+	}
+	result, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	if err != nil {
+		return nil, err
+	}
+	code, err := emitRouteRegistration(pkg, result.Routes, transform.Router, fasthttpTarget())
+	if err != nil || code == nil {
+		return nil, err
+	}
+	return []Artifact{{
+		Kind:        ArtifactTransportRoutes,
+		Destination: DestinationGoPackage,
+		OutputBase:  transportRoutesArtifactBase,
+		Extension:   ExtensionGo,
+		PackageName: pkg.Name,
+		Content:     code,
+	}}, nil
+}
