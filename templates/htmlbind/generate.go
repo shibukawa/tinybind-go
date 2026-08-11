@@ -71,6 +71,14 @@ type GenerateOptions struct {
 	//
 	// Registering none leaves output byte-identical.
 	ReferenceHooks []ReferenceHook
+	// ContentHooks compile the component script blocks whose lang attribute
+	// they claim, so a block written in TypeScript reaches the browser as
+	// JavaScript without a compiler entering this module.
+	//
+	// Registering none is the ordinary case: a block with no lang marker is
+	// written exactly as authored, and a marker naming no registered hook is a
+	// generation error rather than a silent passthrough.
+	ContentHooks []ContentHook
 	// CSRFMode turns the automatic CSRF field off. Empty is [CSRFAuto], which
 	// puts the hidden field in every unsafe form.
 	CSRFMode CSRFMode
@@ -148,6 +156,11 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	// A registration mistake is reported against whoever wrote the generate
+	// command, before any template is examined for a marker.
+	if err := ValidateContentHooks(options.ContentHooks); err != nil {
+		return Result{}, err
+	}
 	result := Result{
 		Produced:          hooks.produced,
 		Rewrites:          hooks.rewrites,
@@ -179,6 +192,9 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 		return Result{}, err
 	}
 	result.Assets = assets
+	// A content transform's read set joins the reference transforms' own, so an
+	// edit to a file either kind read regenerates through one path.
+	result.ReadSet = append(result.ReadSet, compiler.contentReads...)
 	generated, err := compiler.emit(options)
 	if err != nil {
 		return Result{}, err

@@ -254,8 +254,14 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	if required := e.c.transitiveAssets(component.Name); len(required) > 0 {
 		parts := make([]string, 0, len(required))
 		for _, asset := range required {
-			parts = append(parts, fmt.Sprintf("{ID: %s, Type: %s, URL: %s}",
-				strconv.Quote(asset.Base), strconv.Quote(asset.MediaType()), strconv.Quote(asset.URL)))
+			// Scope is written only for a component script block, so a project
+			// declaring none regenerates byte for byte.
+			scope := ""
+			if asset.Owner != "" {
+				scope = ", Scope: " + strconv.Quote(asset.Owner)
+			}
+			parts = append(parts, fmt.Sprintf("{ID: %s, Type: %s, URL: %s%s}",
+				strconv.Quote(asset.Base), strconv.Quote(asset.MediaType()), strconv.Quote(asset.URL), scope))
 		}
 		assets = "\tAssets: []htmlbind.Asset{" + strings.Join(parts, ", ") + "},\n"
 	}

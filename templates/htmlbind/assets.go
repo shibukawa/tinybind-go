@@ -39,6 +39,12 @@ type Asset struct {
 	Content   []byte
 	// URL is the reference written into the emitted link or script tag.
 	URL string
+	// Owner names the component whose requirement:component-script-block
+	// declared this file, and is empty for everything else. An empty owner is
+	// document lifetime: the file evaluates once and is never released. A named
+	// one binds the file to that component's live instances, which is the link
+	// requirement:scoped-script-declaration publishes to a caller's runtime.
+	Owner string
 }
 
 // FileName is the name the asset is written under, inside the configured
@@ -107,10 +113,93 @@ func (c *compiler) extractAssets(options GenerateOptions) ([]Asset, error) {
 			}
 			tags = append(tags, headTag{html: html, source: c.headSource(info, node)})
 		}
+		// The component's own script block is extracted after its head
+		// contributions so its reference tag follows them, which keeps a block
+		// that calls into a head-declared script loading after it.
+		if info.script != "" {
+			content, extension, err := c.compileScriptBlock(info, component.Name, options)
+			if err != nil {
+				return nil, err
+			}
+			asset := newAsset(AssetScript, unit, jsGeneratedHeader+content+"\n", urlBase)
+			if extension != "" {
+				asset = asset.withExtension(extension, urlBase)
+			}
+			asset.Owner = component.Name
+			if !seen[asset.FileName()] {
+				seen[asset.FileName()] = true
+				assets = append(assets, asset)
+			}
+			// The block is a module: a lifecycle method is an export, and a
+			// classic script has no export surface to call one through. The lang
+			// marker describes the authored block rather than the served file,
+			// so it does not travel to the tag.
+			attributes := append([]Attribute{{Kind: "html:attribute", Name: "type", Value: []AttributePart{{Kind: "html:text", Text: "module"}}}}, info.scriptAttributes...)
+			tags = append(tags, headTag{html: referenceTag("script", "src", asset.URL, attributes)})
+			required = append(required, asset)
+		}
 		info.headTags = tags
 		info.assets = required
 	}
 	return assets, nil
+}
+
+// withExtension renames an asset to what a transform produced. The content hash
+// is unchanged, because it names the bytes and the bytes did not change; only
+// what the file is called does.
+func (a Asset) withExtension(extension, urlBase string) Asset {
+	a.Extension = extension
+	a.URL = JoinPublicURL(urlBase, a.Base+"."+extension)
+	return a
+}
+
+// compileScriptBlock hands a block marked with a lang attribute to the
+// registered transform and returns what to write.
+//
+// A block with no marker is written as authored, which is every block until a
+// project registers a hook.
+func (c *compiler) compileScriptBlock(info *componentInfo, component string, options GenerateOptions) (string, string, error) {
+	lang := ""
+	var kept []Attribute
+	for _, attribute := range info.scriptAttributes {
+		if attribute.Name != "lang" {
+			kept = append(kept, attribute)
+			continue
+		}
+		// A lang marker is a build-time fact, so an expression there has
+		// nothing to resolve against and reads as no marker at all.
+		text, static := staticAttributeText(attribute)
+		if !static {
+			return "", "", c.error(info.scriptPos, "component "+component+" script block: lang must be written as literal text")
+		}
+		lang = strings.TrimSpace(text)
+	}
+	if lang == "" {
+		return info.script, "", nil
+	}
+	info.scriptAttributes = kept
+	hook, err := findContentHook(options.ContentHooks, lang)
+	if err != nil {
+		return "", "", c.error(info.scriptPos, "component "+component+" script block: "+err.Error())
+	}
+	result, err := hook.Transform(ContentRequest{
+		Hook:      hook.Name,
+		Lang:      lang,
+		Content:   info.script,
+		Component: component,
+		Dir:       filepath.Dir(c.filename),
+		File:      c.filename,
+		Pos:       info.scriptPos,
+	})
+	if err != nil {
+		return "", "", c.error(info.scriptPos, "component "+component+" script block: "+hook.Name+": "+err.Error())
+	}
+	extension := hook.Extension
+	if result.Extension != "" {
+		extension = result.Extension
+	}
+	c.contentReads = append(c.contentReads, result.Read...)
+	return result.Content, extension, nil
 }
 
 // MediaType is what the reference tag says this asset is.

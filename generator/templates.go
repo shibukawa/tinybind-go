@@ -366,6 +366,7 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			PreserveWhitespace:  g.Options.PreserveTemplateWhitespace,
 			DataAttributePrefix: g.Options.DataAttributePrefix,
 			ReferenceHooks:      hooks,
+			ContentHooks:        g.Options.ContentHooks,
 		})
 		if err != nil {
 			return nil, htmlbind.Result{}, err

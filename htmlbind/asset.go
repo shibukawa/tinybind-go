@@ -23,6 +23,19 @@ type Asset struct {
 	// URL is where the reference tag points, which is the generation-time public
 	// URL base joined to the file name.
 	URL string
+	// Scope names the component whose script block declared this file, and is
+	// empty for every other asset.
+	//
+	// Empty is document lifetime: the file evaluates once and is never released,
+	// which is what a head contribution has always been. A named one binds the
+	// file to that component's live instances, and the name is the same
+	// declaration identity the update manifest already carries per instance, so
+	// a caller joins an asset to a live instance with no second identity scheme.
+	//
+	// The module publishes the owner and calls nothing. What a scoped script
+	// exports, when it is started, and when it is released are the caller's,
+	// which is the division decision:client-runtime-ownership already draws.
+	Scope string
 }
 
 // Asset media types. They are the two kinds requirement:static-asset-extraction

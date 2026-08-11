@@ -168,6 +168,11 @@ type Options struct {
 	// the conversion turned out; an encode larger than its source is worth
 	// declining, and only the converted bytes can say so.
 	ReferenceHooks []htmlbind.ReferenceHook
+	// ContentHooks compile the component script blocks whose lang attribute
+	// they claim. A block marked lang="ts" reaches the browser as JavaScript
+	// through the transform registered here, so the compiler is this command's
+	// dependency and never the module's.
+	ContentHooks []htmlbind.ContentHook
 	// ConversionCacheDir stores the outcome of each conversion, keyed by what
 	// the hook's CacheKey declared it depends on. An unchanged asset then costs
 	// a digest instead of an encode, and a source that once lost a size
@@ -300,6 +305,9 @@ func (o Options) normalized() (normalizedOptions, error) {
 	// against the registration rather than against the first template position
 	// that happens to reach it.
 	if err := htmlbind.ValidateReferenceHooks(o.ReferenceHooks); err != nil {
+		return normalizedOptions{}, err
+	}
+	if err := htmlbind.ValidateContentHooks(o.ContentHooks); err != nil {
 		return normalizedOptions{}, err
 	}
 	disabled := make(map[Feature]bool, len(o.DisableFeatures))

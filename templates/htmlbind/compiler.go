@@ -140,6 +140,17 @@ type componentInfo struct {
 	// style is the scoped CSS of this component's style block, which
 	// requirement:static-asset-extraction moves into a generated stylesheet.
 	style string
+	// script is the authored body of this component's own script block, the
+	// requirement:component-script-block declaration extracted into its own
+	// file and bound to this component's instances. It is empty for a component
+	// declaring none, which is every component that predates the feature.
+	script string
+	// scriptAttributes are the block's authored attributes, minus the marker
+	// that identified it. They travel to the emitted reference tag the way a
+	// head script's do.
+	scriptAttributes []Attribute
+	// scriptPos locates the block, for a diagnostic a transform returns.
+	scriptPos Position
 	// scope carries the requirement:scoped-component-style renaming applied to
 	// this component's style block, or nil when it declares none.
 	scope *styleScope
@@ -193,6 +204,9 @@ type compiler struct {
 	csrfMode   CSRFMode
 	csrfField  string
 	attrPrefix string
+	// contentReads collects the files the content transforms reported reading,
+	// so an edit to one regenerates the block that depends on it.
+	contentReads []string
 	// foreignDepth is non-zero inside an SVG or MathML subtree, where a
 	// hyphenated name is a standard foreign-namespace element rather than a
 	// custom element and so sits outside the whitelist entirely.
@@ -366,6 +380,13 @@ func (c *compiler) analyze() error {
 		// Whitespace is normalized before the head is collected, so the
 		// contributions collectHead captures are the rewritten nodes.
 		body, err := normalizeWhitespace(c.filename, body, c.collapseWhitespace)
+		if err != nil {
+			return err
+		}
+		// The component's own script block is taken out before anything else
+		// looks at the body, because it is a declaration rather than markup and
+		// every later pass would otherwise treat it as content to render.
+		body, err = c.collectScriptBlock(info, body)
 		if err != nil {
 			return err
 		}
@@ -891,6 +912,134 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			}
 		default:
 			return c.error(Position{Line: 1, Col: 1}, fmt.Sprintf("unsupported HTML node %T", node))
+		}
+	}
+	return nil
+}
+
+// collectScriptBlock takes the component's own script block out of the body and
+// records it, returning the body the component actually renders.
+//
+// The block is removed rather than skipped at emission because it is not markup
+// at all: requirement:static-asset-extraction writes it to a file and the merged
+// head references it, exactly as it already does for a head script.
+//
+// It must be a direct child of the component. A block inside a control flow
+// block would be a component-wide declaration written as though it were
+// conditional, and nothing about the file it produces could honor that.
+func (c *compiler) collectScriptBlock(info *componentInfo, body []Node) ([]Node, error) {
+	var block *ElementNode
+	kept := make([]Node, 0, len(body))
+	for _, node := range body {
+		element, ok := node.(*ElementNode)
+		if !ok || !isComponentScriptBlock(element.Name, element.Attributes) {
+			kept = append(kept, node)
+			continue
+		}
+		if block != nil {
+			return nil, c.error(element.Pos, "component "+info.decl.Name+" declares more than one script block")
+		}
+		block = element
+	}
+	if err := c.rejectNestedScriptBlocks(info, kept); err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return body, nil
+	}
+	info.script = strings.TrimSpace(elementText(block))
+	info.scriptPos = block.Pos
+	if specifier := relativeImportSpecifier(info.script); specifier != "" {
+		return nil, c.error(block.Pos, "component "+info.decl.Name+" imports "+specifier+
+			" from its script block; a relative specifier resolves against the generated file's URL under the public asset directory rather than against this template, so write the served path instead")
+	}
+	for _, attr := range block.Attributes {
+		if attr.Name == componentScriptMarker && attr.Boolean {
+			continue
+		}
+		// A lifecycle method is an export, and a classic script has no export
+		// surface to reach one through. Its only per-visit behavior is
+		// re-execution, which re-runs customElements.define and re-adds every
+		// listener, so this is the bug the block exists to remove rather than a
+		// weaker version of it.
+		if attr.Name == "global" && attr.Boolean {
+			return nil, c.error(attr.Pos, "component "+info.decl.Name+" declares a global script block; a component script block is a module, because the lifecycle it exports cannot be reached from a classic script")
+		}
+		if attr.Name == "module" && attr.Boolean {
+			continue
+		}
+		info.scriptAttributes = append(info.scriptAttributes, attr)
+	}
+	return kept, nil
+}
+
+// relativeImportSpecifier returns the first relative module specifier a script
+// block imports, or empty when it imports none.
+//
+// An extracted block is served from the public asset directory under a
+// content-hashed name, so `./util.js` resolves next to that generated file
+// rather than next to the template the author is looking at. The result is a
+// 404 for a file that exists, which is worth a diagnostic even though this
+// module otherwise reads none of the JavaScript it extracts.
+//
+// Only a specifier on a statement beginning its own line is examined. A real
+// import is a top-level statement, and the restriction keeps the same words
+// inside a comment or a string from being mistaken for one.
+func relativeImportSpecifier(script string) string {
+	for _, line := range strings.Split(script, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "import") && !strings.HasPrefix(line, "export") {
+			continue
+		}
+		for _, quote := range []string{`"`, "'"} {
+			start := strings.Index(line, quote+".")
+			if start < 0 {
+				continue
+			}
+			rest := line[start+1:]
+			end := strings.Index(rest, quote)
+			if end < 0 {
+				continue
+			}
+			specifier := rest[:end]
+			if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
+				return specifier
+			}
+		}
+	}
+	return ""
+}
+
+// rejectNestedScriptBlocks reports a marked script anywhere but the component's
+// own top level, where collectScriptBlock has already taken the legal one.
+func (c *compiler) rejectNestedScriptBlocks(info *componentInfo, nodes []Node) error {
+	for _, node := range nodes {
+		var children [][]Node
+		switch node := node.(type) {
+		case *ElementNode:
+			if isComponentScriptBlock(node.Name, node.Attributes) {
+				return c.error(node.Pos, "component "+info.decl.Name+" declares a script block inside markup; declare it at the top of the component, beside its head block")
+			}
+			children = [][]Node{node.Children}
+		case *HeadNode:
+			children = [][]Node{node.Children}
+		case *SlotNode:
+			children = [][]Node{node.Default}
+		case *ComponentNode:
+			children = [][]Node{node.Children}
+		case *syntax.IfNode:
+			children = [][]Node{node.Then, node.Else}
+		case *syntax.ForNode:
+			children = [][]Node{node.Body}
+		case *syntax.AwaitNode:
+			children = [][]Node{node.Primary, node.Fallback, node.Recover}
+		default:
+			continue
+		}
+		for _, branch := range children {
+			if err := c.rejectNestedScriptBlocks(info, branch); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -173,8 +173,9 @@ func (p *htmlParser) parseElement(context string) (Node, error) {
 	}
 	// A style or script body inside a head contribution is authored content,
 	// not markup, so braces belong to CSS and JavaScript rather than to the
-	// template language.
-	if p.insideHeadContribution && (name == "style" || name == "script") && !selfClosing {
+	// template language. A component script block is the same kind of content
+	// declared one level out, so it reads the same way.
+	if (p.insideHeadContribution || isComponentScriptBlock(name, attrs)) && (name == "style" || name == "script") && !selfClosing {
 		text, err := p.readRawUntilClose(name)
 		if err != nil {
 			return nil, err
@@ -272,6 +273,29 @@ func (p *htmlParser) parseSlot(start int, context string) (Node, error) {
 	}
 	slot.Default = children
 	return slot, nil
+}
+
+// componentScriptMarker is the bare attribute naming a component's own script,
+// the block requirement:component-script-block extracts and binds to the
+// component's instances.
+//
+// The marker is needed because position cannot tell the two apart: a script at
+// the top of a component body is equally the shape of markup carrying a
+// RawJavaScript or JsonForScript insertion, which is a shipped feature.
+const componentScriptMarker = "component"
+
+// isComponentScriptBlock reports whether an element is a component's own script
+// block rather than a script it renders.
+func isComponentScriptBlock(name string, attrs []Attribute) bool {
+	if name != "script" {
+		return false
+	}
+	for _, attr := range attrs {
+		if attr.Name == componentScriptMarker && attr.Boolean {
+			return true
+		}
+	}
+	return false
 }
 
 // isRawTextContext reports whether an insertion context is the body of a

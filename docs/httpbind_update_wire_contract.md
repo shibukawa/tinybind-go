@@ -241,6 +241,38 @@ A sequence derives from the template rather than from the request, which makes i
 
 A client must deduplicate against what the document already has, and must treat `<title>` as a singleton that replaces rather than accumulates — otherwise history entries and assistive technology see the old page.
 
+**The head is only ever added to.** Nothing here retires a tag, which is why a script installed through it has already evaluated and owns whatever it registered for the life of the document. A script that must be released when a region leaves is the next section.
+
+## Scoped scripts
+
+A component can declare a script of its own, beside its head block:
+
+```text
+<script component>
+  export function setup(el) { … }
+</script>
+```
+
+It is extracted to a content-hashed file like any other, and its head reference is an ordinary `type="module"` tag. What is different is that the module reports **who owns it**. Each asset carries a scope:
+
+```go
+htmlbind.Asset{ID: "…", Type: "text/javascript", URL: "/public/generated/…", Scope: "Counter"}
+```
+
+An **empty** `Scope` is document lifetime — the file evaluates once and is never released, which is what a head contribution has always been. A **named** one is the component declaration that owns it, and it is the same identity the manifest already carries as `component_id` on every instance. Joining an asset to a live region therefore needs no second identity scheme and nothing new on the wire.
+
+This module publishes the owner and **calls nothing**. What a scoped script exports, when it is started, and when it is released are the client's; the rules below are what a client must not break, not an API this module specifies.
+
+**Run per live instance, not once per document.** The asset set is deliberately conservative — it reports what a composition *could* require, including a component below a slot that never rendered — so it is a catalogue, not a mount list. An instance that did not render has no attribute and no manifest entry, and nothing should start for it.
+
+**Release before the incoming markup lands.** When a delta removes or replaces an instance, whatever that instance's script registered is released first. Doing it afterwards means the teardown runs against DOM that is already gone.
+
+**Diff the chain across a navigation; do not tear it down.** A common prefix of the composition chain stays mounted. Only the tail below the divergence is released, innermost first, and the new tail started, outermost first. The server reads composition order from `MergeAssets`, which is outermost first, and each layer's own set from `Assets()` on that `Wrapper` or `Fragment`. Build the chain from the per-layer sets: the merged one is flat and cannot tell you where a layer ends.
+
+**A throwing start or release must not stop the apply loop.** Catch it, report through your own diagnostics, and keep applying — the same rule a signal handler follows.
+
+Do not rebuild this on top of the head: re-adding a `<script type="module">` tag does not re-evaluate it, because a module is keyed by its resolved URL in a per-document module map. That map is also why code shared by two scoped scripts should stay an ordinary import of one URL. It is fetched and evaluated once, so bundling is what would duplicate it.
+
 ## Redraw
 
 ### Request
@@ -310,8 +342,12 @@ A conforming client must not break these, whatever else it does.
 
 7. **Resolve a signal name against your own registration table and nothing else.** No `eval`, no `new Function`, no `import()`, no global lookup by name. A dynamic fallback for an unregistered name is the code execution the record exists to avoid, reached by another route.
 
+8. **Release a scoped script's registrations when its instance goes.** A script whose asset names an owner is bound to that component's live instances; if a delta removes or replaces one and nothing is released, every listener, observer, and timer it installed survives and the next instance adds its own on top. The symptom is a handler firing twice, which still looks like it works.
+
 ## Checking an implementation
 
 `htmlupdate/testdata/runtime_harness.js` drives a client against a stubbed DOM under node, covering header construction, validator bookkeeping, supersession, head installation, the terminator reasons, and the fallback paths. It tests observable wire behaviour — the requests a client issues, the responses it consumes, the resulting DOM — rather than any JavaScript entry surface, so it is not a second contract in another language.
+
+Two parts of this document have no wire form and so no harness coverage: the lifecycle vocabulary and the scoped-script rules. Both are dispatched by the client about itself, and both are specified here because a second implementation cannot infer them from the bytes. Checking them means testing your own runtime.
 
 If you implement this specification and find it under-determined anywhere, that is a defect in this document.
