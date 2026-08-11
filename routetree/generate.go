@@ -19,12 +19,35 @@ const (
 	ComponentSuffix = "_gen.go"
 )
 
-// Generated is one emitted file and where it belongs.
+// Generated is one emitted Go file and where it belongs.
 type Generated struct {
 	// Path is the absolute destination.
 	Path string
 	// Source is the formatted Go source.
 	Source []byte
+}
+
+// Result is everything one whole-tree generation run produced.
+//
+// Go sources and public assets are two lists rather than one tagged list
+// because only one of them has a destination this package can compute. A
+// generated component belongs beside the template that produced it; an
+// extracted asset belongs wherever the caller serves PublicURLBase from, which
+// is the caller's layout and not the tree's.
+type Result struct {
+	// Files are the emitted Go sources: a compiled component per template, a
+	// typed decoder per route, and one registry in the route root.
+	Files []Generated
+	// Assets are the stylesheets and component scripts the tree's templates
+	// extracted, deduplicated across the tree. A file name carries the hash of
+	// its own bytes, so two templates producing one name produced identical
+	// content and the duplicate is dropped rather than returned twice.
+	//
+	// Nothing writes them. Each carries Base, Extension, Content, and the URL it
+	// was compiled against, which is what a caller needs to put the file where
+	// that URL resolves. A page declaring a script block whose asset is dropped
+	// leaves a reference to a file that answers 404.
+	Assets []htmlbind.Asset
 }
 
 // GenerateOptions configures one whole-tree generation run.
@@ -46,15 +69,43 @@ type GenerateOptions struct {
 	// A handler exported by the template's own route package always wins, which is
 	// what keeps a resolver from silently retargeting a discovered action.
 	ActionResolver func(name string) (url string, ok bool)
+	// DataAttributePrefix is the boundary attribute prefix compiled into every
+	// template in the tree. Empty uses the htmlbind default.
+	//
+	// A project configuring its runtime with a prefix of its own sets the same
+	// value here. Without it a page tree takes the default while a registered
+	// template takes the configured one, and two halves of one project disagree
+	// about an attribute name they both have to read.
+	DataAttributePrefix string
+	// PublicURLBase is the URL prefix an extracted asset's reference is computed
+	// against. Empty uses the htmlbind default.
+	//
+	// It has to name where the caller actually serves Result.Assets from, since
+	// the URL it produces is written into the generated component and nothing
+	// downstream can correct it.
+	PublicURLBase string
 }
 
-// Generate discovers the tree and emits every file it needs: the compiled
-// components for each template, a typed decoder per route, and one registry in
-// the route root carrying the integrated ServeMux.
+// Generate discovers the tree and emits its Go files, discarding the public
+// assets its templates extracted. Callers that write files use [GenerateTree]
+// instead.
+//
+// Discarding them is safe only for a tree whose templates declare no style or
+// script block. One that does gets a generated component referencing an asset
+// URL, and no bytes for anything to serve there.
+func Generate(options GenerateOptions) ([]Generated, error) {
+	result, err := GenerateTree(options)
+	return result.Files, err
+}
+
+// GenerateTree discovers the tree and emits everything it needs: the compiled
+// components for each template, a typed decoder per route, one registry in the
+// route root carrying the integrated ServeMux, and the public files the
+// templates extracted.
 //
 // Nothing is written to disk; the caller owns that, which is what lets a
 // framework post-process or redirect the output.
-func Generate(options GenerateOptions) ([]Generated, error) {
+func GenerateTree(options GenerateOptions) (Result, error) {
 	emitter := options.Emitter
 	if emitter == nil {
 		emitter = NewEmitter()
@@ -65,7 +116,7 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 
 	tree, err := Discover(options.Config)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	rootPackage := options.RootPackage
 	if rootPackage == "" {
@@ -73,11 +124,27 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 	}
 
 	if err := ValidateActionPrefix(emitter.ActionPrefix, tree); err != nil {
-		return nil, err
+		return Result{}, err
 	}
 
 	var out []Generated
+	var assets []htmlbind.Asset
 	var errs []error
+
+	// An asset's file name carries the hash of its own bytes, so one name is one
+	// content and the second template to extract it adds nothing. A layout
+	// shared by twenty routes is compiled once, but a style block two pages
+	// happen to write identically still arrives twice.
+	seenAsset := map[string]bool{}
+	collect := func(compiled htmlbind.Result) {
+		for _, asset := range compiled.Assets {
+			if seenAsset[asset.FileName()] {
+				continue
+			}
+			seenAsset[asset.FileName()] = true
+			assets = append(assets, asset)
+		}
+	}
 
 	// Layout templates are compiled once per directory, and their signatures
 	// are keyed by RelDir so every route sharing a layout reads the same one.
@@ -118,12 +185,13 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 			}
 			layoutSignatures[layout.RelDir] = signature
 			discoverActions(filepath.Dir(layout.File), layout.RelDir, layout.Package, layout.ImportPath)
-			source, err := compileTemplate(layout.File, layout.Package, emitter, actionsByDir[layout.RelDir], options.ActionResolver)
+			compiled, err := compileTemplate(layout.File, layout.Package, emitter, actionsByDir[layout.RelDir], options)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			out = append(out, Generated{Path: componentPath(layout.File, componentSuffix), Source: source})
+			collect(compiled)
+			out = append(out, Generated{Path: componentPath(layout.File, componentSuffix), Source: compiled.GoSource})
 		}
 		discoverActions(route.Dir, route.RelDir, route.Package, route.ImportPath)
 
@@ -139,11 +207,12 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 
 		pagePath := componentPath(route.PageFile, componentSuffix)
 		if !alreadyEmitted(out, pagePath) {
-			source, err := compileTemplate(route.PageFile, route.Package, emitter, actionsByDir[route.RelDir], options.ActionResolver)
+			compiled, err := compileTemplate(route.PageFile, route.Package, emitter, actionsByDir[route.RelDir], options)
 			if err != nil {
 				errs = append(errs, err)
 			} else {
-				out = append(out, Generated{Path: pagePath, Source: source})
+				collect(compiled)
+				out = append(out, Generated{Path: pagePath, Source: compiled.GoSource})
 			}
 		}
 
@@ -156,15 +225,15 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 	}
 
 	if len(errs) > 0 {
-		return nil, joinErrors(errs)
+		return Result{}, joinErrors(errs)
 	}
 
 	registry, err := emitter.Registry(tree, rootPackage, analyses, layoutSignatures, allActions)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	out = append(out, Generated{Path: filepath.Join(tree.Root, registryOut), Source: registry})
-	return out, nil
+	return Result{Files: out, Assets: assets}, nil
 }
 
 // Write writes generated files to disk, creating directories as needed.
@@ -190,10 +259,10 @@ func componentPath(templatePath, suffix string) string {
 	return filepath.Join(filepath.Dir(templatePath), base+suffix)
 }
 
-func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, resolver func(string) (string, bool)) ([]byte, error) {
+func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, options GenerateOptions) (htmlbind.Result, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return htmlbind.Result{}, err
 	}
 	// A route directory is its own Go package, so an external's implementation
 	// sits beside the template that calls it. Scanning that directory is what
@@ -202,14 +271,19 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, resol
 	// declaration generates a bare call and the route package does not build.
 	withContext, err := contextscan.Externals(filepath.Dir(path))
 	if err != nil {
-		return nil, err
+		return htmlbind.Result{}, err
 	}
-	return htmlbind.Generate(path, source, htmlbind.GenerateOptions{
+	// GenerateModule rather than Generate: the tree's own templates declare
+	// style and script blocks, and Generate is the variant that drops what they
+	// extract, which leaves the component referencing a file nobody wrote.
+	return htmlbind.GenerateModule(path, source, htmlbind.GenerateOptions{
 		Package:              pkg,
 		ServerActions:        actionURLs(actions),
-		ServerActionResolver: resolver,
+		ServerActionResolver: options.ActionResolver,
 		ServerActionAttr:     emitter.ActionAttr,
 		ContextExternals:     withContext,
+		DataAttributePrefix:  options.DataAttributePrefix,
+		PublicURLBase:        options.PublicURLBase,
 	})
 }
 

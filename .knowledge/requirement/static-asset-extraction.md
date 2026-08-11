@@ -36,6 +36,12 @@ emission:
   artifact: data:generation-artifact with a public asset destination
   writer: the generator writes the file, exactly as it writes Go artifacts
   determinism: identical input produces identical file names and bytes
+page_tree:
+  reported: 2026-08-11 against v0.5.5 by a downstream caller; a page or layout declaring a block produced a component referencing an asset URL and no bytes, so the reference answered 404 and nothing downstream could repair it because the content existed only inside the compile
+  cause: routetree compiled through htmlbind.Generate, the variant its own doc comment describes as discarding extracted assets, rather than GenerateModule which already returned them
+  as_built: routetree.GenerateTree returns Result carrying Files and Assets, deduplicated by file name across the tree; Generate keeps its signature and stays the discarding variant, documented as safe only for a tree declaring no block
+  writer: routetree writes nothing, unlike the generator; a tree cannot know where its PublicURLBase is served from, so the caller places the bytes
+  options: routetree.GenerateOptions gained DataAttributePrefix and PublicURLBase, which the tree run did not thread through before, so a page tree took the module defaults while a registered template took the configured ones and one project disagreed with itself
 head_reference:
   produced: a link or script tag stored on the decision:generated-render-plan value as a pending head contribution
   href: the resolution reference_url, written into the link href or script src attribute
