@@ -32,9 +32,16 @@ zero_valued_parents:
     dependon parent at all
   comparison: by parsed value, so 0, 0s, and 0ms are one duration
   kind_source: the parent's generated Scaffold entry, which already names every key's kind
+  no_longer_the_only_way: >
+    decision:dependon-value-condition lets a dependent name the off value inline,
+    which needs no falsy tag on the parent; falsy stays the way to say it once for
+    every dependent, and stays the only way to reach the fill-in half of
+    rule:falsy-value-resolution
 not_enforced_yet:
-  - membership of the value in the enum allowlist; configbind does not read enum
-    tags yet, so a mismatch is not caught
+  - >
+    membership of the falsy value in the enum allowlist; configbind now reads enum
+    tags for decision:dependon-value-condition, so the check is reachable and
+    simply not written yet
 two_effects: rule:falsy-value-resolution
 example:
   go: |
@@ -46,6 +53,7 @@ example:
 related:
   - decision:struct-field-tags
   - decision:dependon-tag-form
+  - decision:dependon-value-condition
   - rule:falsy-value-resolution
   - rule:dependent-key-visibility
   - rule:enum-value-validation

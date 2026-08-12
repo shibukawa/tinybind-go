@@ -380,6 +380,11 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 		dependsOn := structTagGet(tag, "dependon")
 		falsy := structTagGet(tag, "falsy")
 		secret := structTagGet(tag, "secret")
+		summary := structTagGet(tag, "summary")
+		// enum is carried for the sake of a dependon condition that names values of
+		// this field, which is the one thing configbind does with an allowlist; the
+		// load-time check of rule:enum-value-validation is still unimplemented.
+		enum := structTagGet(tag, "enum")
 
 		// An alias is transparent here: it must bind as the type it names, not
 		// fall through to that type's underlying form.
@@ -403,6 +408,8 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 					DependsOn: dependsOn,
 					Falsy:     falsy,
 					Secret:    secret,
+					Summary:   summary,
+					Enum:      enum,
 				})
 				continue
 			}
@@ -430,6 +437,8 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 					DependsOn: dependsOn,
 					Falsy:     falsy,
 					Secret:    secret,
+					Summary:   summary,
+					Enum:      enum,
 					Arg:       arg,
 				})
 				continue
@@ -452,6 +461,8 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 			DependsOn: dependsOn,
 			Falsy:     falsy,
 			Secret:    secret,
+			Summary:   summary,
+			Enum:      enum,
 		})
 	}
 	return fields, nil

@@ -41,19 +41,22 @@ const (
 
 // FieldPlan is one struct field mapping plan (compile-time).
 type FieldPlan struct {
-	Name     string      // Go field name
-	Wire     string      // wire / tag name ("*" for payload rest)
-	Source   FieldSource // input|query|payload|path|header|cookie|method
-	Kind     string      // string|int|int64|bool|float64|file|rest_*|struct|slice|map
-	JSON     string      // json name for encode/document keys
-	Check    CheckRules  // from check:"" tag; empty if absent
-	Enum     EnumRule    // from enum:"" tag; unset if absent
-	Default  DefaultRule // from default:"" tag; unset if absent
-	TypeName string      // KindStruct name, or element struct name for slice/map of struct
-	ElemKind string      // for slice/map: string|int|int64|bool|float64|struct
-	DB       string      // SQL result column (db tag or snake_case field name)
-	GroupKey bool        // groupkey tag presence
-	Doc      string      // godoc of the field (doc or line comment)
+	Name      string      // Go field name
+	Wire      string      // wire / tag name ("*" for payload rest)
+	Source    FieldSource // input|query|payload|path|header|cookie|method
+	Kind      string      // string|int|int64|bool|float64|file|rest_*|struct|slice|map
+	JSON      string      // json name for encode/document keys
+	JSONSkip  bool        // json:"-": the JSON codec neither writes nor reads it
+	OmitEmpty bool        // json:",omitempty": skip when it would encode as "", [] or {}
+	OmitZero  bool        // json:",omitzero": skip when the field holds the Go zero value
+	Check     CheckRules  // from check:"" tag; empty if absent
+	Enum      EnumRule    // from enum:"" tag; unset if absent
+	Default   DefaultRule // from default:"" tag; unset if absent
+	TypeName  string      // KindStruct name, or element struct name for slice/map of struct
+	ElemKind  string      // for slice/map: string|int|int64|bool|float64|struct
+	DB        string      // SQL result column (db tag or snake_case field name)
+	GroupKey  bool        // groupkey tag presence
+	Doc       string      // godoc of the field (doc or line comment)
 }
 
 // HasValidation reports whether anything about the field can reject a bound
@@ -592,8 +595,12 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 	if jsonName == "" || jsonName == "*" {
 		jsonName = lowerFirst(fieldName)
 	}
-	if jt := tagValue(tag, "json"); jt != "" && jt != "-" {
-		jsonName = strings.Split(jt, ",")[0]
+	jsonSkip, jsonTagName, omitEmpty, omitZero, err := parseJSONTag(tagValue(tag, "json"))
+	if err != nil {
+		return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+	}
+	if jsonTagName != "" {
+		jsonName = jsonTagName
 	}
 	checkRaw := tagValue(tag, "check")
 	check, err := ParseCheckTag(checkRaw, kind)
@@ -617,20 +624,53 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		}
 	}
 	return FieldPlan{
-		Name:     fieldName,
-		Wire:     wire,
-		Source:   src,
-		Kind:     kind,
-		JSON:     jsonName,
-		Check:    check,
-		Enum:     enum,
-		Default:  def,
-		TypeName: typeName,
-		ElemKind: elemKind,
-		DB:       dbColumn(fieldName, tag),
-		GroupKey: tagPresent(tag, "groupkey"),
-		Doc:      doc,
+		Name:      fieldName,
+		Wire:      wire,
+		Source:    src,
+		Kind:      kind,
+		JSON:      jsonName,
+		JSONSkip:  jsonSkip,
+		OmitEmpty: omitEmpty,
+		OmitZero:  omitZero,
+		Check:     check,
+		Enum:      enum,
+		Default:   def,
+		TypeName:  typeName,
+		ElemKind:  elemKind,
+		DB:        dbColumn(fieldName, tag),
+		GroupKey:  tagPresent(tag, "groupkey"),
+		Doc:       doc,
 	}, true, nil
+}
+
+// parseJSONTag splits a json tag into the parts the codec acts on. The name and
+// the option list follow encoding/json, including its one piece of punctuation
+// trivia: a bare "-" excludes the field, while "-," names it "-".
+//
+// Only omitempty and omitzero are recognised as options; an unknown one is an
+// error rather than a tag that silently does nothing, since a misspelled option
+// looks exactly like a working one until someone diffs the output.
+func parseJSONTag(raw string) (skip bool, name string, omitEmpty, omitZero bool, err error) {
+	if raw == "" {
+		return false, "", false, false, nil
+	}
+	if raw == "-" {
+		return true, "", false, false, nil
+	}
+	parts := strings.Split(raw, ",")
+	for _, opt := range parts[1:] {
+		switch opt {
+		case "omitempty":
+			omitEmpty = true
+		case "omitzero":
+			omitZero = true
+		case "":
+			// A trailing or doubled comma carries no option.
+		default:
+			return false, "", false, false, fmt.Errorf("unknown json tag option %q", opt)
+		}
+	}
+	return false, parts[0], omitEmpty, omitZero, nil
 }
 
 func dbColumn(fieldName string, tag *ast.BasicLit) string {

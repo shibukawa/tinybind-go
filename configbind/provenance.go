@@ -20,6 +20,12 @@ type ProvenanceEntry struct {
 	// configured value, so a caller re-rendering these entries can tell the two
 	// apart without comparing against the mask text.
 	Masked bool
+	// Omittable reports that a short surface may leave this entry out: the key is
+	// rated as detail by a summary tag and nothing but the default layer set it.
+	// Both halves are already applied, so two callers cannot read the rule
+	// differently, and unlike the dependon and secret policies this one removes
+	// nothing on its own.
+	Omittable bool
 	// ArrayKey is the array of tables this entry is an element field of, with
 	// the indices of any enclosing arrays already in place. It is empty for an
 	// ordinary key, so a caller groups a tree by it and orders by Index without
@@ -64,12 +70,18 @@ var sensitiveKeyTokens = []string{
 // or dropped, and a key with no tag is masked when its name looks sensitive.
 // Fields whose dependon parent is empty are omitted, while the parent itself is
 // kept: an empty parent is the reason its dependents vanished.
+//
+// A summary tag is reported rather than applied: the entry carries Omittable, and
+// a caller rendering a short surface skips those. The two policies differ because
+// a dependon condition states a fact about the configuration, true wherever it is
+// printed, while a summary rating is a judgment about one surface that only the
+// caller knows it is on.
 func (r *LoadResult) Provenance() []ProvenanceEntry {
 	if r == nil || r.Overlay == nil {
 		return nil
 	}
 	hidden := r.hiddenKeys()
-	secrets := r.secretModes()
+	modes := displayModes{secrets: r.secretModes(), summary: r.summaryModes()}
 	elements := r.tableArrayFields()
 	seen := make(map[string]bool)
 	out := make([]ProvenanceEntry, 0, len(r.Overlay.entries))
@@ -78,7 +90,7 @@ func (r *LoadResult) Provenance() []ProvenanceEntry {
 			return
 		}
 		seen[key] = true
-		if hidden[key] || secrets[key] == secretHide {
+		if hidden[key] || modes.secrets[key] == secretHide {
 			return
 		}
 		entry, ok := r.Overlay.Get(key)
@@ -88,15 +100,16 @@ func (r *LoadResult) Provenance() []ProvenanceEntry {
 		if entry.IsTables {
 			// An array of tables holds no value of its own, so reporting the key
 			// alone would say only that some elements exist.
-			out = append(out, expandTables(key, key, entry.Tables, elements[key], secrets)...)
+			out = append(out, expandTables(key, key, entry.Tables, elements[key], modes)...)
 			return
 		}
-		value, masked := displayValue(key, entry.Raw, secrets[key])
+		value, masked := displayValue(key, entry.Raw, modes.secrets[key])
 		out = append(out, ProvenanceEntry{
-			Key:    key,
-			Value:  value,
-			Place:  entry.Place,
-			Masked: masked,
+			Key:       key,
+			Value:     value,
+			Place:     entry.Place,
+			Masked:    masked,
+			Omittable: modes.omittable(key, entry.Place),
 		})
 	}
 	for _, definition := range r.definitions {
@@ -112,9 +125,9 @@ func (r *LoadResult) Provenance() []ProvenanceEntry {
 	return out
 }
 
-// hiddenKeys collects keys suppressed because a dependon parent is empty.
+// hiddenKeys collects keys suppressed because a dependon condition failed.
 func (r *LoadResult) hiddenKeys() map[string]bool {
-	parents := make(map[string][]string)
+	parents := make(map[string][]Dependency)
 	for _, definition := range r.definitions {
 		for key, keyParents := range definition.DependsOn {
 			parents[key] = append(parents[key], keyParents...)
@@ -171,10 +184,10 @@ func collectTableArrayFields(out map[string][]ScaffoldField, prefix string, fiel
 // expandTables turns one array of tables into per-element entries.
 //
 // displayKey carries the indices of every enclosing array, because that is what
-// a reader needs to find the element in the file. secretKey carries none, since
-// an index exists only at run time and the generated secret map is keyed by the
+// a reader needs to find the element in the file. stableKey carries none, since
+// an index exists only at run time and the generated mode maps are keyed by the
 // stable path under the array.
-func expandTables(displayKey, secretKey string, tables []*Overlay, fields []ScaffoldField, secrets map[string]string) []ProvenanceEntry {
+func expandTables(displayKey, stableKey string, tables []*Overlay, fields []ScaffoldField, modes displayModes) []ProvenanceEntry {
 	var out []ProvenanceEntry
 	for index, element := range tables {
 		if element == nil {
@@ -183,7 +196,8 @@ func expandTables(displayKey, secretKey string, tables []*Overlay, fields []Scaf
 		arrayKey := displayKey
 		for _, field := range fields {
 			fullKey := fmt.Sprintf("%s[%d].%s", displayKey, index, field.Key)
-			mode := secrets[secretKey+"."+field.Key]
+			stableField := stableKey + "." + field.Key
+			mode := modes.secrets[stableField]
 			if mode == secretHide {
 				continue
 			}
@@ -194,10 +208,10 @@ func expandTables(displayKey, secretKey string, tables []*Overlay, fields []Scaf
 				}
 				out = append(out, expandTables(
 					fmt.Sprintf("%s[%d].%s", displayKey, index, field.Key),
-					secretKey+"."+field.Key,
+					stableField,
 					nested,
 					field.Nested,
-					secrets,
+					modes,
 				)...)
 				continue
 			}
@@ -207,16 +221,33 @@ func expandTables(displayKey, secretKey string, tables []*Overlay, fields []Scaf
 			}
 			value, masked := displayValue(fullKey, entry.Raw, mode)
 			out = append(out, ProvenanceEntry{
-				Key:      fullKey,
-				Value:    value,
-				Place:    entry.Place,
-				Masked:   masked,
-				ArrayKey: arrayKey,
-				Index:    index,
+				Key:       fullKey,
+				Value:     value,
+				Place:     entry.Place,
+				Masked:    masked,
+				Omittable: modes.omittable(stableField, entry.Place),
+				ArrayKey:  arrayKey,
+				Index:     index,
 			})
 		}
 	}
 	return out
+}
+
+// displayModes is the per-key policy in force for one Provenance call: how a
+// value may be disclosed, and how interesting the key is. Both are keyed by the
+// stable path, which for an array-of-tables element field is its path under the
+// array rather than its indexed one.
+type displayModes struct {
+	secrets map[string]string
+	summary map[string]string
+}
+
+// omittable applies rule:summary-key-omission: the key is rated as detail, and
+// the default layer is what set it. A rated key a source did set is a decision
+// this deployment made, and a brevity feature that hid one would be a bug.
+func (m displayModes) omittable(key string, place Place) bool {
+	return m.summary[key] == SummaryOmit && place == PlaceDefault
 }
 
 // secretModes indexes every generated secret tag by absolute key.
@@ -224,6 +255,17 @@ func (r *LoadResult) secretModes() map[string]string {
 	modes := make(map[string]string)
 	for _, definition := range r.definitions {
 		for key, mode := range definition.Secrets {
+			modes[key] = mode
+		}
+	}
+	return modes
+}
+
+// summaryModes indexes every generated summary tag by absolute key.
+func (r *LoadResult) summaryModes() map[string]string {
+	modes := make(map[string]string)
+	for _, definition := range r.definitions {
+		for key, mode := range definition.Summary {
 			modes[key] = mode
 		}
 	}
@@ -247,9 +289,9 @@ func collectScaffoldKinds(out map[string]ScaffoldKind, prefix string, fields []S
 	}
 }
 
-// dependencyHidden walks the parent chains; one empty or hidden parent hides
-// the key. visiting guards against a cycle codegen validation failed to reject.
-func (r *LoadResult) dependencyHidden(key string, parents map[string][]string, falsy map[string]string, kinds map[string]ScaffoldKind, visiting map[string]bool) bool {
+// dependencyHidden walks the parent chains; one failed condition or one hidden
+// parent hides the key. visiting guards against a cycle codegen failed to reject.
+func (r *LoadResult) dependencyHidden(key string, parents map[string][]Dependency, falsy map[string]string, kinds map[string]ScaffoldKind, visiting map[string]bool) bool {
 	keyParents, ok := parents[key]
 	if !ok || visiting[key] {
 		return false
@@ -259,8 +301,9 @@ func (r *LoadResult) dependencyHidden(key string, parents map[string][]string, f
 	}
 	visiting[key] = true
 	defer delete(visiting, key)
-	for _, parent := range keyParents {
-		if emptyParent(r.Overlay, parent, falsy[parent], kinds[parent]) {
+	for _, condition := range keyParents {
+		parent := condition.Key
+		if conditionFails(r.Overlay, condition, falsy[parent], kinds[parent]) {
 			return true
 		}
 		if r.dependencyHidden(parent, parents, falsy, kinds, visiting) {
@@ -268,6 +311,34 @@ func (r *LoadResult) dependencyHidden(key string, parents map[string][]string, f
 		}
 	}
 	return false
+}
+
+// conditionFails reports whether one condition rules its dependent out.
+//
+// An operator states the whole test, so neither emptiness nor the parent's falsy
+// choice is consulted: a tag reading =off has to keep its dependent at "off",
+// which is the value it names. An absent parent compares as the empty string,
+// which hides under "=" and shows under "!=" — over-showing on a parent nothing
+// set, the same direction displayValue takes for an untagged sensitive-looking key.
+func conditionFails(o *Overlay, condition Dependency, falsy string, kind ScaffoldKind) bool {
+	if condition.Op == "" {
+		return emptyParent(o, condition.Key, falsy, kind)
+	}
+	raw := ""
+	if entry, ok := o.Get(condition.Key); ok {
+		raw = entry.Raw
+	}
+	matched := false
+	for _, value := range condition.Values {
+		if sameValue(kind, raw, value) {
+			matched = true
+			break
+		}
+	}
+	if condition.Op == DependOpNotEqual {
+		return matched
+	}
+	return !matched
 }
 
 // emptyParent reports whether a parent key reads as unconfigured. The empty
@@ -323,6 +394,12 @@ const (
 	secretMask = "mask"
 	secretShow = "show"
 )
+
+// SummaryOmit is the only summary rating: a caller rendering a short surface may
+// leave the key out once nothing has set it. It is exported because a caller
+// reading Definition.Summary directly needs to name the same value, though
+// ProvenanceEntry.Omittable already applies the whole rule.
+const SummaryOmit = "omit"
 
 // displayValue applies the disclosure policy for one key and reports whether
 // the returned text is the mask. An explicit secret tag decides on its own; a

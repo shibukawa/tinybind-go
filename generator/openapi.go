@@ -462,6 +462,9 @@ func ensureSchema(schemas map[string]any, name string, tp TypePlan) {
 			additionalProps = true
 			continue
 		}
+		if f.JSONSkip {
+			continue // json:"-": not part of the document the schema describes
+		}
 		key := f.JSON
 		if key == "" {
 			key = f.Wire

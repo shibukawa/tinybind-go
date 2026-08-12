@@ -179,12 +179,257 @@ func TestGenerateEmitsDependsOnMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"DependsOn: map[string][]string{",
-		`"rdb.pool_size": {"rdb.dsn"}`,
+		"DependsOn: map[string][]configbind.Dependency{",
+		`"rdb.pool_size": {{Key: "rdb.dsn"}}`,
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Fatalf("generated dependon %q missing:\n%s", want, src)
 		}
+	}
+}
+
+// A value condition is what lets a subtree belong to one choice of a mode key:
+// such a key is non-empty in every mode, so an emptiness test cannot tell them
+// apart. The comma separates alternative values here, not parents.
+func TestGenerateEmitsValueConditions(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "AuthConfig",
+		Prefix:   "auth",
+		Fields: []Field{
+			{GoName: "Mode", Key: "mode", Kind: FieldString, Default: "oidc_only", Enum: "oidc_only,oidc_passkey,jwt_only"},
+			{GoName: "Passkey", Key: "passkey", Kind: FieldStruct, DependsOn: ".mode=oidc_only,oidc_passkey", Nested: []Field{
+				{GoName: "Path", Key: "path", Kind: FieldString},
+			}},
+			{GoName: "Legacy", Key: "legacy", Kind: FieldStruct, DependsOn: ".mode!=jwt_only", Nested: []Field{
+				{GoName: "Path", Key: "path", Kind: FieldString},
+			}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"auth.passkey.path": {{Key: "auth.mode", Op: "=", Values: []string{"oidc_only", "oidc_passkey"}}}`,
+		`"auth.legacy.path": {{Key: "auth.mode", Op: "!=", Values: []string{"jwt_only"}}}`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+// A number parent needs a falsy tag only for an emptiness test. A condition that
+// names the value inline has already said which one means off.
+func TestGenerateAcceptsValueConditionOnNumberWithoutFalsy(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "QueryConfig",
+		Prefix:   "query",
+		Fields: []Field{
+			{GoName: "SlowThreshold", Key: "slow_threshold", Kind: FieldDuration, Default: "200ms"},
+			{GoName: "SlowLevel", Key: "slow_level", Kind: FieldString, DependsOn: ".slow_threshold!=0s"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsNormalized(src, `"query.slow_level": {{Key: "query.slow_threshold", Op: "!=", Values: []string{"0s"}}}`) {
+		t.Fatalf("condition missing:\n%s", src)
+	}
+}
+
+// Only the first "=" is the operator, so a value may carry one of its own.
+func TestGenerateKeepsEqualsInsideAValue(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "AppConfig",
+		Prefix:   "app",
+		Fields: []Field{
+			{GoName: "Marker", Key: "marker", Kind: FieldString},
+			{GoName: "Detail", Key: "detail", Kind: FieldString, DependsOn: ".marker=a=b"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsNormalized(src, `"app.detail": {{Key: "app.marker", Op: "=", Values: []string{"a=b"}}}`) {
+		t.Fatalf("value lost its equals sign:\n%s", src)
+	}
+}
+
+// A parent generated elsewhere has no kind and no enum here, so its values pass
+// unchecked rather than failing the build — the same blind spot the parent-kind
+// check already accepts.
+func TestGenerateAcceptsValueConditionOnForeignParent(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "AppConfig",
+		Prefix:   "app",
+		Fields:   []Field{{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "middleware.rdb.driver=postgres"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsNormalized(src, `"app.pool": {{Key: "middleware.rdb.driver", Op: "=", Values: []string{"postgres"}}}`) {
+		t.Fatalf("cross-package condition missing:\n%s", src)
+	}
+}
+
+// A summary tag rates a key as detail. Subtree propagation is what makes it
+// affordable: one tag on a struct covers every key below it, which is how a
+// deployment's unremarkable defaults get rated without a tag per line.
+func TestGenerateEmitsSummaryMap(t *testing.T) {
+	src, err := Generate("fixture", []Spec{{
+		TypeName: "ObservabilityConfig",
+		Prefix:   "obs",
+		Fields: []Field{
+			{GoName: "MinimumLevel", Key: "minimum_level", Kind: FieldString, Default: "info"},
+			{GoName: "Query", Key: "query", Kind: FieldStruct, Summary: "omit", Nested: []Field{
+				{GoName: "Explain", Key: "explain", Kind: FieldBool, Default: "true"},
+				{GoName: "MaxSQLLength", Key: "max_sql_length", Kind: FieldInt, Default: "4096"},
+			}},
+			{GoName: "Jitter", Key: "jitter", Kind: FieldInt, Default: "20", Summary: "omit"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Summary: map[string]string{",
+		`"obs.query.explain": "omit"`,
+		`"obs.query.max_sql_length": "omit"`,
+		`"obs.jitter": "omit"`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+	if containsNormalized(src, `"obs.minimum_level": "omit"`) {
+		t.Fatalf("an untagged key was rated:\n%s", src)
+	}
+}
+
+// Unlike dependon, falsy, and enum, this rates the key being printed rather than
+// naming one to look up, so it needs no stable key of its own and reaches an
+// array-of-tables element by the same path secret uses.
+func TestGenerateEmitsSummaryForTableArrayElements(t *testing.T) {
+	connections := func(arrayTag string, elementTag string) []Field {
+		return []Field{{
+			GoName:   "Connections",
+			Key:      "connections",
+			Kind:     FieldStructSlice,
+			ElemType: "ConnectionConfig",
+			Summary:  arrayTag,
+			Nested: []Field{
+				{GoName: "DSN", Key: "dsn", Kind: FieldString},
+				{GoName: "MaxIdleConns", Key: "max_idle_conns", Kind: FieldInt, Summary: elementTag},
+			},
+		}}
+	}
+	// An element field carries its own rating.
+	src, err := Generate("fixture", []Spec{{TypeName: "RDBConfig", Prefix: "rdb", Fields: connections("", "omit")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsNormalized(src, `"rdb.connections.max_idle_conns": "omit"`) {
+		t.Fatalf("element rating missing:\n%s", src)
+	}
+	if containsNormalized(src, `"rdb.connections.dsn": "omit"`) {
+		t.Fatalf("an untagged sibling was rated:\n%s", src)
+	}
+	// A rating on the array field reaches every element field under it.
+	src, err = Generate("fixture", []Spec{{TypeName: "RDBConfig", Prefix: "rdb", Fields: connections("omit", "")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"rdb.connections.dsn": "omit"`,
+		`"rdb.connections.max_idle_conns": "omit"`,
+	} {
+		if !containsNormalized(src, want) {
+			t.Fatalf("missing %q in\n%s", want, src)
+		}
+	}
+}
+
+func TestGenerateRejectsBadSummaryMode(t *testing.T) {
+	_, err := Generate("fixture", []Spec{{
+		TypeName: "ObservabilityConfig",
+		Prefix:   "obs",
+		Fields:   []Field{{GoName: "Jitter", Key: "jitter", Kind: FieldInt, Summary: "hide"}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), `summary must be omit, got "hide"`) {
+		t.Fatalf("err=%v want a rejected summary mode", err)
+	}
+}
+
+// A subcommand field never reaches provenance, so a rating there rates it for an
+// output it does not appear in. An inherited tag is caught the same way.
+func TestGenerateRejectsSummaryInSubCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields []Field
+	}{
+		{
+			name:   "leaf",
+			fields: []Field{{GoName: "DryRun", Key: "dry_run", Kind: FieldBool, Summary: "omit"}},
+		},
+		{
+			name: "inherited from a struct",
+			fields: []Field{{GoName: "Detail", Key: "detail", Kind: FieldStruct, Summary: "omit", Nested: []Field{
+				{GoName: "Verbose", Key: "verbose", Kind: FieldBool},
+			}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Generate("fixture", []Spec{{
+				TypeName:   "MigrateOptions",
+				SubCommand: true,
+				Name:       "migrate",
+				Help:       "run migrations",
+				Fields:     tc.fields,
+			}})
+			if err == nil || !strings.Contains(err.Error(), "cannot use summary") {
+				t.Fatalf("err=%v want a subcommand rejection", err)
+			}
+		})
+	}
+}
+
+// An enum tag names a value, which neither a struct nor an array element has.
+// The generator only started reading the tag for the sake of a dependon
+// condition, so its placement has to be decided rather than silently dropped.
+func TestGenerateRejectsEnumOnNonLeafFields(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields []Field
+		want   string
+	}{
+		{
+			name: "nested struct",
+			fields: []Field{{GoName: "TLS", Key: "tls", Kind: FieldStruct, Enum: "a,b", Nested: []Field{
+				{GoName: "Path", Key: "path", Kind: FieldString},
+			}}},
+			want: "enum applies to a leaf field, not to the nested struct tls",
+		},
+		{
+			name: "array of tables",
+			fields: []Field{{GoName: "Routes", Key: "routes", Kind: FieldStructSlice, ElemType: "RouteConfig", Enum: "a,b", Nested: []Field{
+				{GoName: "Dir", Key: "dir", Kind: FieldString},
+			}}},
+			want: "enum applies to a leaf field, not to the array of tables routes",
+		},
+		{
+			name: "array-of-tables element field",
+			fields: []Field{{GoName: "Routes", Key: "routes", Kind: FieldStructSlice, ElemType: "RouteConfig", Nested: []Field{
+				{GoName: "Dir", Key: "dir", Kind: FieldString, Enum: "a,b"},
+			}}},
+			want: "no provenance key for dependon, falsy, or enum",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Generate("fixture", []Spec{{TypeName: "ServerConfig", Prefix: "server", Fields: tc.fields}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -199,7 +444,7 @@ func TestGenerateAcceptsDependsOnFromAnotherPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), `"app.pool": {"middleware.rdb.dsn"}`) {
+	if !strings.Contains(string(src), `"app.pool": {{Key: "middleware.rdb.dsn"}}`) {
 		t.Fatalf("cross-package parent missing:\n%s", src)
 	}
 }
@@ -248,6 +493,64 @@ func TestGenerateRejectsBadDependsOn(t *testing.T) {
 			},
 			want: "dependon cycle",
 		},
+		{
+			name: "operator with no parent",
+			fields: []Field{
+				{GoName: "Mode", Key: "mode", Kind: FieldString},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "=fast"},
+			},
+			want: "needs a parent key before the operator",
+		},
+		{
+			name: "empty value",
+			fields: []Field{
+				{GoName: "Mode", Key: "mode", Kind: FieldString},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.mode=fast,"},
+			},
+			want: "names an empty value",
+		},
+		{
+			name: "repeated value",
+			fields: []Field{
+				{GoName: "Mode", Key: "mode", Kind: FieldString},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.mode=fast,fast"},
+			},
+			want: `names "fast" twice`,
+		},
+		{
+			// The one failure this feature can cause: a typo hides a subtree for
+			// good, and no reader can tell from an output the key is missing from.
+			name: "value outside the parent's enum",
+			fields: []Field{
+				{GoName: "Mode", Key: "mode", Kind: FieldString, Enum: "fast,slow"},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.mode=faast"},
+			},
+			want: "is not one of the enum choices",
+		},
+		{
+			name: "non-bool value on a bool parent",
+			fields: []Field{
+				{GoName: "Enabled", Key: "enabled", Kind: FieldBool},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.enabled=yes"},
+			},
+			want: "is a bool, so \"yes\" is not a value it can hold",
+		},
+		{
+			name: "unparsable duration value",
+			fields: []Field{
+				{GoName: "Window", Key: "window", Kind: FieldDuration},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.window=soon"},
+			},
+			want: "is not a duration",
+		},
+		{
+			name: "value on a list parent",
+			fields: []Field{
+				{GoName: "Origins", Key: "origins", Kind: FieldStringSlice},
+				{GoName: "Pool", Key: "pool", Kind: FieldInt, DependsOn: "rdb.origins=any"},
+			},
+			want: "must be a string, bool, int, or duration field",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Generate("fixture", []Spec{{TypeName: "RDBConfig", Prefix: "rdb", Fields: tc.fields}})
@@ -286,7 +589,7 @@ func TestGenerateEmitsFalsyMap(t *testing.T) {
 	for _, want := range []string{
 		"Falsy: map[string]string{",
 		`"obs.tracing": "off"`,
-		`"obs.url": {"obs.tracing"}`,
+		`"obs.url": {{Key: "obs.tracing"}}`,
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Fatalf("generated falsy %q missing:\n%s", want, src)
@@ -422,7 +725,7 @@ func TestGenerateRejectsDependsOnInsideTableArrayElement(t *testing.T) {
 			},
 		}},
 	}})
-	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon or falsy") {
+	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon, falsy, or enum") {
 		t.Fatalf("err=%v want an element-field rejection", err)
 	}
 }
@@ -459,8 +762,8 @@ func TestGenerateSpreadsDependsOnOverNestedStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"security.hsts.max_age": {"security.enabled"}`,
-		`"security.hsts.preload": {"security.enabled"}`,
+		`"security.hsts.max_age": {{Key: "security.enabled"}}`,
+		`"security.hsts.preload": {{Key: "security.enabled"}}`,
 	} {
 		if !containsNormalized(src, want) {
 			t.Fatalf("missing %q in\n%s", want, src)
@@ -491,7 +794,7 @@ func TestGenerateKeepsLeafParentInsideDependentStruct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsNormalized(src, `"security.hsts.max_age": {"security.enabled", "security.mode"}`) {
+	if !containsNormalized(src, `"security.hsts.max_age": {{Key: "security.enabled"}, {Key: "security.mode"}}`) {
 		t.Fatalf("both parents expected:\n%s", src)
 	}
 }
@@ -517,8 +820,8 @@ func TestGenerateResolvesRelativeDependsOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`"server.health.path": {"server.health.enabled"}`,
-		`"server.readiness.path": {"server.readiness.enabled"}`,
+		`"server.health.path": {{Key: "server.health.enabled"}}`,
+		`"server.readiness.path": {{Key: "server.readiness.enabled"}}`,
 	} {
 		if !containsNormalized(src, want) {
 			t.Fatalf("missing %q in\n%s", want, src)

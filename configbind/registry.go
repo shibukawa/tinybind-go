@@ -10,6 +10,30 @@ import (
 // ApplyFunc applies an overlay onto a destination pointer without reflection.
 type ApplyFunc func(dst any, o *Overlay) error
 
+// Dependency is one resolved visibility condition: the parent key a field
+// answers to, and how its value is read.
+//
+// Op empty is the emptiness test, which hides the field while the parent is "",
+// false, absent, or holding its own falsy choice. "=" and "!=" test membership of
+// Values instead, which is what lets a subtree belong to one value of a mode or
+// backend key: such a key is non-empty in every mode, so emptiness cannot
+// distinguish them. Op empty implies Values empty, and the reverse.
+type Dependency struct {
+	// Key is the parent's absolute config key, already resolved from any
+	// dot-prefixed relative form at generation time.
+	Key string
+	// Op is "", "=", or "!=".
+	Op string
+	// Values are the choices the operator compares against, in tag order.
+	Values []string
+}
+
+// Operators a Dependency may carry.
+const (
+	DependOpEqual    = "="
+	DependOpNotEqual = "!="
+)
+
 // Definition describes one generated Bind target and its scaffold fields.
 type Definition struct {
 	// TypeName is the package-qualified Go type identity used for diagnostics.
@@ -24,10 +48,10 @@ type Definition struct {
 	FlagMetas []cliparser.FieldMeta
 	// Defaults maps stable keys to default raw strings applied when absent.
 	Defaults map[string]string
-	// DependsOn maps a stable key to every parent it answers to: its own
-	// dependon tag plus the tags of the structs it sits under. One empty parent
-	// is enough to hide the key from provenance output; nothing else.
-	DependsOn map[string][]string
+	// DependsOn maps a stable key to every condition it answers to: its own
+	// dependon tag plus the tags of the structs it sits under. One failed
+	// condition is enough to hide the key from provenance output; nothing else.
+	DependsOn map[string][]Dependency
 	// Falsy maps a stable key to the choice from its falsy tag. The key resolves
 	// to that value when nothing sets it and it has no default, and the value
 	// counts as empty when other keys depend on this one.
@@ -35,6 +59,11 @@ type Definition struct {
 	// Secrets maps a stable key to its secret tag: hide, mask, or show. A key
 	// with no entry follows the key-name policy in displayValue.
 	Secrets map[string]string
+	// Summary maps a stable key to its summary tag, which today is only "omit".
+	// It rates the key as detail, so a caller rendering a short surface may drop
+	// it once nothing has set it; see ProvenanceEntry.Omittable. Unlike Secrets
+	// and DependsOn it removes nothing on its own.
+	Summary map[string]string
 	// Apply writes overlay values into *T (dst must be *T).
 	Apply ApplyFunc
 	// Scaffold contains the leaf fields used to render example configuration.

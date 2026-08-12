@@ -111,15 +111,23 @@ type Field struct {
 	Help string
 	// Arg is a subcommand-only positional role: required, optional, or *.
 	Arg string
-	// DependsOn is the absolute parent config key from a dependon tag. When the
-	// parent reads as empty, this field is omitted from provenance output.
+	// DependsOn is the condition from a dependon tag: a parent config key, and
+	// optionally an operator and the values it selects. This field is omitted from
+	// provenance output while the condition fails.
 	DependsOn string
 	// Falsy is the enum choice from a falsy tag that means "off" for this field.
 	// An empty value resolves to it, and it hides fields that depend on this one.
 	Falsy string
+	// Enum is the raw allowlist from an enum tag. configbind reads it to check the
+	// values a dependon condition names against the choices the field can hold.
+	Enum string
 	// Secret is the disclosure mode from a secret tag: hide, mask, or show. On
 	// a nested struct it covers every field of the subtree.
 	Secret string
+	// Summary is the rating from a summary tag: omit, meaning a short surface may
+	// drop this key while nothing has set it. On a nested struct it covers every
+	// field of the subtree.
+	Summary string
 }
 
 // Spec describes one Bind-style config struct and its prefix table name.

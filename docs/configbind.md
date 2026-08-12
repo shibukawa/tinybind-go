@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - Discovering configuration structs used by `configbind.Bind[T]`
 - Deriving TOML keys, CLI options, and environment names from struct fields
-- Applying `default`, `key`, `opt`, `env`, `help`, `falsy`, `dependon`, and `secret` tags
+- Applying `default`, `key`, `opt`, `env`, `help`, `enum`, `falsy`, `dependon`, `summary`, and `secret` tags
 - Mapping nested structs, `[]string`, and slices of structs from arrays of tables
 - Merging defaults, TOML, environment, and CLI values
 - Converting values to string, bool, int, `time.Duration`, and `[]string`
@@ -188,15 +188,19 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
 | `falsy:"value"` | The value that means "off" for a string, int, or duration option | `falsy:"off"`, `falsy:"0s"` |
+| `enum:"a,b,c"` | Allowlist of accepted values | `enum:"oidc_only,jwt_only"` |
 | `dependon:"key"` | Hide this field from provenance while that key is empty | `dependon:"webserver.tls.enabled"` |
 | `dependon:".key"` | The same, naming a key inside the struct the tag is written in | `dependon:".enabled"` |
+| `dependon:"key=a,b"` | Show this field only while that key holds one of those values | `dependon:".mode=oidc_only,oidc_passkey"` |
+| `dependon:"key!=a"` | Show this field only while that key holds none of those values | `dependon:".backend!=cookie"` |
+| `summary:"omit"` | Rate this key as detail, droppable from a short surface while nothing has set it | `summary:"omit"` |
 | `secret:"hide"` | Never print this field in provenance output | `secret:"hide"` |
 | `secret:"mask"` | Print `*****` instead of the value | `secret:"mask"` |
 | `secret:"show"` | Print the value even though the key name looks sensitive | `secret:"show"` |
 
-`falsy`, `dependon`, and `secret` need a stable config key, so none is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
+`falsy`, `enum`, and `dependon` need a stable config key, so none is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
 
-`dependon` and `secret` may also sit on a nested struct field, where they cover every field of that subtree. `falsy` may not: it names one value, and a struct has none.
+`dependon`, `secret`, and `summary` may also sit on a nested struct field, where they cover every field of that subtree. `falsy` and `enum` may not: each names a value, and a struct has none.
 
 ### Godoc as the help source
 
@@ -671,9 +675,11 @@ The slice is ordered rather than sorted: bindings appear in `Bind` call order, a
 
 Two filters run before you see the slice.
 
+> The sections below cover the tags. For the record type itself — every field of `ProvenanceEntry`, how one call serves both a startup summary and a full dump, and what the generated definitions expose — see [configbind_provenance.md](configbind_provenance.md).
+
 The first is disclosure. A `secret` tag decides on its own: `hide` drops the entry, `mask` reports `*****`, and `show` prints the value. A field with no tag is masked when its key path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, `access_key`, `dsn`, or `private_key` — a DSN carries its password inline, so it belongs on that list. The match is a substring, so a name like `token_bucket_size` is masked too; `secret:"show"` is the way out. `ProvenanceEntry.Masked` reports whether `Value` is the placeholder, so a caller re-rendering these entries never has to compare against the mask text.
 
-The second is dependency: a field with a `dependon` tag disappears while its parent is empty, which the next section covers.
+The second is dependency: a field with a `dependon` tag disappears while its condition fails, which the next section covers.
 
 ### Hiding settings of a disabled feature
 
@@ -722,9 +728,82 @@ type SQLConfig struct {
 }
 ```
 
-The comparison is by value rather than by text, so `0`, `0s`, and `0ms` all read as off. Without the `falsy` tag a number or duration cannot be a parent at all: generation fails rather than guessing that zero means disabled.
+The comparison is by value rather than by text, so `0`, `0s`, and `0ms` all read as off. Without the `falsy` tag a number or duration cannot be an emptiness parent at all: generation fails rather than guessing that zero means disabled.
 
-None of this reaches the bound struct. `TracingURL` is still populated from its sources, CLI flags and help are unchanged, and scaffolds still list every field so the options stay discoverable before a first load.
+### Selecting one variant's settings
+
+Emptiness answers "is this feature on". It cannot answer "which mode is this", because a mode key holds a non-empty value in every mode — so every mode's block stays on screen, and the settings of the two modes that are inert read as though they were in force. Naming the values that select the field is what distinguishes them:
+
+```go
+type AuthConfig struct {
+	Enabled bool
+	Mode    string        `default:"oidc_only" enum:"oidc_only,oidc_passkey,jwt_only" dependon:".enabled"`
+	OIDC    OIDCConfig    `dependon:".mode=oidc_only,oidc_passkey"`
+	Passkey PasskeyConfig `dependon:".mode=oidc_passkey"`
+	JWT     JWTConfig     `dependon:".mode=jwt_only"`
+}
+```
+
+With `auth.mode` at `oidc_only`, the whole `auth.passkey` and `auth.jwt` blocks are absent and `auth.oidc` remains. The comma separates alternative values of one key, which is why `auth.oidc` survives two of the three modes. It never separates parents: a comma with no operator before it is still the rejected parent list it always was.
+
+`!=` is the same test inverted, for a field that belongs to every value but one:
+
+```go
+Keyring SessionKeyringConfig `dependon:".backend!=cookie"`
+```
+
+Prefer whichever polarity you will not have to revisit. A `=` list must gain each new value that ships, and forgetting one hides a setting that is in force; a `!=` list only has to name the values that do *not* apply.
+
+Three rules make a condition predictable:
+
+- **The operator states the whole test.** Neither emptiness nor the parent's `falsy` value is also consulted, so `dependon:"obs.tracing=off"` really does keep its field at `off`.
+- **A parent nothing set compares as the empty string.** `=` hides, `!=` shows. Over-showing is the safe direction when nobody has said what the parent is.
+- **Values are compared in the parent's own terms.** A duration condition matches `0`, `0s`, and `0ms` alike, and a number or duration named this way needs no `falsy` tag, having said inline which value matters.
+
+You rarely have to write "enabled *and* mode = x". A mode key normally carries its own `dependon` on the feature switch, as `Mode` does above, and a hidden parent hides its dependents — so turning `auth.enabled` off removes the selected block too.
+
+Generation checks the values against the parent's `enum` when it declares one. This is worth adding an `enum` tag for: a mistyped value hides its whole subtree silently and permanently, and it is the one mistake here that no reader can diagnose from output the key is simply missing from. The check is best-effort in the same way the parent-kind check is — a parent bound in another package is invisible to this generation run and passes unchecked.
+
+None of this reaches the bound struct. `TracingURL` and every field of `auth.jwt` are still populated from their sources, CLI flags and help are unchanged, and scaffolds still list every field so the options stay discoverable before a first load.
+
+### Rating a setting as detail
+
+The two filters above remove keys that do not apply. What remains is still dominated by keys sitting at their defaults — applicable, but nothing this deployment had an opinion about. `summary:"omit"` rates those as detail:
+
+```go
+type ObservabilityConfig struct {
+	MinimumLevel string      `default:"info"`
+	Query        QueryConfig `summary:"omit"`
+	Trace        TraceConfig `summary:"omit"`
+}
+```
+
+Two things make this safe to apply broadly.
+
+**A rated key that a source set is never droppable.** The rating and the winning `Place` both have to say so: `Omittable` is true only when the tag is in force *and* the value came from the default layer. So you can rate a whole subtree without first auditing which of its leaves someone configured — the configured ones come back on their own. A brevity feature that hid a decision somebody wrote down would be a bug, not a shorter output.
+
+**The library marks; it never drops.** `Provenance()` returns the same slice whichever surface you are rendering, and each entry carries `Omittable`:
+
+```go
+for _, entry := range result.Provenance() {
+	if brief && entry.Omittable {
+		continue
+	}
+	render(entry)
+}
+```
+
+That is the difference from `dependon`. A failed `dependon` condition states a fact about the configuration — this setting is inert — which is true wherever it is printed, so the library drops the entry itself. A `summary` rating is a judgment about one surface, and the library cannot know which surface you are on. So a startup summary skips the marked entries and a `docker inspect`-style dump renders all of them, from one call.
+
+A dump is still not *everything*: keys dropped by a `dependon` condition and keys marked `secret:"hide"` never reach the caller on any surface.
+
+Rating an untagged key is the safe direction, so omission is opt-in: a forgotten tag only leaves the output longer, where the opposite polarity would make a newly added field invisible to whoever operates the service. The cost is that brevity is proportional to tags written, which is why the tag propagates over a subtree — one tag on a nested struct rates every key below it.
+
+Placement follows `secret`: a leaf, a nested struct, an array of tables, or an element field of one. Note that an element field can never actually be droppable today, because nothing seeds an array element with a default value, so every element field that appears was set by a source.
+
+Nothing here changes the bound struct, CLI flags, validation, or scaffolds.
+
+The placement table for every output-shaping tag, and the reason an element-field rating is currently inert, are in [configbind_provenance.md](configbind_provenance.md).
 
 ### The raw overlay
 

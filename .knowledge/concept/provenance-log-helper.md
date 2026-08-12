@@ -17,8 +17,12 @@ behavior:
   - Value is show or mask form only
   - order follows rule:config-output-ordering, not key sort
 filters_in_order:
-  - dependency visibility, so an empty parent removes its dependents
+  - dependency visibility, so a failed condition removes its dependents
   - secret policy, so a surviving entry is still redacted or dropped
+classified_not_filtered:
+  - rule:summary-key-omission marks a surviving entry omittable and removes nothing
+  - the caller applies it, because the library cannot know which surface is being drawn
+  - detail: requirement:effective-config-brevity surfaces
 non_goals:
   - mandatory printing; caller logs the slice
   - mutating stored config values
@@ -31,6 +35,8 @@ related:
   - data:provenance-event
   - rule:secret-redaction
   - rule:dependent-key-visibility
+  - rule:summary-key-omission
+  - decision:summary-tag-form
   - rule:config-output-ordering
   - decision:struct-field-tags
   - flow:config-load

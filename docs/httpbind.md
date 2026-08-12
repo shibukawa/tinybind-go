@@ -311,7 +311,7 @@ err := httpbind.Write(w, r, UserResponse{ID: "u_1", Name: "Ada"})
 
 `Write` writes `200 OK` with `application/json`.
 
-The generated encoder reads the name portion of `json` tags and currently nothing else: `omitempty` has no effect, and `json:"-"` excludes nothing. Design response models assuming every field is emitted.
+The generated encoder reads a `json` tag's name and its options. `json:"-"` keeps the field out of the response entirely, `omitempty` drops a member that would encode as `""`, `[]` or `{}`, and `omitzero` drops one holding the Go zero value — the option that reaches `0` and `false`. Both follow `encoding/json/v2` rather than `encoding/json`; [jsonbind](jsonbind.md) covers where the two readings differ.
 
 ### Other success statuses
 

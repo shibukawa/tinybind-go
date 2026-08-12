@@ -23,7 +23,15 @@ fields:
     description: >
       Value is the redaction placeholder rather than the configured value, so a
       caller re-rendering these records never compares against the mask text
-go_shape: '{Key, Value, Place string, Masked bool, ArrayKey string, Index int}'
+  - name: Omittable
+    type: bool
+    ref: rule:summary-key-omission
+    description: >
+      the record may be dropped from a short surface: it is rated detail by
+      decision:summary-tag-form and its Place is default. The conclusion is
+      computed here rather than left as the raw tag, so two callers cannot
+      disagree about the rule, exactly as Masked is
+go_shape: '{Key, Value, Place string, Masked bool, Omittable bool, ArrayKey string, Index int}'
 element_detail: requirement:array-of-tables-provenance
 element_fields:
   - name: ArrayKey
@@ -40,6 +48,7 @@ notes:
   - mask mode sets Value to a fixed-width asterisk run per rule:secret-redaction, never length-jittered
   - show mode sets Value to string form of the effective value
   - rule:dependent-key-visibility can drop the record before redaction runs
+  - Omittable never drops a record; it is the one policy the caller applies
   - duration Value is the time.Duration String() form
   - slice position follows rule:config-output-ordering
 used_by:
