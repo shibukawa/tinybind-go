@@ -98,10 +98,20 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				httpbind.WriteError(w, r, err)
 			}
 		})
+	mux.HandleFunc("POST /users/{id}",
+		func(w http.ResponseWriter, r *http.Request) {
+			switch httpbind.ActionSelector(r, "_action") {
+			case "d71506d06c1e/Retire":
+				httpbind.DispatchAction(w, r, id_.Retire)
+			default:
+				httpbind.WriteError(w, r, httpbind.BadRequest(httpbind.Problem{Code: "unknown_action", Message: "no server function on this page matches the submitted selector"}))
+			}
+		})
 
 	// Server function endpoints. Each handler owns its whole response, so
 	// nothing is generated around it; registration is all there is.
 	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)
+	mux.HandleFunc("POST /_action/d71506d06c1e/Retire", id_.Retire)
 }
 
 // NewServeMux returns a router carrying every discovered route.
@@ -146,6 +156,7 @@ type RouteInfo struct {
 // token, so each handler still authenticates and authorizes its own caller.
 var Actions = []ActionInfo{
 	{Pattern: "POST /_action/00369cf962b6/Rename", Path: "/_action/00369cf962b6/Rename", Dir: "users/id_", Handler: "Rename", Hash: "00369cf962b6"},
+	{Pattern: "POST /_action/d71506d06c1e/Retire", Path: "/_action/d71506d06c1e/Retire", Dir: "users/id_", Handler: "Retire", Hash: "d71506d06c1e"},
 }
 
 // ActionInfo is one entry of Actions.

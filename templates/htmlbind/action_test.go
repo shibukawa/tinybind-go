@@ -211,3 +211,105 @@ func TestGenerateNamesBothSourcesWhenNothingResolves(t *testing.T) {
 		t.Errorf("error = %v, want it to name both attempted sources", err)
 	}
 }
+
+// generateAction compiles one source with an action resolved to both an address
+// and a selector, which is what the integrated routetree path supplies.
+func generateAction(t *testing.T, source string) string {
+	t.Helper()
+	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
+		Package:               "id_",
+		ServerActions:         map[string]string{"Save": "/_action/9f3c2ab1e4d7/Save"},
+		ServerActionSelectors: map[string]string{"Save": "9f3c2ab1e4d7/Save"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	return string(got)
+}
+
+func TestFormCarriesBothLoweringsFromOneCompile(t *testing.T) {
+	out := generateAction(t, `export component Page(): html { <form server-action="Save"><input name="title" /></form> }`)
+	// The scripted half, which a browser runtime binds to.
+	if !strings.Contains(out, `data-tb-action=\"/_action/9f3c2ab1e4d7/Save\"`) {
+		t.Errorf("the URL attribute is missing:\n%s", out)
+	}
+	// The native half. Without the method this is a GET form to the current URL,
+	// which is what shipped and what this test exists to keep from returning.
+	if !strings.Contains(out, `method=\"post\"`) {
+		t.Errorf("the form is not a POST form:\n%s", out)
+	}
+	if !strings.Contains(out, `name=\"_action\" value=\"9f3c2ab1e4d7/Save\"`) {
+		t.Errorf("the selector field is missing:\n%s", out)
+	}
+	if !strings.Contains(out, `CSRFField("_csrf")`) {
+		t.Errorf("the token is missing, which the absent method used to suppress:\n%s", out)
+	}
+}
+
+func TestActionFormWritesNoActionAttribute(t *testing.T) {
+	out := generateAction(t, `export component Page(): html { <form server-action="Save"></form> }`)
+	// A form declaring no action submits to the document URL, which is already
+	// the page pattern, and a POST keeps that URL's query rather than replacing
+	// it. Writing one would need the concrete request path at render time.
+	// The leading space is what separates a standalone action from the lowered
+	// data-tb-action, which ends in the same characters.
+	if strings.Contains(out, ` action=\"`) {
+		t.Errorf("an action attribute was emitted:\n%s", out)
+	}
+}
+
+func TestAuthoredPostMethodIsNotDoubled(t *testing.T) {
+	out := generateAction(t, `export component Page(): html { <form server-action="Save" method="post"></form> }`)
+	if n := strings.Count(out, `method=\"post\"`); n != 1 {
+		t.Errorf("method written %d times, want 1:\n%s", n, out)
+	}
+}
+
+func TestBareButtonKeepsTheScriptedLoweringAlone(t *testing.T) {
+	out := generateAction(t, `export component Page(): html { <button server-action="Save">go</button> }`)
+	if !strings.Contains(out, `data-tb-action=\"/_action/9f3c2ab1e4d7/Save\"`) {
+		t.Errorf("the URL attribute is missing:\n%s", out)
+	}
+	// A button carries no fields and belongs to no form the generator can see,
+	// so there is nothing native to emit and this is not an error.
+	if strings.Contains(out, `_action`) && strings.Contains(out, "hidden") {
+		t.Errorf("a bare button carried form markup:\n%s", out)
+	}
+}
+
+func TestFormWithNoSelectorKeepsTheScriptedLoweringAlone(t *testing.T) {
+	// A framework resolving an address from its own route table owns the route a
+	// form would post to, so this module writes no form markup for it.
+	got, err := Generate("page.tb.html", []byte(
+		`export component Page(): html { <form server-action="Save"></form> }`), GenerateOptions{
+		Package:       "id_",
+		ServerActions: map[string]string{"Save": "/app/save"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	out := string(got)
+	if strings.Contains(out, `name=\"_action\"`) {
+		t.Errorf("a selector was emitted with none supplied:\n%s", out)
+	}
+	if strings.Contains(out, `method=\"post\"`) {
+		t.Errorf("a method was emitted with no native channel to use it:\n%s", out)
+	}
+}
+
+func TestFormWithNoSelectorStaysTokenFree(t *testing.T) {
+	// With no native channel the form is still a GET form, and a token in a GET
+	// form reaches history, logs, and referrers. Analysis and emission have to
+	// agree about which of the two this is.
+	got, err := Generate("page.tb.html", []byte(
+		`export component Page(): html { <form server-action="Save"></form> }`), GenerateOptions{
+		Package:       "id_",
+		ServerActions: map[string]string{"Save": "/app/save"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if out := string(got); strings.Contains(out, "CSRFField") {
+		t.Errorf("a GET form carried a token:\n%s", out)
+	}
+}

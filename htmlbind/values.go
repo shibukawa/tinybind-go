@@ -138,6 +138,22 @@ func JSONOptional[T any](value *T, encode func(T) string) string {
 	return encode(*value)
 }
 
+// JSONMember appends one member to a JSON object body under assembly, writing
+// the separator only when something precedes it.
+//
+// It exists so a component's emitted parameters can omit an absent optional
+// rather than writing null: the generated code guards the call, and a member
+// that is never appended leaves no trace. One absence for JavaScript to test
+// beats two, and it matches what the attribute context already does when it
+// omits a whole attribute rather than emitting an empty one.
+func JSONMember(body, name, encoded string) string {
+	member := JSONString(name) + ":" + encoded
+	if body == "" {
+		return member
+	}
+	return body + "," + member
+}
+
 // JSONArray encodes a slice as a JSON array, delegating each element.
 func JSONArray[T any](values []T, encode func(T) string) string {
 	var out strings.Builder

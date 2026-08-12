@@ -6,17 +6,22 @@
 package pagesfixture
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/generator"
+	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
+	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/users/id_"
 	"github.com/shibukawa/tinybind-go/routetree"
+	templatehtml "github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 const importBase = "github.com/shibukawa/tinybind-go/internal/pagesfixture/pages"
@@ -25,6 +30,20 @@ func options() routetree.GenerateOptions {
 	return routetree.GenerateOptions{
 		Config:      routetree.Config{Root: "pages", ImportBase: importBase},
 		RootPackage: "pages",
+		// A framework reads the reported block with its own JavaScript parser and
+		// answers here. This stub stands in for that parser: the module reads no
+		// JavaScript, so what it needs is an answer rather than a reader.
+		ScriptResolver: func(_ string, scripts []templatehtml.ComponentScript) (routetree.ScriptAnswers, error) {
+			answers := routetree.ScriptAnswers{
+				Handlers:   map[string]templatehtml.ClientHandlerSet{},
+				Parameters: map[string][]string{},
+			}
+			for _, script := range scripts {
+				answers.Handlers[script.Component] = templatehtml.ClientHandlerSet{Resolved: []string{"reload"}}
+				answers.Parameters[script.Component] = script.Parameters
+			}
+			return answers, nil
+		},
 	}
 }
 
@@ -130,7 +149,7 @@ func get(t *testing.T, mux *http.ServeMux, target string) *httptest.ResponseReco
 }
 
 func TestServeMuxServesEveryDiscoveredRoute(t *testing.T) {
-	mux := pages.NewServeMux()
+	mux := serveMux()
 
 	cases := map[string]string{
 		"/":            "home",
@@ -150,7 +169,7 @@ func TestServeMuxServesEveryDiscoveredRoute(t *testing.T) {
 }
 
 func TestRootLayoutWrapsEveryPage(t *testing.T) {
-	mux := pages.NewServeMux()
+	mux := serveMux()
 	for _, target := range []string{"/", "/about", "/users/alice"} {
 		body := get(t, mux, target).Body.String()
 		if !strings.Contains(body, `<div id="shell">`) {
@@ -162,21 +181,21 @@ func TestRootLayoutWrapsEveryPage(t *testing.T) {
 func TestTypedPageResultReachesTheComponent(t *testing.T) {
 	// func Page uppercases the id, so seeing it in the markup proves the
 	// generated handler ran Go between decoding and rendering.
-	body := get(t, pages.NewServeMux(), "/users/bob").Body.String()
+	body := get(t, serveMux(), "/users/bob").Body.String()
 	if !strings.Contains(body, "user BOB") {
 		t.Errorf("typed page result missing: %s", body)
 	}
 }
 
 func TestQueryParameterReachesATemplateOnlyPage(t *testing.T) {
-	body := get(t, pages.NewServeMux(), "/about?topic=routing").Body.String()
+	body := get(t, serveMux(), "/about?topic=routing").Body.String()
 	if !strings.Contains(body, "about routing") {
 		t.Errorf("query parameter missing: %s", body)
 	}
 }
 
 func TestAbsentQueryParameterRendersItsZeroValue(t *testing.T) {
-	rec := get(t, pages.NewServeMux(), "/about")
+	rec := get(t, serveMux(), "/about")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
@@ -189,7 +208,7 @@ func TestAbsentQueryParameterRendersItsZeroValue(t *testing.T) {
 // non-pointer query parameter cannot express: page=0 is a value the author
 // chose, and no page at all is not.
 func TestOptionalQueryParameterSeparatesAbsentFromZero(t *testing.T) {
-	mux := pages.NewServeMux()
+	mux := serveMux()
 	cases := map[string]string{
 		"/about":         "every page",
 		"/about?page=0":  "page 0",
@@ -209,22 +228,23 @@ func TestOptionalQueryParameterSeparatesAbsentFromZero(t *testing.T) {
 }
 
 func TestUnparsableOptionalQueryParameterIsStillRejected(t *testing.T) {
-	rec := get(t, pages.NewServeMux(), "/about?page=x")
+	rec := get(t, serveMux(), "/about?page=x")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body = %s", rec.Code, rec.Body)
 	}
 }
 
 func TestUnmatchedPathIsNotFound(t *testing.T) {
-	if rec := get(t, pages.NewServeMux(), "/nope"); rec.Code != http.StatusNotFound {
+	if rec := get(t, serveMux(), "/nope"); rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
 
 func TestNonGetMethodIsRejected(t *testing.T) {
-	// The tree registers GET only, so the stdlib mux answers 405 itself.
+	// This page declares no form carrying server-action, so it registers GET
+	// alone and the stdlib mux answers 405 itself.
 	rec := httptest.NewRecorder()
-	pages.NewServeMux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/about", nil))
+	serveMux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/about", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
@@ -295,7 +315,7 @@ func TestServerActionEndpointReachesTheHandler(t *testing.T) {
 	body := strings.NewReader("name=carol")
 	request := httptest.NewRequest(http.MethodPost, actionPath(t, "Rename"), body)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	pages.NewServeMux().ServeHTTP(rec, request)
+	serveMux().ServeHTTP(rec, request)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
@@ -313,7 +333,7 @@ func TestServerActionBindsATypedRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, actionPath(t, "Rename"), strings.NewReader("name="))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	pages.NewServeMux().ServeHTTP(rec, request)
+	serveMux().ServeHTTP(rec, request)
 
 	if rec.Code != http.StatusUnprocessableEntity && rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want a rejection; body = %s", rec.Code, rec.Body)
@@ -341,13 +361,13 @@ func TestOpenAPIExcludesPageRoutesAndActions(t *testing.T) {
 }
 
 func TestServerActionEndpointIsPostOnly(t *testing.T) {
-	if rec := get(t, pages.NewServeMux(), actionPath(t, "Rename")); rec.Code != http.StatusMethodNotAllowed {
+	if rec := get(t, serveMux(), actionPath(t, "Rename")); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
 }
 
 func TestTemplateCarriesTheLoweredEndpointURL(t *testing.T) {
-	body := get(t, pages.NewServeMux(), "/users/alice").Body.String()
+	body := get(t, serveMux(), "/users/alice").Body.String()
 	want := `data-tb-action="` + actionPath(t, "Rename") + `"`
 	if !strings.Contains(body, want) {
 		t.Errorf("page does not carry %s: %s", want, body)
@@ -407,7 +427,7 @@ func TestDiscoveryDefaultsToPages(t *testing.T) {
 func TestRequestContextReachesBothShapesOfAPage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/archive", nil)
-	pages.NewServeMux().ServeHTTP(rec, request.WithContext(archive.WithReader(request.Context(), "alice")))
+	serveMux().ServeHTTP(rec, request.WithContext(archive.WithReader(request.Context(), "alice")))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
@@ -429,11 +449,144 @@ func TestRequestContextReachesBothShapesOfAPage(t *testing.T) {
 // Without the value the same page still serves, because the context always
 // exists; what it carries is the application's business.
 func TestAPageReadingTheContextServesWithoutTheValue(t *testing.T) {
-	rec := get(t, pages.NewServeMux(), "/archive")
+	rec := get(t, serveMux(), "/archive")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	if !strings.Contains(rec.Body.String(), "archive for guest") {
 		t.Errorf("body = %s", rec.Body)
 	}
+}
+
+// The native submit path. These are what an acceptance condition requiring a
+// working page with no browser runtime rests on: the markup a browser needs, and
+// the route that markup submits to.
+
+func TestFormCarriesTheNativeSubmitMarkup(t *testing.T) {
+	body := get(t, serveMux(), "/users/alice").Body.String()
+
+	// Without a method a form is a GET form to the current URL, which submits the
+	// fields as a query string, discards the page's own query, and reaches no
+	// handler. That is what shipped before this test existed.
+	if !strings.Contains(body, `<form data-tb-action="`) || !strings.Contains(body, `method="post"`) {
+		t.Errorf("the form is not a POST form: %s", body)
+	}
+	// No action attribute: a form declaring none submits to the document URL,
+	// which is already the page pattern with its path parameters filled in.
+	if strings.Contains(body, `<form action=`) || strings.Contains(body, ` action="/`) {
+		t.Errorf("an action attribute was emitted: %s", body)
+	}
+	if !strings.Contains(body, `name="_action"`) {
+		t.Errorf("the form carries no selector, so the page POST cannot dispatch it: %s", body)
+	}
+	// The same absent method used to suppress the token as well.
+	if !strings.Contains(body, `name="_csrf"`) {
+		t.Errorf("the form carries no CSRF token: %s", body)
+	}
+}
+
+func TestNativeSubmitReachesTheHandlerWithItsPathValue(t *testing.T) {
+	id_.Retired = ""
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/users/alice",
+		strings.NewReader("_action="+url.QueryEscape(selectorOf(t, "Retire"))+"&reason=left"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	serveMux().ServeHTTP(rec, request)
+
+	// A handler writing nothing gets post-redirect-get, so a reload does not
+	// resubmit and the address bar keeps showing the page.
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body = %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Location"); got != "/users/alice" {
+		t.Errorf("Location = %q, want the page it was submitted from", got)
+	}
+	// The path value is the thing the hash address cannot carry, and it is the
+	// whole reason a native submit posts to the page rather than to that address.
+	if got := id_.Retired; got != "left for alice" {
+		t.Errorf("handler saw %q, want the form field and the path value", got)
+	}
+}
+
+func TestPagePostRejectsAnUnknownSelector(t *testing.T) {
+	rec := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/users/alice", strings.NewReader("_action=nope/Nope"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	serveMux().ServeHTTP(rec, request)
+
+	if rec.Code == http.StatusSeeOther || rec.Code == http.StatusOK {
+		t.Errorf("an unknown selector was accepted: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// selectorOf is the opaque value the form's hidden field carries, which is the
+// tail of the handler's own endpoint path.
+func selectorOf(t *testing.T, handler string) string {
+	t.Helper()
+	for _, info := range pages.Actions {
+		if info.Handler == handler {
+			return info.Hash + "/" + info.Handler
+		}
+	}
+	t.Fatalf("no action named %q", handler)
+	return ""
+}
+
+// serveMux is the tree's mux with a session token supplied. The users page
+// declares a form carrying server-action, and requirement:csrf-token-rendering
+// fails such a render rather than emitting an empty token, so every render of
+// this tree now needs one — which is what a deployment serving forms must do.
+func serveMux() *http.ServeMux {
+	return pages.NewServeMux(htmlbind.WithCSRFToken("test-token"))
+}
+
+// The client-handler and parameter lowerings, rendered. The generated closure
+// has to compile and produce a value a browser can read, which no source-level
+// assertion reaches.
+
+func TestClientHandlerLowersInARenderedPage(t *testing.T) {
+	body := get(t, serveMux(), "/about?topic=routing").Body.String()
+	if !strings.Contains(body, `data-tb-on="click:reload"`) {
+		t.Errorf("the handler marker is missing: %s", body)
+	}
+	// The authored attribute is never emitted, exactly as server-action is not.
+	if strings.Contains(body, "on-click") {
+		t.Errorf("the authored attribute reached the output: %s", body)
+	}
+}
+
+func TestComponentParametersRenderAsJSON(t *testing.T) {
+	body := get(t, serveMux(), "/about?topic=routing&page=3").Body.String()
+	props := attributeValue(t, body, "data-tb-props")
+	if props != `{"topic":"routing","page":3}` {
+		t.Errorf("props = %s", props)
+	}
+}
+
+func TestAnAbsentOptionalParameterOmitsItsKey(t *testing.T) {
+	// One absence for JavaScript to test rather than a key holding null.
+	body := get(t, serveMux(), "/about?topic=routing").Body.String()
+	props := attributeValue(t, body, "data-tb-props")
+	if props != `{"topic":"routing"}` {
+		t.Errorf("props = %s, want the absent optional omitted", props)
+	}
+	if strings.Contains(props, "null") {
+		t.Errorf("an absence was rendered as null: %s", props)
+	}
+}
+
+// attributeValue reads one attribute out of rendered markup and undoes the HTML
+// escaping, which is what a browser does before JavaScript sees the value.
+func attributeValue(t *testing.T, body, name string) string {
+	t.Helper()
+	start := strings.Index(body, name+`="`)
+	if start < 0 {
+		t.Fatalf("no %s attribute in: %s", name, body)
+	}
+	rest := body[start+len(name)+2:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("unterminated %s attribute in: %s", name, body)
+	}
+	return html.UnescapeString(rest[:end])
 }

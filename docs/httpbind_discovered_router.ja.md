@@ -197,11 +197,30 @@ func Rename(w http.ResponseWriter, r *http.Request) { /* レスポンスを全�
 <button data-tb-action="/_action/00369cf962b6/Rename" data-target="#name">rename</button>
 ```
 
-契約はこれで全部である。`server-action` は名前を URL に解決して書き下すだけで、
-クライアントのプロトコルを一切モデル化しない。だから `data-target` —— あるいは
-`hx-target` でも何でも —— の意味は実装者のランタイムが決められる。
-`Emitter.ActionAttr` を `hx-post` に向ければ、生成されたアクションはグルーコード
-なしで HTMX を動かす。
+ボタンの上での契約はこれで全部である。`server-action` は名前を URL に解決して
+書き下すだけで、クライアントのプロトコルを一切モデル化しない。だから
+`data-target` —— あるいは `hx-target` でも何でも —— の意味は実装者のランタイムが
+決められる。`Emitter.ActionAttr` を `hx-post` に向ければ、生成されたアクションは
+グルーコードなしで HTMX を動かす。
+
+`<form>` はその属性に加えて、ブラウザ単体で動くだけのマークアップも受け取る。
+
+```html
+<form server-action="Retire"> … </form>
+```
+
+```html
+<form data-tb-action="/_action/d71506d06c1e/Retire" method="post">
+  <input type="hidden" name="_action" value="d71506d06c1e/Retire" />
+  <input type="hidden" name="_csrf" value="…" /> …
+</form>
+```
+
+`action` 属性は出さない。`action` を持たない form はドキュメントの URL に送信され、
+それはパスパラメータが埋まった状態のこのページであり、`POST` ならクエリも保たれる
+からだ。したがってページは `GET` と並んで `POST` も登録し、hidden の selector で
+振り分ける。1つのビルドがランタイムのあるクライアントと無いクライアントの両方に
+応える —— ランタイムは submit を横取りし、無ければ素の form がそのまま動く。
 
 手書きの `action="/users/42/rename"` に対してこれが買うものはコンパイラである。
 URL は、それが指すハンドラと照合されることのない文字列にすぎない。名前は解決を
@@ -493,12 +512,15 @@ tinybind のものを置き換えるのではなくテンプレートの周り�
 
 ## まだ無いもの
 
-- CSRF は未配線である。ambient credentials で到達可能な `POST` エンドポイントな
-  ので、入るまでは自分で包むこと。
-- スクリプト無しモードは設計済みだが未実装である。いまは `<form server-action>` も
-  他の要素と同じように下がり、横取りするランタイムを必要とする。ページ自身へ POST
-  して `303` で戻る形が第2段階であり、JavaScript を無効にして送信されたフォームが
-  必要とするのはそれである。
+- CSRF の検証は未配線である。生成された form は hidden トークンを持つように
+  なったが、それを検証するのはミドルウェアの仕事でこのモジュールは書かない。
+  自分で包むこと。
+- スクリプト無し*モード* —— クローラやメール本文のためにランタイム、境界マーカ、
+  非同期ストリーミングを一括で止めるもの —— は設計済みだが未実装である。
+  アクションはもうそれを待たない。`<form server-action>` はどのビルドでも
+  ネイティブな POST マークアップとページ自身の `POST` ルートを持つので、
+  JavaScript を無効にした送信は今日ハンドラに届く。裸のボタンに付いた
+  `server-action` は依然ランタイムを必要とする。ボタンにネイティブな送信が無いからだ。
 - `document.tb.html` は探索されるが、まだ適用されない。ドキュメントシェルは
   実装者のもの。
 - URL セグメントを持たないルートグループには記法が無い。他のフレームワークが使う

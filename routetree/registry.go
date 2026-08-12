@@ -55,6 +55,28 @@ type RegistryRoute struct {
 	PageFields []ComposerArg
 	// Layouts are the ancestor wrappers, outermost first.
 	Layouts []ComposerLayout
+	// PostPattern is the pattern the page's own POST route registers under,
+	// empty where the route reaches no server function. A form carrying
+	// server-action posts here rather than to the handler's own address, because
+	// a form declaring no action submits to the document URL and that is what
+	// carries the path parameters a handler serving /users/{id} needs.
+	PostPattern string
+	// FormActions are the server functions a native submit on this page can
+	// reach: the ones declared in the route's own package and in every layout
+	// wrapping it. One POST registration serves them all and the generated
+	// dispatcher branches on the selector.
+	FormActions []RegistryFormAction
+}
+
+// RegistryFormAction is one server function a page's POST route dispatches to.
+type RegistryFormAction struct {
+	// Selector is the opaque value the form's hidden field carries.
+	Selector string
+	// Package qualifies the handler symbol, such as "id_." It is empty for a
+	// handler in the root package itself.
+	Package string
+	// Name is the exported Go function name.
+	Name string
 }
 
 // RegistryModel is the data the registry template renders.
@@ -70,6 +92,9 @@ type RegistryModel struct {
 	Routes         []RegistryRoute
 	Actions        []RegistryAction
 	Symbols        Symbols
+	// ActionSelectorField is the hidden field the generated dispatcher reads the
+	// selector out of. The template compiler wrote it into the form.
+	ActionSelectorField string
 }
 
 // Render describes the render call of one route's generated handler, which the
@@ -132,6 +157,14 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		ActionTableVar: orDefault(e.ActionTableVar, ActionTableVar),
 		DecodeFunc:     e.DecodeFunc,
 		Symbols:        e.symbols(),
+
+		ActionSelectorField: orDefault(e.ActionSelectorField, DefaultActionSelectorField),
+	}
+	// Server functions are grouped by declaring directory, so a route can collect
+	// the ones its own package and its layouts declare without rescanning.
+	actionsByDir := map[string][]Action{}
+	for _, action := range actions {
+		actionsByDir[action.RelDir] = append(actionsByDir[action.RelDir], action)
 	}
 
 	aliases := newAliasSet(rootPackage)
@@ -175,6 +208,46 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		}
 		if route.RelDir != "" {
 			entry.Selector = addImport(route.ImportPath, route.Package)
+		}
+
+		// A native form submit posts to the page rather than to the handler's own
+		// address, so the page pattern gains a POST beside its GET. Reachable
+		// means declared in the route's own package or in a layout wrapping it,
+		// which is exactly the set a template rendered on this page can name.
+		//
+		// This runs before the raw-handler branch below, because a handler owning
+		// its whole response still renders a template that can carry a form.
+		seen := map[string]bool{}
+		collectActions := func(relDir string) {
+			for _, action := range actionsByDir[relDir] {
+				// A handler no form names has no native submit to serve, and
+				// registering for it would claim a pattern an application is
+				// documented to be able to register itself.
+				if !action.NativeForm || seen[action.Selector()] {
+					continue
+				}
+				seen[action.Selector()] = true
+				qualifier := ""
+				if action.RelDir != "" {
+					qualifier = addImport(action.ImportPath, action.Package)
+				}
+				entry.FormActions = append(entry.FormActions, RegistryFormAction{
+					Selector: action.Selector(),
+					Package:  qualifier,
+					Name:     action.Name,
+				})
+			}
+		}
+		collectActions(route.RelDir)
+		for _, layout := range route.Layouts {
+			collectActions(layout.RelDir)
+		}
+		if len(entry.FormActions) > 0 {
+			entry.PostPattern = model.Symbols.RoutePostPattern(route)
+			// The dispatcher body names both transport values, so a tree of
+			// nothing but raw handlers still imports the request package once one
+			// of its pages can be posted to.
+			needsRequest = true
 		}
 
 		if analysis.Page != nil && analysis.Page.Rung == RungHandlerPage {

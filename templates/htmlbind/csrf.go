@@ -60,6 +60,16 @@ func (c *compiler) unsafeForm(node *ElementNode) (bool, error) {
 	if dynamic {
 		return false, c.error(node.Pos, "a form's method must be static, because it decides whether the form carries a CSRF token")
 	}
+	// A form carrying server-action is a POST form whether or not the author
+	// wrote the method, because the lowering writes one. Reading the authored
+	// attribute alone is what left the shipped markup with no token at all.
+	//
+	// Only when a selector resolved, though: with none the form keeps no native
+	// channel, stays a GET form, and a token in it would reach history, logs, and
+	// referrers.
+	if name, action := serverActionName(node); action && c.actionSelectors[name] != "" {
+		method = "post"
+	}
 	if !unsafeFormMethods[strings.ToLower(strings.TrimSpace(method))] {
 		return false, nil
 	}
@@ -102,6 +112,18 @@ func (c *compiler) hasCSRFField(node *ElementNode) bool {
 			continue
 		}
 		if name, dynamic := staticAttribute(element, "name"); !dynamic && name == c.csrfFieldName() {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAttribute reports whether an element carries an attribute at all. It is
+// distinct from [staticAttribute], whose second result says the value is an
+// expression rather than that the attribute is present.
+func hasAttribute(node *ElementNode, name string) bool {
+	for _, attribute := range node.Attributes {
+		if attribute.Name == name {
 			return true
 		}
 	}

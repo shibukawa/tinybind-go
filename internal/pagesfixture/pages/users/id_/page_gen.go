@@ -17,7 +17,9 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Ops: []htmlbind.Op[PageParams]{
 		planPageOps.Static(" <h1>user "),
 		planPageOps.Text(func(p PageParams) string { return p.Name }),
-		planPageOps.Static("</h1> <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> "),
+		planPageOps.Static("</h1> <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> <form data-tb-action=\"/_action/d71506d06c1e/Retire\" method=\"post\"><input type=\"hidden\" name=\"_action\" value=\"d71506d06c1e/Retire\" />"),
+		planPageOps.CSRFField("_csrf"),
+		planPageOps.Static(" <input name=\"reason\" /> <button type=\"submit\">retire</button> </form> "),
 	},
 }
 

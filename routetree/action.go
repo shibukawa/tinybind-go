@@ -53,6 +53,15 @@ type Action struct {
 	Hash string
 	// Path is the endpoint path, such as /_action/9f3c2ab1e4d7/Rename.
 	Path string
+	// NativeForm reports that a template in the declaring package names this
+	// handler from a form element, so a browser can submit to it with no runtime
+	// loaded. It is what puts a POST on the page's own pattern.
+	//
+	// An action named only from a bare button sets nothing: such an element has
+	// no native submit channel to serve, so registering a POST for it would take
+	// a path an application may want and buy nothing. Discovery cannot see this,
+	// because it reads Go sources; the template compiler reports it.
+	NativeForm bool
 }
 
 // Pattern returns the stdlib ServeMux pattern for the endpoint, which is always
@@ -158,6 +167,35 @@ func ActionHash(relDir, name string) string {
 // ActionPath builds the endpoint path for one handler.
 func ActionPath(prefix, hash, name string) string {
 	return strings.TrimSuffix(prefix, "/") + "/" + hash + "/" + name
+}
+
+// DefaultActionSelectorField is the hidden field a generated form carries to
+// name the handler a native submit is for.
+const DefaultActionSelectorField = "_action"
+
+// Selector is the opaque value a native form submit carries so the page's own
+// POST route can tell which handler it is for.
+//
+// It is spelled as the hash and the handler name together, matching the tail of
+// [Action.Path], so a reader of the DOM or of a network trace sees which Go
+// function runs. The whole string is compared as one key, so no mismatch between
+// the two halves is representable, and naming the function changes no security
+// property: the hash hides structure and grants nothing either way.
+func (a Action) Selector() string { return a.Hash + "/" + a.Name }
+
+// actionSelectors is the second half of the resolution map the template compiler
+// needs: handler name to the selector its form carries. A name resolved by a
+// framework's own route table has no entry, which is what keeps this module from
+// writing form markup for a route it does not own.
+func actionSelectors(actions []Action) map[string]string {
+	if len(actions) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(actions))
+	for _, action := range actions {
+		out[action.Name] = action.Selector()
+	}
+	return out
 }
 
 // ValidateActionPrefix reports whether a configured endpoint prefix is usable

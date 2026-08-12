@@ -204,6 +204,19 @@ type compiler struct {
 	csrfMode   CSRFMode
 	csrfField  string
 	attrPrefix string
+	// actionSelectors mirrors GenerateOptions.ServerActionSelectors. Analysis
+	// reads it for one thing only: whether a form carrying server-action becomes
+	// a POST form, and so whether it needs a token.
+	actionSelectors map[string]string
+	// clientHandlers collects the on-prefixed references the module makes, in
+	// source order, and clientHandlerSets mirrors GenerateOptions.ClientHandlers.
+	// A component absent from the sets is unchecked, which is what lets the
+	// reporting pass run before the caller has anything to answer with.
+	clientHandlers    []ClientHandlerRef
+	clientHandlerSets map[string]ClientHandlerSet
+	// componentParameters mirrors GenerateOptions.ComponentParameters, the set of
+	// parameters each component emits onto its root element.
+	componentParameters map[string][]string
 	// contentReads collects the files the content transforms reported reading,
 	// so an edit to one regenerates the block that depends on it.
 	contentReads []string
@@ -403,6 +416,9 @@ func (c *compiler) analyze() error {
 			return err
 		}
 		c.current = nil
+	}
+	if err := c.validateComponentParameters(); err != nil {
+		return err
 	}
 	return c.validateCachedComponents()
 }
@@ -875,6 +891,17 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			for _, attribute := range node.Attributes {
 				if attribute.Name == ServerActionAttr {
 					if err := c.analyzeServerAction(node.Name, attribute, node.Attributes); err != nil {
+						return err
+					}
+					continue
+				}
+				// The on- namespace is reserved only inside a component that
+				// declares a script block, because that is the only place a
+				// handler name could resolve. Everywhere else it stays the
+				// ordinary custom-element attribute rule:event-attribute-context
+				// calls it, and is emitted unread.
+				if c.current != nil && c.current.script != "" && isClientHandlerName(attribute.Name) {
+					if err := c.analyzeClientHandler(node.Name, attribute, node.Attributes); err != nil {
 						return err
 					}
 					continue

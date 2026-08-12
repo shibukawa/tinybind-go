@@ -205,11 +205,30 @@ survives untouched:
 <button data-tb-action="/_action/00369cf962b6/Rename" data-target="#name">rename</button>
 ```
 
-That is the whole contract. `server-action` resolves a name to a URL and writes
-it down; it models no client protocol at all, which is what leaves `data-target`
-— or `hx-target`, or anything else — to mean whatever your runtime decides.
-Point `Emitter.ActionAttr` at `hx-post` and a generated action drives HTMX with
-no glue code.
+That is the whole contract on a button. `server-action` resolves a name to a URL
+and writes it down; it models no client protocol at all, which is what leaves
+`data-target` — or `hx-target`, or anything else — to mean whatever your runtime
+decides. Point `Emitter.ActionAttr` at `hx-post` and a generated action drives
+HTMX with no glue code.
+
+A `<form>` gets that attribute *and* the markup a browser needs on its own:
+
+```html
+<form server-action="Retire"> … </form>
+```
+
+```html
+<form data-tb-action="/_action/d71506d06c1e/Retire" method="post">
+  <input type="hidden" name="_action" value="d71506d06c1e/Retire" />
+  <input type="hidden" name="_csrf" value="…" /> …
+</form>
+```
+
+No `action` attribute: a form declaring none submits to the document URL, which
+is this page with its path parameters already filled in, and a `POST` keeps that
+URL's query. So the page registers `POST` alongside its `GET` and dispatches on
+the hidden selector. One build serves a client with a runtime and one without —
+the runtime intercepts the submit, and its absence leaves a working form.
 
 What this buys over a hand-written `action="/users/42/rename"` is the compiler. A
 URL is a string nothing checks against the handler it targets; a name is a symbol
@@ -506,12 +525,15 @@ makes; `htmlbind.Signatures` and `htmlbind.ActionRefs` are documented in
 
 ## What is not there yet
 
-- CSRF is not wired. These are `POST` endpoints reachable with ambient
-  credentials, so wrap them yourself until it is.
-- The script-free mode is designed but unimplemented. Today a `<form
-  server-action>` lowers like any other element and needs a runtime to intercept
-  it; posting to the page itself with a `303` back is the second phase, and it is
-  what a form submitted with JavaScript disabled will need.
+- CSRF verification is not wired. A generated form now carries the hidden token,
+  but checking it is middleware's job and this module writes none, so wrap these
+  endpoints yourself.
+- The script-free *mode* — suppressing the runtime, the boundary markers and the
+  async streaming for a crawler or a mail body — is designed but unimplemented.
+  Actions no longer wait on it: a `<form server-action>` carries the native POST
+  markup and the page's own `POST` route in every build, so a submit with
+  JavaScript disabled reaches the handler today. A `server-action` on a bare
+  button still needs a runtime, because a button has no native submit.
 - `document.tb.html` is discovered but not yet applied; the document shell is
   still yours.
 - Route groups that contribute no URL segment have no notation, because the

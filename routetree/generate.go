@@ -69,6 +69,16 @@ type GenerateOptions struct {
 	// A handler exported by the template's own route package always wins, which is
 	// what keeps a resolver from silently retargeting a discovered action.
 	ActionResolver func(name string) (url string, ok bool)
+	// ScriptResolver reads the component script blocks of one template and
+	// answers what each block exposes and which of the component's parameters to
+	// emit onto its root element.
+	//
+	// It is how a framework that parses JavaScript supplies what this module
+	// refuses to read. Configuring one costs a second parse of every template
+	// carrying a block, because the blocks have to be reported before the compile
+	// that consumes the answers can run; a tree with no resolver parses once, as
+	// it always has.
+	ScriptResolver func(path string, scripts []htmlbind.ComponentScript) (ScriptAnswers, error)
 	// DataAttributePrefix is the boundary attribute prefix compiled into every
 	// template in the tree. Empty uses the htmlbind default.
 	//
@@ -136,13 +146,24 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 	// shared by twenty routes is compiled once, but a style block two pages
 	// happen to write identically still arrives twice.
 	seenAsset := map[string]bool{}
-	collect := func(compiled htmlbind.Result) {
+	// nativeForm records which handlers a template named from a form, keyed by
+	// the declaring directory and the handler name. Only those need a POST on the
+	// page's own pattern: an action on a bare button has no native submit to
+	// serve, and registering one would claim a pattern an application is
+	// documented to be free to register itself.
+	nativeForm := map[string]bool{}
+	collect := func(relDir string, compiled htmlbind.Result) {
 		for _, asset := range compiled.Assets {
 			if seenAsset[asset.FileName()] {
 				continue
 			}
 			seenAsset[asset.FileName()] = true
 			assets = append(assets, asset)
+		}
+		for _, ref := range compiled.ActionRefs {
+			if ref.Element == "form" {
+				nativeForm[relDir+"\x00"+ref.Handler] = true
+			}
 		}
 	}
 
@@ -190,7 +211,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 				errs = append(errs, err)
 				continue
 			}
-			collect(compiled)
+			collect(layout.RelDir, compiled)
 			out = append(out, Generated{Path: componentPath(layout.File, componentSuffix), Source: compiled.GoSource})
 		}
 		discoverActions(route.Dir, route.RelDir, route.Package, route.ImportPath)
@@ -211,7 +232,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 			if err != nil {
 				errs = append(errs, err)
 			} else {
-				collect(compiled)
+				collect(route.RelDir, compiled)
 				out = append(out, Generated{Path: pagePath, Source: compiled.GoSource})
 			}
 		}
@@ -226,6 +247,12 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 
 	if len(errs) > 0 {
 		return Result{}, joinErrors(errs)
+	}
+
+	// The page POST route is decided by the markup rather than by the Go sources,
+	// so the flag is applied once every template has been compiled.
+	for i := range allActions {
+		allActions[i].NativeForm = nativeForm[allActions[i].RelDir+"\x00"+allActions[i].Name]
 	}
 
 	registry, err := emitter.Registry(tree, rootPackage, analyses, layoutSignatures, allActions)
@@ -259,6 +286,18 @@ func componentPath(templatePath, suffix string) string {
 	return filepath.Join(filepath.Dir(templatePath), base+suffix)
 }
 
+// ScriptAnswers is what a [GenerateOptions.ScriptResolver] returns for one
+// template: what each component's script block exposes, and which of each
+// component's parameters to emit onto its root element.
+//
+// Both maps are keyed by component declaration name, which is unique within one
+// template module. A component absent from Handlers is unchecked, and one absent
+// from Parameters emits nothing.
+type ScriptAnswers struct {
+	Handlers   map[string]htmlbind.ClientHandlerSet
+	Parameters map[string][]string
+}
+
 func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, options GenerateOptions) (htmlbind.Result, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
@@ -276,14 +315,36 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 	// GenerateModule rather than Generate: the tree's own templates declare
 	// style and script blocks, and Generate is the variant that drops what they
 	// extract, which leaves the component referencing a file nobody wrote.
+	var answers ScriptAnswers
+	if options.ScriptResolver != nil {
+		// The blocks are reported before the compile that consumes the answers,
+		// which is why this parses once more. Only a tree configuring a resolver
+		// pays it.
+		scripts, err := htmlbind.ComponentScripts(path, source)
+		if err != nil {
+			return htmlbind.Result{}, err
+		}
+		if len(scripts) > 0 {
+			answers, err = options.ScriptResolver(path, scripts)
+			if err != nil {
+				return htmlbind.Result{}, err
+			}
+		}
+	}
 	return htmlbind.GenerateModule(path, source, htmlbind.GenerateOptions{
-		Package:              pkg,
-		ServerActions:        actionURLs(actions),
-		ServerActionResolver: options.ActionResolver,
-		ServerActionAttr:     emitter.ActionAttr,
-		ContextExternals:     withContext,
-		DataAttributePrefix:  options.DataAttributePrefix,
-		PublicURLBase:        options.PublicURLBase,
+		Package:                   pkg,
+		ClientHandlers:            answers.Handlers,
+		ClientHandlerAttr:         emitter.ClientHandlerAttr,
+		ComponentParameters:       answers.Parameters,
+		ComponentParameterAttr:    emitter.ComponentParameterAttr,
+		ServerActions:             actionURLs(actions),
+		ServerActionSelectors:     actionSelectors(actions),
+		ServerActionSelectorField: emitter.ActionSelectorField,
+		ServerActionResolver:      options.ActionResolver,
+		ServerActionAttr:          emitter.ActionAttr,
+		ContextExternals:          withContext,
+		DataAttributePrefix:       options.DataAttributePrefix,
+		PublicURLBase:             options.PublicURLBase,
 	})
 }
 
