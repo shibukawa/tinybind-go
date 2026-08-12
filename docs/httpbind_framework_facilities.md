@@ -37,6 +37,10 @@ or decides a route.
 | Router type independence | naming your own router type | shipped |
 | Generated-source exclusion | keeping your generated files out of discovery | shipped |
 | Server action resolution | addressing a handler from your own route table | shipped |
+| Native form submit | a server action reached with no browser runtime | **shipped 2026-08-12** |
+| Script block reporting | reading a component's own script without parsing the template | **shipped 2026-08-12** |
+| Client handlers (`on-click="…"`) | a template naming a function that block produced | **shipped 2026-08-12** |
+| Component parameters as JSON | a script block reading an argument with its type | **shipped 2026-08-12** |
 | Render context for a synchronous external | a per-request value rendered inline | **shipped 2026-07-31** |
 | Caller head contributions | a head tag decided per response | **shipped 2026-07-31** |
 | `noscript` in the head | telling a scriptless client something | **shipped 2026-07-31** |
@@ -49,8 +53,11 @@ or decides a route.
 | Component assets | a library shipping a component plus its `.js` | specified, not built |
 | Render-time script contribution | selecting a script per response by name | specified, not built |
 
-The rest of this document covers the three rows marked with a date in depth,
-then states what the unbuilt ones would give you and why they are not built yet.
+The rest of this document covers the three 2026-07-31 rows in depth, then states
+what the unbuilt ones would give you and why they are not built yet. The four
+2026-08-12 rows are one feature set with its own guide:
+[httpbind_client_behavior.md](httpbind_client_behavior.md), which is where to
+start if your framework owns a browser runtime.
 
 ## Per-request values in markup
 

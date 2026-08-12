@@ -34,6 +34,13 @@ customizable:
     corrected: 2026-08-12, having been listed here as a setting before it was built
   handler_attribute: the lowered attribute name of requirement:template-client-handlers
   parameter_attribute: the lowered attribute name of requirement:component-parameter-emission
+none_of_these_follow_the_data_attribute_prefix:
+  found: 2026-08-12, while documenting
+  what: DataAttributePrefix renames the boundary and declaration markers, and the four emitted attribute names here are literals it does not reach
+  effect: a project setting the prefix to its own gets data-pw-component beside data-tb-on unless it also sets each name
+  not_new: always true of element_attribute; this round made it true of three more, so the trap is now four settings rather than one
+  not_changed_because: deriving them from the prefix would diverge from element_attribute, which a framework already points at hx-post, a name no prefix could produce
+  mitigation: docs/httpbind_client_behavior.md states it in the settings table rather than leaving a reader to discover it
   method_attribute: whether method is emitted
   dispatcher: the generated POST dispatcher, replaceable through the same registry template override requirement:generated-route-registration already exposes
 fixed:
