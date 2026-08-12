@@ -311,7 +311,7 @@ err := httpbind.Write(w, r, UserResponse{ID: "u_1", Name: "Ada"})
 
 `Write` は `200 OK` と `application/json` を書きます。
 
-生成された encoder が読むのは `json` タグの名前部分だけで、いまのところそれ以外は読みません。`omitempty` は効かず、`json:"-"` も何も除外しません。レスポンス型の field はすべて出力される前提で設計してください。
+生成された encoder は `json` タグの名前とオプションの両方を読みます。`json:"-"` はその field をレスポンスから完全に外し、`omitempty` は `""`・`[]`・`{}` になるメンバーを落とし、`omitzero` は Go のゼロ値を落とします。`0` や `false` に届くのは後者です。いずれも `encoding/json` ではなく `encoding/json/v2` の解釈で、両者の差は [jsonbind](jsonbind.ja.md) にまとめてあります。
 
 ### 200 以外の成功
 

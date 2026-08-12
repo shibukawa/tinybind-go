@@ -4,6 +4,7 @@ package about
 
 import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
 type PageParams struct {
@@ -13,10 +14,40 @@ type PageParams struct {
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
+// planPageInput canonically encodes the declared inputs of Page.
+// Slot arguments are excluded: their content belongs to the child boundary,
+// so a frame stays comparable when only its child changed.
+func planPageInput(p PageParams) string {
+	return delta.CanonJoin(
+		delta.CanonString[string](p.Topic),
+		delta.CanonOptional(p.Page, delta.CanonInt),
+	)
+}
+
+var planPageBoundary = &htmlbind.Boundary[PageParams]{
+	ComponentID: "templates.page.Page",
+	Attr:        "data-tb-id",
+	Input:       planPageInput,
+}
+
 var planPagePlan = &htmlbind.Plan[PageParams]{
-	Head: nil,
+	Head:        []string{"<script src=\"/public/generated/page.script.19acbe0c54ad.js\" type=\"module\"></script>"},
+	HeadSources: []string{""},
+	Assets:      []htmlbind.Asset{{ID: "page.script.19acbe0c54ad", Type: "text/javascript", URL: "/public/generated/page.script.19acbe0c54ad.js", Scope: "templates.page.Page"}},
+	Boundary:    planPageBoundary,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static(" <h1>about "),
+		planPageOps.Static("  <div"),
+		planPageOps.BoundaryAttr(),
+		planPageOps.Static(" data-tb-component=\"templates.page.Page\""),
+		planPageOps.Attr("data-tb-props", func(p PageParams) (string, bool) {
+			body := ""
+			body = htmlbind.JSONMember(body, "topic", htmlbind.JSONString[string](p.Topic))
+			if p.Page != nil {
+				body = htmlbind.JSONMember(body, "page", htmlbind.JSONInt(*p.Page))
+			}
+			return htmlbind.Escape("{" + body + "}"), true
+		}),
+		planPageOps.Static(" class=\"about\"> <h1>about "),
 		planPageOps.Text(func(p PageParams) string { return p.Topic }),
 		planPageOps.Static("</h1> "),
 		planPageOps.If(func(p PageParams) bool { return (p.Page == nil) },
@@ -33,7 +64,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 				}),
 				planPageOps.Static("</p> "),
 			}),
-		planPageOps.Static(" "),
+		planPageOps.Static(" <button data-tb-on=\"click:reload\">reload</button> </div> "),
 	},
 }
 

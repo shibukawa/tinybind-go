@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 const actionSource = `package id_
@@ -200,5 +202,194 @@ func TestRegistryRegistersEveryActionEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(out, `Handler: "Rename"`) {
 		t.Errorf("endpoint table does not name the handler:\n%s", out)
+	}
+}
+
+func TestRegistryRegistersThePagePostRoute(t *testing.T) {
+	users, analysis := templateOnly("/users/{id}", "users/id_", "id_", "example.com/m/pages/users/id_",
+		[]Segment{{Name: "id"}}, []Value{{Name: "id", Type: "string"}})
+	actions := []Action{
+		{
+			Name: "Rename", RelDir: "users/id_", Package: "id_",
+			ImportPath: "example.com/m/pages/users/id_",
+			Hash:       "00369cf962b6", Path: "/_action/00369cf962b6/Rename",
+			NativeForm: true,
+		},
+		{
+			Name: "Delete", RelDir: "users/id_", Package: "id_",
+			ImportPath: "example.com/m/pages/users/id_",
+			Hash:       "11469cf962b7", Path: "/_action/11469cf962b7/Delete",
+			NativeForm: true,
+		},
+	}
+
+	source, err := NewEmitter().Registry(&Tree{Routes: []Route{users}}, "pages", []Analysis{analysis}, nil, actions)
+	if err != nil {
+		t.Fatalf("Registry: %v", err)
+	}
+	out := string(source)
+	// A form declaring no action submits to the document URL, so the page pattern
+	// is what has to accept the POST. Without this the browser reaches no handler.
+	if !strings.Contains(out, `mux.HandleFunc("POST /users/{id}"`) {
+		t.Errorf("the page carries no POST route:\n%s", out)
+	}
+	// One registration serves every handler the page can reach, so a page holding
+	// several forms needs no second pattern.
+	if !strings.Contains(out, `case "00369cf962b6/Rename":`) ||
+		!strings.Contains(out, `case "11469cf962b7/Delete":`) {
+		t.Errorf("the dispatcher does not branch on both selectors:\n%s", out)
+	}
+	if !strings.Contains(out, "httpbind.DispatchAction(w, r, id_.Rename)") {
+		t.Errorf("the dispatcher does not run the handler:\n%s", out)
+	}
+	if !strings.Contains(out, `httpbind.ActionSelector(r, "_action")`) {
+		t.Errorf("the dispatcher does not read the selector field:\n%s", out)
+	}
+	// The direct entry points are unchanged and still registered beside it.
+	if !strings.Contains(out, `mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)`) {
+		t.Errorf("the direct entry point was lost:\n%s", out)
+	}
+}
+
+func TestRegistryDispatchesALayoutsActionsToo(t *testing.T) {
+	// A layout is compiled once and renders under every page below it, so a form
+	// its markup declares has to reach a handler from the page that rendered it.
+	layout := Layout{RelDir: "users", Package: "users", ImportPath: "example.com/m/pages/users",
+		File: "pages/users/layout.tb.html"}
+	users, analysis := templateOnly("/users/{id}", "users/id_", "id_", "example.com/m/pages/users/id_",
+		[]Segment{{Name: "id"}}, []Value{{Name: "id", Type: "string"}}, layout)
+	actions := []Action{{
+		Name: "Search", RelDir: "users", Package: "users",
+		ImportPath: "example.com/m/pages/users",
+		Hash:       "22569cf962b8", Path: "/_action/22569cf962b8/Search",
+		NativeForm: true,
+	}}
+
+	signatures := map[string]ComponentSignature{
+		"users": {Name: "Layout", Slots: []Value{{Name: SlotParamName, Type: "html"}}},
+	}
+	source, err := NewEmitter().Registry(&Tree{Routes: []Route{users}}, "pages", []Analysis{analysis}, signatures, actions)
+	if err != nil {
+		t.Fatalf("Registry: %v", err)
+	}
+	if out := string(source); !strings.Contains(out, `case "22569cf962b8/Search":`) {
+		t.Errorf("a layout's action is unreachable from the page below it:\n%s", out)
+	}
+}
+
+func TestRegistryLeavesAnActionlessPageWithGetAlone(t *testing.T) {
+	home, analysis := templateOnly("/", "", "pages", "example.com/m/pages", nil, nil)
+	source, err := NewEmitter().Registry(&Tree{Routes: []Route{home}}, "pages", []Analysis{analysis}, nil, nil)
+	if err != nil {
+		t.Fatalf("Registry: %v", err)
+	}
+	if out := string(source); strings.Contains(out, `mux.HandleFunc("POST /`) {
+		t.Errorf("a page reaching no server function gained a POST route:\n%s", out)
+	}
+}
+
+func TestRegistryLeavesAButtonOnlyActionWithNoPagePost(t *testing.T) {
+	// A bare button has no native submit channel, so a POST on the page pattern
+	// would serve nothing and would claim an address the framework-owner guide
+	// documents an application as free to register itself.
+	users, analysis := templateOnly("/users/{id}", "users/id_", "id_", "example.com/m/pages/users/id_",
+		[]Segment{{Name: "id"}}, []Value{{Name: "id", Type: "string"}})
+	actions := []Action{{
+		Name: "Rename", RelDir: "users/id_", Package: "id_",
+		ImportPath: "example.com/m/pages/users/id_",
+		Hash:       "00369cf962b6", Path: "/_action/00369cf962b6/Rename",
+	}}
+
+	source, err := NewEmitter().Registry(&Tree{Routes: []Route{users}}, "pages", []Analysis{analysis}, nil, actions)
+	if err != nil {
+		t.Fatalf("Registry: %v", err)
+	}
+	out := string(source)
+	if strings.Contains(out, `mux.HandleFunc("POST /users/{id}"`) {
+		t.Errorf("a button-only action claimed the page pattern:\n%s", out)
+	}
+	// The direct entry point is what a button's runtime calls, and it is unmoved.
+	if !strings.Contains(out, `mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)`) {
+		t.Errorf("the direct entry point was lost:\n%s", out)
+	}
+}
+
+func TestScriptResolverAnswersTheCompile(t *testing.T) {
+	// The resolver is where a framework that parses JavaScript answers what this
+	// module refuses to read. The stub below stands in for that parser.
+	root := tree(t, map[string]string{
+		"page.tb.html": `export component Page(label: string): html {
+<script component>
+export function setup({ label }) { return { increment() {} } }
+</script>
+<div><button on-click="increment">{label}</button></div>
+}`,
+	})
+
+	var sawBlock string
+	files, err := Generate(GenerateOptions{
+		Config:      Config{Root: root, ImportBase: "example.com/m/pages"},
+		RootPackage: "pages",
+		ScriptResolver: func(_ string, scripts []htmlbind.ComponentScript) (ScriptAnswers, error) {
+			sawBlock = scripts[0].Script
+			return ScriptAnswers{
+				Handlers:   map[string]htmlbind.ClientHandlerSet{"Page": {Resolved: []string{"increment"}}},
+				Parameters: map[string][]string{"Page": {"label"}},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(sawBlock, "export function setup({ label })") {
+		t.Errorf("the resolver did not receive the block as authored: %q", sawBlock)
+	}
+
+	var page string
+	for _, file := range files {
+		if strings.HasSuffix(file.Path, "page_gen.go") {
+			page = string(file.Source)
+		}
+	}
+	if page == "" {
+		t.Fatal("no component file was generated")
+	}
+	if !strings.Contains(page, `data-tb-on=\"click:increment\"`) {
+		t.Errorf("the handler did not lower:\n%s", page)
+	}
+	if !strings.Contains(page, `Attr("data-tb-props"`) {
+		t.Errorf("the named parameter was not emitted:\n%s", page)
+	}
+}
+
+func TestNoScriptResolverLeavesTheCompileUnchanged(t *testing.T) {
+	root := tree(t, map[string]string{
+		"page.tb.html": `export component Page(label: string): html {
+<script component>
+export function setup({ label }) {}
+</script>
+<div><button on-click="increment">{label}</button></div>
+}`,
+	})
+	files, err := Generate(GenerateOptions{
+		Config:      Config{Root: root, ImportBase: "example.com/m/pages"},
+		RootPackage: "pages",
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, file := range files {
+		if !strings.HasSuffix(file.Path, "page_gen.go") {
+			continue
+		}
+		out := string(file.Source)
+		// Unchecked, so the handler still lowers; but nothing names a parameter,
+		// so no object is emitted.
+		if !strings.Contains(out, `data-tb-on=\"click:increment\"`) {
+			t.Errorf("an unchecked handler did not lower:\n%s", out)
+		}
+		if strings.Contains(out, "data-tb-props") {
+			t.Errorf("parameters were emitted with none named:\n%s", out)
+		}
 	}
 }

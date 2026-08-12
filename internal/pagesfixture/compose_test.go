@@ -19,24 +19,24 @@ func post(t *testing.T, mux *http.ServeMux, target string) *httptest.ResponseRec
 }
 
 // TestComposedRoutersShareOnePathUnderDifferentMethods is the documented shape:
-// a form target registered by hand beside the generated page it posts from.
+// a POST registered by hand beside the generated page at the same address.
+//
+// It uses a page declaring no native form. A page that does declare one now owns
+// its own POST, which TestPageWithANativeFormOwnsItsPost records.
 func TestComposedRoutersShareOnePathUnderDifferentMethods(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /users/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /about", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Handled-By", "registered")
-		w.Header().Set("X-ID", r.PathValue("id"))
 	})
 	pages.Register(mux)
 
-	if rec := post(t, mux, "/users/alice"); rec.Code != http.StatusOK {
+	if rec := post(t, mux, "/about"); rec.Code != http.StatusOK {
 		t.Fatalf("POST status = %d, body = %s", rec.Code, rec.Body)
 	} else if got := rec.Header().Get("X-Handled-By"); got != "registered" {
 		t.Errorf("POST reached %q, want the hand-registered handler", got)
-	} else if got := rec.Header().Get("X-ID"); got != "alice" {
-		t.Errorf("hand-registered handler saw id = %q", got)
 	}
 
-	rec := get(t, mux, "/users/alice")
+	rec := get(t, mux, "/about")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d", rec.Code)
 	}
@@ -49,16 +49,34 @@ func TestComposedRoutersAreOrderIndependent(t *testing.T) {
 	// Registering the generated routes first must work as well as last.
 	mux := http.NewServeMux()
 	pages.Register(mux)
-	mux.HandleFunc("POST /users/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /about", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Handled-By", "registered")
 	})
 
-	if rec := post(t, mux, "/users/bob"); rec.Header().Get("X-Handled-By") != "registered" {
+	if rec := post(t, mux, "/about"); rec.Header().Get("X-Handled-By") != "registered" {
 		t.Errorf("POST did not reach the hand-registered handler: %d", rec.Code)
 	}
-	if rec := get(t, mux, "/users/bob"); rec.Code != http.StatusOK {
+	if rec := get(t, mux, "/about"); rec.Code != http.StatusOK {
 		t.Errorf("GET status = %d", rec.Code)
 	}
+}
+
+// TestPageWithANativeFormOwnsItsPost is the narrowing this feature cost. A page
+// whose template declares a form carrying server-action must accept the POST
+// that form submits, so that address stops being one an application can take.
+//
+// The narrowing is confined to such pages: a page whose only action sits on a
+// bare button registers no POST, because a button has no native submit to serve.
+func TestPageWithANativeFormOwnsItsPost(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /users/{id}", func(http.ResponseWriter, *http.Request) {})
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("the page's own POST was not registered, so a native submit reaches no handler")
+		}
+	}()
+	pages.Register(mux)
 }
 
 // TestGeneratedRootDoesNotSwallowHandRegisteredPrefixes checks the consequence

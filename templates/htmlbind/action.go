@@ -22,6 +22,26 @@ const ServerActionAttr = "server-action"
 // library points it at that library's vocabulary instead.
 const DefaultActionAttr = "data-tb-action"
 
+// DefaultActionSelectorField is the hidden field a form carries to say which
+// handler a native submit is for. The form posts to its own page, so the URL no
+// longer identifies the handler and this does.
+const DefaultActionSelectorField = "_action"
+
+// serverActionName returns the handler an element names, if it names one. It is
+// what lets a form be recognized as unsafe before the attribute loop runs: the
+// generator writes method="post" onto such a form, so the absence of an authored
+// method says nothing about whether a token is needed.
+func serverActionName(node *ElementNode) (string, bool) {
+	for _, attribute := range node.Attributes {
+		if attribute.Name != ServerActionAttr {
+			continue
+		}
+		name, static := staticAttributeText(attribute)
+		return name, static
+	}
+	return "", false
+}
+
 // ActionRef is one server-action reference found in a template.
 type ActionRef struct {
 	// Component is the declaration the reference appears in.

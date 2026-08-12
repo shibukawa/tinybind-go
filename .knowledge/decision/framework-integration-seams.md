@@ -45,6 +45,8 @@ deferred:
     design_status: already decided in decision:script-free-render-mode and the script_free lowerings of decision:server-action-lowering; nothing about the design is contested
     verdict: a scheduling request rather than a design change, so it changes priority and not this catalog's shape
     stated_because: a downstream acceptance condition requiring a script-free page cannot be met by a route using actions until the phase ships, and that dependency is invisible in a design that reads as complete
+    closed: 2026-08-12 by requirement:native-action-form-submit, and the verdict above was wrong; it was a design change, because the caller cannot take a per-build mode at all and the markup had to become unconditional
+    what_the_verdict_missed: the request was for markup and this read it as a request for the mode that would produce it, so a shape question sat as a priority question for twelve days
 implementation_findings:
   mechanism_correction:
     was: the binder gap was attributed to discovery being driven by user-written registrations
@@ -83,6 +85,7 @@ later_rounds:
   components: decision:library-component-seams applies it to the component and asset seams, reported the same day
   runtime: decision:update-runtime-ownership-seams applies it to the browser asset and the protocol names, reported 2026-08-01; its mux item is this round's deferred interface_or_generic_mux found again in the runtime package, where no MuxType escape exists
   composition: decision:update-composition-seams, reported 2026-08-02; its headline item strains this principle, because a wire token is not a seam and settling it is not widening it
+  client_handlers: decision:client-handler-seams, reported 2026-08-11; it is the first round to change default emitted bytes, which this principle does not permit and correctness overrides, and it closes the script_free_mode_sequencing item deferred below
 related:
   - requirement:generated-route-registration
   - requirement:custom-framework-generation-profile

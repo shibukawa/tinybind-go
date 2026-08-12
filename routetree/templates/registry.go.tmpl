@@ -15,6 +15,9 @@ package {{ .Package }}
 func {{ .RegisterFunc }}(mux {{ .Symbols.MuxType }}, options ...{{ .Symbols.RuntimeAlias }}.Option) {
 {{- range .Routes }}
 	mux.HandleFunc({{ .Pattern | quote }}, {{ template "handler" dict "Route" . "Top" $ }})
+{{- if .PostPattern }}
+	mux.HandleFunc({{ .PostPattern | quote }}, {{ template "actiondispatch" dict "Route" . "Top" $ }})
+{{- end }}
 {{- end }}
 {{- if .Actions }}
 
@@ -127,6 +130,29 @@ func({{ $t.Symbols.HandlerParams }}) {
 		}
 	}
 {{- end }}
+{{- end }}
+
+{{- /*
+actiondispatch is the page's own POST route. A form carrying server-action
+declares no action, so the browser submits it to the document URL, which is this
+pattern with its path parameters already filled in. The hidden selector says
+which handler, since the address no longer does.
+
+One registration serves every server function the page can reach, so a page
+holding several forms needs no second route and no second pattern.
+*/ -}}
+{{- define "actiondispatch" }}
+{{- $r := .Route }}{{- $t := .Top }}
+func({{ $t.Symbols.HandlerParams }}) {
+		switch {{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.ActionSelector }}({{ $t.Symbols.Request }}, {{ $t.ActionSelectorField | quote }}) {
+{{- range $r.FormActions }}
+		case {{ .Selector | quote }}:
+			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.DispatchAction }}({{ $t.Symbols.TransportArgs }}, {{ .Package }}{{ .Name }})
+{{- end }}
+		default:
+			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.WriteError }}({{ $t.Symbols.TransportArgs }}, {{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.BadRequest }}({{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.Problem }}{Code: "unknown_action", Message: "no server function on this page matches the submitted selector"}))
+		}
+	}
 {{- end }}
 
 {{- define "imports" }}

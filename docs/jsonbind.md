@@ -119,13 +119,22 @@ func use(r io.Reader, w io.Writer) error {
 
 Without an explicit wire name, a field becomes lower camel case. `DecodeJSON` ignores fields tagged for the HTTP-only `query`, `path`, `header`, and `cookie` sources; `EncodeJSON` does not make that distinction and emits struct fields as it finds them. A JSON-only model is therefore clearest when it carries nothing but standard `json` names.
 
-One habit carried over from `encoding/json` needs unlearning here. The generated codec reads only the name portion of a `json` tag: `omitempty` has no effect, and `json:"-"` excludes nothing. Design models on the assumption that every declared field is written out.
+### Tag options
+
+A `json` tag is a name followed by options, and the codec acts on both. The name `-` takes the field out of the document in both directions: nothing is written for it, and a member arriving under its name is not read into it. Two options decide whether a member is written at all:
+
+- **`omitempty`** drops the member when it would encode as an empty JSON value — `""`, `[]`, `{}`. This is the `encoding/json/v2` reading, not the `encoding/json` one, so `0` and `false` are still written. Numbers, booleans, and nested objects have no empty form, which makes the option inert on them.
+- **`omitzero`** drops the member when the field holds its Go zero value. This is the one that reaches `0` and `false`, and a nested struct counts as zero when every one of its fields does.
+
+The two pull apart on a value that is empty without being zero. A `map[string]string{}` is not nil, so `omitzero` writes `{}` while `omitempty` drops it; a `[]string(nil)` is both, so either drops it. Spelling both options leaves the member out when either applies.
+
+An option the codec does not recognise is a generation error, not a tag that quietly does nothing — a misspelled `omitempy` is otherwise indistinguishable from a working one until someone diffs the output.
 
 ## How the wire bytes differ from encoding/json
 
 The codec reads a document in a single forward pass and writes one by appending
 to a buffer, so it never builds an intermediate map and never reflects over your
-structs. Three consequences are worth knowing before you diff output against
+structs. Four consequences are worth knowing before you diff output against
 `encoding/json`:
 
 - **Members come out in struct field order**, not sorted by name. Map-typed
@@ -138,13 +147,18 @@ structs. Three consequences are worth knowing before you diff output against
   occurrence and never looks at the earlier ones, so a wrongly typed duplicate
   passes silently. Here every occurrence is decoded as it arrives, and a bad one
   reports a field error.
+- **A nil slice is written as `[]`, a nil map as `{}`.** `encoding/json` writes
+  `null` for both, which hands the client a distinction the Go type never drew:
+  nothing separates "no items" from "an empty list" on the Go side, so nothing
+  should separate them on the wire. `encoding/json/v2` writes the empty array
+  and the empty object, and so does this codec.
 
-String escaping, number formatting, and the `null` handling for absent slices
-and maps all match `encoding/json` byte for byte, including the HTML escaping of
-`<`, `>` and `&` that makes output safe to embed in a page. The one exception is
-invalid UTF-8, which is written as the `\ufffd` escape: that is what the default
-encoder produces, while `encoding/json` under `GOEXPERIMENT=jsonv2` writes the
-replacement character raw. Both decode to the same string.
+String escaping and number formatting match `encoding/json` byte for byte,
+including the HTML escaping of `<`, `>` and `&` that makes output safe to embed
+in a page. The one exception is invalid UTF-8, which is written as the `\ufffd`
+escape: that is what the default encoder produces, while `encoding/json` under
+`GOEXPERIMENT=jsonv2` writes the replacement character raw. Both decode to the
+same string.
 
 ## Retaining unknown fields
 

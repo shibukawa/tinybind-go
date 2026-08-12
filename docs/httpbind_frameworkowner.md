@@ -94,6 +94,14 @@ shadowing a generated one is therefore a startup crash rather than a silent
 override — the right failure, but it also means adding a page can break a server
 that already registered that exact pattern by hand.
 
+A page usually registers `GET` alone, so its own path stays free for whatever
+`POST` you want there. The exception is a page whose template declares a `<form
+server-action="…">`: a form with no `action` submits to the page's own URL, so
+that page registers `POST` on its path too and dispatches on a hidden field. If
+you were already handling `POST` at that address by hand, adding the form is the
+startup crash above. A `server-action` on a bare button changes nothing here,
+because a button has no native submit to serve and registers no `POST`.
+
 ## The registered router
 
 Generation reads route registrations to learn three things: the pattern, the

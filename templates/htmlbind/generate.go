@@ -58,6 +58,47 @@ type GenerateOptions struct {
 	// [DefaultActionAttr]. A framework driving an existing client library points
 	// it at that library's vocabulary, such as hx-post.
 	ServerActionAttr string
+	// ServerActionSelectors maps each handler name to the opaque selector a
+	// native form submit carries, which is the tail of that handler's endpoint
+	// URL. Supplying it is what makes a form work with no browser runtime: the
+	// form posts to its own page and the generated dispatcher branches on this
+	// value.
+	//
+	// A name present in ServerActions and absent here lowers to the URL
+	// attribute alone, which is the shape a framework resolving an address from
+	// its own route table gets, since that framework owns the route the form
+	// would post to.
+	ServerActionSelectors map[string]string
+	// ServerActionSelectorField renames the hidden field carrying the selector.
+	// Empty uses [DefaultActionSelectorField]. It has to agree with whatever
+	// dispatcher reads it back out.
+	ServerActionSelectorField string
+	// ClientHandlers maps each component declaration to what its script block
+	// exposes, so an on-prefixed attribute naming a function that block does not
+	// provide fails generation at the attribute rather than at runtime.
+	//
+	// The caller reads the block [ComponentScripts] reported and answers here.
+	// This module reads no JavaScript, so a component absent from the map is
+	// unchecked: every name it references is accepted and lowered.
+	ClientHandlers map[string]ClientHandlerSet
+	// ClientHandlerAttr is the attribute the lowering writes. Empty uses
+	// [DefaultClientHandlerAttr].
+	ClientHandlerAttr string
+	// ComponentParameters names, per component declaration, the parameters to
+	// emit as JSON onto that component's root element. It exists because a script
+	// block is extracted to one content-hashed file shared by every instance and
+	// every render, so there is nothing per-render to interpolate into it, and
+	// reading a rendered attribute back loses the type.
+	//
+	// The caller chooses the set, which is what keeps this opt-in: an emitted
+	// parameter is in the DOM, where it is readable and editable by the client,
+	// so a server-authoritative value crosses only because someone named it.
+	//
+	// A component with no entry, or an empty one, emits nothing.
+	ComponentParameters map[string][]string
+	// ComponentParameterAttr is the attribute that object is written to. Empty
+	// uses [DefaultComponentParameterAttr].
+	ComponentParameterAttr string
 	// ReferenceHooks rewrite the static values of the attributes they are
 	// registered for, before analysis and before asset extraction, and declare
 	// the conversions those rewrites depend on. They are how a build converts a
@@ -127,6 +168,16 @@ type Result struct {
 	// DynamicReferences are the attributes a hook was registered for whose
 	// value is an expression, and so could not be rewritten.
 	DynamicReferences []DynamicReference
+	// ActionRefs are the server-action references this module makes, in source
+	// order, the same value [ActionRefs] returns. It is reported here so a caller
+	// that already compiled need not parse a second time to learn which element
+	// kind carries an action, which is what decides whether the handler needs a
+	// native submit channel at all.
+	ActionRefs []ActionRef
+	// ComponentScripts are the components declaring a script block, the same
+	// value [ComponentScripts] returns. It is reported here so a caller that
+	// already compiled need not parse a second time.
+	ComponentScripts []ComponentScript
 }
 
 // Generate compiles an HTML template module to Go, discarding the extracted
@@ -178,6 +229,12 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	compiler.elements = elements
 	compiler.csrfMode = options.CSRFMode
 	compiler.csrfField = options.CSRFFieldName
+	// The selectors decide whether a form carrying server-action becomes a POST
+	// form, which in turn decides whether it needs a token. Analysis and emission
+	// have to agree, or a form gets a token it puts in a query string.
+	compiler.actionSelectors = options.ServerActionSelectors
+	compiler.clientHandlerSets = options.ClientHandlers
+	compiler.componentParameters = options.ComponentParameters
 	compiler.attrPrefix = options.DataAttributePrefix
 	if compiler.attrPrefix == "" {
 		compiler.attrPrefix = DefaultDataAttributePrefix
@@ -185,6 +242,8 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	if err := compiler.analyze(); err != nil {
 		return Result{}, err
 	}
+	result.ActionRefs = compiler.actions
+	result.ComponentScripts = compiler.componentScripts()
 	// Extraction runs before emission so a plan's head carries the reference
 	// tags rather than the style and script blocks themselves.
 	assets, err := compiler.extractAssets(options)
@@ -273,6 +332,19 @@ type goEmitter struct {
 	actions       map[string]string
 	resolveAction func(string) (string, bool)
 	actionAttr    string
+	// actionSelectors and actionSelectorField mirror the options of the same
+	// name. A form whose handler has a selector also carries the native markup,
+	// so a submit reaches the handler with no browser runtime.
+	actionSelectors     map[string]string
+	actionSelectorField string
+	// clientHandlerAttr is the one attribute every on-prefixed attribute on an
+	// element lowers into.
+	clientHandlerAttr string
+	// componentParams and componentParamAttr mirror the options of the same
+	// name, and scopeComponent is the declaration whose root is being emitted.
+	componentParams    map[string][]string
+	componentParamAttr string
+	scopeComponent     string
 }
 
 // packageName is the template module's package, which together with the file
@@ -306,9 +378,23 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 		actions:          options.ServerActions,
 		resolveAction:    options.ServerActionResolver,
 		actionAttr:       options.ServerActionAttr,
+		actionSelectors:  options.ServerActionSelectors,
 	}
 	if e.actionAttr == "" {
 		e.actionAttr = DefaultActionAttr
+	}
+	e.actionSelectorField = options.ServerActionSelectorField
+	if e.actionSelectorField == "" {
+		e.actionSelectorField = DefaultActionSelectorField
+	}
+	e.clientHandlerAttr = options.ClientHandlerAttr
+	if e.clientHandlerAttr == "" {
+		e.clientHandlerAttr = DefaultClientHandlerAttr
+	}
+	e.componentParams = options.ComponentParameters
+	e.componentParamAttr = options.ComponentParameterAttr
+	if e.componentParamAttr == "" {
+		e.componentParamAttr = DefaultComponentParameterAttr
 	}
 	e.prefix = options.DataAttributePrefix
 	if e.prefix == "" {
