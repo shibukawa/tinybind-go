@@ -20,8 +20,20 @@ customizable:
   url_prefix: the entry point prefix of requirement:template-server-functions, defaulting to /_action
   name_resolution: requirement:external-action-resolution, so a framework's own route table can address a handler the route tree does not hold
   element_attribute: the URL attribute of the other_element lowering, defaulting to data-tb-action
+  element_attribute_value:
+    what: whether that attribute carries the endpoint URL or the selector alone
+    status: not built; recorded 2026-08-12 as the shape decision:client-handler-seams entry_point_discussion would take if the downstream stops resolving the asymmetry in its own runtime
+    default_is_fixed: the URL, because this decision rests on lowering to hx-post and an existing library needs an address there, so the selector could only ever be a setting
+    not_a_gap_yet: the reporter said it would fix the path-parameter asymmetry in its runtime, so nothing has asked for this
   hidden_fields: the selector and token field names of the form lowering
   selector_channel: whether the form lowering carries the selector in a hidden field or in the action query
+  both_lowerings:
+    what: whether one compile emits the scripted attribute and the native form markup together
+    status: no setting exists; both are emitted whenever a selector resolves, per decision:server-action-lowering both_sets_emitted
+    the_narrowing_that_does_exist: supplying no selector for a name leaves the scripted attribute alone, which is what requirement:external-action-resolution already produces; it is a consequence of not resolving rather than a knob
+    corrected: 2026-08-12, having been listed here as a setting before it was built
+  handler_attribute: the lowered attribute name of requirement:template-client-handlers
+  parameter_attribute: the lowered attribute name of requirement:component-parameter-emission
   method_attribute: whether method is emitted
   dispatcher: the generated POST dispatcher, replaceable through the same registry template override requirement:generated-route-registration already exposes
 fixed:

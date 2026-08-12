@@ -43,6 +43,11 @@ parser:
   covers: only the declaration block; markup inside the component keeps parsing exactly as now
   attributes: parsed as ordinary attributes and available to the rules below, so requirement:authored-language-transform can read a language marker off the tag
   reuse: the same treatment head already applies to its style and script children, applied one level out, rather than a second raw-text mechanism
+reported_out:
+  added: 2026-08-12, per requirement:script-block-reporting
+  what: the block's text as authored, plus the client handler names the component's markup referenced, returned by a reader beside ActionRefs and Signatures
+  why_here: the text this concept reads verbatim is the thing a caller needs, and the extracted file exists only after the compile that needs the answer, so reading the output is not available to a pass that feeds the input
+  still_reads_no_javascript: the reader reports the bytes and the caller interprets them, per decision:client-runtime-ownership
 extraction:
   same_pipeline: the block becomes a content-hashed file under PublicDir with a reference under PublicURLBase, exactly as a head script does
   identity: unchanged; two components whose blocks have identical bytes still emit one file

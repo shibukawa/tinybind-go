@@ -26,11 +26,18 @@ matching:
   why_a_prefix_and_not_a_list: a fixed roster of handler names goes stale as browsers add them, and the safe direction on an unknown name is to treat it as a handler
   not_matched: a hyphenated name such as on-click, which is not an event handler content attribute and belongs to a custom element
   interaction_with_url_roster: no attribute is on both rosters, so the order the two are tested in does not matter
+  partly_reserved_2026_08_12:
+    what: requirement:template-client-handlers takes the hyphenated on- namespace inside a component declaring a script block, where it names a function that component's script produced
+    scope: that context only; everywhere else a hyphenated on- name stays an ordinary attribute and this rule's custom-element reading is unchanged
+    why_it_is_written_here: this clause assigned the namespace, so a feature claiming part of it amends the assignment rather than merely relying on it
+    this_rule_is_untouched: a hyphenated name is still not an event handler content attribute and still takes no JavaScript insertion context; what changed is that one context now reserves it before it reaches the attribute path
+    onclick_unchanged: the unhyphenated form keeps meaning inline JavaScript and keeps requiring trusted_javascript, which is what makes the two spellings safe to give different meanings
 recommended_path_is_unchanged:
   what: server-action, which names a Go function statically and lowers to the client library's attribute
   why_it_matters_here: the language already has a vocabulary for behavior, so this rule closes a hole rather than removing the way to attach one
 compatibility:
   in_tree: no fixture, example or document uses an on-prefixed attribute, statically or with an expression, so nothing in this module changes
+  in_tree_is_not_downstream: noted 2026-08-12 while reserving the hyphenated form; the survey covered this module, and the spelling requirement:template-client-handlers takes is Polymer's declarative event binding, so a downstream template carrying it changes meaning inside a script-block component
   downstream: a template writing onclick={s} stops compiling, which is the intended outcome and the diagnostic names RawJavaScript
   static_handlers: an on-prefixed attribute with no expression is untouched, because the rule governs insertion and not authored text
 rejected_alternatives:

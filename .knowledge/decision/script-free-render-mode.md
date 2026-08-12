@@ -28,13 +28,15 @@ turns_off:
   async_streaming: requirement:suspense-html-streaming does not run; a decision:async-boundary-syntax await settles in place instead
   element_actions: the non-form lowering of decision:server-action-lowering has no caller
 turns_on:
-  form_post: a form carrying server-action posts to the page's own pattern rather than to the direct entry point
-  redirect: the 303 post-redirect-get default of requirement:template-server-functions, so a reload does not resubmit
-  form_csrf: the hidden field transport of policy:html-update-csrf-protection, because a plain form cannot set a header
+  nothing_about_actions: as of 2026-08-12; the three entries below moved out of this mode and are now unconditional, per requirement:native-action-form-submit
+  was_form_post: a form carrying server-action posts to the page's own pattern rather than to the direct entry point
+  was_redirect: the 303 post-redirect-get default of requirement:template-server-functions, so a reload does not resubmit
+  was_form_csrf: the hidden field transport of policy:html-update-csrf-protection, because a plain form cannot set a header
 lowering_sets:
-  scripted: every element lowers alike, to the URL-carrying attribute; a form is intercepted by the runtime and needs no action, method, or hidden field
-  script_free: the form and submit button lowerings of decision:server-action-lowering
-  gain: the selector, the page-pattern POST registration, and the render-time request path channel are needed by the script-free set only, so the scripted set carries none of them
+  status: removed 2026-08-12; this mode selects no lowering set, because decision:server-action-lowering both_sets_emitted emits them together
+  was: the scripted set lowered every element alike to the URL attribute, and the script-free set emitted the form and submit-button markup, with the mode choosing
+  why_the_gain_argument_fell: it named the selector, the page-pattern POST registration, and the render-time request path channel as script-free-only costs; the third does not exist, per decision:server-action-lowering form_action_url, and the first two are static markup and one route registration
+  what_this_mode_still_does: four of its five jobs, all of them about suppressing a runtime rather than about what markup an action lowers to
 async_already_present:
   fact: the blocking await path is what the synchronous render entry already takes
   failure: that path returns the failure instead of writing a fallback, so a caller rendering into a buffer can still choose the status
@@ -47,23 +49,28 @@ switch_placement:
 cache_identity:
   rule: the mode participates in the component version that validates requirement:component-output-cache and requirement:layout-reuse-boundaries entries
   reason: the same component emits different markup in each mode, so output cached in one is invalid in the other
+  narrowed: 2026-08-12; an action no longer contributes to that difference, because both lowerings are emitted in either mode. The rule survives on the boundary markers, the async placeholders, and the bootstrap, which still differ.
 downstream_dependency:
   reported: 2026-07-30, through decision:framework-integration-seams
   fact: a downstream framework carries an acceptance condition requiring pages to work with no browser runtime
-  effect: a route adopting the server actions of requirement:template-server-functions cannot meet that condition until this mode's form phase is implemented
+  effect: a route adopting the server actions of requirement:template-server-functions cannot meet that condition until the form markup is emitted
   status: design decided here and unimplemented, so the gap is sequencing rather than shape
   stated_because: a complete-reading design hides the fact that adopting one feature suspends someone else's acceptance condition
+  raised_again: 2026-08-11, through decision:client-handler-seams, with the reading sharpened; the emitted form is not inert without a runtime but a working GET form, so the condition is not merely unmet, it fails silently
+  moved_out: 2026-08-12; requirement:native-action-form-submit owns the fix and it is no longer a phase of this mode, because the caller cannot take a per-build mode without turning one application into two deployments
+  read_this_way: the request was for the markup rather than for the mode, and that is the distinction two rounds took to surface
 unaffected:
   framework_script: requirement:framework-script-contribution and requirement:render-time-script-contribution stay available; the mode suppresses the tinybind runtime, not whatever the application ships
 authoring_rule:
-  rule: under this mode server-action must sit on a form; on any other element it is a generation error naming the position and saying to wrap it
-  decided: 2026-07-29, closing whether a bare button is an error or dead markup
-  why_author: only the author knows whether an ancestor form already encloses the element and whether the action needs inputs at all
-  common_case: a bare button is the usual shape under the default mode, so this is the cost the script-free mode charges
+  status: retired 2026-08-12, never built as an error
+  was: under this mode server-action must sit on a form, and on any other element it is a generation error naming the position and saying to wrap it, decided 2026-07-29
+  why_retired: with both lowerings emitted there is no mode for the rule to be scoped to, so it would apply always, and a bare button is the common shape under today's default; the rule would break the ordinary case to describe a missing fallback
+  now: a bare button compiles and lowers to the scripted attribute alone, with an opt-in diagnostic naming the missing native path, per requirement:native-action-form-submit
+  why_author_still_decides: only the author knows whether an ancestor form already encloses the element and whether the action needs inputs at all, which is why the diagnostic never becomes an error
   portability:
-    one_way: a form carrying server-action works under both modes; a bare button works under the default mode only
-    guidance: put server-action on a form when the script-free mode is a possibility
-    supersedes: an earlier constraint claiming a template compiles unchanged under either mode
+    one_way: a form carrying server-action reaches its handler with or without a runtime; a bare button needs one
+    guidance: put server-action on a form when a client with no runtime must reach it
+    no_longer_about_modes: the guidance is about which clients can invoke the element, which is a property of the markup rather than of a build setting
 rejected_auto_wrap:
   shape: the generator wraps a bare button in a generated form
   blocker: a form cannot nest, and whether an ancestor form encloses the element is invisible across component boundaries, so the wrap is unprovable in general

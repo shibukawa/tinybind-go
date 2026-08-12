@@ -195,10 +195,10 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 	e.boundaryRoot = e.boundaryCandidate(component)
 	e.reloadable = e.c.components[component.Name].reloadable
 	e.kindConst = e.c.componentGoName(component.Name) + "Kind"
-	e.scopeRoot, e.scopeID = nil, ""
+	e.scopeRoot, e.scopeID, e.scopeComponent = nil, "", ""
 	defer func() {
 		e.scope, e.shell, e.boundaryRoot, e.reloadable = nil, false, nil, false
-		e.scopeRoot, e.scopeID = nil, ""
+		e.scopeRoot, e.scopeID, e.scopeComponent = nil, "", ""
 	}()
 	if e.c.components[component.Name].reloadable {
 		if err := e.checkReloadable(component); err != nil {
@@ -212,6 +212,7 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 		}
 		e.scopeRoot = root
 		e.scopeID = componentKind(e.c.packageName(), e.c.filename, component.Name)
+		e.scopeComponent = component.Name
 	}
 
 	params := e.c.paramsGoName(component.Name)
@@ -639,6 +640,20 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 	// sends back — still tells a client which elements belong to which script.
 	if node == e.scopeRoot {
 		p.static(` data-` + e.prefix + `-component="` + e.scopeID + `"`)
+		// The instance's own arguments, for the block that marker just named.
+		// Unlike the marker this is per render, which is why the caller names the
+		// set rather than every parameter crossing.
+		if err := e.emitComponentParameters(p, node); err != nil {
+			return err
+		}
+	}
+	// Every on-prefixed attribute on this element becomes one marker, so a client
+	// runtime finds them with a single indexed query rather than by reading the
+	// attributes of every element on every mount and every swap.
+	if e.reservesClientHandlers() {
+		if value := clientHandlerValue(node); value != "" {
+			p.static(" " + e.clientHandlerAttr + `="` + escapeAttributeValue(value) + `"`)
+		}
 	}
 	optOut := "data-" + e.c.attrPrefix + "-no-csrf"
 	for _, attribute := range node.Attributes {
@@ -647,7 +662,12 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 		if attribute.Name == optOut {
 			continue
 		}
-		if err := e.emitAttributeOp(p, attribute); err != nil {
+		// The authored attribute is never emitted, exactly as server-action is
+		// never emitted; the marker written above replaced it.
+		if e.reservesClientHandlers() && isClientHandlerName(attribute.Name) {
+			continue
+		}
+		if err := e.emitAttributeOp(p, node, attribute); err != nil {
 			return err
 		}
 	}
@@ -656,6 +676,9 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 		return nil
 	}
 	p.static(">")
+	// The selector says which handler a native submit is for, since the form
+	// posts to the page rather than to the handler's own address.
+	e.emitActionFormFields(p, node)
 	// The field goes first, so a later field of the same name cannot displace it
 	// and an author reading the output finds it in one place.
 	if unsafe, err := e.c.unsafeForm(node); err != nil {
@@ -678,9 +701,9 @@ func (e *goEmitter) emitElementOps(p *planEmitter, node *ElementNode) error {
 	return nil
 }
 
-func (e *goEmitter) emitAttributeOp(p *planEmitter, attribute Attribute) error {
+func (e *goEmitter) emitAttributeOp(p *planEmitter, node *ElementNode, attribute Attribute) error {
 	if attribute.Name == ServerActionAttr {
-		return e.emitServerAction(p, attribute)
+		return e.emitServerAction(p, node, attribute)
 	}
 	if attribute.Boolean {
 		p.static(" " + attribute.Name)
@@ -754,7 +777,14 @@ func listShapeConst(shape string) string {
 // emitServerAction replaces the reserved attribute with the one carrying the
 // handler's endpoint. The URL is a compile-time constant, because the direct
 // entry point holds no path parameter, so the whole lowering is static text.
-func (e *goEmitter) emitServerAction(p *planEmitter, attribute Attribute) error {
+//
+// On a form it also writes the method, so a native submit is a POST to the page
+// rather than a GET carrying the fields in the query string. The action
+// attribute is deliberately not written: a form declaring none submits to the
+// document URL, which is already the page pattern, and a POST keeps that URL's
+// query rather than replacing it. The hidden selector that names the handler is
+// written by [goEmitter.emitActionFormFields], once the start tag is closed.
+func (e *goEmitter) emitServerAction(p *planEmitter, node *ElementNode, attribute Attribute) error {
 	name, _ := staticAttributeText(attribute)
 	url, ok := e.actions[name]
 	if !ok && e.resolveAction != nil {
@@ -771,7 +801,46 @@ func (e *goEmitter) emitServerAction(p *planEmitter, attribute Attribute) error 
 		return e.c.error(attribute.Pos, "no server action was resolved for "+quoteName(name)+"; "+where)
 	}
 	p.static(" " + e.actionAttr + `="` + escapeAttributeValue(url) + `"`)
+	// An author-written method is already post, because analyzeServerAction
+	// refuses every other value, so writing a second one would only duplicate it.
+	if node.Name == "form" && e.actionSelector(name) != "" && !hasAttribute(node, "method") {
+		p.static(` method="post"`)
+	}
 	return nil
+}
+
+// reservesClientHandlers reports whether the component being emitted is one the
+// on- namespace is reserved in, which is a component declaring a script block.
+// Outside one the attribute was never analyzed and keeps its ordinary meaning,
+// so emission has to make the same choice analysis did.
+func (e *goEmitter) reservesClientHandlers() bool { return e.scopeID != "" }
+
+// actionSelector returns the opaque value a native submit carries to name the
+// handler. An empty result means the caller resolved an address but no selector,
+// which is the framework case of requirement:external-action-resolution: that
+// framework owns the route a form would post to, so this module writes no form
+// markup for it.
+func (e *goEmitter) actionSelector(name string) string {
+	return e.actionSelectors[name]
+}
+
+// emitActionFormFields writes the hidden fields a native submit needs, directly
+// after the form's start tag so an author reading the output finds them in one
+// place and a later field of the same name cannot displace them.
+func (e *goEmitter) emitActionFormFields(p *planEmitter, node *ElementNode) {
+	if node.Name != "form" {
+		return
+	}
+	name, ok := serverActionName(node)
+	if !ok {
+		return
+	}
+	selector := e.actionSelector(name)
+	if selector == "" {
+		return
+	}
+	p.static(`<input type="hidden" name="` + escapeAttributeValue(e.actionSelectorField) +
+		`" value="` + escapeAttributeValue(selector) + `" />`)
 }
 
 // attributeValueEscaper makes a caller-supplied URL safe in a double-quoted

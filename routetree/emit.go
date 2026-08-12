@@ -125,6 +125,16 @@ type Symbols struct {
 	PathValue   string
 	QueryValues string
 	QueryLookup string
+	// ActionSelector and DispatchAction are selectors on ErrorAlias naming the
+	// two halves of the page's own POST route: reading which server function a
+	// native form submit named, and running it with the post-redirect-get default
+	// applied when it writes nothing.
+	//
+	// They sit here for the same reason the accessors above do. Observing whether
+	// a handler wrote a response means wrapping the transport's own writer, which
+	// no template can spell portably.
+	ActionSelector string
+	DispatchAction string
 	// StrconvImport is the package providing the scalar parsers. It is only
 	// imported when a route actually declares a non-string input.
 	StrconvImport string
@@ -145,18 +155,20 @@ func DefaultSymbols() Symbols {
 		MuxType:        "*http.ServeMux",
 		MuxConstructor: "http.NewServeMux",
 
-		ErrorImport:   defaultErrorImport,
-		ErrorAlias:    "httpbind",
-		BadRequest:    "BadRequest",
-		Problem:       "Problem",
-		WriteError:    "WriteError",
-		PathValue:     "PathValue",
-		QueryValues:   "Queries",
-		QueryLookup:   "QueryLookup",
-		StrconvImport: "strconv",
-		StrconvAlias:  "strconv",
-		RuntimeImport: defaultErrorImport + "/htmlbind",
-		RuntimeAlias:  "htmlbind",
+		ErrorImport:    defaultErrorImport,
+		ErrorAlias:     "httpbind",
+		BadRequest:     "BadRequest",
+		Problem:        "Problem",
+		WriteError:     "WriteError",
+		PathValue:      "PathValue",
+		QueryValues:    "Queries",
+		QueryLookup:    "QueryLookup",
+		ActionSelector: "ActionSelector",
+		DispatchAction: "DispatchAction",
+		StrconvImport:  "strconv",
+		StrconvAlias:   "strconv",
+		RuntimeImport:  defaultErrorImport + "/htmlbind",
+		RuntimeAlias:   "htmlbind",
 	}
 }
 
@@ -255,6 +267,11 @@ func (s Symbols) RoutePath(route Route) string {
 // what the registry registers under.
 func (s Symbols) RoutePattern(route Route) string { return "GET " + s.RoutePath(route) }
 
+// RoutePostPattern is the same address registered for the page's own POST route,
+// which a native form submit reaches. A page carries GET for itself and POST for
+// its server functions, and no other method.
+func (s Symbols) RoutePostPattern(route Route) string { return "POST " + s.RoutePath(route) }
+
 // TransportArgs is the leading argument list of a runtime call taking both the
 // writer and the request, such as WriteError. Where one value carries both it
 // is that value written once, which is how a two-argument call on net/http
@@ -339,6 +356,18 @@ type Emitter struct {
 	// ActionAttr is the attribute a lowered server-action writes in compiled
 	// templates. Empty uses the htmlbind default.
 	ActionAttr string
+	// ClientHandlerAttr is the attribute an on-prefixed handler lowers into, and
+	// ComponentParameterAttr the one a component's emitted parameters are written
+	// to. Empty uses the htmlbind defaults. A framework driving its own client
+	// runtime points them at that runtime's vocabulary.
+	ClientHandlerAttr      string
+	ComponentParameterAttr string
+	// ActionSelectorField is the hidden field a generated form carries to say
+	// which server function a native submit is for. Empty uses
+	// [DefaultActionSelectorField]. It is written into the form by the template
+	// compiler and read back by the generated page POST, so one setting moves
+	// both halves.
+	ActionSelectorField string
 
 	tmpl *template.Template
 }
