@@ -25,6 +25,13 @@ io:
 encoding:
   style: compact single-line JSON (encoding/json Encoder default; no SetIndent)
   trailing_newline: allowed if Encoder adds one; callers must not rely on absence
+  nil_slice_map: "[] and {} as encoding/json/v2 writes them, not encoding/json's null for both"
+  json_tag:
+    name: first comma-separated part; falls back to the wire name, then lower camel case
+    dash: 'json:"-" drops the field from encode and decode alike; the HTTP binder still reads it by wire name'
+    omitempty: encoding/json/v2 reading — omits "" [] {}, writes 0 and false, inert on numbers bools and nested objects
+    omitzero: omits the Go zero value, which is what reaches 0 and false; a nested struct is zero when all its fields are
+    unknown_option: a generation error, not a silently inert tag
 type_path:
   preferred: reuse generated codecs / registry for types known to concept:code-generation
   goal: decision:reflection-free for registered models

@@ -245,6 +245,118 @@ func TestDecodeEncodeJSON_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestEncodeJSON_NilSliceAndMapAreEmpty pins the encoder to what
+// encoding/json/v2 writes: a nil slice is an empty array and a nil map an empty
+// object, not the nulls encoding/json produced. Nothing in the Go type
+// separates "no items" from "an empty list", so a client should not have to
+// read that distinction off the wire.
+func TestEncodeJSON_NilSliceAndMapAreEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	if err := jsonbind.EncodeJSON(&buf, mappingfixture.NestedOrderRequest{}); err != nil {
+		t.Fatalf("EncodeJSON: %v", err)
+	}
+	want := `{"customer":{"id":"","name":""},"items":[],"labels":{}}`
+	if got := strings.TrimSpace(buf.String()); got != want {
+		t.Errorf("zero value encodes as %s, want %s", got, want)
+	}
+}
+
+// TestEncodeJSON_OmitTags covers the json tag options the encoder reads.
+// omitempty follows encoding/json/v2 — it drops what would encode as an empty
+// JSON value and leaves 0 and false alone — while omitzero drops the Go zero
+// value. The pair pulls apart on a non-nil empty map: it is empty but not zero.
+func TestEncodeJSON_OmitTags(t *testing.T) {
+	full := mappingfixture.OmitTagged{
+		Lead:   "l",
+		Live:   3,
+		Tags:   []string{"a"},
+		Meta:   map[string]string{"k": "v"},
+		Sub:    mappingfixture.OmitInner{A: "x"},
+		Type:   "t",
+		After:  "z",
+		Secret: "not on the wire",
+	}
+	for name, tc := range map[string]struct {
+		in   mappingfixture.OmitTagged
+		want string
+	}{
+		"zero value keeps only the untagged member": {
+			in:   mappingfixture.OmitTagged{},
+			want: `{"type":""}`,
+		},
+		"every member set": {
+			in:   full,
+			want: `{"lead":"l","live":3,"tags":["a"],"meta":{"k":"v"},"sub":{"a":"x","b":[]},"type":"t","after":"z"}`,
+		},
+		"empty slice is empty, empty map is not zero": {
+			in:   mappingfixture.OmitTagged{Tags: []string{}, Meta: map[string]string{}},
+			want: `{"meta":{},"type":""}`,
+		},
+		"omitzero keeps a false-y number out but not a set one": {
+			in:   mappingfixture.OmitTagged{Live: 0, After: "z"},
+			want: `{"type":"","after":"z"}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := jsonbind.EncodeJSON(&buf, tc.in); err != nil {
+				t.Fatalf("EncodeJSON: %v", err)
+			}
+			if got := strings.TrimSpace(buf.String()); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDecodeJSON_DashSkipsBothWays checks the other half of json:"-": the
+// member is not written, and one arriving under that name is not read either.
+func TestDecodeJSON_DashSkipsBothWays(t *testing.T) {
+	got, err := jsonbind.DecodeJSON[mappingfixture.OmitTagged](
+		strings.NewReader(`{"type":"t","secret":"leaked"}`))
+	if err != nil {
+		t.Fatalf("DecodeJSON: %v", err)
+	}
+	if got.Type != "t" {
+		t.Errorf("type: got %q", got.Type)
+	}
+	if got.Secret != "" {
+		t.Errorf(`json:"-" field was decoded: %q`, got.Secret)
+	}
+}
+
+// TestEncodeJSON_OmitBeforeRestMap covers the separator a rest map has to place
+// when the only member in front of it may not be there.
+func TestEncodeJSON_OmitBeforeRestMap(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   mappingfixture.OmitRest
+		want string
+	}{
+		"member omitted": {
+			in:   mappingfixture.OmitRest{Extra: map[string]any{"a": 1.0, "b": "two"}},
+			want: `{"a":1,"b":"two"}`,
+		},
+		"member written": {
+			in:   mappingfixture.OmitRest{Note: "n", Extra: map[string]any{"a": 1.0}},
+			want: `{"note":"n","a":1}`,
+		},
+		"nothing at all": {
+			in:   mappingfixture.OmitRest{},
+			want: `{}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := jsonbind.EncodeJSON(&buf, tc.in); err != nil {
+				t.Fatalf("EncodeJSON: %v", err)
+			}
+			if got := strings.TrimSpace(buf.String()); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecodeEncodeJSON_CodecOnlyType(t *testing.T) {
 	// Type is registered via generated codecs; exercise Decode/Encode entry points.
 	_ = mappingfixture.CodecOnlyNote{} // keep type linked

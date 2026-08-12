@@ -79,3 +79,31 @@ type CodecOnlyNote struct {
 	Text string `payload:"text"`
 	N    int    `payload:"n"`
 }
+
+// OmitInner is the nested object OmitTagged asks about with omitzero.
+type OmitInner struct {
+	A string `json:"a"`
+	B []int  `json:"b"`
+}
+
+// OmitTagged exercises every json tag option the encoder acts on, and the order
+// that makes the separators interesting: omittable members first, so the comma
+// before Type is only settled at run time, then one after Type whose comma is
+// certain again.
+type OmitTagged struct {
+	Lead   string            `json:"lead,omitempty"`
+	Live   int               `json:"live,omitzero"`
+	Tags   []string          `json:"tags,omitempty"`
+	Meta   map[string]string `json:"meta,omitzero"`
+	Sub    OmitInner         `json:"sub,omitzero"`
+	Type   string            `json:"type"`
+	After  string            `json:"after,omitempty"`
+	Secret string            `json:"-"`
+}
+
+// OmitRest pairs an omittable member with a rest map, which is what leaves the
+// comma in front of the rest members undecided until run time.
+type OmitRest struct {
+	Note  string         `payload:"note" json:"note,omitempty"`
+	Extra map[string]any `payload:"*"`
+}

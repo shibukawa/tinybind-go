@@ -84,11 +84,18 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 		types[t.Name] = t
 	}
 
+	// Computed over the whole plan, not the selection: a per-source artifact may
+	// hold the only omitzero field that asks about a type declared elsewhere.
+	zeroChecked := zeroCheckedTypes(plan.Types)
+
 	for _, t := range emitted {
 		if t.Usage&(UsageBind|UsageDecodeJSON) != 0 {
 			emitDecodeJSON(&b, t, types)
 		}
 		if t.Usage&(UsageWrite|UsageEncodeJSON) != 0 {
+			if zeroChecked[t.Name] {
+				emitZeroCheck(&b, t)
+			}
 			emitEncode(&b, t, types)
 		}
 		if t.Usage&UsageBind != 0 {
@@ -583,6 +590,12 @@ func isDocumentField(f FieldPlan) bool {
 	if f.Kind == "file" {
 		return false
 	}
+	// json:"-" takes the field out of the document in both directions. Its wire
+	// name stays spoken for, so skippedBodyNames still consumes a member under
+	// that name rather than sweeping it into a rest map.
+	if f.JSONSkip {
+		return false
+	}
 	return f.Source == SourceInput || f.Source == SourcePayload
 }
 
@@ -691,33 +704,69 @@ func emitAssignMapFromRaw(b *bytes.Buffer, f FieldPlan, rawVar, prefix, dest, re
 //
 // One visible consequence: members come out in struct field order rather than
 // the sorted order a map produced.
+//
+// Separators are the one thing omitempty and omitzero complicate. A model with
+// no such tag knows at generation time which member is first, so every comma is
+// baked into the key bytes. Once a member can drop out, the comma before the
+// next one is only knowable at run time — but only until some member is written
+// unconditionally, after which every later comma is certain again. The `wrote`
+// flag below covers exactly that opening stretch and is declared only when a
+// member actually consults it.
 func emitEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
+	members := jsonMembers(t)
+	var rest []FieldPlan
+	for _, f := range t.Fields {
+		if f.IsRest() {
+			rest = append(rest, f)
+		}
+	}
+
 	fmt.Fprintf(b, "func append%sJSON(dst []byte, v %s) []byte {\n", t.Name, t.Name)
 	b.WriteString("\tdst = append(dst, '{')\n")
 
-	written := 0
-	for _, f := range t.Fields {
-		if f.IsRest() {
-			continue
-		}
+	flagged := needsWroteFlag(members, len(rest) > 0)
+	if flagged {
+		b.WriteString("\twrote := false\n")
+	}
+
+	certain := false
+	for i, f := range members {
 		key := f.JSON
 		if key == "" {
 			key = f.Wire
 		}
-		lead := ""
-		if written > 0 {
-			lead = ","
+		cond := omitCondition(f, "v."+f.Name)
+		prefix := "\t"
+		if cond != "" {
+			fmt.Fprintf(b, "\tif %s {\n", cond)
+			prefix = "\t\t"
 		}
-		fmt.Fprintf(b, "\tdst = append(dst, %s...)\n", strconv.Quote(lead+strconv.Quote(key)+":"))
-		emitAppendValue(b, f, "\t", "v."+f.Name)
-		written++
-	}
-
-	for _, f := range t.Fields {
-		if !f.IsRest() {
+		switch {
+		case i == 0:
+			// Nothing can precede the first member, so it never leads with a comma.
+			fmt.Fprintf(b, "%sdst = append(dst, %s...)\n", prefix, strconv.Quote(strconv.Quote(key)+":"))
+		case certain:
+			fmt.Fprintf(b, "%sdst = append(dst, %s...)\n", prefix, strconv.Quote(","+strconv.Quote(key)+":"))
+		default:
+			fmt.Fprintf(b, "%sif wrote {\n%s\tdst = append(dst, ',')\n%s}\n", prefix, prefix, prefix)
+			fmt.Fprintf(b, "%sdst = append(dst, %s...)\n", prefix, strconv.Quote(strconv.Quote(key)+":"))
+		}
+		emitAppendValue(b, f, prefix, "v."+f.Name)
+		if cond == "" {
+			certain = true
 			continue
 		}
-		emitAppendRest(b, f, written > 0)
+		// Only worth recording when something still to come will ask: the next
+		// member reads it while nothing is certain yet, and a rest map reads it
+		// after the last one.
+		if flagged && !certain && (i < len(members)-1 || len(rest) > 0) {
+			fmt.Fprintf(b, "%swrote = true\n", prefix)
+		}
+		b.WriteString("\t}\n")
+	}
+
+	for _, f := range rest {
+		emitAppendRest(b, f, restLead(len(members), certain, flagged))
 	}
 
 	b.WriteString("\treturn append(dst, '}')\n}\n\n")
@@ -730,6 +779,190 @@ func emitEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 	b.WriteString("\tjsonbind.PutBuffer(buf)\n")
 	b.WriteString("\treturn err\n}\n\n")
 	_ = types
+}
+
+// jsonMembers lists the fields the encoder writes as named members, in
+// declaration order: everything but a rest map and the fields json:"-" removes
+// from the document altogether.
+func jsonMembers(t TypePlan) []FieldPlan {
+	var out []FieldPlan
+	for _, f := range t.Fields {
+		if f.IsRest() || f.JSONSkip {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// needsWroteFlag reports whether the encoder has to remember at run time that
+// something was written. It does when some member's leading comma cannot be
+// settled at generation time, which happens only while every member so far
+// could have dropped out.
+func needsWroteFlag(members []FieldPlan, hasRest bool) bool {
+	certain := false
+	for i, f := range members {
+		if i > 0 && !certain {
+			return true
+		}
+		if omitCondition(f, "x") == "" {
+			certain = true
+		}
+	}
+	return hasRest && len(members) > 0 && !certain
+}
+
+// restLead is how a rest map decides on the comma before each of its members.
+func restLead(members int, certain, flagged bool) string {
+	switch {
+	case certain:
+		return "always"
+	case members > 0 && flagged:
+		return "wrote"
+	default:
+		return "first"
+	}
+}
+
+// omitCondition is the expression that must hold for a field to be written, or
+// "" when it is written unconditionally.
+//
+// omitempty follows encoding/json/v2 rather than encoding/json: it asks whether
+// the member would encode as an empty JSON value, so it reaches "", [] and {}
+// and leaves 0 and false alone. omitzero is the one that drops a zero number or
+// a false flag. Both together mean either can drop the member.
+func omitCondition(f FieldPlan, src string) string {
+	empty := ""
+	if f.OmitEmpty {
+		empty = notEmptyExpr(f, src)
+	}
+	zero := ""
+	if f.OmitZero {
+		zero = notZeroExpr(f, src)
+	}
+	switch {
+	case empty == "" || zero == "" || empty == zero:
+		return empty + zero
+	case f.Kind == KindSlice || f.Kind == KindMap:
+		// A non-empty slice or map is never the nil one, so asking both would
+		// only spell the same test twice.
+		return empty
+	default:
+		return empty + " && " + zero
+	}
+}
+
+// notEmptyExpr is true when the field would not encode as an empty JSON value.
+// Numbers, booleans and nested objects have no empty form, so they carry no
+// condition and omitempty is inert on them.
+func notEmptyExpr(f FieldPlan, src string) string {
+	switch f.Kind {
+	case "string":
+		return src + ` != ""`
+	case KindSlice, KindMap:
+		return "len(" + src + ") > 0"
+	default:
+		return ""
+	}
+}
+
+// notZeroExpr is true when the field holds something other than its Go zero
+// value. A nested struct delegates to the generated isZero helper for its type.
+// It is the negation of zeroExpr, spelled directly rather than wrapped in a !()
+// so that the generated line reads the way it would if it were written by hand.
+func notZeroExpr(f FieldPlan, src string) string {
+	switch f.Kind {
+	case "string":
+		return src + ` != ""`
+	case "int", "int64", "float64":
+		return src + " != 0"
+	case "bool":
+		return src
+	case KindSlice, KindMap, KindRestAny, KindRestRaw:
+		return src + " != nil"
+	case KindStruct:
+		return "!isZero" + f.TypeName + "(" + src + ")"
+	case "file":
+		return "!(" + zeroExpr(f, src) + ")"
+	default:
+		return ""
+	}
+}
+
+// zeroExpr is the test for a field holding its Go zero value, which is what
+// omitzero asks and what an isZero helper is built out of. Reading it in the
+// positive keeps the nested case honest: a struct is zero when every one of its
+// fields is, and that conjunction is what has to be negated as a whole.
+func zeroExpr(f FieldPlan, src string) string {
+	switch f.Kind {
+	case "string":
+		return src + ` == ""`
+	case "int", "int64", "float64":
+		return src + " == 0"
+	case "bool":
+		return "!" + src
+	case KindSlice, KindMap, KindRestAny, KindRestRaw:
+		return src + " == nil"
+	case KindStruct:
+		return "isZero" + f.TypeName + "(" + src + ")"
+	case "file":
+		// httpbind.File holds a []byte, so it is not comparable and the zero
+		// value has to be spelled out a field at a time.
+		return src + `.Filename == "" && ` + src + `.ContentType == "" && ` + src + ".Size == 0 && " + src + ".Content == nil"
+	default:
+		return ""
+	}
+}
+
+// zeroCheckedTypes names the struct types that need an isZero helper: the ones
+// an omitzero field asks about, plus the ones those reach through struct fields
+// of their own, since a struct is zero only when its members all are.
+func zeroCheckedTypes(plans []TypePlan) map[string]bool {
+	byName := make(map[string]TypePlan, len(plans))
+	for _, t := range plans {
+		byName[t.Name] = t
+	}
+	need := map[string]bool{}
+	var walk func(string)
+	walk = func(name string) {
+		t, ok := byName[name]
+		if !ok || need[name] {
+			return
+		}
+		need[name] = true
+		for _, f := range t.Fields {
+			if f.Kind == KindStruct {
+				walk(f.TypeName)
+			}
+		}
+	}
+	for _, t := range plans {
+		for _, f := range t.Fields {
+			if f.OmitZero && f.Kind == KindStruct {
+				walk(f.TypeName)
+			}
+		}
+	}
+	return need
+}
+
+// emitZeroCheck writes the helper omitzero uses on a nested struct.
+// encoding/json/v2 compares the field against its type's zero value; a struct
+// carrying a slice or a map is not comparable in Go, so the same question is
+// asked one member at a time instead.
+func emitZeroCheck(b *bytes.Buffer, t TypePlan) {
+	var conds []string
+	for _, f := range t.Fields {
+		if c := zeroExpr(f, "v."+f.Name); c != "" {
+			conds = append(conds, c)
+		}
+	}
+	fmt.Fprintf(b, "func isZero%s(v %s) bool {\n", t.Name, t.Name)
+	if len(conds) == 0 {
+		fmt.Fprintf(b, "\t_ = v\n\treturn true\n}\n\n")
+		return
+	}
+	fmt.Fprintf(b, "\treturn %s\n}\n\n", strings.Join(conds, " && "))
 }
 
 // emitAppendValue appends one field value to dst.
@@ -750,42 +983,47 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 	case KindStruct:
 		fmt.Fprintf(b, "%sdst = append%sJSON(dst, %s)\n", prefix, f.TypeName, src)
 	case KindSlice:
-		// A nil slice encodes as null, as encoding/json does.
-		fmt.Fprintf(b, "%sif %s == nil {\n", prefix, src)
-		fmt.Fprintf(b, "%s\tdst = append(dst, \"null\"...)\n", prefix)
-		fmt.Fprintf(b, "%s} else {\n", prefix)
-		fmt.Fprintf(b, "%s\tdst = append(dst, '[')\n", prefix)
-		fmt.Fprintf(b, "%s\tfor i := range %s {\n", prefix, src)
-		fmt.Fprintf(b, "%s\t\tif i > 0 {\n%s\t\t\tdst = append(dst, ',')\n%s\t\t}\n", prefix, prefix, prefix)
-		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t\t\t", src+"[i]")
-		fmt.Fprintf(b, "%s\t}\n", prefix)
-		fmt.Fprintf(b, "%s\tdst = append(dst, ']')\n", prefix)
+		// A nil slice encodes as [], the way encoding/json/v2 writes one.
+		// encoding/json wrote null, which asked a client to tell "no items"
+		// apart from "an empty list" along a line the Go type never drew.
+		// The nil case needs nothing of its own: ranging over a nil slice
+		// yields nothing, so the brackets come out empty by themselves.
+		fmt.Fprintf(b, "%sdst = append(dst, '[')\n", prefix)
+		fmt.Fprintf(b, "%sfor i := range %s {\n", prefix, src)
+		fmt.Fprintf(b, "%s\tif i > 0 {\n%s\t\tdst = append(dst, ',')\n%s\t}\n", prefix, prefix, prefix)
+		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t\t", src+"[i]")
 		fmt.Fprintf(b, "%s}\n", prefix)
+		fmt.Fprintf(b, "%sdst = append(dst, ']')\n", prefix)
 	case KindMap:
-		fmt.Fprintf(b, "%sif %s == nil {\n", prefix, src)
-		fmt.Fprintf(b, "%s\tdst = append(dst, \"null\"...)\n", prefix)
-		fmt.Fprintf(b, "%s} else {\n", prefix)
-		fmt.Fprintf(b, "%s\tdst = append(dst, '{')\n", prefix)
-		fmt.Fprintf(b, "%s\tfor i, k := range jsonbind.SortedKeys(%s) {\n", prefix, src)
-		fmt.Fprintf(b, "%s\t\tif i > 0 {\n%s\t\t\tdst = append(dst, ',')\n%s\t\t}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s\t\tdst = jsonbind.AppendString(dst, k)\n", prefix)
-		fmt.Fprintf(b, "%s\t\tdst = append(dst, ':')\n", prefix)
-		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t\t", src+"[k]")
-		fmt.Fprintf(b, "%s\t}\n", prefix)
-		fmt.Fprintf(b, "%s\tdst = append(dst, '}')\n", prefix)
+		// Same rule as the slice above: a nil map is {}, not null. SortedKeys
+		// hands back an empty list for one, so the braces close on their own.
+		fmt.Fprintf(b, "%sdst = append(dst, '{')\n", prefix)
+		fmt.Fprintf(b, "%sfor i, k := range jsonbind.SortedKeys(%s) {\n", prefix, src)
+		fmt.Fprintf(b, "%s\tif i > 0 {\n%s\t\tdst = append(dst, ',')\n%s\t}\n", prefix, prefix, prefix)
+		fmt.Fprintf(b, "%s\tdst = jsonbind.AppendString(dst, k)\n", prefix)
+		fmt.Fprintf(b, "%s\tdst = append(dst, ':')\n", prefix)
+		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]")
 		fmt.Fprintf(b, "%s}\n", prefix)
+		fmt.Fprintf(b, "%sdst = append(dst, '}')\n", prefix)
 	default:
 		fmt.Fprintf(b, "%sdst = append(dst, \"null\"...)\n", prefix)
 	}
 }
 
 // emitAppendRest appends a payload:"*" map. Keys are sorted so a response is
-// reproducible, which is what the map-based encoder gave for free.
-func emitAppendRest(b *bytes.Buffer, f FieldPlan, needsComma bool) {
-	if needsComma {
+// reproducible, which is what the map-based encoder gave for free. lead says
+// how each member decides on its leading comma: "always" when a declared member
+// is certainly in front of it, "first" when nothing is, and "wrote" when only
+// omittable members are and the answer waits until run time.
+func emitAppendRest(b *bytes.Buffer, f FieldPlan, lead string) {
+	switch lead {
+	case "always":
 		fmt.Fprintf(b, "\tfor _, k := range jsonbind.SortedKeys(v.%s) {\n", f.Name)
 		b.WriteString("\t\tdst = append(dst, ',')\n")
-	} else {
+	case "wrote":
+		fmt.Fprintf(b, "\tfor i, k := range jsonbind.SortedKeys(v.%s) {\n", f.Name)
+		b.WriteString("\t\tif wrote || i > 0 {\n\t\t\tdst = append(dst, ',')\n\t\t}\n")
+	default:
 		fmt.Fprintf(b, "\tfor i, k := range jsonbind.SortedKeys(v.%s) {\n", f.Name)
 		b.WriteString("\t\tif i > 0 {\n\t\t\tdst = append(dst, ',')\n\t\t}\n")
 	}
