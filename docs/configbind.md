@@ -675,6 +675,8 @@ The slice is ordered rather than sorted: bindings appear in `Bind` call order, a
 
 Two filters run before you see the slice.
 
+> The sections below cover the tags. For the record type itself — every field of `ProvenanceEntry`, how one call serves both a startup summary and a full dump, and what the generated definitions expose — see [configbind_provenance.md](configbind_provenance.md).
+
 The first is disclosure. A `secret` tag decides on its own: `hide` drops the entry, `mask` reports `*****`, and `show` prints the value. A field with no tag is masked when its key path contains `password`, `secret`, `token`, `apikey`, `api_key`, `credential`, `access_key`, `dsn`, or `private_key` — a DSN carries its password inline, so it belongs on that list. The match is a substring, so a name like `token_bucket_size` is masked too; `secret:"show"` is the way out. `ProvenanceEntry.Masked` reports whether `Value` is the placeholder, so a caller re-rendering these entries never has to compare against the mask text.
 
 The second is dependency: a field with a `dependon` tag disappears while its condition fails, which the next section covers.
@@ -800,6 +802,8 @@ Rating an untagged key is the safe direction, so omission is opt-in: a forgotten
 Placement follows `secret`: a leaf, a nested struct, an array of tables, or an element field of one. Note that an element field can never actually be droppable today, because nothing seeds an array element with a default value, so every element field that appears was set by a source.
 
 Nothing here changes the bound struct, CLI flags, validation, or scaffolds.
+
+The placement table for every output-shaping tag, and the reason an element-field rating is currently inert, are in [configbind_provenance.md](configbind_provenance.md).
 
 ### The raw overlay
 
