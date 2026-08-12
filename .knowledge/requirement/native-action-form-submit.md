@@ -28,6 +28,13 @@ the_defect_survives_where_a_framework_owns_the_route:
   why_not_fixed_here: this module registers no route for that address and cannot know what method the framework's own route accepts, so emitting a POST form would point a native submit at something it has not been told exists
   the_framework_s_move: supply a selector through the same option, or own the fallback, since it already owns the route
   stated_because: the fix reads as total and is not; one path still emits the GET form this concept exists to remove
+the_field_name_is_not_settable_through_the_tree:
+  found: 2026-08-12, while documenting
+  what: routetree forwards neither CSRFFieldName nor CSRFMode, so a generated tree always emits _csrf and always emits it
+  predates_this: an author-written form carrying method=post already reached the same insertion with the same fixed name
+  why_it_matters_now: a server action form carries a token where it carried none, so a framework whose middleware expects another name meets the gap for the first time
+  the_open_question_it_instantiates: policy:html-update-csrf-protection asks whether an existing middleware's field name forces this to be a deployment setting rather than a generation one; this is that question arriving with a caller behind it
+  interim: compile those templates directly rather than through the tree
 a_form_makes_every_render_of_that_page_need_a_token:
   found: 2026-08-12, while building
   what: requirement:csrf-token-rendering fails a render that reaches an unsafe form with no token rather than emitting an empty one, and the emitted form is now unsafe by construction

@@ -356,6 +356,13 @@ now four of them.
 ## What is not there
 
 - **CSRF verification.** The field is written; checking it is middleware's.
+- **Renaming the CSRF field through `routetree`.** `GenerateOptions.CSRFFieldName`
+  is a `templates/htmlbind` option and the tree generator forwards neither it nor
+  `CSRFMode`, so a tree always emits `_csrf` and always emits it. That gap
+  predates this feature — an author-written `<form method="post">` already hit it
+  — but a server action form now carries a token where it did not, so a framework
+  whose middleware expects another name will meet it. Compile those templates
+  directly, or ask and it becomes an emitter setting.
 - **A template outside the route tree still emits a GET form.** When you resolve
   an address through `ActionResolver`, no selector exists, so the form keeps the
   scripted attribute alone and carries no method and no token. This module
