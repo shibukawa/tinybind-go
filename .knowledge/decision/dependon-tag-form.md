@@ -8,6 +8,9 @@ A dependon tag names one parent config key whose emptiness hides the field from 
 ```yaml
 status: accepted
 value: one term:config-key, absolute by default
+value_test: >
+  the tag may also test the parent's value rather than its emptiness; the parent
+  half of the tag is unchanged, so see decision:dependon-value-condition
 absolute_form:
   spelling: 'dependon:"middleware.rdb.dsn"'
   why_default:
@@ -20,8 +23,11 @@ relative_form:
   effect: one tag on a shared struct type names a sibling under every prefix it is embedded at
   state: implemented
 cardinality:
-  v1: one parent per tag; a key answers to one tag per struct level above it
-  out_of_scope_v1: comma-separated parent lists and boolean combinations
+  rule: one parent per tag; a key answers to one tag per struct level above it
+  still_out_of_scope: comma-separated parent lists and boolean combinations
+  comma_now_means: >
+    alternative values of one parent, and only after an operator; a comma with no
+    operator is still a rejected parent list, per decision:dependon-value-condition
 parent_constraints:
   - parent must be a known key of some registered definition
   - parent kind must be string or bool, or an int or duration that declares its own falsy
@@ -29,6 +35,9 @@ parent_constraints:
   - self-reference and dependency cycles are rejected
   - a parent may itself carry dependon; visibility is transitive
   - a key may hold several parents once a struct above it declares one; all must be non-empty
+  - >
+    the falsy prerequisite for a number or duration parent lifts when the tag
+    names the off value inline; see decision:dependon-value-condition
 placement:
   - Bind option struct fields
   - nested struct fields, using the nested field's own absolute key
@@ -61,8 +70,9 @@ validation_time:
     - a leaf-only tag on a struct field, per requirement:struct-tag-placement-totality
     - a parent in this run that is a list, or a number or duration with no falsy tag
     - self-reference
-    - comma-separated parent list
+    - comma-separated parent list, i.e. a comma with no operator before it
     - cycle among parents in this run
+    - a value condition's own rejections, per decision:dependon-value-condition
     - dependon on a subcommand field, which has no overlay
   passes_through:
     - parent bound in another package; unresolvable here
@@ -82,6 +92,8 @@ example:
 related:
   - decision:struct-field-tags
   - decision:shared-config-struct-instances
+  - decision:dependon-value-condition
+  - data:dependency-condition
   - rule:dependent-key-visibility
   - requirement:dependent-field-visibility
   - term:config-key

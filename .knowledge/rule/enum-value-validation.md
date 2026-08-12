@@ -14,6 +14,10 @@ parse:
   - empty tokens rejected at generation or load time
 enforcement:
   - after value is chosen from default, TOML, env, or CLI
+  - >
+    state: not implemented for config. configbind reads the tag, but only to check
+    the values a decision:dependon-value-condition names against it; no source
+    value is rejected yet
   - value not in allowlist is a load/parse error
   - applies to Bind fields and SubCommand CLI fields when tagged
   - for []string with enum TBD_policy: each element must match or whole field must match one value

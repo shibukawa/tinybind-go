@@ -21,9 +21,25 @@ tag_outcomes_on_a_struct_field:
   secret:
     outcome: propagate
     detail: rule:secret-redaction covers the whole subtree
+  summary:
+    outcome: propagate
+    detail: decision:summary-tag-form covers the whole subtree
+    why: >
+      subtree propagation is what makes the tag affordable at all; 20 struct-level
+      tags cover 73 of the 106 unremarkable lines in
+      requirement:effective-config-brevity measured_case
+    state: implemented
   falsy:
     outcome: reject
     why: falsy names one value and a struct has none
+  enum:
+    outcome: reject
+    why: an allowlist constrains one scalar, and a struct owns none, the same reason falsy is rejected
+    state: >
+      implemented. The tag became readable with decision:dependon-value-condition,
+      which needs the parent's allowlist; the rejection landed in the same change,
+      because a newly readable tag with no placement row is exactly the silent-drop
+      class this requirement closed
   default:
     outcome: reject
     why: decision:shared-config-struct-instances rejected child defaults in a struct field tag; the rejection has to be enforced, not assumed
@@ -50,6 +66,17 @@ tag_outcomes_on_an_array_of_tables_element_field:
   env: reject, current
   dependon: reject, current
   falsy: reject, current
+  enum: reject, implemented with decision:dependon-value-condition
+  summary:
+    outcome: honored, resolved by the element's stable path under the array key
+    why: >
+      it rates the key being printed rather than naming one to look up, so unlike
+      dependon, falsy, and enum it needs no stable key of its own; this is the same
+      reason secret is honored here
+    state: >
+      implemented, and inert: an element has no default layer, so the Place half of
+      rule:summary-key-omission never holds. The resolution is kept rather than
+      special-cased; see decision:summary-tag-form element_fields_inert_today
   secret:
     outcome: honored, resolved by the element's stable path under the array key
     was: accepted and dropped, the one hole in an otherwise total row
@@ -75,12 +102,19 @@ acceptance:
   - falsy on a nested struct field still fails, unchanged
   - an array-of-tables field keeps its existing rejection for all of these
   - no tag reaches generated output through a path that neither propagates nor rejects it
+  - the generation run that first reads a config enum tag also rejects it on a struct and an element field
+  - 'summary:"omit" on a nested struct, an array field, and an element field each reach every key they cover'
+  - a summary value other than omit fails go generate
 related:
   - requirement:array-of-tables-provenance
   - decision:struct-field-tags
   - decision:shared-config-struct-instances
   - decision:dependon-tag-form
+  - decision:dependon-value-condition
   - decision:falsy-tag-form
+  - decision:summary-tag-form
+  - rule:summary-key-omission
+  - rule:enum-value-validation
   - decision:default-tag-form
   - requirement:struct-field-metadata
   - requirement:analysis-diagnostics

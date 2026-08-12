@@ -15,7 +15,7 @@ default < TOML file < environment variable < CLI option
 
 - 設定構造体と `configbind.Bind[T]` の利用箇所の発見
 - 構造体 field から TOML key、CLI option、環境変数名の決定
-- `default`、`key`、`opt`、`env`、`help`、`falsy`、`dependon`、`secret` tag の反映
+- `default`、`key`、`opt`、`env`、`help`、`enum`、`falsy`、`dependon`、`summary`、`secret` tag の反映
 - nested struct、`[]string`、array of tables から作る struct slice の設定 mapping
 - default → TOML → env → CLI の merge
 - string、bool、int、`time.Duration`、`[]string` への型変換
@@ -188,15 +188,19 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
 | `falsy:"value"` | string、int、duration の option において「off」を意味する値 | `falsy:"off"`、`falsy:"0s"` |
+| `enum:"a,b,c"` | 受け付ける値の allowlist | `enum:"oidc_only,jwt_only"` |
 | `dependon:"key"` | 指定 key が空の間、この field を provenance から隠す | `dependon:"webserver.tls.enabled"` |
 | `dependon:".key"` | 同上。tag を書いた構造体の中の key を指す | `dependon:".enabled"` |
+| `dependon:"key=a,b"` | 指定 key がその値のいずれかである間だけ出力する | `dependon:".mode=oidc_only,oidc_passkey"` |
+| `dependon:"key!=a"` | 指定 key がその値のいずれでもない間だけ出力する | `dependon:".backend!=cookie"` |
+| `summary:"omit"` | このキーを詳細と評価する。誰も設定していない間、短い出力から落として良い | `summary:"omit"` |
 | `secret:"hide"` | provenance に一切出力しない | `secret:"hide"` |
 | `secret:"mask"` | 値の代わりに `*****` を出力する | `secret:"mask"` |
 | `secret:"show"` | key 名が機密に見えても値をそのまま出力する | `secret:"show"` |
 
-`falsy`、`dependon`、`secret` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
+`falsy`、`enum`、`dependon` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
 
-`dependon` と `secret` は入れ子の構造体 field にも書けます。その場合は subtree 全体に効きます。`falsy` は書けません。値を 1 つ指名する tag であり、構造体には値がないためです。
+`dependon`、`secret`、`summary` は入れ子の構造体 field にも書けます。その場合は subtree 全体に効きます。`falsy` と `enum` は書けません。どちらも値を指名する tag であり、構造体には値がないためです。
 
 ### godoc を説明の source にする
 
@@ -659,7 +663,7 @@ slice を受け取る前に filter が 2 つ走ります。
 
 1 つ目は開示制御です。`secret` tag があればそれが決めます。`hide` は entry ごと落とし、`mask` は `*****` を返し、`show` は値をそのまま出力します。tag のない field は、key path に `password`、`secret`、`token`、`apikey`、`api_key`、`credential`、`access_key`、`dsn`、`private_key` を含む場合に mask されます。DSN は password を URL に埋め込むのが普通なので、この一覧に入ります。部分一致なので `token_bucket_size` のような無害な名前も mask されます。逃げ道が `secret:"show"` です。`ProvenanceEntry.Masked` は `Value` が placeholder かどうかを返すので、出力を加工する側が mask 文字列と比較する必要はありません。
 
-2 つ目が `dependon` tag による抑制で、次節で説明します。
+2 つ目が `dependon` tag による抑制で、条件が成り立たない間は出力されません。次節で説明します。
 
 ### 無効な機能の設定を隠す
 
@@ -708,9 +712,80 @@ type SQLConfig struct {
 }
 ```
 
-比較は文字列ではなく値で行うので、`0`、`0s`、`0ms` はすべて off と読めます。`falsy` tag がない数値や duration は、そもそも親にできません。0 を無効の意味だと推測するのではなく、生成時にエラーになります。
+比較は文字列ではなく値で行うので、`0`、`0s`、`0ms` はすべて off と読めます。`falsy` tag がない数値や duration は、空判定の親にはできません。0 を無効の意味だと推測するのではなく、生成時にエラーになります。
 
-いずれも bind 先の構造体には影響しません。`TracingURL` は入力元の値で populate されますし、CLI flag や help も変わりません。雛形も全 field を出力し続けます。初回 load より前に option を発見できなくなっては困るためです。
+### 選ばれた variant の設定だけを出す
+
+空判定が答えるのは「この機能は有効か」です。「今どの mode なのか」には答えられません。mode を表す key は、どの mode でも空ではない値を持つからです。結果として全 mode の設定が並び、効いていない 2 つの mode の設定が、効いているもののように読めてしまいます。両者を区別するのは、その field を選ぶ値を指定することです。
+
+```go
+type AuthConfig struct {
+	Enabled bool
+	Mode    string        `default:"oidc_only" enum:"oidc_only,oidc_passkey,jwt_only" dependon:".enabled"`
+	OIDC    OIDCConfig    `dependon:".mode=oidc_only,oidc_passkey"`
+	Passkey PasskeyConfig `dependon:".mode=oidc_passkey"`
+	JWT     JWTConfig     `dependon:".mode=jwt_only"`
+}
+```
+
+`auth.mode` が `oidc_only` なら、`auth.passkey` と `auth.jwt` の塊はまるごと消え、`auth.oidc` が残ります。カンマは 1 つの key に対する値の並列で、だからこそ `auth.oidc` は 3 つの mode のうち 2 つで生き残ります。親の並列ではありません。演算子のないカンマは、従来どおり「親の list」として生成時に拒否されます。
+
+`!=` は同じ判定の反転で、1 つの値以外すべてに属する field 用です。
+
+```go
+Keyring SessionKeyringConfig `dependon:".backend!=cookie"`
+```
+
+後から直さずに済む向きを選んでください。`=` の list は値が増えるたびに追記が必要で、書き漏らすと効いている設定が隠れます。`!=` の list は「当てはまらない値」だけを書けば済みます。
+
+条件の挙動は 3 つの規則で決まります。
+
+- **演算子を書いたら、判定はそれだけ。** 空判定も親の `falsy` も併用しません。`dependon:"obs.tracing=off"` は本当に `off` のときに出力されます。
+- **どこも設定していない親は空文字として比較されます。** `=` なら隠れ、`!=` なら出ます。親の値が誰にも宣言されていないとき、多めに出すのが安全側です。
+- **値は親自身の型で比較されます。** duration の条件は `0`、`0s`、`0ms` を同じ値として扱い、この形で指定する数値や duration に `falsy` tag は不要です。どの値が問題なのかを tag 自身が述べているからです。
+
+「有効 かつ mode = x」と書く必要はほとんどありません。mode の key は上の `Mode` のように自分自身が機能 switch へ `dependon` を持つのが普通で、隠れた親はその依存先も隠します。つまり `auth.enabled` を off にすれば、選ばれていた塊も一緒に消えます。
+
+生成時には、親が `enum` を宣言していれば値がその選択肢に含まれるかを検査します。これのために `enum` tag を足す価値はあります。値の typo は subtree 全体を黙って、恒久的に隠します。しかも出力からその key が消えるだけなので、読む側には診断できません。この検査は親の型検査と同じく best-effort です。別 package で bind された親は、この生成実行から見えないため検査を通過します。
+
+いずれも bind 先の構造体には影響しません。`TracingURL` も `auth.jwt` の全 field も入力元の値で populate されますし、CLI flag や help も変わりません。雛形も全 field を出力し続けます。初回 load より前に option を発見できなくなっては困るためです。
+
+### 設定を「詳細」と評価する
+
+ここまでの 2 つの filter が落とすのは、当てはまらないキーです。残るのは依然として default のままのキーが大半で、これらは当てはまるけれど、この deployment が何も意見を持たなかったものです。`summary:"omit"` はそれを詳細と評価します。
+
+```go
+type ObservabilityConfig struct {
+	MinimumLevel string      `default:"info"`
+	Query        QueryConfig `summary:"omit"`
+	Trace        TraceConfig `summary:"omit"`
+}
+```
+
+広く付けても安全な理由が 2 つあります。
+
+**入力元が設定した値は、評価済みでも落とせません。** 評価と winning `Place` の両方が揃ったときだけ `Omittable` が true になります。つまり subtree ごと評価しても、どの leaf が設定済みかを事前に調べる必要がありません。設定済みのものは自動で戻ってきます。誰かが書き下した決定を隠すのは、出力が短くなったのではなく単なるバグです。
+
+**ライブラリは印を付けるだけで、落としません。** `Provenance()` はどのサーフェスでも同じ slice を返し、各 entry が `Omittable` を持ちます。
+
+```go
+for _, entry := range result.Provenance() {
+	if brief && entry.Omittable {
+		continue
+	}
+	render(entry)
+}
+```
+
+ここが `dependon` との違いです。`dependon` の条件が成り立たないことは**設定についての事実**（この設定は効いていない）で、どこに印字されようと真なので、ライブラリが entry ごと落とします。`summary` の評価は**あるサーフェスについての判断**で、ライブラリは呼び出し側がどのサーフェスにいるか知り得ません。だから起動時サマリは印の付いた entry を skip し、`docker inspect` 相当のダンプは全部描く。呼び出しは 1 回です。
+
+ただしダンプも「全部」ではありません。`dependon` の条件で落ちたキーと `secret:"hide"` のキーは、どのサーフェスでも呼び出し側に届きません。
+
+無印を「重要」とする、つまり省略はオプトインです。タグの書き忘れは出力が少し長くなるだけですが、逆の極性では新しく追加した field が運用者から見えなくなります。代償は「短さがタグの枚数に比例する」ことで、だからこの tag は subtree に効きます。入れ子の構造体に 1 つ書けば、その下の全キーが評価されます。
+
+配置は `secret` と同じで、leaf、入れ子の構造体、array of tables、その要素 field です。ただし現状、要素 field が実際に落ちることはありません。array の要素に default を流し込む仕組みがないため、出力に現れる要素 field はすべて入力元が設定したものです。
+
+ここまでのどれも、bind 先の構造体、CLI flag、検証、雛形には影響しません。
 
 ### 生の overlay
 

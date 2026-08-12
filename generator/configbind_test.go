@@ -37,8 +37,8 @@ func TestGenerateConfigBindFromFixture(t *testing.T) {
 		// time.Duration must not degrade to an int field.
 		`Kind: configbind.ScaffoldDuration`,
 		`time.ParseDuration`,
-		`DependsOn: map[string][]string{`,
-		`{"webserver.tls.enabled"}`,
+		`DependsOn: map[string][]configbind.Dependency{`,
+		`{{Key: "webserver.tls.enabled"}}`,
 		`Key: "tls.cert_path"`,
 		`Env: "TLS_CERT_FILE"`,
 		"applyWebServerConfigDefinition0",

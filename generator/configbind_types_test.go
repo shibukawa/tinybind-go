@@ -175,8 +175,8 @@ type ServerConfig struct {
 var config = configbind.Bind[ServerConfig]("server")
 `)
 	for _, want := range []string{
-		`"server.health.path": {"server.health.enabled"}`,
-		`"server.readiness.path": {"server.readiness.enabled"}`,
+		`"server.health.path": {{Key: "server.health.enabled"}}`,
+		`"server.readiness.path": {{Key: "server.readiness.enabled"}}`,
 		`"server.upstream.user": "hide"`,
 		`"server.upstream.password": "hide"`,
 	} {
@@ -222,11 +222,137 @@ var config = configbind.Bind[SQLConfig]("sql")
 `)
 	for _, want := range []string{
 		`"sql.slow_threshold": "0s"`,
-		`"sql.explain": {"sql.slow_threshold"}`,
+		`"sql.explain": {{Key: "sql.slow_threshold"}}`,
 	} {
 		if !containsNormalizedSource(text, want) {
 			t.Fatalf("missing %q in\n%s", want, text)
 		}
+	}
+}
+
+// A mode key holds a non-empty value in every mode, so only a value condition
+// can say which of its sibling subtrees the current mode actually uses. The
+// relative form resolves against the struct the tag is written in, exactly as
+// the emptiness form does.
+func TestConfigBindReadsValueConditionTags(t *testing.T) {
+	text := generateConfigBindSource(t, `package sample
+import "github.com/shibukawa/tinybind-go/configbind"
+type PasskeyConfig struct {
+ Path string
+}
+type JWTConfig struct {
+ Leeway string
+}
+type AuthConfig struct {
+ Enabled bool
+ Mode string `+"`default:\"oidc_only\" enum:\"oidc_only,oidc_passkey,jwt_only\" dependon:\".enabled\"`"+`
+ Passkey PasskeyConfig `+"`dependon:\".mode=oidc_only,oidc_passkey\"`"+`
+ JWT JWTConfig `+"`dependon:\".mode!=jwt_only\"`"+`
+}
+var config = configbind.Bind[AuthConfig]("auth")
+`)
+	for _, want := range []string{
+		`"auth.mode": {{Key: "auth.enabled"}}`,
+		`"auth.passkey.path": {{Key: "auth.mode", Op: "=", Values: []string{"oidc_only", "oidc_passkey"}}}`,
+		`"auth.jwt.leeway": {{Key: "auth.mode", Op: "!=", Values: []string{"jwt_only"}}}`,
+	} {
+		if !containsNormalizedSource(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+}
+
+// A summary tag on a nested struct rates every key below it, which is what makes
+// rating a deployment's unremarkable defaults affordable at all.
+func TestConfigBindReadsSummaryTag(t *testing.T) {
+	text := generateConfigBindSource(t, `package sample
+import "github.com/shibukawa/tinybind-go/configbind"
+type QueryConfig struct {
+ Explain bool
+ MaxSQLLength int
+}
+type ObservabilityConfig struct {
+ MinimumLevel string `+"`default:\"info\"`"+`
+ Query QueryConfig `+"`summary:\"omit\"`"+`
+ Jitter int `+"`default:\"20\" summary:\"omit\"`"+`
+}
+var config = configbind.Bind[ObservabilityConfig]("obs")
+`)
+	for _, want := range []string{
+		"Summary: map[string]string{",
+		`"obs.query.explain": "omit"`,
+		`"obs.query.max_sql_length": "omit"`,
+		`"obs.jitter": "omit"`,
+	} {
+		if !containsNormalizedSource(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+	if containsNormalizedSource(text, `"obs.minimum_level": "omit"`) {
+		t.Fatalf("an untagged key was rated:\n%s", text)
+	}
+}
+
+func TestConfigBindRejectsBadSummaryMode(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	writeTestFile(t, filepath.Join(dir, "config.go"), `package sample
+import "github.com/shibukawa/tinybind-go/configbind"
+type ObservabilityConfig struct {
+ Jitter int `+"`default:\"20\" summary:\"verbose\"`"+`
+}
+var config = configbind.Bind[ObservabilityConfig]("obs")
+`)
+	tidyTempModule(t, dir)
+	g := generator.New(generator.DefaultOptions())
+	_, err := g.GenerateConfigBind(dir, t.TempDir(), "configbind_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "summary must be omit") {
+		t.Fatalf("err=%v want a rejected summary mode", err)
+	}
+}
+
+// A mistyped value would hide its whole subtree silently and for good, so the
+// enum tag of the parent is read to catch it while the author is still here.
+func TestConfigBindRejectsValueOutsideParentEnum(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	writeTestFile(t, filepath.Join(dir, "config.go"), `package sample
+import "github.com/shibukawa/tinybind-go/configbind"
+type AuthConfig struct {
+ Mode string `+"`default:\"oidc_only\" enum:\"oidc_only,jwt_only\"`"+`
+ Passkey string `+"`dependon:\".mode=oidc_passkey\"`"+`
+}
+var config = configbind.Bind[AuthConfig]("auth")
+`)
+	tidyTempModule(t, dir)
+	g := generator.New(generator.DefaultOptions())
+	_, err := g.GenerateConfigBind(dir, t.TempDir(), "configbind_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "is not one of the enum choices") {
+		t.Fatalf("err=%v want a rejected dependon value", err)
+	}
+}
+
+// An enum names one value, which a struct has none of. The tag became readable
+// only for the sake of a dependon condition, so its placement is decided here
+// rather than accepted and dropped.
+func TestConfigBindRejectsEnumOnNestedStruct(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	writeTestFile(t, filepath.Join(dir, "config.go"), `package sample
+import "github.com/shibukawa/tinybind-go/configbind"
+type TLSConfig struct {
+ CertPath string
+}
+type ServerConfig struct {
+ TLS TLSConfig `+"`enum:\"a,b\"`"+`
+}
+var config = configbind.Bind[ServerConfig]("server")
+`)
+	tidyTempModule(t, dir)
+	g := generator.New(generator.DefaultOptions())
+	_, err := g.GenerateConfigBind(dir, t.TempDir(), "configbind_gen.go")
+	if err == nil || !strings.Contains(err.Error(), "enum applies to a leaf field") {
+		t.Fatalf("err=%v want an enum placement rejection", err)
 	}
 }
 

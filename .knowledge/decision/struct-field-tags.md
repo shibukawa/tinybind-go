@@ -3,7 +3,7 @@ id: decision:struct-field-tags
 type: decision
 title: Config Struct Field Tags
 ---
-Struct field tags declare defaults, help, CLI names, enum allowlists, secret disclosure, parent dependencies, and positional arg roles.
+Struct field tags declare defaults, help, CLI names, enum allowlists, secret disclosure, parent dependencies, summary rating, and positional arg roles.
 
 ```yaml
 status: accepted
@@ -41,6 +41,14 @@ option_tags:
     placement: a leaf field, a nested struct field, or an array-of-tables field, each covering its whole subtree
     element_fields: honored per requirement:array-of-tables-provenance
     redaction: rule:secret-redaction
+  summary:
+    form: 'summary:"omit"'
+    meaning: rate this key as detail, so a short surface may drop it while nobody has set it
+    conjunction: droppable only when the winning Place is also default
+    policy: rule:summary-key-omission
+    detail: decision:summary-tag-form
+    placement: a leaf field, a nested struct field, an array-of-tables field, or an element field
+    scope: output only, and only as a mark; the library drops nothing for it
   falsy:
     form: 'falsy:"off"'
     meaning: the value that means "off" for this option
@@ -52,6 +60,9 @@ option_tags:
     form: 'dependon:"prefix.parent_key"' or 'dependon:".sibling_key"'
     meaning: hide this field from provenance output while the named parent is empty
     parent_key: one term:config-key, absolute or dot-prefixed relative; see decision:dependon-tag-form
+    value_form: 'dependon:".mode=oidc_only,oidc_passkey"' or 'dependon:".backend!=cookie"'
+    value_meaning: show this field only while the parent holds one of the listed values, or none of them
+    value_detail: decision:dependon-value-condition
     placement: a leaf field, a nested struct field, or an array-of-tables field, each covering its whole subtree
     not_on: an array-of-tables element field, whose key carries a runtime index
     visibility: rule:dependent-key-visibility
@@ -67,7 +78,7 @@ arg_tags:
     form: 'arg:"*"'
     meaning: remaining positional arguments as array or multi-value
 rules:
-  - Bind option fields use default, help, optional opt, optional enum, optional secret, optional dependon, optional falsy
+  - Bind option fields use default, help, optional opt, optional enum, optional secret, optional dependon, optional falsy, optional summary
   - SubCommand fields are CLI-only; no TOML or env mapping; may use opt and help
   - positional arg fields use arg tags on subcommand option structs only
   - help text seeds generated CLI --help and Bind TOML scaffold comments
@@ -77,6 +88,8 @@ rules:
   - default value must be in enum when both tags are present
   - secret tag affects log helpers only, not runtime stored values
   - dependon affects output visibility only; the field is still applied
+  - summary marks a record rather than removing it; the caller decides by surface
+  - a dependon value condition is checked against the parent's enum at generation time
   - falsy affects the resolved value and dependent visibility; a default outranks it
   - opt changes CLI surface only; overlay config_key stays prefix.field_key
   - every tag on a nested struct field either propagates or fails generation; see requirement:struct-tag-placement-totality
@@ -93,6 +106,7 @@ example:
       TLSCertPath string `dependon:"webserver.tls.enabled" help:"TLS certificate path"`
       Tracing string `enum:"off,otlp" falsy:"off" help:"tracing exporter"`
       TracingURL string `dependon:"webserver.tracing" help:"collector URL"`
+      LiveJitter int `default:"20" summary:"omit" help:"reconnect jitter percent"`
     }
   default_flag_without_opt:
     - '[webserver] port -> --webserver-port'
@@ -104,7 +118,10 @@ related:
   - requirement:dependent-field-visibility
   - requirement:duration-config-fields
   - decision:dependon-tag-form
+  - decision:dependon-value-condition
   - decision:falsy-tag-form
+  - decision:summary-tag-form
+  - rule:summary-key-omission
   - rule:dependent-key-visibility
   - rule:falsy-value-resolution
   - rule:duration-value-parsing

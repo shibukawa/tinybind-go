@@ -8,7 +8,10 @@ LoadResult exposes the effective config as an ordered, redacted, dependency-filt
 ```yaml
 signature: 'func (r *LoadResult) Provenance() []ProvenanceEntry'
 record: data:provenance-event
-entry_shape: 'ProvenanceEntry{Key string, Value string, Place Place, Masked bool, ArrayKey string, Index int}'
+entry_shape: 'ProvenanceEntry{Key string, Value string, Place Place, Masked bool, Omittable bool, ArrayKey string, Index int}'
+one_call_two_surfaces: >
+  the slice is the same for a boot summary and a full dump; a summary skips the
+  entries marked Omittable, per rule:summary-key-omission, and nothing else differs
 coverage:
   - only keys present in the overlay; a field with no default and no source is absent
   - >
@@ -20,11 +23,13 @@ behavior:
   - Place is the winning term:config-source
   - order follows rule:config-output-ordering
   - rule:secret-redaction decides Value and Masked, and drops hide entries
-  - rule:dependent-key-visibility drops entries under an empty parent
+  - rule:dependent-key-visibility drops entries whose declared condition fails, whether an emptiness or a value test
+  - rule:summary-key-omission sets Omittable and drops nothing, because only the caller knows its surface
   - multi-value keys render as their joined raw form
   - the process-only config path key never appears
 non_goals:
   - printing or logging; the caller formats the slice
+  - deciding which surface the caller is rendering, which is what Omittable leaves open
   - mutating the overlay or the bound structs
   - exposing hidden or redacted raw values through another accessor
 caller_burden_to_avoid: >
@@ -33,6 +38,9 @@ caller_burden_to_avoid: >
   generated secret map are both package-internal
 callers: concept:provenance-callback
 related:
+  - decision:summary-tag-form
+  - rule:summary-key-omission
+  - requirement:effective-config-brevity
   - concept:provenance-log-helper
   - requirement:source-provenance-logging
   - requirement:deterministic-config-output-order
