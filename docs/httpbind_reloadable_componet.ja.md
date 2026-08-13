@@ -146,7 +146,7 @@ if time.Since(opened) > lifetime {
 
 `Accept` を使わないのは意図的です。共有キャッシュは `Vary: Accept` を正規化したり落としたりしますし、1つの URL は1つのキャッシュ可能なドキュメントリソースであるべきだからです。クエリパラメータも同様に避けています。正規 URL、共有される URL、ログに残る URL が変わってしまいます。
 
-すべての応答が更新ヘッダに対して `Vary` します。ただしヘッダフィールドを書くのは利用側です。このパッケージが書くのはボディだけで、`Vary`・`Content-Type`・返したモードのエコー・live マーカー・`ETag` は「計算して渡す」までを担当します。差分応答は文書固有の validator を含むので `no-store` が妥当ですが、それを設定するのも利用側です。詳しくは [`httpbind_update_surface.md`](httpbind_update_surface.md) を参照してください。
+すべての応答が更新ヘッダに対して `Vary` します。ただしヘッダフィールドを書くのは利用側です。このパッケージが書くのはボディだけで、`Vary`・`Content-Type`・返したモードのエコー・live マーカー・`ETag` は「計算して渡す」までを担当します。差分応答は文書固有の validator を含むので `no-store` が妥当ですが、それを設定するのも利用側です。詳しくは [`httpbind_update_surface.ja.md`](httpbind_update_surface.ja.md) を参照してください。
 
 解釈できないもの（未知のモード、切り詰められたヘッダ、プロキシが落としたヘッダ）は、エラーではなく**完全なドキュメント**になります。この規則があるからこそ、各マイルストーンは未完成のままでも不正にはなりません。
 
@@ -164,7 +164,7 @@ if time.Since(opened) > lifetime {
 
 ヘッダ・レコード・ステータス・適合クライアントが守るべき規則を含む完全なワイヤ仕様は [更新ワイヤ契約](httpbind_update_wire_contract.md) にあります。自分でクライアントを書くならそちらを読んでください。
 
-render・redraw・action・sequence の各エントリの呼び方は [更新サーフェス](httpbind_update_surface.md) にまとめてあります。
+render・redraw・action・sequence の各エントリの呼び方は [更新サーフェス](httpbind_update_surface.ja.md) にまとめてあります。
 
 ## 差分の操作
 
