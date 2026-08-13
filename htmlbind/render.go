@@ -40,7 +40,18 @@ func (w Wrapper) Validate() error {
 // BindWrapper pairs a plan with parameters and the setter that installs the
 // child fragment. Generated code supplies the setter because only it knows
 // which field the unnamed slot binds to.
+//
+// Deprecated: use the BindWrapper method on Plan. It carries no type parameter
+// beyond the receiver's own, so the method form was always available; this
+// function remains so no generated or hand-written caller is forced to move.
 func BindWrapper[P any](plan *Plan[P], params P, setChildren func(*P, Fragment)) Wrapper {
+	return plan.BindWrapper(params, setChildren)
+}
+
+// BindWrapper pairs a plan with parameters and the setter that installs the
+// child fragment. Generated code supplies the setter because only it knows
+// which field the unnamed slot binds to.
+func (plan *Plan[P]) BindWrapper(params P, setChildren func(*P, Fragment)) Wrapper {
 	wrapper := Wrapper{
 		head:            plan.Head,
 		headSources:     plan.HeadSources,

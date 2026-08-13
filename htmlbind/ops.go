@@ -387,7 +387,21 @@ func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
 // It writes nothing, which is the point: the check has to run on the initial
 // pass, where a failure can still become an error response, rather than in the
 // boundary goroutine that runs after the response is already committed.
-func Require[P any](check func(P) error) Op[P] { return requireOp[P]{check: check} }
+//
+// Deprecated: use the Require method on Builder. It carries no type parameter
+// beyond the receiver's own, so the method form was always available; this
+// function remains so no generated or hand-written caller is forced to move.
+func Require[P any](check func(P) error) Op[P] { return Builder[P]{}.Require(check) }
+
+// Require fails the render when check rejects the parameters. Generation emits
+// it ahead of an await boundary that binds a required async parameter, so a
+// caller who left one unset gets an error before the boundary commits its
+// fallback and fixes the response status.
+//
+// It writes nothing, which is the point: the check has to run on the initial
+// pass, where a failure can still become an error response, rather than in the
+// boundary goroutine that runs after the response is already committed.
+func (Builder[P]) Require(check func(P) error) Op[P] { return requireOp[P]{check: check} }
 
 type requireOp[P any] struct {
 	check func(P) error

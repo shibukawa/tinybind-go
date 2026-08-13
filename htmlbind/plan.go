@@ -265,7 +265,16 @@ type Fragment struct {
 }
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
+//
+// Deprecated: use the Bind method on Plan. It carries no type parameter beyond
+// the receiver's own, so the method form was always available; this function
+// remains so no generated or hand-written caller is forced to move.
 func Bind[P any](plan *Plan[P], params P) Fragment {
+	return plan.Bind(params)
+}
+
+// Bind pairs a plan with parameters, producing the value a slot accepts.
+func (plan *Plan[P]) Bind(params P) Fragment {
 	fragment := Fragment{
 		head:            plan.Head,
 		headSources:     plan.HeadSources,

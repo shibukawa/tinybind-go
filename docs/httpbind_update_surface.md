@@ -84,16 +84,18 @@ mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
         return
     }
     wrappers := []htmlbind.Wrapper{
-        htmlbind.BindWrapper(documentPlan, documentParams{}, setChildren),
-        htmlbind.BindWrapper(layoutPlan, layoutParams{Section: r.URL.Query().Get("section")}, setChildren),
+        documentPlan.BindWrapper(documentParams{}, setChildren),
+        layoutPlan.BindWrapper(layoutParams{Section: r.URL.Query().Get("section")}, setChildren),
     }
-    leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+    leaf := pagePlan.Bind(pageParams{Query: r.URL.Query().Get("q")})
     htmlupdate.ApplyTo(update.Headers(r, wrappers, leaf), w)
     if err := update.Render(w, r, wrappers, leaf); err != nil {
         http.Error(w, http.StatusText(500), 500)
     }
 })
 ```
+
+`Bind` and `BindWrapper` are methods on `*Plan[P]`. The package-level `htmlbind.Bind(plan, params)` and `htmlbind.BindWrapper(plan, params, set)` still work and still mean exactly the same thing — they are deprecated wrappers, kept so no generated or hand-written caller is forced to move. Generated plans still spell the function form; move your own code when it is convenient, or never.
 
 `Headers` needs the same wrappers and leaf the render will get, because whether the composition owns a live boundary is a property of the composition. Pass none and the live marker is left off — and a page that owns one then never gets a live request opened against it.
 
