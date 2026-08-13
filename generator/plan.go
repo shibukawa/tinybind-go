@@ -145,6 +145,7 @@ const (
 	UsageEncodeEntity
 	UsageDecodeEntity
 	UsageEntityKey
+	UsageCacheKey
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
 	// UsageItem is every DynamoDB item entry point. It stays out of UsageAll:
 	// the item codec has its own generate-all rule, which requires a dynamo tag,

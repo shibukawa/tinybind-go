@@ -56,6 +56,8 @@ const (
 	FeatureItemTable Feature = "item-table"
 	// FeatureEntityCodec turns off Firestore entity codec generation entirely.
 	FeatureEntityCodec Feature = "entity-codec"
+	// FeatureCacheKey turns off cache key generation entirely.
+	FeatureCacheKey Feature = "cache-key"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
 	// structs. Disable it to keep hand-written sources untouched.
 	FeatureHelpBackfill Feature = "help-backfill"
@@ -268,7 +270,7 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:          PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath}},
+		RuntimePackages:          PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath, cachekeybindImportPath}},
 		FileTypes:                PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
 		HTMLTemplatePattern:      DefaultHTMLTemplatePattern,
 		SQLTemplatePattern:       DefaultSQLTemplatePattern,
@@ -630,6 +632,8 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageDecodeEntity
 	case OperationEntityKey:
 		return UsageEntityKey
+	case OperationCacheKey:
+		return UsageCacheKey
 	default:
 		return 0
 	}
@@ -666,13 +670,15 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureItemCodec]
 	case OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
 		return disabled[FeatureEntityCodec]
+	case OperationCacheKey:
+		return disabled[FeatureCacheKey]
 	default:
 		return false
 	}
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "socket-in", "socket-out", "decode", "encode", "row", "item", "entity", "config"}
+	roles := []string{"request", "response", "stream", "socket-in", "socket-out", "decode", "encode", "row", "item", "entity", "key", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source

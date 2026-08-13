@@ -31,9 +31,13 @@ const (
 	// The Firestore entity operations. They are separate from the DynamoDB item
 	// ones rather than shared, because the two runtimes emit different methods
 	// onto the same struct and a call has to say which.
-	OperationEntityEncode     CallOperation = "entity_encode"
-	OperationEntityDecode     CallOperation = "entity_decode"
-	OperationEntityKey        CallOperation = "entity_key"
+	OperationEntityEncode CallOperation = "entity_encode"
+	OperationEntityDecode CallOperation = "entity_decode"
+	OperationEntityKey    CallOperation = "entity_key"
+	// OperationCacheKey marks the argument a cache reads a key from. It selects
+	// an argument type rather than a type parameter, because the value passed is
+	// the key itself and a framework's memo call is generic over the result.
+	OperationCacheKey         CallOperation = "cache_key"
 	OperationConfigBind       CallOperation = "config_bind"
 	OperationConfigSubCommand CallOperation = "config_subcommand"
 	OperationRouteRegister    CallOperation = "route_register"
@@ -271,6 +275,14 @@ func EntityKeyCall(target CallTarget, options ...CallPatternOption) CallPattern 
 	return Call(OperationEntityKey, target, options...)
 }
 
+// CacheKeyCall declares a wrapper that reads a cache key from an argument.
+//
+// The key role takes ArgumentType rather than GenericType: a memo call is
+// generic over the result it caches, and the key is the value beside it.
+func CacheKeyCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCacheKey, target, options...)
+}
+
 // ConfigBindCall declares a configbind registration wrapper.
 func ConfigBindCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationConfigBind, target, options...)
@@ -490,7 +502,8 @@ func supportedCallOperation(operation CallOperation) bool {
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
 		OperationItemEncodeDecode, OperationItemKeyDecode,
-		OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
+		OperationEntityEncode, OperationEntityDecode, OperationEntityKey,
+		OperationCacheKey:
 		return true
 	default:
 		return false
@@ -522,6 +535,8 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"item"}, nil
 	case OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
 		return []string{"entity"}, nil
+	case OperationCacheKey:
+		return []string{"key"}, nil
 	case OperationConfigBind:
 		return []string{"config"}, []string{"prefix"}
 	case OperationConfigSubCommand:

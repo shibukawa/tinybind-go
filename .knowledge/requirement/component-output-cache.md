@@ -61,4 +61,21 @@ open_questions:
   - stale-while-revalidate and explicit invalidation
   - caching a fully settled boundary set, which requirement:suspense-html-streaming currently excludes
   - what a rich entry costs the document path in practice, which is the one number that should be measured before the interface changes
+downstream_experience_2026_08_13:
+  status: input, not a request; offered against the two open questions by a reporter who built both at its own data layer, per decision:cache-key-generator-seams
+  why_it_transfers_only_partly: a duplicate fetch costs an upstream call where a duplicate render costs local CPU, so the same mechanism carries a different cost-benefit
+  stale_window_changes_the_entry_not_the_policy:
+    finding: one TTL cannot express it; the entry needs a fresh deadline and a last-answerable deadline, and a read between them returns the held value and starts one revalidation
+    consequence_for_this_module: it is an api:cache-store interface change, not a policy setting; the reporter did not retrofit it onto bytes plus one duration and built a superset instead
+    weighs_against: the unchanged_2026_08_08 decision above, which kept the byte slice for a different reason and would have to be reopened on this one
+  tag_invalidation_needs_a_reverse_index:
+    prefix_axis_is_free: prepending the scope makes scope deletion a range rather than a scan, and the reporter reports it paid off as decision:cache-key-derivation scope_prefix predicted
+    other_axis_is_not: with the scope first, every entry of one key type across all readers is not a prefix
+    consequence: a tag index answers it and does not fit Get/Set
+  coalescing_objection_answered_not_overruled:
+    ours: coalescing inside the runtime would tie one request's cancellation to another request's work
+    their_answer: the shared fetch runs on a context with cancellation removed and values kept, so a waiter that goes away stops waiting and stops nothing else
+    cost_it_creates: detaching removes the only bound on the fetch, which is why their store also carries a fetch timeout
+    their_own_verdict: the mechanism transfers, the cost-benefit does not, and the no-coalescing default is still right for a render
+  fingerprint_has_no_hand_written_equivalent: a Go function compiles to nothing to digest, which is why requirement:cache-key-generation is the blocking ask of that round rather than a convenience
 ```

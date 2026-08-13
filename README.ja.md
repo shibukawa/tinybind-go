@@ -4,7 +4,7 @@
 
 TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL・DynamoDB のランタイム依存を別パッケージに分離しています。
 
-利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md) · [firestorebind](docs/firestorebind.ja.md) · [リロード可能な component](docs/httpbind_reloadable_componet.ja.md) · [fasthttp バックエンド](docs/httpbind_fasthttp.ja.md)
+利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md) · [firestorebind](docs/firestorebind.ja.md) · [cachekeybind](docs/cachekeybind.ja.md) · [リロード可能な component](docs/httpbind_reloadable_componet.ja.md) · [fasthttp バックエンド](docs/httpbind_fasthttp.ja.md)
 
 この上にフレームワークを作る方へ: まず [フレームワーク向け機能一覧](docs/httpbind_framework_facilities.ja.md)（何が使えて何が無いかの索引）、次に [htmlbind フレームワーク実装者向けガイド](docs/htmlbind_frameworkowner.ja.md)、利用者が fasthttp 向けにビルドするなら [fasthttp バックエンド フレームワーク実装者向けガイド](docs/httpbind_fasthttp_frameworkowner.ja.md)
 
@@ -116,6 +116,7 @@ httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
 | `dynamobind/` | `tinygodriver/nosql/dynamodb` 上の DynamoDB item runtime。`net/http` も `database/sql` も import しない |
 | `firestorebind/` | `tinygodriver/nosql/datastore` 上の Firestore（Datastore mode）entity runtime。`net/http` も `database/sql` も import しない |
+| `cachekeybind/` | キャッシュキーのフレーミング runtime。stdlib のみ |
 | `generator/` | フィールド計画に基づくバインダ／ライタ + OpenAPI 3.1 埋め込み生成 |
 | `parser/` | ルート／ハンドラ発見（`Bind`、`Write`、`WriteStream`、エラー） |
 | `templates/htmlbind/` | 型付きで文脈安全な HTML template compiler |

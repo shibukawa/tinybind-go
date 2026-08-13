@@ -128,6 +128,28 @@ options, err := calls.Options(generator.DefaultOptions())
 という名前のメソッドは登録ではない。無関係な API がルーティングと誤認されない
 のはこの性質による。
 
+### 型が型引数ではなく引数にある場合
+
+`GenericType` はロールを型引数から読む。ラッパーによっては、型がそこにない。
+キャッシュの参照が最も分かりやすい例だ。キャッシュする*結果*についてジェネリック
+であり、生成コードを必要とするのはその隣にあるキーのほうである。
+
+```go
+// func Memo[T any](ctx context.Context, key cachekeybind.CacheKey, fetch func(context.Context) (T, error)) (T, error)
+calls.Register(generator.CacheKeyCall(
+	generator.Function("example.com/framework", "Memo"),
+	generator.ArgumentType("key", 1),
+))
+```
+
+`ArgumentType` は 0 始まりの*値*引数のインデックスを取り、そこに渡される値の
+静的な型を読む。生成されるメソッドはその型に付くので、generator はその型を宣言
+しているパッケージで動かす必要がある。別パッケージのキー型は生成されずに報告
+される。item と entity の codec と同じ規則である。
+
+印を付けた構造体がどう見えるか、生成されるキーが何を含むかは
+[cachekeybind 利用ガイド](cachekeybind.ja.md)を参照。
+
 ### 見えないもの
 
 探索は静的でパッケージ内に閉じており、推測せずにその旨を報告する。

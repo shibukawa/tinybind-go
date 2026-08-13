@@ -135,6 +135,29 @@ Identity is resolved through `go/types`, not by name. A method called
 `HandleFunc` on a type you did not configure is not a registration, which is what
 keeps an unrelated API from being mistaken for routing.
 
+### When the type is an argument, not a type parameter
+
+`GenericType` reads a role from a type parameter. Some wrappers do not put the
+type there. A cache lookup is the clearest case: it is generic over the *result*
+it caches, and the thing that needs generated code is the key beside it.
+
+```go
+// func Memo[T any](ctx context.Context, key cachekeybind.CacheKey, fetch func(context.Context) (T, error)) (T, error)
+calls.Register(generator.CacheKeyCall(
+	generator.Function("example.com/framework", "Memo"),
+	generator.ArgumentType("key", 1),
+))
+```
+
+`ArgumentType` takes the zero-based *value* argument index and reads the static
+type of what is passed there. The generated method lands on that type, so the
+generator has to run on the package that declares it — a key type from another
+package is reported rather than generated, the same rule the item and entity
+codecs follow.
+
+See the [cachekeybind guide](cachekeybind.md) for what the marked struct looks
+like and what the emitted key contains.
+
 ### What it cannot see
 
 Discovery is static and package-local, and it says so rather than guessing:
