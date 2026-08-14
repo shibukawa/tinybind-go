@@ -25,6 +25,32 @@ type Generated struct {
 	Path string
 	// Source is the formatted Go source.
 	Source []byte
+	// Registry marks the one file registering every route and endpoint.
+	//
+	// It is flagged because it is the one file whose write has an order. It
+	// names the entry point of every typed server action, and those are emitted
+	// by the binding phase, which runs after this one because it type-checks
+	// each route package and a package does not type-check until the compiled
+	// component is in it. Writing the registry first would leave the root
+	// package naming a symbol nothing had written yet.
+	//
+	// Writing it last costs nothing: the binding phase is required to skip it
+	// anyway, per rule:generated-source-not-discovered, so writing it earlier
+	// only produces a file that phase must ignore.
+	Registry bool
+}
+
+// SplitRegistry separates the files a caller writes before the binding phase
+// from the registry it writes after, per [Generated.Registry].
+func SplitRegistry(files []Generated) (before []Generated, registry []Generated) {
+	for _, file := range files {
+		if file.Registry {
+			registry = append(registry, file)
+			continue
+		}
+		before = append(before, file)
+	}
+	return before, registry
 }
 
 // Result is everything one whole-tree generation run produced.
@@ -267,7 +293,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	out = append(out, Generated{Path: filepath.Join(tree.Root, registryOut), Source: registry})
+	out = append(out, Generated{Path: filepath.Join(tree.Root, registryOut), Source: registry, Registry: true})
 	return Result{Files: out, Assets: assets, Actions: allActions}, nil
 }
 

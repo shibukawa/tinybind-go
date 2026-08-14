@@ -25,9 +25,10 @@ as_built:
   registry: the registration names Action.Wrapper rather than the function, so a typed action is installed under the generated entry point and the declared function may stay unexported; the action table gained Published and Typed beside the handler name
   refusal: routetree keeps a typed action out of the URL map the template compiler resolves through, and supplies a name-to-reason map beside it, per rule:typed-action-call-only
   fixtures: internal/pagesfixture and internal/fasthttppagesfixture regenerated for the two added table fields; every raw registration is byte for byte what it was
-not_built_yet:
-  ordering: the registry-last sequencing that ordering describes; the two phases are wired to each other but a caller still has to write the registry after the binding phase
-  caller_wiring: nothing yet passes Result.Actions into the binding phase's Options, so the two halves are reachable and not yet joined by the generate command
+  hand_off: Result.Actions carries what routetree read, and generator.ServerActionsFor converts it, so the wrapper name, the parameter list and the context flag cannot drift between what the registry registers and what is emitted
+  conversion_lives_in_generator: routetree imports nothing from it and generator already sits above the same layer, so the adapter goes there rather than into every caller
+  ordering_is_expressed: Generated.Registry marks the one file whose write has an order, and SplitRegistry partitions on it
+  end_to_end: a whole tree generated in that order, compiled, and served through the emitted registry, answering a real POST with the encoded result
 source:
   - downstream framework change request 2026-08-13, asks 1 to 3
   - requirement:template-server-functions
@@ -104,6 +105,7 @@ where_the_wrapper_is_emitted:
   registry_side: routetree registers the address and references the wrapper as an exported symbol of the route package, which is the direction it already imports
   consequence_for_export: the declared function needs no export, because the registry names the wrapper rather than the function; what must be exported is the generated wrapper
   ordering:
+    status: expressed 2026-08-13 as Generated.Registry and SplitRegistry, and exercised by the end-to-end test
     chain: components into each route package, then the binding phase, then the wrapper, then the registry that names it
     each_link: a route package type-checks only once the compiled component is in it, per decision:route-handler-shape not_page; the binding phase needs that type-check; the wrapper needs the encoder that phase emits; the registry needs the wrapper
     nothing_can_move_earlier:
