@@ -1,6 +1,7 @@
 package generator_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -212,5 +213,90 @@ func TestServerActionRefusesAnUnparseableParameterType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a type expression") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// Neither defect below is reachable from the tests above, because both need a
+// package with more than one generated artifact. Emitting with selected == nil
+// is the one-artifact path, and it hid both.
+func TestServerActionArtifactsAreSelfContained(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	// Two sources carrying bindings, so generation produces two artifacts.
+	if err := os.WriteFile(filepath.Join(dir, "models.go"), []byte(`package main
+
+type User struct {
+	ID string `+"`json:\"id\"`"+`
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "action.go"), []byte(`package main
+
+import "context"
+
+type Other struct {
+	Note string `+"`json:\"note\"`"+`
+}
+
+func GetUser(ctx context.Context, id string) (User, error) { return User{ID: id}, nil }
+
+func main() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tidyTempModule(t, dir)
+
+	opts := generator.DefaultOptions()
+	opts.GenerateAll = true
+	opts.ServerActions = []generator.ServerAction{{
+		Func:         "GetUser",
+		TakesContext: true,
+		Params:       []generator.ServerActionParam{{Name: "id", Type: "string"}},
+		Result:       "User",
+		SourcePath:   filepath.Join(dir, "action.go"),
+	}}
+	artifacts, err := generator.New(opts).GenerateArtifacts(context.Background(), generator.GenerateRequest{Dir: dir})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	var wrappers, inputTypes, decoders int
+	for _, a := range artifacts {
+		if a.Kind != generator.ArtifactBinding {
+			continue
+		}
+		body := string(a.Content)
+		wrappers += strings.Count(body, "func ActionGetUser(")
+		inputTypes += strings.Count(body, "type actionGetUserInput struct")
+		decoders += strings.Count(body, "func decodeactionGetUserInputBytes(")
+		// Whatever an artifact names, it has to define, or the package does not
+		// compile once the files sit beside each other.
+		if strings.Contains(body, "decodeactionGetUserInputBytes(body)") &&
+			!strings.Contains(body, "func decodeactionGetUserInputBytes(") {
+			t.Fatalf("%s calls the decoder it does not define:\n%s", a.OutputBase, body)
+		}
+	}
+	// Exactly once each, in one artifact, however many artifacts there are.
+	if wrappers != 1 || inputTypes != 1 || decoders != 1 {
+		t.Fatalf("wrapper=%d inputType=%d decoder=%d; each belongs to one artifact", wrappers, inputTypes, decoders)
+	}
+
+	// The package has to build with every artifact written beside the sources.
+	for _, a := range artifacts {
+		if a.Kind != generator.ArtifactBinding {
+			continue
+		}
+		// OutputBase is the source's stem, so a caller suffixes it; writing it
+		// bare would overwrite the source the artifact was generated from.
+		if err := os.WriteFile(filepath.Join(dir, a.OutputBase+"_gen.go"), a.Content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command("go", "build", "./...")
+	command.Dir = dir
+	command.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("generated package does not compile: %v\n%s", err, output)
 	}
 }

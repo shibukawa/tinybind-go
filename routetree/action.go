@@ -10,6 +10,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+
+	"github.com/shibukawa/tinybind-go/internal/gensource"
 	"sort"
 	"strings"
 )
@@ -150,9 +152,29 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 	var parsedNames []string
 	for _, name := range names {
 		filename := filepath.Join(dir, name)
-		file, err := parser.ParseFile(fset, filename, nil, parser.SkipObjectResolution)
+		// Comments are parsed because the generated-source header is one, and
+		// without ParseComments the file arrives with none to recognize.
+		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
 		if err != nil {
 			errs = append(errs, err)
+			continue
+		}
+		// Nothing a generation run wrote is an input to what it reads, which
+		// rule:generated-source-not-discovered states for route discovery and
+		// for the call-site analysis and which this pass did not implement.
+		//
+		// The entry point generated for a typed action is the case that made it
+		// matter: it is an exported function of exactly the transport types
+		// returning nothing, in a route package, which is the raw admission
+		// rule to the letter. Read back, it becomes a second action with its
+		// own hash, address and published name, beside the one it exists to
+		// serve.
+		//
+		// This module's own header is recognized without being configured, so a
+		// caller does not list another module's prefix to avoid rediscovering
+		// that module's output. A framework branding its own header registers
+		// it through the handler shape, the way every other pass takes it.
+		if gensource.IsGenerated(file, shape.GeneratedHeaders...) {
 			continue
 		}
 		parsed = append(parsed, file)

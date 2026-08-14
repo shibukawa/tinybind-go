@@ -475,15 +475,23 @@ func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
 	}
 	grouped := map[string][]string{}
 	var order []string
+	seeSource := func(source string) {
+		if _, seen := grouped[source]; !seen {
+			order = append(order, source)
+			grouped[source] = nil
+		}
+	}
 	for _, t := range plan.Types {
 		if t.Usage == 0 {
 			continue
 		}
-		source := t.SourcePath
-		if _, seen := grouped[source]; !seen {
-			order = append(order, source)
-		}
-		grouped[source] = append(grouped[source], t.Name)
+		seeSource(t.SourcePath)
+		grouped[t.SourcePath] = append(grouped[t.SourcePath], t.Name)
+	}
+	// An action declaring no parameter contributes no type, so its file would
+	// otherwise have no artifact and its entry point would be written nowhere.
+	for _, action := range plan.ServerActions {
+		seeSource(actionSourceKey(action.SourcePath, order))
 	}
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
@@ -492,7 +500,13 @@ func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
 		for _, name := range grouped[source] {
 			selected[name] = true
 		}
-		code, err := emitSelected(plan, selected)
+		// Scoped rather than filtered inside the emitter: the grouping is this
+		// function's, and an emitter given the whole list has no way to know
+		// which artifact it is writing. Emitting them all in every artifact is
+		// what declared the entry point once per source file of the package.
+		scoped := *plan
+		scoped.ServerActions = actionsForSource(plan.ServerActions, source, order)
+		code, err := emitSelected(&scoped, selected)
 		if err != nil {
 			return nil, err
 		}
@@ -507,6 +521,37 @@ func (g *Generator) bindingArtifacts(load *packageLoad) ([]Artifact, error) {
 		})
 	}
 	return artifacts, nil
+}
+
+// actionSourceKey maps an action's declaring file onto the source key its
+// artifact is grouped under.
+//
+// routetree reports the file as it walked it and the plan carries the path the
+// loader reported, which need not be spelled alike. A package is one directory,
+// so the base name identifies the file within it, and matching on that is
+// immune to one side being absolute and the other relative.
+func actionSourceKey(declaredIn string, order []string) string {
+	if declaredIn == "" {
+		return ""
+	}
+	base := filepath.Base(declaredIn)
+	for _, source := range order {
+		if source != "" && filepath.Base(source) == base {
+			return source
+		}
+	}
+	return declaredIn
+}
+
+// actionsForSource selects the actions declared in one source file.
+func actionsForSource(actions []ServerAction, source string, order []string) []ServerAction {
+	var out []ServerAction
+	for _, action := range actions {
+		if actionSourceKey(action.SourcePath, order) == source {
+			out = append(out, action)
+		}
+	}
+	return out
 }
 
 // transportArtifactBase names the generated transport file. It is package-wide
