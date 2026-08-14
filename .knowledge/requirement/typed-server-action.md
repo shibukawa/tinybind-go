@@ -95,12 +95,27 @@ where_the_wrapper_is_emitted:
       costs_no_rediscovery: the action list is resolved before any template is compiled, so the registry emission needs nothing the later phase produces except the wrapper's name
       caller_surface: routetree Result returns one flat Files list today, so the registry entry has to become separately addressable for a caller to order the writes
       no_intermediate_dangling_state: with the registry last, every package type-checks at every point a phase reads it
-a_parameter_type_is_only_readable_when_it_is_predeclared:
-  found: 2026-08-13
-  what: routetree parses with go/parser and never type-checks, so `id string` is readable and `id UserID` names a type the AST cannot resolve to a shape
-  already_the_rule_next_door: decision:route-handler-shape parameter_rule restricts a typed rung to scalars the generated decoder can bind and errors on anything else
-  consequence: the same restriction is the honest first shape here, and a named or struct parameter is a diagnostic naming its position rather than a silent miss
-  widening_costs: type checking the route package before its glue is generated, which inverts the ordering requirement:action-request-binding settled
+a_parameter_type_is_whatever_the_codec_generator_can_plan:
+  corrected: 2026-08-13, replacing a claim that a parameter must be a predeclared scalar
+  the_wrong_claim: that routetree parses rather than type-checks, so only a predeclared type name is readable and a struct parameter is a diagnostic
+  why_it_was_wrong:
+    reading: routetree Value.Type already carries the type expression as source text, composites included, and an action needs nothing resolved from it
+    validating: bindableType and scalarTypes check a page's parameters because those come from the URL, per decision:route-handler-shape parameter_rule; a JSON payload gives no such reason
+    planning: the argument struct is declared and planned by the binding phase, which type-checks, per where_the_wrapper_is_emitted
+    net: the limit sits on what the codec generator can plan rather than on what routetree can read, and those are different layers
+  works:
+    scalars: string, int, int64, bool, float64
+    same_package_struct: the ordinary nested case the codec generator is built around, so a struct parameter is the natural shape rather than the refused one
+    other_package_struct: through requirement:json-codec-interface, which is what makes it reachable at all
+    collections: a slice or map of those, except a foreign element type
+  a_named_non_struct_type_is_the_real_gap:
+    measured: 2026-08-13, generating over a struct holding a field of type UserID where UserID is a named string
+    what_happens: fieldTypeKind maps every same-package identifier to KindStruct, so emission names appendUserIDJSON, decodeUserIDBytes, and decodeUserIDJSON
+    none_are_defined: analyzeStruct collects only struct type declarations, so a named scalar never enters the plan and none of those functions is emitted
+    result: generated source that does not compile, with no diagnostic, the failure being a missing identifier inside a DO NOT EDIT file
+    predates_this: reachable from any request or response model holding such a field, so it is a defect of the codec generator rather than of this feature
+    consequence_here: a typed action taking such a parameter meets it, which is the one part of the original claim that survives
+  asymmetry_gone: a result type and a parameter type are governed by the same question now, both being planned by the phase that type-checks
 the_result_type_must_be_declared_in_the_route_package:
   found: 2026-08-13
   what: rule:same-package-convention lists a model declared in another package as out of scope for analysis, so the codec generator plans a type it finds beside the handler and not one imported from elsewhere
@@ -112,7 +127,7 @@ the_result_type_must_be_declared_in_the_route_package:
     widen_it: plan a type the declaration names wherever it is declared, which is cross-package type planning and is a much larger change than the rest of this feature
     contract_it: requirement:json-codec-interface plus requirement:declared-json-codec, so the declaring package generates its own codec and advertises it, and this module encodes a type it never analyzed
   preferred: the third, because it dissolves the constraint rather than widening the analysis that produced it, and because the analyzer keeps its same-package scope intact
-  asymmetry_with_parameters: a parameter is decoded here and so must also be readable from the AST, which is the stricter of the two limits
+  asymmetry_with_parameters: none; a_parameter_type_is_whatever_the_codec_generator_can_plan settles both sides on one question
 there_is_no_success_writer_symbol:
   claimed: the request treats the error writer and the response writer as settings this module already takes
   half_true: routetree.Symbols.WriteError is an emission selector a generated body writes through, and the WriteAPI a framework configures is a generator ResponseWriteCall pattern, which is a call analysis reads rather than one an emitter writes; nothing in Symbols writes a success response
