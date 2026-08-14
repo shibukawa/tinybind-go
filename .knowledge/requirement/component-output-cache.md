@@ -78,4 +78,11 @@ downstream_experience_2026_08_13:
     cost_it_creates: detaching removes the only bound on the fetch, which is why their store also carries a fetch timeout
     their_own_verdict: the mechanism transfers, the cost-benefit does not, and the no-coalescing default is still right for a render
   fingerprint_has_no_hand_written_equivalent: a Go function compiles to nothing to digest, which is why requirement:cache-key-generation is the blocking ask of that round rather than a convenience
+self_loading_component_2026_08_14:
+  wanted: a component declaring a primary key as its parameter, loading its own data, and carrying one annotation over the load and the render together
+  today: this cache saves the rendering and the reporter's own data cache saves the fetching, so one slow page is configured in two places for what an author thinks of as one thing
+  already_covered_here: the load would sit inside the cached subtree and decision:cache-key-derivation keys on declared parameters, so a hit skips the loader with no change to this requirement
+  blocked_on: proposed requirement:template-value-binding, because a component cannot name a fetched value today and calls its loader once per field it renders
+  still_open: a staleness policy over fetched data, which is the stale-while-revalidate question above rather than a new one
+  not_requested_yet: the reporter asks for the binding alone and says the key routing for the combined form is unresolved on their side
 ```

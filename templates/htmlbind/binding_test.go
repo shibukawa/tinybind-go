@@ -1,0 +1,276 @@
+package htmlbind_test
+
+import (
+	"strings"
+	"testing"
+
+	htmlbind "github.com/shibukawa/tinybind-go/templates/htmlbind"
+)
+
+const bindingHead = "package pages\n\n" +
+	"type Record {\n  title: string\n  summary: string\n}\n\n" +
+	"external LoadData(id: string): Record\n" +
+	"external async LoadSlow(id: string): Record\n" +
+	"external Fragment(): html\n" +
+	"external Norm(s: string): string\n\n"
+
+func bindingSource(body string) string {
+	return bindingHead + "export component Card(id: string): html {\n" + body + "\n}\n"
+}
+
+// The whole point of the construct: four reads of one loaded record are one
+// call. Without a binding each mention compiles to its own closure, which is
+// correct and is exactly what makes a component that fetches unaffordable.
+func TestValueBindingCallsItsExternalOnce(t *testing.T) {
+	generated := generateWith(t, bindingSource("{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>"), htmlbind.GenerateOptions{})
+	if calls := strings.Count(generated, "LoadData("); calls != 1 {
+		t.Fatalf("want one LoadData call, got %d:\n%s", calls, generated)
+	}
+	for _, want := range []string{"htmlbind.Val(", "p.Record.Title", "p.Record.Summary"} {
+		if !strings.Contains(generated, want) {
+			t.Fatalf("generated code is missing %q:\n%s", want, generated)
+		}
+	}
+}
+
+// The same template without the binding is the behaviour that has to stay
+// unchanged, so the repeat is still a repeat when nobody asked for a name.
+func TestWithoutABindingEveryMentionIsStillItsOwnCall(t *testing.T) {
+	generated := generateWith(t, bindingSource("<h1>{LoadData(id).title}</h1>\n<p>{LoadData(id).summary}</p>"), htmlbind.GenerateOptions{})
+	if calls := strings.Count(generated, "LoadData("); calls != 2 {
+		t.Fatalf("want two LoadData calls, got %d:\n%s", calls, generated)
+	}
+}
+
+// The bindings of one directive are independent, so one cannot read another.
+// Go reads a comma-separated declaration the same way and an await clause has
+// to, because its bindings settle concurrently; letting this comma mean
+// something else would be one spelling with two meanings.
+func TestBindingsOfOneDirectiveCannotDependOnEachOther(t *testing.T) {
+	message := generateError(t, bindingSource("{val raw = Norm(id), key = Norm(raw)}\n<p>{key}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "the bindings of one directive are independent") {
+		t.Fatalf("want the independence diagnostic, got %q", message)
+	}
+	if !strings.Contains(message, "write key as its own {val}") {
+		t.Fatalf("the diagnostic does not say what to do instead: %q", message)
+	}
+}
+
+// Written as two directives it is an ordinary enclosing binding, and the
+// generated scopes chain through Outer.
+func TestADependentBindingIsWrittenAsTwoDirectives(t *testing.T) {
+	generated := generateWith(t, bindingSource("{val raw = Norm(id)}\n{val key = Norm(raw)}\n<p>{raw}/{key}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(generated, "Norm(p.Raw)") {
+		t.Fatalf("the second binding never read the first:\n%s", generated)
+	}
+	if !strings.Contains(generated, "p.Outer.Raw") {
+		t.Fatalf("the body never reached the outer binding:\n%s", generated)
+	}
+}
+
+// Independent bindings in one directive still work, and both have to count as
+// read: the lowering nests them, so the scan has to walk into a binding's body
+// to find the reader of the outer one.
+func TestIndependentBindingsShareOneDirective(t *testing.T) {
+	generated := generateWith(t, bindingSource("{val a = Norm(id), b = Norm(id)}\n<p>{a}/{b}</p>"), htmlbind.GenerateOptions{})
+	if calls := strings.Count(generated, "Norm("); calls != 2 {
+		t.Fatalf("want one call per binding, got %d:\n%s", calls, generated)
+	}
+}
+
+// Two bindings of one name in one block is a redeclaration rather than a
+// deliberate shadow, and the source has no closer to read the first one's extent
+// from. Both spellings are the same mistake and get the same diagnostic.
+func TestSameBlockRedeclarationIsRefused(t *testing.T) {
+	for name, body := range map[string]string{
+		"two directives": "{val a = Norm(id)}\n{val a = Norm(id)}\n<p>{a}</p>",
+		"one directive":  "{val a = Norm(id), a = Norm(id)}\n<p>{a}</p>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := generateError(t, bindingSource(body), htmlbind.GenerateOptions{})
+			if !strings.Contains(message, "duplicate value binding a") {
+				t.Fatalf("want a redeclaration diagnostic, got %q", message)
+			}
+		})
+	}
+}
+
+// Shadowing from further out stays legal, because for and await already shadow
+// silently and a binding that did not would be the odd one. The outer binding
+// has to be read outside the shadowing subtree, which is what makes the shadow
+// deliberate rather than a name the author lost track of.
+func TestShadowingFromADeeperBlockIsAllowed(t *testing.T) {
+	for name, body := range map[string]string{
+		"nested element": "{val a = Norm(id)}\n<p>{a}</p>\n<div>{val a = Norm(id)}<p>{a}</p></div>",
+		"a parameter":    "{val id = Norm(id)}\n<p>{id}</p>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			generateWith(t, bindingSource(body), htmlbind.GenerateOptions{})
+		})
+	}
+}
+
+// A binding nothing reads still calls its external on every render, and an
+// external may only answer a query, so the call is paid for and discarded.
+// Generated Go accepts it, because the value becomes a struct field rather than
+// a local — which is exactly why the diagnostic has to come from here.
+func TestUnreadBindingIsRefused(t *testing.T) {
+	message := generateError(t, bindingSource("{val a = Norm(id)}\n<p>hi</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "val binding a is never read") {
+		t.Fatalf("want the unread diagnostic, got %q", message)
+	}
+}
+
+// One unread binding beside a read one is still unread, which is the case a
+// comma list makes easy to write by accident.
+func TestUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
+	message := generateError(t, bindingSource("{val a = Norm(id), b = Norm(id)}\n<p>{b}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "val binding a is never read") {
+		t.Fatalf("want the unread diagnostic for the first binding, got %q", message)
+	}
+}
+
+// A read inside a subtree that rebinds the name resolves to the inner binding,
+// so the outer one is unread and the shadow was pointless. Every binder that
+// introduces a name has to be recognized for this to hold.
+func TestShadowedBindingCountsAsUnread(t *testing.T) {
+	for name, body := range map[string]string{
+		"a nested binding": "{val a = Norm(id)}\n<div>{val a = Norm(id)}<p>{a}</p></div>",
+		"a loop variable":  "{val a = Norm(id)}\n{for a in ids}<p>{a}</p>{/for}",
+		"an await binding": "{val s = Norm(id)}\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := bindingHead + "export component Card(id: string, ids: string[]): html {\n" + body + "\n}\n"
+			if _, err := htmlbind.Generate("page.tb.html", []byte(source), htmlbind.GenerateOptions{}); err == nil ||
+				!strings.Contains(err.Error(), "is never read") {
+				t.Fatalf("want the shadowed binding reported unread, got %v", err)
+			}
+		})
+	}
+}
+
+// Every position a bound name can be read from has to count as a read, or a
+// working template is refused. These are the ones the walk had to learn.
+func TestABindingIsReadFromEveryValuePosition(t *testing.T) {
+	for name, body := range map[string]string{
+		"text":              "{val a = Norm(id)}\n<p>{a}</p>",
+		"bare attribute":    "{val a = Norm(id)}\n<p class={a}>hi</p>",
+		"quoted attribute":  "{val a = Norm(id)}\n<p class=\"x {a}\">hi</p>",
+		"if condition":      "{val a = Norm(id)}\n{if a == \"x\"}<p>y</p>{/if}",
+		"for iterable":      "{val a = ids}\n{for x in a}<p>{x}</p>{/for}",
+		"for body":          "{val a = Norm(id)}\n{for x in ids}<p>{a}{x}</p>{/for}",
+		"await binding":     "{val a = Norm(id)}\n{await s = LoadSlow(a)}<p>{s.title}</p>{fallback}...{/await}",
+		"await primary":     "{val a = Norm(id)}\n{await s = LoadSlow(id)}<p>{a}{s.title}</p>{fallback}...{/await}",
+		"await fallback":    "{val a = Norm(id)}\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}{a}{/await}",
+		"a later directive": "{val a = Norm(id)}\n{val b = Norm(a)}\n<p>{b}</p>",
+		"a nested element":  "{val a = Norm(id)}\n<div><section><p>{a}</p></section></div>",
+		"a component child": "{val a = Norm(id)}\n<Panel label=\"x\"><p>{a}</p></Panel>",
+		"a component arg":   "{val a = Norm(id)}\n<Panel label={a}/>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := bindingHead + "component Panel(label: string, children: html?): html {\n<i>{label}</i><slot/>\n}\n" +
+				"export component Card(id: string, ids: string[]): html {\n" + body + "\n}\n"
+			if _, err := htmlbind.Generate("page.tb.html", []byte(source), htmlbind.GenerateOptions{}); err != nil {
+				t.Fatalf("a read binding was refused: %v", err)
+			}
+		})
+	}
+}
+
+// The name is unresolved once the block that introduced it ends, which is what
+// makes the closerless form readable: the enclosing tag is the extent.
+func TestBindingDoesNotEscapeItsBlock(t *testing.T) {
+	message := generateError(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "unknown identifier a") {
+		t.Fatalf("want the trailing read to be unresolved, got %q", message)
+	}
+}
+
+// An await clause is the only place an async external can be called, so naming
+// one here points at that clause rather than reporting an unknown function.
+func TestAsyncExternalCannotBeBound(t *testing.T) {
+	message := generateError(t, bindingSource("{val r = LoadSlow(id)}\n<p>{r.title}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "await") {
+		t.Fatalf("want the diagnostic to name the await clause, got %q", message)
+	}
+}
+
+// An html result is a subtree rendered where it is written, not a value, so
+// binding it would promise an operand position it cannot fill.
+func TestHTMLResultCannotBeBound(t *testing.T) {
+	message := generateError(t, bindingSource("{val f = Fragment()}\n<p>x</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "renders where it is written") {
+		t.Fatalf("want the html diagnostic, got %q", message)
+	}
+}
+
+// A binding has a body even without a closer, and an attribute value has no
+// later siblings for it to reach.
+func TestBindingIsRefusedInAnAttribute(t *testing.T) {
+	message := generateError(t, bindingSource(`<p class="{val a = Norm(id)}">x</p>`), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "forbidden in attributes") {
+		t.Fatalf("want the attribute diagnostic, got %q", message)
+	}
+}
+
+// A binding is scoped by whatever block encloses it, and every construct that
+// owns a body is such a block. These are the traversals that had to learn the
+// node, so a miss shows up here rather than as a subtree quietly dropped.
+func TestBindingWorksInsideEveryBodyBearingBlock(t *testing.T) {
+	for name, body := range map[string]string{
+		"for body":       "{for x in ids}{val r = LoadData(x)}<p>{r.title}{r.summary}</p>{/for}",
+		"if branch":      "{if flag}{val r = LoadData(id)}<p>{r.title}{r.summary}</p>{else}<p>no</p>{/if}",
+		"await primary":  "{await s = LoadSlow(id)}{val r = LoadData(s.title)}<p>{r.title}{r.summary}</p>{fallback}...{/await}",
+		"await fallback": "{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}{val r = LoadData(id)}<p>{r.title}{r.summary}</p>{/await}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := bindingHead + "export component Card(id: string, ids: string[], flag: bool): html {\n" + body + "\n}\n"
+			generated := generateWith(t, source, htmlbind.GenerateOptions{})
+			if calls := strings.Count(generated, "LoadData("); calls != 1 {
+				t.Fatalf("want one LoadData call, got %d:\n%s", calls, generated)
+			}
+		})
+	}
+}
+
+// The case the whole request was made for: a component takes a primary key,
+// loads its own data, and one @cache covers the load and the render together.
+// The loader sits inside the cached subtree and the key is the declared
+// parameter, so a hit skips the fetch as well as the markup — and none of that
+// needed a change to the cache.
+func TestCachedComponentCanLoadItsOwnData(t *testing.T) {
+	source := bindingHead + "@cache(ttl: \"5m\")\nexport component Card(id: string): html {\n" +
+		"{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>\n}\n"
+	generated := generateWith(t, source, htmlbind.GenerateOptions{})
+	if calls := strings.Count(generated, "LoadData("); calls != 1 {
+		t.Fatalf("want one LoadData call, got %d:\n%s", calls, generated)
+	}
+	if !strings.Contains(generated, "CachePolicy[CardParams]") {
+		t.Fatalf("the component lost its cache policy:\n%s", generated)
+	}
+	// The key is the declared parameter, never the loaded value: a key built
+	// from what the lookup exists to avoid fetching would be no lookup at all.
+	if !strings.Contains(generated, "KeyString[string](p.Id)") {
+		t.Fatalf("the cache key is not the declared parameter:\n%s", generated)
+	}
+	policy := strings.Index(generated, "planCardCache")
+	loader := strings.Index(generated, "LoadData(p.Id)")
+	if policy < 0 || loader < 0 || loader < policy {
+		t.Fatalf("the loader is not inside the cached plan:\n%s", generated)
+	}
+}
+
+// Inside a script body the gate decides whether a brace is an insertion at all.
+// Without the keyword the shapes read `{val a = f()}` as content, because an
+// identifier followed by another one is neither a bare value nor a call.
+func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
+	source := bindingHead + "export component Card(id: string): html {\n" +
+		"<script>{val a = Norm(id)}const x = {JsonForScript(a)};</script>\n}\n"
+	generated := generateWith(t, source, htmlbind.GenerateOptions{})
+	if !strings.Contains(generated, "htmlbind.Val(") {
+		t.Fatalf("the binding never became an instruction:\n%s", generated)
+	}
+	if calls := strings.Count(generated, "Norm("); calls != 1 {
+		t.Fatalf("want one Norm call, got %d:\n%s", calls, generated)
+	}
+}

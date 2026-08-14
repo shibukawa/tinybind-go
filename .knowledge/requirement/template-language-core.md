@@ -23,6 +23,7 @@ expressions:
 control:
   if: bool condition; else and else-if supported
   for: collection item iteration; optional index
+  binding: proposed requirement:template-value-binding names one or more expression results for its own subtree, which is the only binder a synchronous external has
   recognition: active format parser discovers boundaries only in its valid lexical contexts
   recursion: shared parser parses headers and delegates each control body back to the active format parser
 functions:

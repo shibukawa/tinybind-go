@@ -136,6 +136,57 @@ statement, err := BuildRenameUser(42, "Ada")
 
 この保証は例外なく効き、その分の代償もあります。`$1` や `?` を手書きすれば生成エラーになり、通常の値 parameter は SQL の構造要素——table 名、column 名、operator、sort direction——の代わりには決してなれません。
 
+## Go 側で値を 1 回だけ加工する
+
+statement に渡す前に Go で加工が必要なら `external` を宣言し、その結果を複数の位置で
+使うなら `{val}` で束縛します。
+
+```text
+external NormalizeName(name: string): string
+
+export statement FindUser(name: string): sql.many<UserRow> {
+{val key = NormalizeName(name)}
+SELECT id, name FROM users
+WHERE name = {key} OR alias = {key}
+}
+```
+
+```go
+func NormalizeName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+```
+
+束縛は生成される builder の中で Go のローカル変数 1 つになります。いくつの
+placeholder が読んでも、関数が走るのは 1 回です。
+
+```go
+key := NormalizeName(name)
+b.WriteString("... WHERE name = ")
+b.Arg(key)
+b.WriteString(" OR alias = ")
+b.Arg(key)
+```
+
+束縛しなければ `{NormalizeName(name)}` を 2 回書けば 2 回呼ばれます。それ自体は正しい
+動作ですが、関数が実際の仕事をするようになったら避けたいところです。
+
+束縛に閉じタグはありません。及ぶのは後ろに続くもので、囲んでいるブロックの終わりま
+でです。`{if}` の分岐の中で束縛すれば、その分岐が範囲になります。
+
+```text
+SELECT id, name FROM users WHERE
+{if exact}
+  {val key = NormalizeName(name)}
+  name = {key}
+{else}
+  name LIKE {pattern}
+{/if}
+```
+
+意図しない呼び出しにならないよう、規則が 3 つあります。同じブロックで同じ名前を 2 回
+束縛するのは再宣言です。1 つの `{val}` の束縛どうしは独立なので、片方がもう片方を
+読むなら 2 つに分けてください。そしてどこからも読まれない束縛はエラーです——statement
+を組み立てるたびに呼ばれて、結果はどこにも行きません。
+
 ## 戻り件数の宣言
 
 | 出力型 | 契約 | 高レベル API の結果 |

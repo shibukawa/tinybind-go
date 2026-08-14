@@ -719,7 +719,69 @@ func RequestBanner(ctx context.Context) htmlbind.Fragment { ... }
 > ではなく描画呼び出しの `htmlbind.WithCSRFToken(token)` で渡します。
 > [htmlbind_frameworkowner.ja.md](htmlbind_frameworkowner.ja.md#csrf-トークンのライフサイクルを持つ) を参照してください。
 
-```go
+### 結果に名前を付ける
+
+external の呼び出しは普通の式なので、書いた回数だけ呼ばれます。1 件のレコードから
+4 つのフィールドを出す component は、ローダーを 4 回呼びます。
+
+```text
+export component Card(id: string): html {
+<h1>{LoadData(id).title}</h1>
+<p>{LoadData(id).summary}</p>
+}
+```
+
+`{val}` は結果に名前を付けます。
+
+```text
+export component Card(id: string): html {
+{val record = LoadData(id)}
+<h1>{record.title}</h1>
+<p>{record.summary}</p>
+}
+```
+
+名前 1 つ、呼び出し 1 回。閉じタグはありません。束縛が及ぶのは後ろに続くもので、
+囲んでいる要素・制御ブロック・component 本体の終わりまでです。値が書ける場所なら
+どこでも読めます — 補間、属性、`if` の条件、ループの対象、component の引数、別の
+external の引数。
+
+カンマで複数を束縛できます。前の束縛を読みたいときは `{val}` をもう 1 行書きます。
+
+```text
+{val user = LoadUser(id), theme = LoadTheme(id)}
+{val greeting = Greet(user.name)}
+<h1>{greeting}</h1>
+<p class={theme.class}>{user.bio}</p>
+```
+
+1 つの `{val}` の束縛どうしは独立です。Go が `a, b := f(), g()` の右辺をどちらも
+代入前に評価するのと同じ読み方で、同じ `{val}` の兄弟を読むとエラーになり、分けて
+書くよう促されます。
+
+意図しない呼び出しを捕まえるための規則がもう 2 つあります。
+
+- 同じブロックで同じ名前をもう一度束縛するのは再宣言です。意図的に隠すなら、隣に
+  並べるのではなく入れ子の要素の中で束縛してください。
+- どこからも読まれない束縛はエラーです。描画のたびに呼ばれて、結果はどこにも行き
+  ません。
+
+束縛できるのは値だけです。`external async` は
+[`await` 節](#await--fallback--recover) のもので、`: html` と宣言した external は値に
+なるのではなく書いた場所で描画されます。
+
+この構文があると、component が自分でデータを読み込み、その読み込みと描画をひとまと
+まりでキャッシュできます — [キャッシュ component](#キャッシュ-component)
+を参照してください。キーは宣言済みの parameter を覆うので、ヒットすれば markup だけ
+でなく取得ごと省かれます。
+
+```text
+@cache(ttl: "5m")
+export component Card(id: string): html {
+{val record = LoadData(id)}
+<h1>{record.title}</h1>
+<p>{record.summary}</p>
+}
 ```
 
 ## 非同期 component

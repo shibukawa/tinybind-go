@@ -85,5 +85,5 @@ caller_scope:
 open_questions:
   - whether every expression position gains a ctx-carrying op variant, or generation restricts a context-taking sync external to the positions that have one
   - whether a sync external should be allowed an error result once it can observe cancellation, or stay total as requirement:async-external-functions splits it
-  - whether one call is shared when the same context-taking external appears several times in one render
+  - answered 2026-08-14: no call is shared implicitly; proposed requirement:template-value-binding lets the author name the result once, and decision:value-binding-form rejects collapsing identical calls automatically
 ```

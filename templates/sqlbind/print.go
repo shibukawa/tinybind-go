@@ -147,6 +147,13 @@ func (b *docBuilder) elements(nodes []syntax.Node) ([]element, error) {
 			out = append(out, element{atom: atom{
 				kind: atomNode, text: relationText(n), depth: b.lexer.depth, spaced: b.takeSpace(), node: n,
 			}})
+		case *syntax.ValNode:
+			// An atom, not a control: the binding has no closer and the nodes it
+			// scopes stay where the author put them.
+			out = append(out, element{atom: atom{
+				kind: atomNode, text: "{" + syntax.ValString(n) + "}",
+				depth: b.lexer.depth, spaced: b.takeSpace(), node: n,
+			}})
 		default:
 			doc, err := b.control(node)
 			if err != nil {

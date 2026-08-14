@@ -136,6 +136,59 @@ statement, err := BuildRenameUser(42, "Ada")
 
 The guarantee is absolute, and it costs something. Handwritten `$1` or `?` placeholders are generation errors, and an ordinary value parameter can never stand in for a structural element — a table name, a column name, an operator, a sort direction.
 
+## Computing a value once in Go
+
+Declare an `external` function when a parameter needs work done in Go before it
+reaches the statement, and bind its result with `{val}` when more than one
+position uses it:
+
+```text
+external NormalizeName(name: string): string
+
+export statement FindUser(name: string): sql.many<UserRow> {
+{val key = NormalizeName(name)}
+SELECT id, name FROM users
+WHERE name = {key} OR alias = {key}
+}
+```
+
+```go
+func NormalizeName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+```
+
+The binding becomes one Go local in the generated builder, so the function runs
+once no matter how many placeholders read it:
+
+```go
+key := NormalizeName(name)
+b.WriteString("... WHERE name = ")
+b.Arg(key)
+b.WriteString(" OR alias = ")
+b.Arg(key)
+```
+
+Without the binding, `{NormalizeName(name)}` written twice is two calls — correct,
+and worth avoiding once the function does real work.
+
+A binding has no closing tag. It scopes whatever follows it, up to the end of the
+enclosing block, which for a `{if}` branch is that branch:
+
+```text
+SELECT id, name FROM users WHERE
+{if exact}
+  {val key = NormalizeName(name)}
+  name = {key}
+{else}
+  name LIKE {pattern}
+{/if}
+```
+
+Three rules keep a binding from being a call you did not mean to make. Binding
+the same name twice in one block is a redeclaration; the bindings of one `{val}`
+are independent, so one that reads another must be split into two; and a binding
+nothing reads is an error, because its call would run every time the statement is
+built and the result would go nowhere.
+
 ## Declaring result cardinality
 
 | Output | Contract | High-level result |

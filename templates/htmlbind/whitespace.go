@@ -142,6 +142,16 @@ func (w whitespaceWalk) walk(nodes []Node, drop, fills bool) ([]Node, error) {
 				return nil, err
 			}
 			node.Body = body
+		case *syntax.ValNode:
+			// A binding is still flat here; normalization folds the following
+			// siblings into it only after whitespace is settled. The body walk
+			// is for a tree that has already been folded, which the formatter's
+			// path does not produce.
+			body, err := w.walk(node.Body, drop, fills)
+			if err != nil {
+				return nil, err
+			}
+			node.Body = body
 		case *syntax.AwaitNode:
 			primary, err := w.walk(node.Primary, drop, fills)
 			if err != nil {
