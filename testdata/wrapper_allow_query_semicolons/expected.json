@@ -12,9 +12,7 @@
       "success_statuses": [
         200
       ],
-      "wrappers": {
-        "allow_query_semicolons": true
-      }
+      "wrappers": {}
     }
   ]
 }

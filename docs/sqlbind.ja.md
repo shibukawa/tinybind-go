@@ -587,7 +587,7 @@ res, err := DeleteUserContext(ctx, 42)       // sqlbind.ErrReadOnlyExecutor
 
 読み取りと判定されるのは、先頭が `SELECT` / `VALUES` / `TABLE`、または CTE 本体に書き込みを含まず末尾が読み取りの `WITH` で、かつトップレベルに `FOR UPDATE` などの行ロック句がない statement だけです。`DELETE ... RETURNING` を `sql.one<T>` で宣言したものや `SELECT ... FOR UPDATE` は書き込みとして扱われます。判定できないものはすべて書き込みに倒れるので、誤判定は「read replica を使えたはずが writer を使う」方向にしか起きません。
 
-`SELECT` から書き込みを行う関数を呼ぶ場合など、静的に判定できない書き込みは検出できません。最終的な防御はデータベース側に残ります。カスタム resolver（`-sql-executor-resolver`）を指定した場合、その契約は読み取り専用かどうかを運べないため、このチェックは無効になります。
+`SELECT` から書き込みを行う関数を呼ぶ場合など、静的に判定できない書き込みは検出できません。最終的な防御はデータベース側に残ります。カスタム resolver（generator オプションの `SQLExecutorResolver`）を指定した場合、その契約は読み取り専用かどうかを運べないため、このチェックは無効になります。
 
 ## context のみの公開 API
 

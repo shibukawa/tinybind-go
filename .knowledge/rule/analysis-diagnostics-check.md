@@ -19,7 +19,6 @@ silent_drop_forbidden: true
 
 trigger_examples:
   - dynamic pattern: '"GET " + path' or non-string pattern arg
-  - cross_package_handler: handler leaf resolves outside package
   - unanalyzable_middleware: wrapper chain does not yield known leaf
   - cross_package_model: Bind/Write type arg is selector to other package
   - complex_type_arg: pointer *T, nested generic, or unsupported type expr
@@ -32,7 +31,7 @@ non_triggers:
 report_fields:
   - file and position
   - registration call summary
-  - reason code (dynamic_pattern|cross_package_handler|opaque_middleware|cross_package_model|complex_type_arg|other)
+  - reason code (dynamic_pattern|opaque_middleware|cross_package_model|complex_type_arg|other); a cross_package_handler code was documented through 2026-08-14 but no pass ever emitted it
   - whether OpenAPI will omit the route
 
 related:

@@ -48,7 +48,7 @@ implemented_2026_08_08:
     transport_only_calls:
       problem: WriteError and the request accessors take a transport value and name no model, so no call pattern covered them and every handler reporting an error was refused
       fix: OperationTransportOnly, a pattern that carries transport slots and nothing else; discovery ignores it because the parser conversion drops unknown operations
-      scope: WriteError, WriteJSON, WriteJSONBytes, and the request accessors, all of which exist under the same names on both runtimes
+      scope: WriteError, WriteJSONBytes, and the request accessors, all of which exist under the same names on both runtimes; WriteJSON was in this list until 2026-08-14, when the never-called helper was removed from both runtimes
     blank_assignment: "_ = r" discards the value and appears throughout real handlers, including this module's own; refusing it would refuse most of them, so it is admitted
     closure_precedence: a captured transport value is surrounded by ordinary recognized calls, so the capture refusal has to outrank the per-call admission or the capture is missed
     same_package_is_not_third_party: a helper in the package is a transitive candidate, so modelling an unknown call needs a genuinely external callee

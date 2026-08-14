@@ -31,12 +31,7 @@ func MaxJSONBodyBytes() int64 {
 	return DefaultMaxJSONBodyBytes
 }
 
-// ReadLimit reads at most limit bytes from r.
-func ReadLimit(r io.Reader, limit int64) ([]byte, error) {
-	return ReadLimitHint(r, limit, 0)
-}
-
-// ReadLimitHint is ReadLimit with an expected size. A caller that knows the
+// ReadLimitHint reads at most limit bytes from r, with an expected size. A caller that knows the
 // length up front — an HTTP handler with a Content-Length, say — lets the whole
 // body land in one allocation instead of the repeated grow-and-copy io.ReadAll
 // performs. A wrong hint costs nothing but the usual growth.
@@ -435,9 +430,6 @@ func RawJSONArray(raw []byte) ([][]byte, error) {
 
 // RawJSONMap splits a JSON object into raw fields. Values alias raw.
 func RawJSONMap(raw []byte) (*Object, error) { return ParseObject(raw) }
-
-// BytesJSONMap splits a complete JSON object document.
-func BytesJSONMap(data []byte) (*Object, error) { return ParseObject(data) }
 
 // RestJSONAny returns JSON fields not named in exclude.
 func RestJSONAny(body *Object, exclude []string) (map[string]any, error) {

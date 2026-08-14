@@ -10,9 +10,7 @@
       },
       "socket_in": "ClientMsg",
       "socket_out": "ServerMsg",
-      "wrappers": {
-        "allow_query_semicolons": false
-      }
+      "wrappers": {}
     }
   ]
 }

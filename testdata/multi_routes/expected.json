@@ -12,9 +12,7 @@
       "success_statuses": [
         200
       ],
-      "wrappers": {
-        "allow_query_semicolons": false
-      }
+      "wrappers": {}
     },
     {
       "method": "POST",
@@ -31,9 +29,7 @@
       "success_statuses": [
         200
       ],
-      "wrappers": {
-        "allow_query_semicolons": false
-      }
+      "wrappers": {}
     }
   ]
 }

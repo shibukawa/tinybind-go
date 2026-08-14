@@ -142,13 +142,6 @@ type PassthroughElement struct {
 // taken.
 func (b *BuiltinElement) perRequest() bool { return b.Provider != nil }
 
-func (b *BuiltinElement) insertionContext() string {
-	if b.Context == "" {
-		return "html:child"
-	}
-	return b.Context
-}
-
 // elementSet is the resolved whitelist: an immutable snapshot taken before
 // package analysis, so concurrent analysis shares it safely.
 type elementSet struct {

@@ -13,9 +13,7 @@
         200
       ],
       "wrappers": {
-        "allow_query_semicolons": false,
-        "timeout": "30s",
-        "timeout_message": "timeout"
+        "timeout": "30s"
       }
     }
   ]

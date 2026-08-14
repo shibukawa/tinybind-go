@@ -18,16 +18,6 @@ func DecodeJSONLimit[T any](r io.Reader, limit int64) (T, error) {
 	return decodeJSON[T](r, limit, 0)
 }
 
-// DecodeJSONHint is DecodeJSONLimit with an expected document size. A caller
-// that knows the length up front — an HTTP handler with a Content-Length, say
-// — lets the whole body land in one allocation; see ReadLimitHint.
-func DecodeJSONHint[T any](r io.Reader, limit, hint int64) (T, error) {
-	if limit <= 0 {
-		limit = MaxJSONBodyBytes()
-	}
-	return decodeJSON[T](r, limit, hint)
-}
-
 func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 	var zero T
 	fn, ok := lookupDecoder[T]()

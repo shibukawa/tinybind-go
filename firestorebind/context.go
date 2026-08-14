@@ -142,16 +142,6 @@ func ClientFromContext(ctx context.Context) (*datastore.Client, error) {
 	return h.client, nil
 }
 
-// clientFor resolves the client and the namespace resolver together. Every
-// Context-resolving entry of this package calls it.
-func clientFor(ctx context.Context) (*datastore.Client, NamespaceResolver, error) {
-	h, err := HandleFromContext(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return h.resolve()
-}
-
 // KeyFor stamps the Context's namespace onto a key, the way every wrapped entry
 // of this package does before it sends one.
 //

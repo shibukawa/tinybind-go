@@ -589,7 +589,7 @@ Write statements are identified at generation time and return `sqlbind.ErrReadOn
 
 A statement counts as read-only only when it opens with `SELECT`, `VALUES`, or `TABLE`, or is a `WITH` whose CTE bodies do not write and whose tail reads, and when it carries no top-level row-locking clause such as `FOR UPDATE`. A `DELETE ... RETURNING` declared as `sql.one<T>`, and a `SELECT ... FOR UPDATE`, are both writes. Anything the analysis cannot resolve is a write, so a misclassification can only cost a replica connection rather than send a write to a read-only executor.
 
-Writes that are invisible in the SQL text, such as a `SELECT` calling a function that writes, are not detected; the database remains the final guard. The check is disabled when a custom resolver (`-sql-executor-resolver`) is configured, because that contract cannot carry the access mode.
+Writes that are invisible in the SQL text, such as a `SELECT` calling a function that writes, are not detected; the database remains the final guard. The check is disabled when a custom resolver (the `SQLExecutorResolver` generator option) is configured, because that contract cannot carry the access mode.
 
 ## Context-only public API
 

@@ -28,7 +28,6 @@ deprecated:
   target: deprecated true on operation, schema, and property
 absent_doc: field omitted
 inline_handler: no doc source, operation carries no summary
-cross_package_handler: no doc source
 related:
   - concept:openapi-generation
   - rule:openapi-validation-metadata
