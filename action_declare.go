@@ -16,7 +16,10 @@ func ReadActionBody(r *http.Request) ([]byte, error) {
 	if r == nil || r.Body == nil {
 		return nil, nil
 	}
-	data, err := jsonbind.ReadLimit(r.Body, jsonbind.MaxJSONBodyBytes())
+	// The Content-Length is passed as the hint so a body of known size lands in
+	// one allocation, which is what that parameter exists for and what an
+	// action call, being a small JSON document, always has.
+	data, err := jsonbind.ReadLimitHint(r.Body, jsonbind.MaxJSONBodyBytes(), r.ContentLength)
 	if err != nil {
 		if err == jsonbind.ErrBodyTooLarge {
 			return nil, PayloadTooLarge(Problem{Code: "payload_too_large", Message: "request body too large"}, err)
