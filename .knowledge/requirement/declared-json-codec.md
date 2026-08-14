@@ -26,6 +26,14 @@ as_built:
   registered_per_runtime_path: canonicalRuntimeCalls is applied for every runtime package, so the names are registered against each and matched by resolved symbol identity, which is how DecodeJSON and EncodeJSON already work
   tests: generator/declared_codec_test.go over each direction, over a discovered call publishing nothing, over a type beside an annotated one, and over one direction disabled
   init_cost_accepted: the call runs at init and does nothing, which is the runtime footprint decision:typed-action-declaration records for the same declaration shape
+  a_foreign_type_is_refused:
+    measured: 2026-08-14, as silently producing no codec, no method and no diagnostic
+    why_it_was_silent: discovery records the type name and the plan holds only this package's declarations, so the name matched nothing and the loop that would have marked it found nothing to mark
+    why_it_mattered: it is the silent-nothing failure this whole mechanism exists to remove, arriving through the mechanism's own front door
+    now: a generation error naming the type, the package that declares it, and the remedy
+    only_an_annotation_is_checked: an ordinary generic call may legitimately name a type from anywhere, and this package planning nothing for it stays the right answer; the published-method bits are what tell the two apart
+    the_remedy_works: verified 2026-08-14 by declaring the codec in the owning package, generating both packages, and round-tripping a consumer struct holding the type through the generated methods
+    which_is_the_composition: requirement:json-codec-interface is what carries it across, so the guidance is not advice to nowhere
 source:
   - maintainer proposal 2026-08-13
   - requirement:typed-server-action the_result_type_still_needs_a_usage
@@ -67,8 +75,9 @@ acceptance:
   - a declaration naming one direction emits that direction only
   - a declared and a discovered usage for one type emit one codec, and the methods
   - a type reached only by a discovered call gains no method
-  - a declaration naming a type of another package fails generation, naming the package that should carry it
   - a project declaring nothing regenerates byte for byte
+  - a declaration naming a type of another package fails generation, naming that package
+  - an ordinary generic call naming a type of another package is unaffected
 related:
   - rule:usage-directed-generation
   - requirement:json-codec-interface
@@ -76,6 +85,14 @@ related:
   - decision:typed-action-declaration
   - concept:standalone-json-codec
   - rule:same-package-convention
-open_questions:
-  - whether one declaration form covers the other generated paths, the SQL scanner and the item codecs, or stays JSON-only
+stays_json_only:
+  decided: 2026-08-14, closing the question of whether one declaration form covers the other generated paths
+  sql_scanner_does_not_need_it:
+    the_gap_this_fills: a type whose codec is needed and which no discovered call names, which happens when the generator writes the call itself or when the value crosses a boundary the analysis cannot see
+    neither_applies: nothing in the generator emits a sqlbind.ScanRows call, so the call is always the author's own, and row scanning is bound to the query rather than crossing a package boundary
+  item_codec_already_has_one:
+    tag_driven: rule:usage-directed-generation item_key_exception gives a partitionkey-tagged type its key builder and table definition with no discovered call, which is the precedent this requirement was built on
+    and_publishes_methods: requirement:dynamobind-generated-item-codec emits EncodeItem and DecodeItem onto the type, so it already has the reach requirement:json-codec-interface added for JSON
+    no_generated_call_names_one: generated query code adds no item usage, so the typed-action shape has no DynamoDB counterpart
+  therefore: a second spelling would say what a tag already says, and the SQL path has nothing to say
 ```

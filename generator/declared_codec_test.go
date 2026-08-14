@@ -205,3 +205,64 @@ func main() {}
 		t.Fatalf("generated codec does not satisfy the interfaces: %v\n%s\n%s", err, output, code)
 	}
 }
+
+// writeDomainAndApp lays out a package declaring a type and one holding it.
+func writeDomainAndApp(t *testing.T, domainBody, appBody string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	for _, d := range []string{"domain", "app"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	head := "package domain\n\nimport \"github.com/shibukawa/tinybind-go/jsonbind\"\n\nvar _ = jsonbind.GenerateEncoder[marker]()\n\ntype marker struct{ X int }\n\ntype User struct {\n\tID   string `json:\"id\"`\n\tName string `json:\"name\"`\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "domain", "domain.go"), []byte(head+domainBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := "package app\n\nimport (\n\t\"github.com/shibukawa/tinybind-go/jsonbind\"\n\t\"tempmod/domain\"\n)\n\nvar _ = jsonbind.GenerateEncoder[Local]()\n\ntype Local struct{ Y int }\n\n" + appBody
+	if err := os.WriteFile(filepath.Join(dir, "app", "app.go"), []byte(app), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tidyTempModule(t, dir)
+	return dir
+}
+
+// Generation is per package, so an annotation naming a type this package does
+// not declare marks nothing and emits nothing. Left alone that is silent: the
+// author writes the annotation, gets no codec, and is told nothing — which is
+// the failure this mechanism exists to remove, arriving through its own front
+// door.
+func TestDeclarationNamingAnotherPackagesTypeIsRefused(t *testing.T) {
+	dir := writeDomainAndApp(t, "", "var _ = jsonbind.GenerateCodec[domain.User]()\n")
+	_, err := generator.AnalyzePackage(filepath.Join(dir, "app"))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, want := range []string{"User", "tempmod/domain", "write the declaration in"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+	// The remedy the diagnostic names has to work, or it is advice to nowhere.
+	if _, err := generator.AnalyzePackage(filepath.Join(dir, "domain")); err != nil {
+		t.Fatalf("the declaration is legal in the owning package: %v", err)
+	}
+}
+
+// An ordinary generic call may legitimately name a type from anywhere, and this
+// package planning nothing for it stays the right answer. Only an annotation,
+// which is a request to generate, is refused.
+func TestOrdinaryCallNamingAnotherPackagesTypeIsStillFine(t *testing.T) {
+	dir := writeDomainAndApp(t, "", `
+func Read(data []byte) (domain.User, error) {
+	return jsonbind.DecodeJSONBytes[domain.User](data)
+}
+`)
+	if _, err := generator.AnalyzePackage(filepath.Join(dir, "app")); err != nil {
+		t.Fatalf("an ordinary call must not be refused: %v", err)
+	}
+}

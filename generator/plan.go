@@ -337,7 +337,7 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 		for name, kind := range namedKinds {
 			packageNamedKinds[name] = kind
 		}
-		discoveredInFile, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols)
+		discoveredInFile, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols, plan.PackagePath)
 		if err != nil {
 			return nil, err
 		}
@@ -614,7 +614,7 @@ func isByteSliceType(t types.Type) bool {
 
 // discoverGenericTypeArgs finds type arguments of httpbind Bind/Write/DecodeJSON/EncodeJSON
 // using go/types-resolved function identity (import-alias safe).
-func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoverySymbol) (map[string]Usage, error) {
+func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoverySymbol, packagePath string) (map[string]Usage, error) {
 	out := map[string]Usage{}
 	if f == nil || info == nil {
 		return out, nil
@@ -653,7 +653,12 @@ func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoveryS
 				continue
 			}
 			if len(args) > symbol.TypeArgument {
-				if name := namedTypeName(info.TypeOf(args[symbol.TypeArgument])); name != "" {
+				name, declaredIn := namedTypeIdentity(info.TypeOf(args[symbol.TypeArgument]))
+				if err := checkDeclarationIsLocal(symbol, name, declaredIn, packagePath); err != nil {
+					discoveryErr = err
+					return false
+				}
+				if name != "" {
 					out[name] |= symbol.Usage
 				}
 				continue
@@ -665,6 +670,36 @@ func discoverGenericTypeArgs(f *ast.File, info *types.Info, symbols []DiscoveryS
 		return true
 	})
 	return out, discoveryErr
+}
+
+// checkDeclarationIsLocal refuses a codec annotation naming a type this package
+// does not declare.
+//
+// Only an annotation is checked, which the published-method bits identify: an
+// ordinary generic call may legitimately name a type from anywhere, and this
+// package planning nothing for it is the right answer there.
+//
+// An annotation is different. It is a request to generate, and generation is
+// per package: the plan holds this package's declarations, so a name that
+// matches none of them marks nothing and emits nothing. Left alone that is
+// silent — the author writes the annotation, gets no codec, and is told
+// nothing, which is the failure this whole mechanism exists to remove arriving
+// through its own front door.
+//
+// The remedy is to write the annotation beside the type. That works: the owning
+// package generates the codec and publishes it as the methods of
+// requirement:json-codec-interface, and a consumer holding the type reaches it
+// through those.
+func checkDeclarationIsLocal(symbol DiscoverySymbol, name, declaredIn, packagePath string) error {
+	if symbol.Usage&UsageJSONMethods == 0 || name == "" {
+		return nil
+	}
+	if declaredIn == "" || packagePath == "" || declaredIn == packagePath {
+		return nil
+	}
+	return fmt.Errorf(
+		"generator: %s.%s declares a codec for %s, which %s declares; generation is per package, so write the declaration in %s beside the type and this package will reach it through the generated methods",
+		symbol.PackagePath, symbol.Name, name, declaredIn, declaredIn)
 }
 
 func discoverySymbolMatches(obj types.Object, symbol DiscoverySymbol) bool {
@@ -734,10 +769,22 @@ func argumentTypeName(t types.Type) string {
 }
 
 func namedTypeName(t types.Type) string {
-	if n, ok := unaliasPtr(t).(*types.Named); ok && n.Obj() != nil {
-		return n.Obj().Name()
+	name, _ := namedTypeIdentity(t)
+	return name
+}
+
+// namedTypeIdentity is namedTypeName plus the package the type is declared in,
+// which is what tells a declaration naming this package's type from one naming
+// somebody else's.
+func namedTypeIdentity(t types.Type) (name, pkgPath string) {
+	n, ok := unaliasPtr(t).(*types.Named)
+	if !ok || n.Obj() == nil {
+		return "", ""
 	}
-	return ""
+	if pkg := n.Obj().Pkg(); pkg != nil {
+		pkgPath = pkg.Path()
+	}
+	return n.Obj().Name(), pkgPath
 }
 
 // unaliasPtr resolves type aliases and strips one pointer indirection. Since

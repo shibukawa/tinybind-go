@@ -180,7 +180,7 @@ func analyzeDynamoItems(load *packageLoad, opts Options) (*DynamoPackagePlan, er
 			generated[dynamoFileName(pkg, f)] = true
 			continue
 		}
-		discovered, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols)
+		discovered, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols, pkg.PkgPath)
 		if err != nil {
 			return nil, err
 		}
