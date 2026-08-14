@@ -131,7 +131,9 @@ a_parameter_type_is_whatever_the_codec_generator_can_plan:
     same_package_struct: the ordinary nested case the codec generator is built around, so a struct parameter is the natural shape rather than the refused one
     other_package_struct: through requirement:json-codec-interface, which is what makes it reachable at all
     collections: a slice or map of those, except a foreign element type
-  a_named_non_struct_type_is_the_real_gap:
+  a_named_non_struct_type_was_the_real_gap:
+    fixed: 2026-08-14 by rule:named-type-field-kind, which resolves the underlying type
+    was:
     measured: 2026-08-13, generating over a struct holding a field of type UserID where UserID is a named string
     what_happens: fieldTypeKind maps every same-package identifier to KindStruct, so emission names appendUserIDJSON, decodeUserIDBytes, and decodeUserIDJSON
     none_are_defined: analyzeStruct collects only struct type declarations, so a named scalar never enters the plan and none of those functions is emitted

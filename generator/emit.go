@@ -569,11 +569,11 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 	case "string", "int", "int64", "bool", "float64":
 		fmt.Fprintf(b, "%sv, err := p.%s()\n", prefix, parserMethod(f.Kind))
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), f.Kind, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindForeign:
 		// A foreign type cannot join the parser walk, because its decoder takes
 		// a complete document. RawValue lifts the sub-document out so it can be
@@ -691,27 +691,27 @@ func emitAssignFromRaw(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, 
 	case "string":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONString(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid string\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "int":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONInt(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid int\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "int64":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONInt64(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid int64\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "bool":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONBool(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid bool\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "float64":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONFloat64(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid float64\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sBytes(%s)\n", prefix, f.TypeName, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindForeign:
 		// The type fills itself from the raw sub-document. That sub-slice is
 		// the second scan of the region the decode half costs at depth, and it
@@ -732,23 +732,23 @@ func emitAssignSliceFromRaw(b *bytes.Buffer, f FieldPlan, rawVar, prefix, dest, 
 	case "string":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONStringSlice(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "int":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONIntSlice(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "int64":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONInt64Slice(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "bool":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONBoolSlice(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case "float64":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONFloat64Slice(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindStruct:
 		fmt.Fprintf(b, "%sarr, err := jsonbind.RawJSONArray(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
@@ -767,7 +767,7 @@ func emitAssignMapFromRaw(b *bytes.Buffer, f FieldPlan, rawVar, prefix, dest, re
 	case "string":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONMapStringString(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindStruct:
 		fmt.Fprintf(b, "%sobj, err := jsonbind.RawJSONMap(%s)\n", prefix, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
@@ -782,7 +782,7 @@ func emitAssignMapFromRaw(b *bytes.Buffer, f FieldPlan, rawVar, prefix, dest, re
 	case "int", "int64", "bool", "float64":
 		fmt.Fprintf(b, "%sv, err := jsonbind.DecodeJSONMapString%s(%s)\n", prefix, exportedKind(f.ElemKind), rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%sjsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", prefix, prefix, ret, f.Wire, prefix)
-		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	}
 }
 
@@ -1058,15 +1058,15 @@ func emitZeroCheck(b *bytes.Buffer, t TypePlan) {
 func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 	switch f.Kind {
 	case "string":
-		fmt.Fprintf(b, "%sdst = jsonbind.AppendString(dst, %s)\n", prefix, src)
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendString(dst, %s)\n", prefix, f.Read(src))
 	case "int":
 		fmt.Fprintf(b, "%sdst = jsonbind.AppendInt(dst, int64(%s))\n", prefix, src)
 	case "int64":
-		fmt.Fprintf(b, "%sdst = jsonbind.AppendInt(dst, %s)\n", prefix, src)
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendInt(dst, %s)\n", prefix, f.Read(src))
 	case "bool":
-		fmt.Fprintf(b, "%sdst = jsonbind.AppendBool(dst, %s)\n", prefix, src)
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendBool(dst, %s)\n", prefix, f.Read(src))
 	case "float64":
-		fmt.Fprintf(b, "%sdst = jsonbind.AppendFloat(dst, %s)\n", prefix, src)
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendFloat(dst, %s)\n", prefix, f.Read(src))
 	case "file":
 		fmt.Fprintf(b, "%sdst = httpbind.AppendFileJSON(dst, %s)\n", prefix, src)
 	case KindStruct:
@@ -1276,7 +1276,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 	switch f.Source {
 	case SourcePath:
 		if f.Kind == "string" {
-			fmt.Fprintf(b, "\tout.%s = httpbind.PathValue(r, %q)\n", f.Name, f.Wire)
+			fmt.Fprintf(b, "\tout.%s = %s\n", f.Name, f.Write(fmt.Sprintf("httpbind.PathValue(r, %q)", f.Wire)))
 			if track {
 				fmt.Fprintf(b, "\tif out.%s != \"\" {\n\t\tpresent%s = true\n\t}\n", f.Name, f.Name)
 			}
@@ -1290,7 +1290,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 		}
 	case SourceHeader:
 		if f.Kind == "string" {
-			fmt.Fprintf(b, "\tout.%s = httpbind.HeaderValue(r, %q)\n", f.Name, f.Wire)
+			fmt.Fprintf(b, "\tout.%s = %s\n", f.Name, f.Write(fmt.Sprintf("httpbind.HeaderValue(r, %q)", f.Wire)))
 			if track {
 				fmt.Fprintf(b, "\tif out.%s != \"\" {\n\t\tpresent%s = true\n\t}\n", f.Name, f.Name)
 			}
@@ -1313,7 +1313,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 		}
 	case SourceMethod:
 		if f.Kind == "string" {
-			fmt.Fprintf(b, "\tout.%s = r.Method\n", f.Name)
+			fmt.Fprintf(b, "\tout.%s = %s\n", f.Name, f.Write("r.Method"))
 			if track {
 				fmt.Fprintf(b, "\tpresent%s = true\n", f.Name)
 			}
@@ -1353,7 +1353,7 @@ func emitPayloadField(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		if track {
 			fmt.Fprintf(b, "%s\tpresent%s = true\n", prefix, f.Name)
 		}
-		fmt.Fprintf(b, "%s\tout.%s = fv\n", prefix, f.Name)
+		fmt.Fprintf(b, "%s\tout.%s = %s\n", prefix, f.Name, f.Write("fv"))
 		fmt.Fprintf(b, "%s} else if fileBody != nil {\n", prefix)
 		fmt.Fprintf(b, "%s\treturn out, httpbind.BindError(%q, \"payload\", \"missing file\")\n", prefix, f.Wire)
 		fmt.Fprintf(b, "%s}\n", prefix)
@@ -1385,21 +1385,21 @@ func emitConvertFromStringIndented(b *bytes.Buffer, f FieldPlan, varName, locati
 	case "int":
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseInt(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid int\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
-		fmt.Fprintf(b, "%sout.%s = v\n", prefix, f.Name)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
 	case "int64":
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseInt64(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid int64\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
-		fmt.Fprintf(b, "%sout.%s = v\n", prefix, f.Name)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
 	case "bool":
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseBool(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid bool\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
-		fmt.Fprintf(b, "%sout.%s = v\n", prefix, f.Name)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
 	case "float64":
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseFloat64(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid float64\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
-		fmt.Fprintf(b, "%sout.%s = v\n", prefix, f.Name)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
 	case "string":
-		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, varName)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write(varName))
 	}
 }
 

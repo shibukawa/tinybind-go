@@ -78,7 +78,7 @@ func exportedName(name string) string {
 // leaves undone. A codec is emitted for a type some discovered call names, and
 // the only call naming this one is the one this phase is about to write, which
 // discovery is required to skip. The declaration is the usage source instead.
-func planServerActions(plan *PackagePlan, actions []ServerAction, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec) error {
+func planServerActions(plan *PackagePlan, actions []ServerAction, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind) error {
 	if plan == nil || len(actions) == 0 {
 		return nil
 	}
@@ -92,7 +92,7 @@ func planServerActions(plan *PackagePlan, actions []ServerAction, binderNames ma
 		if err != nil {
 			return err
 		}
-		tp, ok, err := analyzeStruct(action.inputTypeName(), "", st, binderNames, foreignCodecs)
+		tp, ok, err := analyzeStruct(action.inputTypeName(), "", st, binderNames, foreignCodecs, namedKinds)
 		if err != nil {
 			return fmt.Errorf("server action %s: %w", action.Func, err)
 		}
