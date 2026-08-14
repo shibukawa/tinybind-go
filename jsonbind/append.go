@@ -129,8 +129,15 @@ func AppendRaw(dst []byte, raw []byte) []byte {
 }
 
 // AppendAny appends an arbitrary Go value produced by rest-field decoding.
-// It covers the shapes Parser.Any yields plus the common scalar types; anything
-// else is written as null rather than failing an otherwise valid response.
+// It covers the shapes Parser.Any yields plus the common scalar types, and any
+// type carrying its own encoder through [Appender]; anything else is written as
+// null rather than failing an otherwise valid response.
+//
+// The Appender arm is what keeps a user type out of that null. Before it a
+// value the switch did not name — which is every named struct — reached the
+// default and encoded as null, producing a wrong document rather than a
+// reported error. It sits after the concrete cases so a builtin shape is still
+// matched by identity rather than by method set.
 func AppendAny(dst []byte, v any) []byte {
 	switch t := v.(type) {
 	case nil:
@@ -194,6 +201,8 @@ func AppendAny(dst []byte, v any) []byte {
 			dst = AppendString(dst, e)
 		}
 		return append(dst, ']')
+	case Appender:
+		return t.AppendJSONTo(dst)
 	default:
 		return append(dst, "null"...)
 	}

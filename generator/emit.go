@@ -36,6 +36,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			emitted = append(emitted, t)
 		}
 	}
+	if err := checkForeignFieldDirections(emitted); err != nil {
+		return nil, err
+	}
 	var b bytes.Buffer
 	needRegexp := false
 	for _, t := range emitted {
@@ -108,6 +111,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			if err := emitScanRows(&b, t, types); err != nil {
 				return nil, err
 			}
+		}
+		if t.DirectUsage&UsageJSONMethods != 0 {
+			emitCodecMethods(&b, t)
 		}
 	}
 
@@ -371,6 +377,68 @@ func sqlIdent(s string) string {
 	return b.String()
 }
 
+// checkForeignFieldDirections refuses a plan whose emission would name a codec
+// method a foreign field's type does not carry.
+//
+// A foreign field is admitted while the file is walked, when nothing yet knows
+// which direction its parent will need. Here the usage is settled, so a type
+// carrying one half is accepted for as long as its parent only needs that half
+// and reported the moment it does not.
+//
+// Reporting rather than emitting matters more than it looks: without this the
+// output compiles or does not depending on a type in another package, and the
+// compiler's message names a call this generator wrote, inside a file headed
+// DO NOT EDIT.
+func checkForeignFieldDirections(plans []TypePlan) error {
+	for _, t := range plans {
+		needsAppend := t.Usage&(UsageWrite|UsageEncodeJSON) != 0
+		// The binder reads a foreign field out of the request body through the
+		// same decoder call the JSON decoder uses, so it needs the same half.
+		needsDecode := t.Usage&(UsageDecodeJSON|UsageBind) != 0
+		for _, f := range t.Fields {
+			if f.Kind != KindForeign || f.JSONSkip {
+				continue
+			}
+			if needsAppend && !f.Foreign.Append {
+				return fmt.Errorf("%s.%s: %s carries no AppendJSONTo, and %s is encoded", t.Name, f.Name, f.TypeName, t.Name)
+			}
+			if needsDecode && !f.Foreign.Decode {
+				return fmt.Errorf("%s.%s: %s carries no DecodeJSONFrom, and %s is decoded", t.Name, f.Name, f.TypeName, t.Name)
+			}
+		}
+	}
+	return nil
+}
+
+// emitCodecMethods publishes the type's codec as the jsonbind Appender and
+// Decoder methods, so a package that never analyzed this type can still encode
+// and decode it.
+//
+// Only a jsonbind annotation asks for this. A codec reached through an ordinary
+// call site emits the functions alone and nothing else changes, which is what
+// keeps every existing project generating the bytes it generates today.
+//
+// The encode half is a delegation, because appendUserJSON already has the
+// method's shape. The decode half is not: the generated decoder returns a
+// value, while the method fills a receiver and returns only an error, so it
+// converts the shape rather than forwarding it.
+func emitCodecMethods(b *bytes.Buffer, t TypePlan) {
+	if t.DirectUsage&UsageAppendMethod != 0 {
+		fmt.Fprintf(b, "// AppendJSONTo implements jsonbind.Appender.\n")
+		fmt.Fprintf(b, "func (v %s) AppendJSONTo(dst []byte) []byte {\n", t.Name)
+		fmt.Fprintf(b, "\treturn append%sJSON(dst, v)\n", t.Name)
+		b.WriteString("}\n\n")
+	}
+	if t.DirectUsage&UsageDecodeMethod != 0 {
+		fmt.Fprintf(b, "// DecodeJSONFrom implements jsonbind.Decoder.\n")
+		fmt.Fprintf(b, "func (v *%s) DecodeJSONFrom(data []byte) error {\n", t.Name)
+		fmt.Fprintf(b, "\tout, err := decode%sBytes(data)\n", t.Name)
+		b.WriteString("\tif err != nil {\n\t\treturn err\n\t}\n")
+		b.WriteString("\t*v = out\n\treturn nil\n")
+		b.WriteString("}\n\n")
+	}
+}
+
 // emitDecodeJSON writes a decoder that walks the document once. Members are
 // dispatched by a switch over the key bytes, and values are read straight out
 // of the input buffer, so decoding allocates only what lands in the result.
@@ -499,6 +567,14 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+	case KindForeign:
+		// A foreign type cannot join the parser walk, because its decoder takes
+		// a complete document. RawValue lifts the sub-document out so it can be
+		// handed one, which is the second scan of that region the decode half
+		// costs at depth.
+		fmt.Fprintf(b, "%sraw, err := p.RawValue()\n", prefix)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid object\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), prefix)
+		fmt.Fprintf(b, "%sif err := %s.DecodeJSONFrom(raw); err != nil {\n%s\treturn out, err\n%s}\n", prefix, dest, prefix, prefix)
 	case KindSlice:
 		if supportedElemKind(f.ElemKind) {
 			emitStreamSlice(b, f, prefix, dest)
@@ -629,6 +705,12 @@ func emitAssignFromRaw(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, 
 		fmt.Fprintf(b, "%sv, err := decode%sBytes(%s)\n", prefix, f.TypeName, rawVar)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%serr\n%s}\n", prefix, prefix, ret, prefix)
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
+	case KindForeign:
+		// The type fills itself from the raw sub-document. That sub-slice is
+		// the second scan of the region the decode half costs at depth, and it
+		// is one a nested struct already pays here, so the foreign case adds
+		// nothing over the case beside it.
+		fmt.Fprintf(b, "%sif err := %s.DecodeJSONFrom(%s); err != nil {\n%s\t%serr\n%s}\n", prefix, dest, rawVar, prefix, ret, prefix)
 	case KindSlice:
 		emitAssignSliceFromRaw(b, f, rawVar, prefix, dest, ret)
 	case KindMap:
@@ -982,6 +1064,11 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		fmt.Fprintf(b, "%sdst = httpbind.AppendFileJSON(dst, %s)\n", prefix, src)
 	case KindStruct:
 		fmt.Fprintf(b, "%sdst = append%sJSON(dst, %s)\n", prefix, f.TypeName, src)
+	case KindForeign:
+		// The type carries its own encoder, so there is no generated function
+		// to name. Appending into the same destination is what lets this
+		// compose at any depth for free.
+		fmt.Fprintf(b, "%sdst = %s.AppendJSONTo(dst)\n", prefix, src)
 	case KindSlice:
 		// A nil slice encodes as [], the way encoding/json/v2 writes one.
 		// encoding/json wrote null, which asked a client to tell "no items"

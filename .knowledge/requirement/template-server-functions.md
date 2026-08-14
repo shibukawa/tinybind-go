@@ -62,6 +62,11 @@ resolution:
       shape: a compile-time assertion such as `var _ tinybind.ServerAction = Rename`
       buys: intentional exposure, type-checked and discoverable by rule:go-types-symbol-identity
       why_not: it costs a declaration for every action to restate what the package boundary already says
+      scope_narrowed:
+        when: 2026-08-13, by requirement:typed-server-action
+        holds: for this shape, where the signature admits and a declaration would only restate the boundary
+        does_not_hold: for a function of an arbitrary signature, where no shape filter can exist and the declaration carries the fact that nothing else can
+        written_here_because: a reader of this clause would otherwise apply the rejection to a declaration that is not the one rejected
 signature:
   shape: 'func Update(w http.ResponseWriter, r *http.Request)'
   decided: an ordinary http.HandlerFunc, approved 2026-07-27
@@ -78,6 +83,11 @@ signature:
     - a form action legitimately needs redirects, conditional statuses, downloads, and streaming, which no fixed typed return could cover
     - it matches the rung 3 shape of decision:route-handler-shape, so a route package has one raw handler idiom rather than two
     - it keeps the generator out of the response body, which is where every other decision in this feature already put it
+  reason_is_about_the_caller:
+    found: 2026-08-13, by requirement:typed-server-action
+    what: every clause above is true of a caller holding a document waiting for a page, which is what a form is
+    consequence: narrowing the caller to a script holding the answer lapses all three at once, which is what admits a second shape rather than refuting this one
+    unchanged_here: this shape stays fixed, stays what a form reaches, and stays the one a redirect or a stream needs
 entry_points:
   why_two: a native form submit and a script call have different requirements, and one URL scheme cannot satisfy both without penalising one
   which_is_used: decision:script-free-render-mode selects it; the default mode uses the direct entry point for every element, and the script-free mode uses the form entry point
@@ -206,7 +216,7 @@ constraints:
   - the handler is an ordinary http.HandlerFunc in an ordinary package, so gopls, go test, httptest, and linters apply with no wrapper
   - the page pattern carries GET for the page and POST for the form entry point, and no other method
   - a generated entry point never collides with a page route, and a collision is a startup error
-  - the generator writes no response body; the only thing it may add is the form entry point's default redirect
+  - the generator writes no response body; the only thing it may add is the form entry point's default redirect. Scoped 2026-08-13 to this shape: requirement:typed-server-action moves the line for a declared function, whose glue encodes a result
 acceptance:
   - a form naming a handler posts to a working endpoint with no URL written anywhere
   - an element other than a form naming a handler carries its endpoint URL and every other attribute it was written with

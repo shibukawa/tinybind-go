@@ -45,6 +45,10 @@ none_of_these_follow_the_data_attribute_prefix:
   dispatcher: the generated POST dispatcher, replaceable through the same registry template override requirement:generated-route-registration already exposes
 fixed:
   handler_shape: the http.HandlerFunc signature of requirement:template-server-functions
+  handler_shape_is_not_the_only_shape:
+    when: 2026-08-13, by requirement:typed-server-action
+    what: a second shape is admitted by declaration rather than by signature, so this line means the raw shape is not configurable rather than that one shape exists
+    still_not_a_setting: neither shape is a knob; an author selects the second by writing a declaration, and a profile renames nothing about either
   hash: its input, length, and determinism
   response_rule: writing nothing means a redirect on the form entry point, and a verbatim response everywhere else
   reason: these are the contract a handler is written against, so moving them would change what an author's Go already means

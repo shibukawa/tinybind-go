@@ -21,7 +21,7 @@ func DecodeJSONLimit[T any](r io.Reader, limit int64) (T, error) {
 func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 	var zero T
 	fn, ok := lookupDecoder[T]()
-	if !ok {
+	if !ok && !carriesDecoder[T]() {
 		return zero, missingDecoderError()
 	}
 	if r == nil {
@@ -34,7 +34,53 @@ func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 		}
 		return zero, newError("body_read", "failed to read JSON", err)
 	}
+	if out, done, err := decodeThroughInterface[T](data); done {
+		return out, err
+	}
 	return fn(data)
+}
+
+// carriesDecoder reports whether *T implements [Decoder], which is what lets a
+// type this run never planned be read anyway.
+//
+// The check is on the pointer because a decoder fills its receiver. It runs
+// before the body is read so a type that can be decoded by neither route still
+// fails without consuming the reader.
+func carriesDecoder[T any]() bool {
+	var zero T
+	_, ok := any(&zero).(Decoder)
+	return ok
+}
+
+// decodeThroughInterface reads data into a T that carries its own decoder, and
+// reports whether it did. A false means the type carries none and the registry
+// is the remaining route.
+func decodeThroughInterface[T any](data []byte) (T, bool, error) {
+	var out T
+	target, ok := any(&out).(Decoder)
+	if !ok {
+		return out, false, nil
+	}
+	if err := target.DecodeJSONFrom(data); err != nil {
+		return out, true, err
+	}
+	return out, true, nil
+}
+
+// encodeThroughInterface writes v through the codec it carries itself.
+//
+// The buffer comes from the same pool a generated writer uses, so a type
+// reaching this path allocates no more than a planned one does.
+func encodeThroughInterface[T any](w io.Writer, v T) (bool, error) {
+	source, ok := any(v).(Appender)
+	if !ok {
+		return false, nil
+	}
+	buf := GetBuffer()
+	*buf = source.AppendJSONTo((*buf)[:0])
+	_, err := w.Write(*buf)
+	PutBuffer(buf)
+	return true, err
 }
 
 // DecodeJSONBytes decodes one JSON value already held in memory into T.
@@ -45,7 +91,12 @@ func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 // document into a second buffer for every call.
 //
 // The limit belongs to whoever produced the bytes, so none is applied here.
+// A type carrying [Decoder] is read through it, on the terms [EncodeJSON]
+// states for the other direction.
 func DecodeJSONBytes[T any](data []byte) (T, error) {
+	if out, done, err := decodeThroughInterface[T](data); done {
+		return out, err
+	}
 	var zero T
 	fn, ok := lookupDecoder[T]()
 	if !ok {
@@ -54,15 +105,27 @@ func DecodeJSONBytes[T any](data []byte) (T, error) {
 	return fn(data)
 }
 
-// EncodeJSON encodes v as compact JSON to w using a generated codec.
+// EncodeJSON encodes v as compact JSON to w using a generated codec, or, for a
+// type carrying its own, through [Appender].
+//
+// The interface is tried first. A type this run planned and also carries a
+// method is one whose author wrote an encoder, and encoding it through the
+// generated one instead would silently produce bytes they did not intend. This
+// is how encoding/json resolves the same conflict, letting the method win over
+// walking the fields. For a declared codec the two are the same code, since the
+// emitted method delegates to the emitted function.
+//
 // It does not set HTTP headers or status.
 func EncodeJSON[T any](w io.Writer, v T) error {
+	if w == nil {
+		return newError("internal", "jsonbind: nil writer", nil)
+	}
+	if done, err := encodeThroughInterface(w, v); done {
+		return err
+	}
 	fn, ok := lookupEncoder[T]()
 	if !ok {
 		return missingEncoderError()
-	}
-	if w == nil {
-		return newError("internal", "jsonbind: nil writer", nil)
 	}
 	return fn(w, v)
 }

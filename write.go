@@ -7,9 +7,24 @@ import (
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 
-// Write serializes a typed response value to the HTTP response via a registered writer.
+// Write serializes a typed response value to the HTTP response via a registered
+// writer, or, for a type carrying its own encoder, through jsonbind.Appender.
 // Status is always 200 OK; use WriteStatus for other success codes.
+//
+// The interface is tried first, for the reason jsonbind.EncodeJSON states: a
+// type that carries a method has an author-written encoder, and going through a
+// generated one instead would produce bytes they did not intend. It is also
+// what lets a value from a package this build never analyzed be answered with
+// at all, which no registration could reach.
 func Write[T any](w http.ResponseWriter, r *http.Request, value T) error {
+	_ = r
+	if source, ok := any(value).(jsonbind.Appender); ok {
+		buf := jsonbind.GetBuffer()
+		*buf = source.AppendJSONTo((*buf)[:0])
+		err := WriteJSONBytes(w, http.StatusOK, *buf)
+		jsonbind.PutBuffer(buf)
+		return err
+	}
 	fn, ok := lookupWriter[T]()
 	if !ok {
 		return missingWriterError()

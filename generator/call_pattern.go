@@ -18,10 +18,21 @@ const (
 	OperationSocketSend          CallOperation = "socket_send"
 	OperationJSONDecode          CallOperation = "json_decode"
 	OperationJSONEncode          CallOperation = "json_encode"
-	OperationRowsScan            CallOperation = "rows_scan"
-	OperationItemEncode          CallOperation = "item_encode"
-	OperationItemDecode          CallOperation = "item_decode"
-	OperationItemKey             CallOperation = "item_key"
+	// The two declaration operations below name a codec an annotation asked for
+	// rather than one a call site implied. They are separate from the two above
+	// because they carry a second meaning: the codec is also published as a
+	// method, which a discovered call never asks for.
+	//
+	// There is one per direction and no third for both, so that each is gated
+	// by the codec feature it carries. An annotation asking for both registers
+	// both patterns against its one target, which is the same shape the socket
+	// entry already has.
+	OperationJSONEncoderDeclare CallOperation = "json_encoder_declare"
+	OperationJSONDecoderDeclare CallOperation = "json_decoder_declare"
+	OperationRowsScan           CallOperation = "rows_scan"
+	OperationItemEncode         CallOperation = "item_encode"
+	OperationItemDecode         CallOperation = "item_decode"
+	OperationItemKey            CallOperation = "item_key"
 	// OperationItemEncodeDecode is a write that reads back what it replaced, and
 	// OperationItemKeyDecode a delete that does. One call needs two generated
 	// methods, and a call target carries exactly one operation, so the pair gets
@@ -223,6 +234,16 @@ func JSONDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern
 	return Call(OperationJSONDecode, target, options...)
 }
 
+// JSONEncoderDeclareCall declares the annotation asking for the encoder alone.
+func JSONEncoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationJSONEncoderDeclare, target, options...)
+}
+
+// JSONDecoderDeclareCall declares the annotation asking for the decoder alone.
+func JSONDecoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationJSONDecoderDeclare, target, options...)
+}
+
 // JSONEncodeCall declares a standalone JSON encoder wrapper.
 func JSONEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationJSONEncode, target, options...)
@@ -353,18 +374,30 @@ func (registry *CallRegistry) Register(patterns ...CallPattern) error {
 //
 // Two patterns on one target are normally a framework claiming a meaning the
 // runtime already claimed, and refusing that is what the guard above is for.
-// The socket entry is the exception, and the only one: its type arguments run
-// in opposite directions, a pattern carries a single type, and so one direction
-// per pattern is the only way to say it. The pair is admitted by naming both
-// operations rather than by relaxing the guard to any two operations, which
-// would let the framework case back in.
+// The two exceptions below are both one call carrying two directions, and both
+// are admitted by naming their operations rather than by relaxing the guard to
+// any two operations, which would let the framework case back in.
+//
+// The socket entry's type arguments run in opposite directions and a pattern
+// carries a single type, so one direction per pattern is the only way to say
+// it. The codec annotation names one type in both directions, and is split for
+// a different reason: a pattern is the unit a disabled feature removes, so an
+// annotation asking for both directions has to be two patterns for turning off
+// one direction to leave the other standing.
 func composeOnOneTarget(a, b CallPattern) bool {
-	return a.Operation != b.Operation &&
-		socketDirection(a.Operation) && socketDirection(b.Operation)
+	if a.Operation == b.Operation {
+		return false
+	}
+	return socketDirection(a.Operation) && socketDirection(b.Operation) ||
+		codecDeclareDirection(a.Operation) && codecDeclareDirection(b.Operation)
 }
 
 func socketDirection(operation CallOperation) bool {
 	return operation == OperationSocketReceive || operation == OperationSocketSend
+}
+
+func codecDeclareDirection(operation CallOperation) bool {
+	return operation == OperationJSONEncoderDeclare || operation == OperationJSONDecoderDeclare
 }
 
 // Options returns an immutable options snapshot containing defaults and wrappers.
@@ -498,6 +531,7 @@ func supportedCallOperation(operation CallOperation) bool {
 	case OperationRequestBind, OperationResponseWrite, OperationResponseWriteStatus,
 		OperationStreamCreate, OperationSocketReceive, OperationSocketSend,
 		OperationJSONDecode, OperationJSONEncode,
+		OperationJSONEncoderDeclare, OperationJSONDecoderDeclare,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
@@ -528,6 +562,10 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"decode"}, nil
 	case OperationJSONEncode:
 		return []string{"encode"}, nil
+	case OperationJSONEncoderDeclare:
+		return []string{"encode"}, nil
+	case OperationJSONDecoderDeclare:
+		return []string{"decode"}, nil
 	case OperationRowsScan:
 		return []string{"row"}, nil
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,
