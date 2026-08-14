@@ -7,6 +7,25 @@ Admit a second server function shape, a declared function of an arbitrary signat
 
 ```yaml
 priority: should
+status: implemented 2026-08-13, asks 1 to 4; the registry side and rule:typed-action-call-only are not built
+as_built:
+  annotation: httpbind.ServerAction, taking the function symbol and an optional published name, returning a zero-size Declaration so the call can be a package-level var
+  discovery: routetree/typedaction.go, matching the annotation's import against the file's own import list, beside the shape filter rather than replacing it
+  the_package_identifier_is_declared_not_derived:
+    found: 2026-08-13, while building
+    what: importName falls back to the import path's last element, which is tinybind-go where the package is httpbind, so nothing matched
+    why_it_never_surfaced: the handler shape check resolves net/http and the context check resolves context, and in both the last element is the package name
+    fix: ActionDeclaration carries the identifier, so a framework declaring its own annotation states it too
+  wrapper: generator/serveraction.go, emitted into the declaring package by the phase that type-checks, naming the generated encoder directly
+  argument_struct: synthesized as an ast.StructType from the declared parameters, each type parsed back from its source text, then run through analyzeStruct so a parameter is classified by the rules a hand-written field is
+  usage_source: the declaration marks the result type encoded and the argument struct decoded, which is the item_key_exception shape of rule:usage-directed-generation
+  error_only_answers_no_content: nothing was produced, and an empty document would claim something was
+  published_name: routetree.PublishedName, initialism-aware, with the declaration's optional string overriding it
+  tests: routetree/typedaction_test.go over admission, the signature, the override, an unexported function and nine diagnostics; generator/serveraction_test.go over the emitted wrapper, a struct parameter, an error-only action, and a compiled entry point answering a real POST
+not_built_yet:
+  registry_side: routetree registers no route for a typed action yet, so the entry point exists and nothing addresses it
+  ordering: the registry-last sequencing that ordering describes
+  template_refusal: rule:typed-action-call-only
 source:
   - downstream framework change request 2026-08-13, asks 1 to 3
   - requirement:template-server-functions
