@@ -62,6 +62,21 @@ type Action struct {
 	// a path an application may want and buy nothing. Discovery cannot see this,
 	// because it reads Go sources; the template compiler reports it.
 	NativeForm bool
+	// Published is the identifier client script calls this action through. It is
+	// the Go name in initialism-aware lowerCamelCase unless a declaration
+	// overrode it, and it is a wire name rather than a second identity: a Go
+	// rename moves Name and leaves an overridden Published where it was.
+	Published string
+	// Typed records that this action was admitted by a declaration rather than
+	// by its signature, and Signature is what that signature says.
+	//
+	// A handler-shaped function is an action by existing, because nothing else
+	// has that shape. An arbitrary signature distinguishes nothing, so a
+	// declaration is what says this one is an action. The two kinds share an
+	// address space, a hash and a table; what differs is that a typed action is
+	// reached only by a script, never by a template.
+	Typed     bool
+	Signature TypedSignature
 }
 
 // Pattern returns the stdlib ServeMux pattern for the endpoint, which is always
@@ -108,6 +123,8 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 	fset := token.NewFileSet()
 	var out []Action
 	var errs []error
+	var parsed []*ast.File
+	var parsedNames []string
 	for _, name := range names {
 		filename := filepath.Join(dir, name)
 		file, err := parser.ParseFile(fset, filename, nil, parser.SkipObjectResolution)
@@ -115,6 +132,8 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 			errs = append(errs, err)
 			continue
 		}
+		parsed = append(parsed, file)
+		parsedNames = append(parsedNames, filename)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv != nil || fn.Name == nil {
@@ -138,8 +157,40 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 				Line:       fset.Position(fn.Pos()).Line,
 				Hash:       hash,
 				Path:       ActionPath(prefix, hash, fn.Name.Name),
+				Published:  PublishedName(fn.Name.Name),
 			})
 		}
+	}
+	// The second admission rule, beside the shape filter rather than replacing
+	// it. An exported handler-shaped function above stays an action by existing;
+	// a declared one is an action by being declared.
+	typed, typedErrs := findTypedActions(parsed, parsedNames, fset, shape.Declaration)
+	errs = append(errs, typedErrs...)
+	seen := make(map[string]bool, len(out))
+	for _, action := range out {
+		seen[action.Name] = true
+	}
+	for _, ref := range typed {
+		if seen[ref.Name] {
+			errs = append(errs, fmt.Errorf("%s:%d: %s is both handler-shaped and declared as a server action; it is admitted once or the other, never twice",
+				ref.File, ref.Line, ref.Name))
+			continue
+		}
+		seen[ref.Name] = true
+		hash := ActionHash(relDir, ref.Name)
+		out = append(out, Action{
+			Name:       ref.Name,
+			RelDir:     relDir,
+			Package:    pkg,
+			ImportPath: importPath,
+			File:       ref.File,
+			Line:       ref.Line,
+			Hash:       hash,
+			Path:       ActionPath(prefix, hash, ref.Name),
+			Published:  ref.Published,
+			Typed:      true,
+			Signature:  ref.Signature,
+		})
 	}
 	if len(errs) > 0 {
 		return nil, joinErrors(errs)

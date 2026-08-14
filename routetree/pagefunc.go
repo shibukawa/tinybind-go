@@ -135,6 +135,14 @@ type HandlerShape struct {
 	// with a leading * where the parameter is a pointer: ResponseWriter and
 	// *Request name the net/http pair.
 	Types []string
+	// Declaration names the annotation that admits a typed server action, whose
+	// signature this shape says nothing about. A zero value uses the annotation
+	// this module ships.
+	//
+	// It sits here because the two admission rules are read together: a
+	// function is an action by having this shape or by being declared, and a
+	// caller configuring one transport configures both at once.
+	Declaration ActionDeclaration
 }
 
 // DefaultHandlerShape is the ordinary http.HandlerFunc signature.
