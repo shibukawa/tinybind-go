@@ -37,7 +37,33 @@ const (
 	KindStruct  = "struct"
 	KindSlice   = "slice"
 	KindMap     = "map"
+	// KindForeign is a field whose type is declared in another package and
+	// carries its own JSON codec through the jsonbind interfaces.
+	//
+	// Such a field used to be dropped from the plan without a word, because
+	// analysis is per package and a qualified type name resolves to nothing it
+	// can walk. It still resolves to nothing this run can walk; what changed is
+	// that the type can say it does not need walking.
+	KindForeign = "foreign"
 )
+
+// ForeignCodec records which halves of the jsonbind codec contract a foreign
+// field's type carries.
+//
+// A type carrying one half is usable in that direction alone. Which halves a
+// field needs is a property of its parent's usage, which is not known while the
+// field is being admitted, so both are recorded and the requirement is checked
+// at emission by checkForeignFieldDirections.
+type ForeignCodec struct {
+	// Append is AppendJSONTo on the value, so the field can be encoded.
+	Append bool
+	// Decode is DecodeJSONFrom on the pointer, so the field can be read.
+	Decode bool
+}
+
+// Any reports whether either half is present, which is what admits the field at
+// all.
+func (c ForeignCodec) Any() bool { return c.Append || c.Decode }
 
 // FieldPlan is one struct field mapping plan (compile-time).
 type FieldPlan struct {
@@ -53,10 +79,13 @@ type FieldPlan struct {
 	Enum      EnumRule    // from enum:"" tag; unset if absent
 	Default   DefaultRule // from default:"" tag; unset if absent
 	TypeName  string      // KindStruct name, or element struct name for slice/map of struct
-	ElemKind  string      // for slice/map: string|int|int64|bool|float64|struct
-	DB        string      // SQL result column (db tag or snake_case field name)
-	GroupKey  bool        // groupkey tag presence
-	Doc       string      // godoc of the field (doc or line comment)
+	// Foreign is which codec halves a KindForeign field's type carries. It is
+	// the zero value for every other kind.
+	Foreign  ForeignCodec
+	ElemKind string // for slice/map: string|int|int64|bool|float64|struct
+	DB       string // SQL result column (db tag or snake_case field name)
+	GroupKey bool   // groupkey tag presence
+	Doc      string // godoc of the field (doc or line comment)
 }
 
 // HasValidation reports whether anything about the field can reject a bound
@@ -78,8 +107,11 @@ func (f FieldPlan) IsRest() bool {
 }
 
 // IsComposite reports nested struct/slice/map kinds.
+//
+// A foreign field counts, because it is read from the document body through a
+// raw sub-slice exactly as a nested struct is, and never from the query.
 func (f FieldPlan) IsComposite() bool {
-	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindMap
+	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindMap || f.Kind == KindForeign
 }
 
 // GoType returns a Go type string for generated code (e.g. NestedCustomer, []string).
@@ -146,7 +178,24 @@ const (
 	UsageDecodeEntity
 	UsageEntityKey
 	UsageCacheKey
+	// UsageAppendMethod and UsageDecodeMethod publish a type's JSON codec as
+	// the Appender and Decoder methods of the jsonbind package, so a consumer
+	// that never analyzed the type can still encode and decode it.
+	//
+	// Only a jsonbind annotation sets them, and each direction is its own bit
+	// because the annotation names the direction. Reading the direction off the
+	// type's overall usage instead would publish both methods for a type that
+	// asked for one, since GenerateAll gives every type every codec.
+	//
+	// They stay out of UsageAll for the reason UsageItem does: a type reached
+	// by an ordinary call site should not acquire a public method it never
+	// asked for, since that is code size in every binary carrying the type.
+	UsageAppendMethod
+	UsageDecodeMethod
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
+	// UsageJSONMethods is either published method, for a caller asking whether
+	// a type publishes any.
+	UsageJSONMethods = UsageAppendMethod | UsageDecodeMethod
 	// UsageItem is every DynamoDB item entry point. It stays out of UsageAll:
 	// the item codec has its own generate-all rule, which requires a dynamo tag,
 	// so an unrelated request struct never acquires one.
@@ -233,6 +282,7 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 			continue
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)
+		foreignCodecs := codecCapableTypeNames(f, pkg.TypesInfo)
 		discoveredInFile, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols)
 		if err != nil {
 			return nil, err
@@ -260,7 +310,7 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 				if len(gd.Specs) == 1 {
 					declDoc = gd.Doc
 				}
-				tp, ok, err := analyzeStruct(ts.Name.Name, godoc.Text(ts.Doc, declDoc), st, binderNames)
+				tp, ok, err := analyzeStruct(ts.Name.Name, godoc.Text(ts.Doc, declDoc), st, binderNames, foreignCodecs)
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", ts.Name.Name, err)
 				}
@@ -312,6 +362,102 @@ func configuredTypeNames(f *ast.File, configured []TypePattern, imports map[stri
 		}
 	}
 	return out
+}
+
+// codecCapableTypeNames reports which qualified type names used as struct field
+// types in this file carry their own JSON codec.
+//
+// The key is the name as written, so the field analysis below can look it up
+// from the AST alone, the way it already looks up a configured file type.
+//
+// Only selector expressions actually appearing as field types are resolved,
+// rather than every exported type of every import: the set is small and the
+// answer is needed for exactly those.
+func codecCapableTypeNames(f *ast.File, info *types.Info) map[string]ForeignCodec {
+	if f == nil || info == nil {
+		return nil
+	}
+	out := map[string]ForeignCodec{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		st, ok := n.(*ast.StructType)
+		if !ok || st.Fields == nil {
+			return true
+		}
+		for _, field := range st.Fields.List {
+			sel, ok := field.Type.(*ast.SelectorExpr)
+			if !ok || sel.Sel == nil {
+				continue
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			name := pkg.Name + "." + sel.Sel.Name
+			if _, seen := out[name]; seen {
+				continue
+			}
+			out[name] = carriesJSONCodec(info.TypeOf(field.Type))
+		}
+		return true
+	})
+	return out
+}
+
+// carriesJSONCodec reports which halves of the jsonbind codec contract t
+// carries: AppendJSONTo on the value, DecodeJSONFrom on the pointer.
+//
+// The check is structural rather than against the declared interfaces, so it
+// needs no import of jsonbind in the file being analyzed and holds for a type
+// whose author never named the interface either.
+//
+// The directions are reported separately rather than collapsed into one answer
+// because this runs while the file is being walked, and a type's usage is
+// assigned only after every type is collected. At the moment a field is
+// admitted nobody knows yet which direction its parent will need, so a field
+// carrying one direction cannot be judged here — it is admitted with what it
+// has, and checkForeignFieldDirections refuses it later only if the parent
+// turns out to need the half it lacks.
+func carriesJSONCodec(t types.Type) ForeignCodec {
+	if t == nil {
+		return ForeignCodec{}
+	}
+	return ForeignCodec{
+		Append: hasMethodShape(t, "AppendJSONTo"),
+		Decode: hasMethodShape(types.NewPointer(t), "DecodeJSONFrom"),
+	}
+}
+
+func hasMethodShape(t types.Type, name string) bool {
+	set := types.NewMethodSet(t)
+	for i := 0; i < set.Len(); i++ {
+		fn, ok := set.At(i).Obj().(*types.Func)
+		if !ok || fn.Name() != name {
+			continue
+		}
+		signature, ok := fn.Type().(*types.Signature)
+		if !ok || signature.Params().Len() != 1 || signature.Results().Len() != 1 {
+			return false
+		}
+		if !isByteSliceType(signature.Params().At(0).Type()) {
+			return false
+		}
+		switch name {
+		case "AppendJSONTo":
+			return isByteSliceType(signature.Results().At(0).Type())
+		default:
+			named, ok := signature.Results().At(0).Type().(*types.Named)
+			return ok && named.Obj() != nil && named.Obj().Name() == "error" && named.Obj().Pkg() == nil
+		}
+	}
+	return false
+}
+
+func isByteSliceType(t types.Type) bool {
+	slice, ok := t.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	return isByteSlice(slice)
 }
 
 // discoverGenericTypeArgs finds type arguments of httpbind Bind/Write/DecodeJSON/EncodeJSON
@@ -531,7 +677,7 @@ func genericTypeArgExprs(fun ast.Expr) []ast.Expr {
 	}
 }
 
-func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]bool) (TypePlan, bool, error) {
+func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec) (TypePlan, bool, error) {
 	var fields []FieldPlan
 	restCount := 0
 	for _, f := range st.Fields.List {
@@ -543,7 +689,7 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 				continue
 			}
 			src, wire := parseFieldTag(id.Name, f.Tag)
-			fp, ok, err := analyzeField(id.Name, godoc.Text(f.Doc, f.Comment), f.Type, f.Tag, src, wire, binderNames)
+			fp, ok, err := analyzeField(id.Name, godoc.Text(f.Doc, f.Comment), f.Type, f.Tag, src, wire, binderNames, foreignCodecs)
 			if err != nil {
 				return TypePlan{}, false, err
 			}
@@ -584,8 +730,8 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 	return TypePlan{Name: name, Doc: doc, Fields: fields}, true, nil
 }
 
-func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool) (FieldPlan, bool, error) {
-	kind, typeName, elemKind, ok, err := fieldTypeKind(typ, binderNames, src, wire, fieldName)
+func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec) (FieldPlan, bool, error) {
+	kind, typeName, elemKind, ok, err := fieldTypeKind(typ, binderNames, foreignCodecs, src, wire, fieldName)
 	if err != nil {
 		return FieldPlan{}, false, err
 	}
@@ -599,6 +745,18 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 	jsonSkip, jsonTagName, omitEmpty, omitZero, err := parseJSONTag(tagValue(tag, "json"))
 	if err != nil {
 		return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
+	}
+	if kind == KindForeign && (omitEmpty || omitZero) {
+		// Both options ask this module whether the value is empty, and a type
+		// carrying its own codec is one whose shape this module never read. It
+		// is refused rather than treated as never-empty, because silently
+		// writing a member the author asked to omit is the failure they would
+		// find last.
+		option := "omitempty"
+		if omitZero {
+			option = "omitzero"
+		}
+		return FieldPlan{}, false, fmt.Errorf("field %s: %s is not available on %s, whose type carries its own JSON codec and whose emptiness this generator cannot judge", fieldName, option, typeName)
 	}
 	if jsonTagName != "" {
 		jsonName = jsonTagName
@@ -637,6 +795,7 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		Enum:      enum,
 		Default:   def,
 		TypeName:  typeName,
+		Foreign:   foreignCodecs[typeName],
 		ElemKind:  elemKind,
 		DB:        dbColumn(fieldName, tag),
 		GroupKey:  tagPresent(tag, "groupkey"),
@@ -711,7 +870,7 @@ func exported(name string) bool {
 }
 
 // fieldTypeKind resolves a field's bind kind.
-func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, src FieldSource, wire, fieldName string) (kind, typeName, elemKind string, ok bool, err error) {
+func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, src FieldSource, wire, fieldName string) (kind, typeName, elemKind string, ok bool, err error) {
 	if restKind, isRest := mapRestKind(expr); isRest {
 		if wire != "*" {
 			return "", "", "", false, nil
@@ -740,12 +899,22 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, src FieldSource, 
 		}
 	case *ast.SelectorExpr:
 		if t.Sel != nil {
-			if pkg, ok := t.X.(*ast.Ident); ok && binderNames[pkg.Name+"."+t.Sel.Name] {
-				return "file", "", "", true, nil
+			if pkg, ok := t.X.(*ast.Ident); ok {
+				qualified := pkg.Name + "." + t.Sel.Name
+				if binderNames[qualified] {
+					return "file", "", "", true, nil
+				}
+				// A type from another package is otherwise unwalkable here, so
+				// it enters the plan only when it carries its own codec. One
+				// half is enough to enter: which halves this field needs
+				// follows from its parent's usage, which nothing knows yet.
+				if foreignCodecs[qualified].Any() {
+					return KindForeign, qualified, "", true, nil
+				}
 			}
 		}
 	case *ast.ArrayType:
-		ek, et, _, eok, eerr := fieldTypeKind(t.Elt, binderNames, src, wire, fieldName)
+		ek, et, _, eok, eerr := fieldTypeKind(t.Elt, binderNames, foreignCodecs, src, wire, fieldName)
 		if eerr != nil {
 			return "", "", "", false, eerr
 		}
@@ -765,7 +934,7 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, src FieldSource, 
 		if !ok || key.Name != "string" {
 			return "", "", "", false, nil
 		}
-		ek, et, _, eok, eerr := fieldTypeKind(t.Value, binderNames, src, wire, fieldName)
+		ek, et, _, eok, eerr := fieldTypeKind(t.Value, binderNames, foreignCodecs, src, wire, fieldName)
 		if eerr != nil {
 			return "", "", "", false, eerr
 		}

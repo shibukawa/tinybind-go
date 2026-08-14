@@ -496,6 +496,17 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		SocketSendCall(Function(path, "WebSocketWith"), GenericType("socket-out", 1)),
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
+		// The annotations of requirement:declared-json-codec. They are ordinary
+		// configured calls, so the package-level var initializer holding one is
+		// walked by the same file inspection every other call site is found by.
+		//
+		// GenerateCodec is two patterns on one target rather than an operation
+		// of its own, so disabling one codec direction leaves the other half of
+		// the annotation standing instead of taking the whole thing.
+		JSONEncoderDeclareCall(Function(path, "GenerateCodec"), GenericType("encode", 0)),
+		JSONDecoderDeclareCall(Function(path, "GenerateCodec"), GenericType("decode", 0)),
+		JSONEncoderDeclareCall(Function(path, "GenerateEncoder"), GenericType("encode", 0)),
+		JSONDecoderDeclareCall(Function(path, "GenerateDecoder"), GenericType("decode", 0)),
 		RowsScanCall(Function(path, "ScanRows"), GenericType("row", 0)),
 		ItemDecodeCall(Function(path, "Load"), GenericType("item", 0)),
 		ItemDecodeCall(Function(path, "LoadAll"), GenericType("item", 0)),
@@ -614,6 +625,12 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageEncodeJSON
 	case OperationJSONDecode:
 		return UsageDecodeJSON
+	case OperationJSONEncoderDeclare:
+		// An annotation asks for the codec and for it to be published, so one
+		// operation carries both meanings rather than needing two call sites.
+		return UsageEncodeJSON | UsageAppendMethod
+	case OperationJSONDecoderDeclare:
+		return UsageDecodeJSON | UsageDecodeMethod
 	case OperationRowsScan:
 		return UsageScanRows
 	case OperationItemEncode:
@@ -659,9 +676,9 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureWebSocket] || disabled[FeatureDecodeJSON]
 	case OperationSocketSend:
 		return disabled[FeatureWebSocket] || disabled[FeatureEncodeJSON]
-	case OperationJSONDecode:
+	case OperationJSONDecode, OperationJSONDecoderDeclare:
 		return disabled[FeatureDecodeJSON]
-	case OperationJSONEncode:
+	case OperationJSONEncode, OperationJSONEncoderDeclare:
 		return disabled[FeatureEncodeJSON]
 	case OperationRowsScan:
 		return disabled[FeatureScanRows]
