@@ -1,7 +1,6 @@
 package httpbind
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
@@ -49,19 +48,6 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", bindcore.ProblemContentType)
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
-}
-
-// WriteJSON is a helper for generated writers: encode a pre-built map/slice without
-// reflecting over application structs. Content-Type is application/json.
-//
-// It hands the value to encoding/json and so does not follow the rules a
-// generated encoder does: a nil slice comes out as null here rather than [],
-// and json tag options are read the v1 way. Anything wanting the codec's
-// behaviour should go through a generated encoder and WriteJSONBytes.
-func WriteJSON(w http.ResponseWriter, status int, v any) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	return json.NewEncoder(w).Encode(v)
 }
 
 // WriteJSONBytes writes an already-encoded document. Generated writers build

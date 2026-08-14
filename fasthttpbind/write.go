@@ -1,8 +1,6 @@
 package fasthttpbind
 
 import (
-	"encoding/json"
-
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 	"github.com/shibukawa/tinygodriver/fasthttp"
@@ -52,14 +50,6 @@ func WriteError(ctx *fasthttp.RequestCtx, err error) {
 	ctx.Response.Header.Set("Content-Type", bindcore.ProblemContentType)
 	ctx.SetStatusCode(status)
 	_, _ = ctx.Write(body)
-}
-
-// WriteJSON is a helper for generated writers: encode a pre-built map/slice
-// without reflecting over application structs.
-func WriteJSON(ctx *fasthttp.RequestCtx, status int, v any) error {
-	ctx.Response.Header.Set("Content-Type", "application/json")
-	ctx.SetStatusCode(status)
-	return json.NewEncoder(ctx).Encode(v)
 }
 
 // WriteJSONBytes writes an already-encoded document. Generated writers build

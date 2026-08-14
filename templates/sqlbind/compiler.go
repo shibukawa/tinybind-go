@@ -36,7 +36,6 @@ type valueType struct {
 	optional bool
 }
 
-func (t valueType) required() valueType { t.optional = false; return t }
 func (t valueType) String() string {
 	base := t.name
 	if base == "" {

@@ -14,8 +14,6 @@ package updatecore
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -543,10 +541,6 @@ type DeltaResponse struct {
 	// before this field existed: a client that reads no marker issues no
 	// speculative request and costs the server no page execution.
 	Live bool `json:"live,omitempty"`
-}
-
-func encodeJSON(w http.ResponseWriter, body DeltaResponse) error {
-	return json.NewEncoder(w).Encode(body)
 }
 
 type DeltaOperation struct {

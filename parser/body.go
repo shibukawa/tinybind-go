@@ -293,16 +293,6 @@ func genericTypeArgExprs(call *ast.CallExpr) []ast.Expr {
 	}
 }
 
-// genericTypeArgStrings extracts type argument names from a generic call Fun.
-func genericTypeArgStrings(call *ast.CallExpr) []string {
-	args := genericTypeArgExprs(call)
-	out := make([]string, 0, len(args))
-	for _, a := range args {
-		out = append(out, typeExprString(a))
-	}
-	return out
-}
-
 // staticHTTPStatus resolves WriteStatus status argument (index 2) when constant.
 func staticHTTPStatus(call *ast.CallExpr) (int, bool) {
 	return staticIntArgument(call, 2)

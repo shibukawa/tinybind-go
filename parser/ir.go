@@ -24,12 +24,11 @@ type Diagnostic struct {
 
 // Reason codes for diagnostics.
 const (
-	ReasonDynamicPattern      = "dynamic_pattern"
-	ReasonOpaqueMiddleware    = "opaque_middleware"
-	ReasonCrossPackageModel   = "cross_package_model"
-	ReasonComplexTypeArg      = "complex_type_arg"
-	ReasonCrossPackageHandler = "cross_package_handler"
-	ReasonOther               = "other"
+	ReasonDynamicPattern    = "dynamic_pattern"
+	ReasonOpaqueMiddleware  = "opaque_middleware"
+	ReasonCrossPackageModel = "cross_package_model"
+	ReasonComplexTypeArg    = "complex_type_arg"
+	ReasonOther             = "other"
 )
 
 // Route is one statically discovered net/http route registration.
@@ -56,11 +55,8 @@ type Handler struct {
 
 // WrapperMeta holds statically known stdlib wrapper metadata.
 type WrapperMeta struct {
-	AllowQuerySemicolons bool   `json:"allow_query_semicolons"`
-	MaxRequestBodyBytes  *int64 `json:"max_request_body_bytes,omitempty"`
-	StrippedPrefix       string `json:"stripped_prefix,omitempty"`
-	Timeout              string `json:"timeout,omitempty"`
-	TimeoutMessage       string `json:"timeout_message,omitempty"`
+	MaxRequestBodyBytes *int64 `json:"max_request_body_bytes,omitempty"`
+	Timeout             string `json:"timeout,omitempty"`
 }
 
 // Normalize sorts routes and nested slices for stable golden comparisons.

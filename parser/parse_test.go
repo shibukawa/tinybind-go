@@ -146,7 +146,7 @@ func TestParsePackage_representativeSamples(t *testing.T) {
 			if w.MaxRequestBodyBytes == nil || *w.MaxRequestBodyBytes != 10485760 {
 				t.Fatalf("max bytes: %+v", w.MaxRequestBodyBytes)
 			}
-			if w.Timeout != "30s" || w.TimeoutMessage != "timeout" {
+			if w.Timeout != "30s" {
 				t.Fatalf("timeout meta: %+v", w)
 			}
 		},

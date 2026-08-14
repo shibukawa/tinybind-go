@@ -81,10 +81,3 @@ func TestOpenAPI_SourceOfTruthIsGoGeneration(t *testing.T) {
 		t.Fatal("handwritten openapi.yaml must not be package source of truth")
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

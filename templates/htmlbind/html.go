@@ -731,24 +731,6 @@ func positionInHTMLFragment(source string, offset int, base Position) Position {
 	return Position{Line: line, Col: col}
 }
 
-func (p *htmlParser) offsetForPosition(pos Position) int {
-	line, col := p.basePos.Line, p.basePos.Col
-	for i := 0; i < len(p.source); {
-		if line == pos.Line && col == pos.Col {
-			return i
-		}
-		r, size := utf8.DecodeRuneInString(p.source[i:])
-		i += size
-		if r == '\n' {
-			line++
-			col = 1
-		} else {
-			col++
-		}
-	}
-	return len(p.source)
-}
-
 func startsUpper(name string) bool {
 	r, _ := utf8.DecodeRuneInString(name)
 	return unicode.IsUpper(r)

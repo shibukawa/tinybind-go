@@ -42,7 +42,6 @@ func unwrapCall(call *ast.CallExpr, meta WrapperMeta) (ast.Expr, WrapperMeta, bo
 	}
 	// http.AllowQuerySemicolons(h)
 	if isNetHTTPCall(call, "AllowQuerySemicolons") && len(call.Args) >= 1 {
-		meta.AllowQuerySemicolons = true
 		return unwrapHandler(call.Args[0], meta)
 	}
 	// http.MaxBytesHandler(h, n)
@@ -54,18 +53,12 @@ func unwrapCall(call *ast.CallExpr, meta WrapperMeta) (ast.Expr, WrapperMeta, bo
 	}
 	// http.StripPrefix(prefix, h)
 	if isNetHTTPCall(call, "StripPrefix") && len(call.Args) >= 2 {
-		if prefix, ok := stringLiteral(call.Args[0]); ok {
-			meta.StrippedPrefix = prefix
-		}
 		return unwrapHandler(call.Args[1], meta)
 	}
 	// http.TimeoutHandler(h, dt, msg)
 	if isNetHTTPCall(call, "TimeoutHandler") && len(call.Args) >= 3 {
 		if d, ok := evalDuration(call.Args[1]); ok {
 			meta.Timeout = d
-		}
-		if msg, ok := stringLiteral(call.Args[2]); ok {
-			meta.TimeoutMessage = msg
 		}
 		return unwrapHandler(call.Args[0], meta)
 	}

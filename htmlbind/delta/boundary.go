@@ -83,11 +83,7 @@ type collector struct {
 	// second, weaker copy of the same idea: it could only change when this
 	// module's wire shape changed, while a build identity also covers a changed
 	// template, a changed external function, and a changed client.
-	tag string
-	// element names the placeholder a decomposing capture writes where a nested
-	// boundary sits. It is the same element a progressive render already writes
-	// for an await boundary, so a client has one hole shape to recognise.
-	element  string
+	tag      string
 	manifest Manifest
 	stack    []*openBoundary
 	// pending holds the boundary whose root element has not yet written its

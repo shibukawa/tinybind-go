@@ -79,10 +79,6 @@ func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...da
 	}, opts...)
 }
 
-// Driver returns the underlying transaction, for an operation this package does
-// not wrap. A key passed through it has no namespace applied.
-func (t *Tx) Driver() *datastore.Tx { return t.tx }
-
 // Store queues an upsert of v.
 func (t *Tx) Store(v EntityEncoder, opts ...datastore.WriteOption) {
 	t.tx.Put(t.encode(v), withBaseVersion(v, opts)...)

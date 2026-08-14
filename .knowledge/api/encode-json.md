@@ -15,12 +15,12 @@ behavior:
   - not HTTP: no Status Code, no Content-Type header
   - prefer generated codec when T is registered (decision:reflection-free)
 name_note: |
-  Existing untyped helper WriteJSON(http.ResponseWriter, status int, v any) stays
-  in httpbind; public standalone API is jsonbind.EncodeJSON.
+  The untyped helper WriteJSON(http.ResponseWriter, status int, v any) stayed in
+  httpbind until 2026-08-14, when the never-called helper was removed from both
+  runtimes; public standalone API is jsonbind.EncodeJSON.
 differs_from:
   api:write: Write sets HTTP status/headers and uses Accept/stream paths
   api:write-error: problem+json for errors
-  WriteJSON: internal/generated HTTP helper writing application/json responses
 related:
   - concept:standalone-json-codec
   - api:decode-json

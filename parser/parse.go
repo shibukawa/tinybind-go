@@ -6,7 +6,6 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
-	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -40,16 +39,6 @@ func ParseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
 		return nil, fmt.Errorf("parser: no loaded package")
 	}
 	return parseLoadedPackage(pkg, config)
-}
-
-// ParsePackageFiles is like ParsePackage but accepts an explicit file list
-// (used by tests when embedding small snippets). Each path must exist.
-func ParsePackageFiles(files []string) (*Result, error) {
-	if len(files) == 0 {
-		return &Result{Routes: []Route{}}, nil
-	}
-	dir := filepath.Dir(files[0])
-	return ParsePackage(dir)
 }
 
 func parseLoadedPackage(pkg *packages.Package, config Config) (*Result, error) {
