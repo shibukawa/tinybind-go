@@ -54,6 +54,15 @@ type GenerateOptions struct {
 	// default, because a silently assumed dialect emits placeholders the target
 	// engine rejects.
 	Dialect string
+	// ErrorExternals names the external functions whose Go implementation
+	// returns a trailing error. A non-nil error fails the statement build, so
+	// such a function may only be called as the whole value of a
+	// requirement:template-value-binding binding, where the failure has a place
+	// to go and a name in the source.
+	//
+	// The caller discovers this by reading the package's Go sources, so the
+	// template declaration stays the same either way.
+	ErrorExternals map[string]bool
 	// ContextAPI adds <Component>Context wrappers which resolve an executor
 	// from context.Context while preserving the explicit executor APIs.
 	ContextAPI bool
@@ -80,6 +89,10 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 		return nil, err
 	}
 	c := newCompiler(filename, module)
+	// Analysis needs this, not only emission: where a failing external may be
+	// called is a rule about the template, and the diagnostic has to name the
+	// call site rather than a line of emitted Go.
+	c.errorExternals = options.ErrorExternals
 	if err := c.analyze(); err != nil {
 		return nil, err
 	}
@@ -557,7 +570,16 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				}
 				// No blank assignment: analysis refused an unread binding
 				// already, so every local emitted here has a reader.
-				e.line(goLocalName(binding.Name) + " := " + code)
+				local := goLocalName(binding.Name)
+				if e.failingCall(binding.Value) {
+					// The builder already returns an error, so a failing
+					// external needs no new plumbing: the statement stops being
+					// built and the caller sees why.
+					e.line(local + ", err := " + code)
+					e.line("if err != nil { return err }")
+				} else {
+					e.line(local + " := " + code)
+				}
 				scope[binding.Name] = e.c.exprTypes[binding.Value]
 			}
 		case *IfNode:
@@ -585,6 +607,18 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 		}
 	}
 	return nil
+}
+
+// failingCall reports whether expr is a call to an external that returns an
+// error. Only the outermost call can be one, because analysis refuses a failing
+// call anywhere else, so this looks no deeper.
+func (e *goEmitter) failingCall(expr Expr) bool {
+	call, ok := expr.(*CallExpr)
+	if !ok {
+		return false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	return ok && e.c.errorExternals[identifier.Name]
 }
 
 func (e *goEmitter) line(value string) {

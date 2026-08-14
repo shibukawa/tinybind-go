@@ -860,6 +860,38 @@ Only a value can be bound. An `external async` still belongs in an
 [`await` clause](#await-fallback-recover), and an external declared `: html`
 renders where it is written rather than becoming a value.
 
+### A call that can fail
+
+A synchronous external is normally total: your Go function returns a value and
+that is all. Give it a trailing `error` and a failure ends the render, reaching
+whoever called it:
+
+```go
+func LoadData(id string) (Record, error) { ... }
+```
+
+The template declaration does not change — `external LoadData(id: string): Record`
+either way — and nothing is written before the value is computed, so a failure
+leaves the bound subtree absent rather than half-rendered.
+
+Such a function may only be the whole value of a `{val}`. Anywhere else there is
+nowhere for the failure to go, so it is a generation error that tells you what to
+write:
+
+```text
+<h1>{LoadData(id).title}</h1>
+```
+
+```text
+LoadData returns an error, so it can only be the whole value of a val binding;
+write {val name = LoadData(...)} and read the name here
+```
+
+This is the same rule that keeps an `external async` inside an `await` clause.
+The difference is where the failure lands: an async one is the boundary's and a
+`recover` clause can absorb it, while a synchronous one has no boundary and ends
+the render.
+
 The construct is what lets a component load its own data and cache the load and
 the render as one unit — see [Cached components](#cached-components). The key
 covers the declared parameters, so a hit skips the fetch as well as the markup:

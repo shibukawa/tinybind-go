@@ -75,6 +75,13 @@ type compiler struct {
 	statements    map[string]*statementInfo
 	exprTypes     map[Expr]valueType
 	relationCalls map[string][]string
+	// errorExternals names the externals whose Go implementation returns a
+	// trailing error, from GenerateOptions.ErrorExternals.
+	errorExternals map[string]bool
+	// valValue is the one expression currently allowed to reach such a call. A
+	// failing call has to be the whole value of a binding, because that is the
+	// only position the emitter can put an error check beside.
+	valValue Expr
 }
 
 type CompileError struct {
@@ -296,7 +303,13 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 			}
 		case *ValNode:
 			for _, binding := range n.Bindings {
+				// The one position a failing external may occupy. Only the
+				// outermost call qualifies: an argument to it is typed with the
+				// mark still pointing at the outer call and is refused.
+				outerVal := c.valValue
+				c.valValue = binding.Value
 				t, err := c.infer(binding.Value, scope)
+				c.valValue = outerVal
 				if err != nil {
 					return err
 				}
@@ -520,6 +533,12 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	sig, ok := c.externals[id.Name]
 	if !ok {
 		return valueType{}, c.error(call.Pos, "unknown function "+id.Name)
+	}
+	// A failing external has one legal position: the whole value of a binding,
+	// which is where emission can put the error check beside the assignment.
+	// Nested in a larger expression there is nothing to check.
+	if c.errorExternals[id.Name] && c.valValue != call {
+		return valueType{}, c.error(call.Pos, id.Name+" returns an error, so it can only be the whole value of a val binding; write {val name = "+id.Name+"(...)} and read the name here")
 	}
 	if len(call.Arguments) != len(sig.params) {
 		return valueType{}, c.error(call.Pos, fmt.Sprintf("%s expects %d arguments", id.Name, len(sig.params)))

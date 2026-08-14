@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shibukawa/tinybind-go/internal/contextscan"
+	"github.com/shibukawa/tinybind-go/internal/externalscan"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
@@ -342,7 +342,7 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 	// lets a function declaring a leading context.Context receive one here, the
 	// way it already does in a templates package. Without it the same
 	// declaration generates a bare call and the route package does not build.
-	withContext, err := contextscan.Externals(filepath.Dir(path))
+	signatures, err := externalscan.Scan(filepath.Dir(path))
 	if err != nil {
 		return htmlbind.Result{}, err
 	}
@@ -377,7 +377,8 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 		ServerActionSelectorField: emitter.ActionSelectorField,
 		ServerActionResolver:      options.ActionResolver,
 		ServerActionAttr:          emitter.ActionAttr,
-		ContextExternals:          withContext,
+		ContextExternals:          signatures.Context,
+		ErrorExternals:            signatures.Error,
 		DataAttributePrefix:       options.DataAttributePrefix,
 		PublicURLBase:             options.PublicURLBase,
 	})

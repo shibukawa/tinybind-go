@@ -34,6 +34,15 @@ type GenerateOptions struct {
 	// template declaration stays the same either way and the choice belongs to
 	// whoever writes the implementation.
 	ContextExternals map[string]bool
+	// ErrorExternals names the synchronous external functions whose Go
+	// implementation returns a trailing error. A non-nil error from one of them
+	// fails the render, so such a function may only be called as the whole value
+	// of a requirement:template-value-binding binding, where the failure has a
+	// place to go and a name in the source.
+	//
+	// Discovered the same way as ContextExternals, from the package's Go
+	// sources, so the template declaration is unchanged either way.
+	ErrorExternals map[string]bool
 	// PreserveWhitespace turns off requirement:static-whitespace-normalization,
 	// so static output keeps the authoring indentation and newlines byte for
 	// byte. It exists for a project comparing generated markup against
@@ -251,6 +260,10 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	if compiler.attrPrefix == "" {
 		compiler.attrPrefix = DefaultDataAttributePrefix
 	}
+	// Analysis needs this, not only emission: where a failing external may be
+	// called is a rule about the template, and the diagnostic has to name the
+	// call site rather than a line of emitted Go.
+	compiler.errorExternals = options.ErrorExternals
 	if err := compiler.analyze(); err != nil {
 		return Result{}, err
 	}
@@ -329,6 +342,8 @@ type goEmitter struct {
 	pkg string
 	// contextExternals mirrors GenerateOptions.ContextExternals.
 	contextExternals map[string]bool
+	// errorExternals mirrors GenerateOptions.ErrorExternals.
+	errorExternals map[string]bool
 	// rootScope is the parameter scope of the component being emitted. A check
 	// written against it can be hoisted to the plan, where it runs before the
 	// component writes anything; a check on a loop item cannot, because the
@@ -388,6 +403,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e := &goEmitter{
 		c:                c,
 		contextExternals: options.ContextExternals,
+		errorExternals:   options.ErrorExternals,
 		actions:          options.ServerActions,
 		refusedActions:   options.ServerActionRefusals,
 		resolveAction:    options.ServerActionResolver,

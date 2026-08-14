@@ -187,6 +187,23 @@ SELECT id, name FROM users WHERE
 読むなら 2 つに分けてください。そしてどこからも読まれない束縛はエラーです——statement
 を組み立てるたびに呼ばれて、結果はどこにも行きません。
 
+`external` は末尾に `error` を返すこともできます。失敗すると statement の組み立てが
+そこで止まり、呼び出した側に届きます。
+
+```go
+func NormalizeName(name string) (string, error) { ... }
+```
+
+```go
+key, err := NormalizeName(name)
+if err != nil {
+	return err
+}
+```
+
+テンプレート側の宣言はどちらでも変わりません。この関数は `{val}` の値そのものにしか
+書けません。ほかの場所では失敗の行き先がないので、生成時にそう告げられます。
+
 ## 戻り件数の宣言
 
 | 出力型 | 契約 | 高レベル API の結果 |

@@ -274,3 +274,79 @@ func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
 		t.Fatalf("want one Norm call, got %d:\n%s", calls, generated)
 	}
 }
+
+// A synchronous external is otherwise total. Declaring a trailing error in the
+// Go implementation gives a call that can fail somewhere to say so, and the
+// binding is where the failure has a place to go: nothing else in the lowering
+// can carry an error out of a value expression.
+func TestFailingExternalIsBoundAsAWholeValue(t *testing.T) {
+	generated := generateWith(t, bindingSource("{val record = LoadData(id)}\n<h1>{record.title}</h1>"),
+		htmlbind.GenerateOptions{ErrorExternals: map[string]bool{"LoadData": true}})
+	if !strings.Contains(generated, "htmlbind.ValErr(") {
+		t.Fatalf("the failing call did not become an error-carrying instruction:\n%s", generated)
+	}
+	if !strings.Contains(generated, "(Record, error) { return LoadData(p.Id) }") {
+		t.Fatalf("the value closure does not hand back the error:\n%s", generated)
+	}
+}
+
+// The context and error variants compose, and generation names the instruction
+// by appending the suffix, so the runtime has to spell it the same way.
+func TestFailingExternalTakingTheContextComposes(t *testing.T) {
+	source := "package pages\n\nexternal Token(): string\n\nexport component Card(): html {\n{val t = Token()}\n<p>{t}</p>\n}\n"
+	generated := generateWith(t, source, htmlbind.GenerateOptions{
+		ErrorExternals:   map[string]bool{"Token": true},
+		ContextExternals: map[string]bool{"Token": true},
+	})
+	if !strings.Contains(generated, "htmlbind.ValErrCtx(") {
+		t.Fatalf("want the context-carrying error instruction:\n%s", generated)
+	}
+	if !strings.Contains(generated, "(string, error) { return Token(ctx) }") {
+		t.Fatalf("the closure takes neither the context nor the error:\n%s", generated)
+	}
+}
+
+// Every other position is refused, for the same reason an async external is
+// confined to an await clause: there is nowhere for the failure to go. The
+// diagnostic says what to write instead.
+func TestFailingExternalIsRefusedOutsideABinding(t *testing.T) {
+	for name, body := range map[string]string{
+		"interpolated":           "<h1>{LoadData(id).title}</h1>",
+		"nested in a bound call": "{val a = Norm(LoadData(id).title)}\n<p>{a}</p>",
+		"an if condition":        "{if LoadData(id).title == \"x\"}<p>y</p>{/if}",
+		"an attribute":           "<p class={LoadData(id).title}>x</p>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := generateError(t, bindingSource(body),
+				htmlbind.GenerateOptions{ErrorExternals: map[string]bool{"LoadData": true}})
+			if !strings.Contains(message, "returns an error, so it can only be the whole value of a val binding") {
+				t.Fatalf("want the placement diagnostic, got %q", message)
+			}
+		})
+	}
+}
+
+// An async external already returns an error and its failure is the boundary's,
+// recoverable at the clause, so the scan naming it changes nothing about it.
+func TestAsyncExternalIsUnaffectedByTheErrorScan(t *testing.T) {
+	source := bindingHead + "export component Card(id: string): html {\n" +
+		"{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}\n}\n"
+	if _, err := htmlbind.Generate("page.tb.html", []byte(source),
+		htmlbind.GenerateOptions{ErrorExternals: map[string]bool{"LoadSlow": true}}); err != nil {
+		t.Fatalf("the error scan disturbed an async external: %v", err)
+	}
+}
+
+// A project whose externals declare no error generates exactly what it
+// generated before this existed.
+func TestATotalExternalIsUnchanged(t *testing.T) {
+	body := "{val record = LoadData(id)}\n<h1>{record.title}</h1>"
+	with := generateWith(t, bindingSource(body), htmlbind.GenerateOptions{ErrorExternals: map[string]bool{}})
+	without := generateWith(t, bindingSource(body), htmlbind.GenerateOptions{})
+	if with != without {
+		t.Fatal("an empty error set changed the output")
+	}
+	if strings.Contains(with, "ValErr") {
+		t.Fatalf("a total external became an error-carrying instruction:\n%s", with)
+	}
+}

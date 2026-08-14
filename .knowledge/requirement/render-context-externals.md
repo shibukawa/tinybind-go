@@ -49,7 +49,7 @@ execution:
   when: at the plan step position during the initial pass of requirement:chain-render-pipeline
   head_pass: never; requirement:head-merging contributions stay static markup
   missing_context: the render context always exists, defaulting to background, so a sync external taking one cannot fail for want of it the way requirement:render-value-provider validation must
-  cancellation: the implementation sees the render context and may return early; a sync external still has no error result, so it cannot report why
+  cancellation: the implementation sees the render context and may return early, and since 2026-08-14 it may say why: requirement:template-value-binding failing_external lets a sync external declare a trailing error, bound at a val binding
 constraints:
   - htmlbind gains no net/http dependency, so decision:runtime-package-boundaries is unchanged
   - no reflection and no runtime lookup; the leading parameter is read from parsed Go source at generation time
@@ -84,6 +84,6 @@ caller_scope:
     not_the_reported_cause: the report's async reproduction failed for the missing caller above rather than for this condition
 open_questions:
   - whether every expression position gains a ctx-carrying op variant, or generation restricts a context-taking sync external to the positions that have one
-  - whether a sync external should be allowed an error result once it can observe cancellation, or stay total as requirement:async-external-functions splits it
+  - answered 2026-08-14: it may, and requirement:template-value-binding failing_external confines it to a binding, since that is the one position whose lowering can carry a failure out
   - answered 2026-08-14: no call is shared implicitly; proposed requirement:template-value-binding lets the author name the result once, and decision:value-binding-form rejects collapsing identical calls automatically
 ```

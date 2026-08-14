@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/shibukawa/tinybind-go/internal/contextscan"
+	"github.com/shibukawa/tinybind-go/internal/externalscan"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 	templatesql "github.com/shibukawa/tinybind-go/templates/sqlbind"
 )
@@ -143,7 +143,7 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (template
 	if err != nil {
 		return templateOutputs{}, err
 	}
-	withContext, err := contextscan.Externals(dir)
+	signatures, err := externalscan.Scan(dir)
 	if err != nil {
 		return templateOutputs{}, err
 	}
@@ -160,7 +160,7 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (template
 		if err != nil {
 			return templateOutputs{}, err
 		}
-		code, compiled, err := g.generateTemplate(file, source, pkg, withContext, hooks)
+		code, compiled, err := g.generateTemplate(file, source, pkg, signatures, hooks)
 		if err != nil {
 			return templateOutputs{}, err
 		}
@@ -349,7 +349,7 @@ func (g *Generator) templatePackageName(dir string, files []templateFile) (strin
 // generated API shape, returning the Go source and the static files extracted
 // from it. Diagnostics keep the discovered path, so custom input suffixes are
 // reported exactly as they exist on disk.
-func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, contextExternals map[string]bool, hooks []htmlbind.ReferenceHook) ([]byte, htmlbind.Result, error) {
+func (g *Generator) generateTemplate(file templateFile, source []byte, pkg string, signatures externalscan.Signatures, hooks []htmlbind.ReferenceHook) ([]byte, htmlbind.Result, error) {
 	if file.kind == htmlTemplate {
 		module, err := htmlbind.Parse(file.path, source)
 		if err != nil {
@@ -362,7 +362,8 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			Package:             pkg,
 			Unit:                artifactBase(file.path),
 			PublicURLBase:       g.Options.resolvedPublicURLBase(),
-			ContextExternals:    contextExternals,
+			ContextExternals:    signatures.Context,
+			ErrorExternals:      signatures.Error,
 			PreserveWhitespace:  g.Options.PreserveTemplateWhitespace,
 			DataAttributePrefix: g.Options.DataAttributePrefix,
 			ReferenceHooks:      hooks,
@@ -381,8 +382,9 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		return nil, htmlbind.Result{}, err
 	}
 	options := templatesql.GenerateOptions{
-		Package:     pkg,
-		Dialect:     g.Options.SQLDialect,
+		Package:        pkg,
+		Dialect:        g.Options.SQLDialect,
+		ErrorExternals: signatures.Error,
 		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
 		ContextOnly: g.Options.SQLContextOnlyAPI,
 	}

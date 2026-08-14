@@ -2,6 +2,7 @@ package htmlbind
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -98,5 +99,82 @@ func TestValSplicesItsBodyIntoTheSequence(t *testing.T) {
 		if other := unbound.Sequence().Nodes[i]; node.Kind != other.Kind || node.Text != other.Text {
 			t.Fatalf("node %d = %+v, want %+v", i, node, other)
 		}
+	}
+}
+
+// A failing binding ends the render and the error reaches the caller. Unlike an
+// async external, whose failure an await clause can route to recover, a
+// synchronous one has no boundary to recover at: it has nowhere to go but out.
+func TestValErrEndsTheRender(t *testing.T) {
+	want := errors.New("load failed")
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		Builder[valParams]{}.Static("<main>"),
+		ValErr(
+			func(p valParams) (string, error) { return "", want },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	var out strings.Builder
+	err := Render(&out, Bind(plan, valParams{ID: "7"}))
+	if !errors.Is(err, want) {
+		t.Fatalf("render error = %v, want %v", err, want)
+	}
+	// Nothing is written before the value is computed, so the binding's subtree
+	// is absent rather than half-rendered.
+	if strings.Contains(out.String(), "<h1>") {
+		t.Fatalf("the failed binding rendered part of its body: %q", out.String())
+	}
+}
+
+// A binding that succeeds is the ordinary path, and the error result costs it
+// nothing.
+func TestValErrRendersWhenTheCallSucceeds(t *testing.T) {
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		ValErr(
+			func(p valParams) (string, error) { return "loaded-" + p.ID, nil },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	var out strings.Builder
+	if err := Render(&out, Bind(plan, valParams{ID: "7"})); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if out.String() != "loaded-7" {
+		t.Fatalf("output = %q, want the bound value", out.String())
+	}
+}
+
+// The context-carrying form fails the same way, and reaches the render context.
+func TestValErrCtxFailsAndReadsTheContext(t *testing.T) {
+	want := errors.New("cancelled")
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		ValErrCtx(
+			func(ctx context.Context, p valParams) (string, error) { return "", ctx.Err() },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out strings.Builder
+	if err := Render(&out, Bind(plan, valParams{}), WithContext(ctx)); err == nil {
+		t.Fatalf("render succeeded on a cancelled context, want %v", want)
+	}
+}
+
+// A failing binding still decomposes: the sequence walk evaluates nothing, so
+// whether the call would fail cannot change the static half.
+func TestValErrSplicesItsBodyIntoTheSequence(t *testing.T) {
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		ValErr(
+			func(p valParams) (string, error) { return p.ID, nil },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value }), body.Static("</h1>")}),
+	}}
+	if nodes := plan.Sequence().Nodes; len(nodes) != 3 || nodes[0].Kind != SeqStatic {
+		t.Fatalf("sequence = %+v, want the body spliced in place", nodes)
 	}
 }

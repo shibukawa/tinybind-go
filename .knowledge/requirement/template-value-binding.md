@@ -83,6 +83,16 @@ typing:
     reason: at one level the second is a redeclaration rather than a deliberate shadow, and the source gives the author no closer to read the first one's extent from
     where_checked: decision:value-binding-form same_level_check; the desugaring makes consecutive directives nest, so this cannot be a plain scope-occupancy test at analysis time
     unchanged_for_others: a for or await clause is unaffected by this rule and keeps the silent shadow it has today
+  failing_external:
+    rule: a synchronous external whose Go implementation returns a trailing error may be called only as the whole value of a binding; every other position is a generation error naming the function and saying what to write instead
+    decided: 2026-08-14 by the owner, answering the requirement:render-context-externals open question on whether a sync external may have an error result
+    declaration_unchanged: the template says `external LoadData(id: string): Record` either way; the trailing error is read from the Go source, exactly as a leading context.Context already is
+    why_one_position: a value closure hands back a value, so there is nowhere in a text, attribute, condition, iterable, or argument position to put a failure; a binding is the one place the lowering can carry one out
+    why_not_error_variants_everywhere: the eight context-carrying instruction forms would each need an error form and a context-and-error form, which is twenty-four where a binding needs two
+    same_shape_as_async: requirement:async-external-functions confines an async external to an await clause for the same reason, so this is one more case of an existing rule rather than a new kind of restriction
+    difference_from_async: an async failure is the boundary's and a recover clause may absorb it; a synchronous one has no boundary, so it ends the render and reaches the caller
+    nested_call_refused: only the outermost call of a binding's value qualifies, so a failing external as an argument to another call is refused with the same diagnostic
+    nothing_written_first: the value is computed before the body renders, so a failure leaves the bound subtree absent rather than half-rendered
   attribute_position: refused by name, per decision:value-binding-form attribute_context; requirement:template-v1-scope excludes block control inside attribute values and a binding has a body even without a closer
   unread_binding:
     rule: a generation error in both formats, decided 2026-08-14 by the owner over two rounds — HTML first, then SQL once the asymmetry was named
@@ -155,6 +165,9 @@ acceptance:
   - a subtree under a binding still decomposes into a sequence tree rather than becoming one opaque node
   - a binding's name is unresolved after the enclosing element, control body, or declaration body ends
   - a binding written in an attribute value is refused by name rather than by the generic attribute diagnostic
+  - an external returning a trailing error compiles as the whole value of a binding and is refused in every other position, in both formats
+  - a non-nil error from such a call ends the render with that error and writes none of the bound subtree
+  - the same external declared without an error result generates exactly the bytes it generates today
   - a source written with a binding round-trips through the formatter with no closer and no added indentation
   - a SQL statement binding one external call and reading it in two parameter positions calls it once
   - a SQL binding declared inside an if body is out of scope after it, because the generated Go block ends there

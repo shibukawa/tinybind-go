@@ -139,3 +139,44 @@ func TestSQLBindingNamedAfterAGoKeywordIsEscaped(t *testing.T) {
 		t.Fatalf("the keyword-named binding was not escaped:\n%s", generated)
 	}
 }
+
+// The builder already returns an error, so a failing external needs no new
+// plumbing: the statement stops being built and the caller sees why.
+func TestSQLFailingExternalIsCheckedAtTheBinding(t *testing.T) {
+	generated, err := sqlbind.Generate("users.tb.sql",
+		bindingSource("{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}"),
+		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{"Norm": true}})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	for _, want := range []string{"key, err := Norm(name)", "if err != nil"} {
+		if !strings.Contains(string(generated), want) {
+			t.Fatalf("generated code is missing %q:\n%s", want, generated)
+		}
+	}
+}
+
+// The placement rule is the same in both formats, since it is about where a
+// failure has somewhere to go rather than about either lowering.
+func TestSQLFailingExternalIsRefusedOutsideABinding(t *testing.T) {
+	_, err := sqlbind.Generate("users.tb.sql",
+		bindingSource("SELECT id, name FROM users WHERE a = {Norm(name)}"),
+		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{"Norm": true}})
+	if err == nil || !strings.Contains(err.Error(), "returns an error, so it can only be the whole value of a val binding") {
+		t.Fatalf("want the placement diagnostic, got %v", err)
+	}
+}
+
+// A project whose externals declare no error generates exactly what it
+// generated before this existed.
+func TestSQLATotalExternalIsUnchanged(t *testing.T) {
+	body := "{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}"
+	with, err := sqlbind.Generate("users.tb.sql", bindingSource(body),
+		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{}})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if string(with) != generateBinding(t, body) {
+		t.Fatal("an empty error set changed the output")
+	}
+}

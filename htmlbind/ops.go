@@ -427,6 +427,56 @@ func (o valCtxOp[P, V, S]) Exec(r *Renderer, params P) error {
 	return execOps(r, o.body, o.scope(params, o.value(r.boundaryContext(), params)))
 }
 
+// ValErr is Val for a value whose expression can fail. A non-nil error ends the
+// render and reaches the caller, because a synchronous binding has no boundary
+// to recover at: unlike an async external, whose failure the await clause can
+// route to recover, this one has nowhere to go but out.
+//
+// Nothing is written before the value is computed, so a failure here leaves the
+// binding's subtree unrendered rather than half-rendered.
+func ValErr[P, V, S any](value func(P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
+	return valErrOp[P, V, S]{value: value, scope: scope, body: body}
+}
+
+// ValErrCtx is ValErr for a value whose expression also needs the render
+// context. The name puts Ctx last because generation builds it by appending the
+// suffix, the same way every other context-carrying instruction is named.
+func ValErrCtx[P, V, S any](value func(context.Context, P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
+	return valErrCtxOp[P, V, S]{value: value, scope: scope, body: body}
+}
+
+type valErrOp[P, V, S any] struct {
+	value func(P) (V, error)
+	scope func(P, V) S
+	body  []Op[S]
+}
+
+func (o valErrOp[P, V, S]) sequenceInline() []SeqNode { return sequenceOf(o.body) }
+
+func (o valErrOp[P, V, S]) Exec(r *Renderer, params P) error {
+	value, err := o.value(params)
+	if err != nil {
+		return err
+	}
+	return execOps(r, o.body, o.scope(params, value))
+}
+
+type valErrCtxOp[P, V, S any] struct {
+	value func(context.Context, P) (V, error)
+	scope func(P, V) S
+	body  []Op[S]
+}
+
+func (o valErrCtxOp[P, V, S]) sequenceInline() []SeqNode { return sequenceOf(o.body) }
+
+func (o valErrCtxOp[P, V, S]) Exec(r *Renderer, params P) error {
+	value, err := o.value(r.boundaryContext(), params)
+	if err != nil {
+		return err
+	}
+	return execOps(r, o.body, o.scope(params, value))
+}
+
 // Require fails the render when check rejects the parameters. Generation emits
 // it ahead of an await boundary that binds a required async parameter, so a
 // caller who left one unset gets an error before the boundary commits its

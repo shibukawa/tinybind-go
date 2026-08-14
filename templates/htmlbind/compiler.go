@@ -229,6 +229,9 @@ type compiler struct {
 	// It is derived from the bindings rather than written at the wait site,
 	// because how often a value arrives is what its declaration says.
 	liveBoundaries map[*syntax.AwaitNode]bool
+	// errorExternals names the synchronous externals whose Go implementation
+	// returns a trailing error, from GenerateOptions.ErrorExternals.
+	errorExternals map[string]bool
 
 	// collapseWhitespace enables requirement:static-whitespace-normalization.
 	// It is on unless the run asked for byte-identical output.
@@ -250,6 +253,11 @@ type compiler struct {
 	// awaitCall is the one call expression currently allowed to name an async
 	// external, so a nested async call inside an await header is still rejected.
 	awaitCall Expr
+	// valCall is the one call expression currently allowed to name an external
+	// that returns an error. A failing call has to be the whole value of a
+	// binding, because that is the only position whose lowering can carry the
+	// failure out; nested in a larger expression there is nowhere to put it.
+	valCall Expr
 	// awaitSource is the one expression currently allowed to evaluate to an
 	// async type. It is the binding source of the await clause being analyzed,
 	// so an async value read anywhere else is a local error with a position.
@@ -1282,7 +1290,15 @@ func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) 
 		// directive: parseVal refuses a directive whose bindings depend on each
 		// other, so a dependency is always two directives and the outer one is
 		// already in scope by the time the inner is analyzed.
+		//
+		// This is the one position a failing external may occupy, so the value
+		// expression itself is marked before typing it. Only the outermost call
+		// qualifies; an argument to it is typed with the mark still pointing at
+		// the outer call and is refused.
+		outerVal := c.valCall
+		c.valCall = binding.Value
 		t, err := c.infer(binding.Value, scope)
+		c.valCall = outerVal
 		if err != nil {
 			return err
 		}
@@ -1855,6 +1871,14 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	}
 	if sig.async && c.awaitCall != call {
 		return valueType{}, c.error(call.Pos, "async function "+identifier.Name+" can only be called in an await binding")
+	}
+	// A failing synchronous external has one legal position, for the same reason
+	// an async one does: the failure needs somewhere to go. A binding's value is
+	// where the lowering can carry an error out, so nested in a larger
+	// expression there is nothing to carry it. An async external is excluded
+	// because its error is already the boundary's, recoverable at the clause.
+	if c.errorExternals[identifier.Name] && !sig.async && !sig.live && c.valCall != call {
+		return valueType{}, c.error(call.Pos, identifier.Name+" returns an error, so it can only be the whole value of a val binding; write {val name = "+identifier.Name+"(...)} and read the name here")
 	}
 	if len(call.Arguments) != len(sig.params) {
 		return valueType{}, c.error(call.Pos, fmt.Sprintf("%s expects %d arguments", identifier.Name, len(sig.params)))

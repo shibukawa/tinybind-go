@@ -770,6 +770,35 @@ external の引数。
 [`await` 節](#await--fallback--recover) のもので、`: html` と宣言した external は値に
 なるのではなく書いた場所で描画されます。
 
+### 失敗しうる呼び出し
+
+同期 external は本来 total です。Go 側の関数が値を返して、それで終わりです。末尾に
+`error` を足すと、失敗が描画を打ち切り、呼び出した側まで届きます。
+
+```go
+func LoadData(id string) (Record, error) { ... }
+```
+
+テンプレート側の宣言は変わりません — どちらでも `external LoadData(id: string): Record`
+です。値が求まる前には何も書き出されないので、失敗したときその束縛のサブツリーは
+途中まで描かれるのではなく、まるごと出ません。
+
+この関数は `{val}` の値そのものにしか書けません。ほかの場所では失敗の行き先がない
+ので、何を書けばよいかを告げる生成エラーになります。
+
+```text
+<h1>{LoadData(id).title}</h1>
+```
+
+```text
+LoadData returns an error, so it can only be the whole value of a val binding;
+write {val name = LoadData(...)} and read the name here
+```
+
+`external async` を `await` 節の中に閉じ込めているのと同じ規則です。違うのは失敗の
+落ちる先で、非同期のものは境界のものなので `recover` 節が受け止められますが、同期
+のものには境界がなく、描画がそこで終わります。
+
 この構文があると、component が自分でデータを読み込み、その読み込みと描画をひとまと
 まりでキャッシュできます — [キャッシュ component](#キャッシュ-component)
 を参照してください。キーは宣言済みの parameter を覆うので、ヒットすれば markup だけ

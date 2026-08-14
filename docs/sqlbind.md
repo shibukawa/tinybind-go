@@ -189,6 +189,24 @@ are independent, so one that reads another must be split into two; and a binding
 nothing reads is an error, because its call would run every time the statement is
 built and the result would go nowhere.
 
+An `external` may also return a trailing `error`, which fails the statement build
+and reaches the caller:
+
+```go
+func NormalizeName(name string) (string, error) { ... }
+```
+
+```go
+key, err := NormalizeName(name)
+if err != nil {
+	return err
+}
+```
+
+The template declaration is unchanged either way. Such a function may only be the
+whole value of a `{val}`; written anywhere else there is nowhere for the failure
+to go, and generation says so.
+
 ## Declaring result cardinality
 
 | Output | Contract | High-level result |

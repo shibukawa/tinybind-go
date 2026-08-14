@@ -1075,11 +1075,35 @@ func (e *goEmitter) emitValBinding(p *planEmitter, node *syntax.ValNode, index i
 	}
 	p.flush()
 	withContext := e.usesRenderContext(binding.Value)
-	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) %s { return %s },\n\tfunc(%s %s, value %s) %s { return %s{Outer: %s, %s: value} },\n%s)",
-		ctxOp("Val", withContext), closureParams(p.scope.goType, withContext), goType(t), value,
+	// A failing external returns its error alongside the value, so the closure
+	// hands both back and the instruction decides. Analysis has already confined
+	// such a call to this position, so the shape of the closure is decided by
+	// the outermost call alone.
+	op, results, returns := ctxOp("Val", withContext), goType(t), "return "+value
+	if e.failingCall(binding.Value) {
+		op, results, returns = ctxOp("ValErr", withContext), "("+goType(t)+", error)", "return "+value
+	}
+	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) %s { %s },\n\tfunc(%s %s, value %s) %s { return %s{Outer: %s, %s: value} },\n%s)",
+		op, closureParams(p.scope.goType, withContext), results, returns,
 		receiverIdent, p.scope.goType, goType(t), scopeType, scopeType, receiverIdent, field,
 		indentBlock(body.literal(), "\t")))
 	return nil
+}
+
+// failingCall reports whether expr is a call to a synchronous external that
+// returns an error. Only the outermost call can be one, because analysis refuses
+// a failing call anywhere else, so this looks no deeper.
+func (e *goEmitter) failingCall(expr Expr) bool {
+	call, ok := expr.(*CallExpr)
+	if !ok {
+		return false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	if !ok || !e.errorExternals[identifier.Name] {
+		return false
+	}
+	signature, known := e.c.externals[identifier.Name]
+	return known && !signature.async && !signature.live
 }
 
 // awaitSourceName renders a binding's source the way the template wrote it, so
