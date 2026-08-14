@@ -108,6 +108,11 @@ func (c *BodyContext) ParseEmbedded(fragment Embedded, context string) (Node, *T
 		offset := headerOffset + strings.Index(trimmed, header)
 		node, err := c.parseAwait(header, offset, pos, context)
 		return node, nil, err
+	case strings.HasPrefix(trimmed, "val "):
+		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "val "))
+		offset := headerOffset + strings.Index(trimmed, header)
+		node, err := c.parseVal(header, offset, pos, context)
+		return node, nil, err
 	case strings.HasPrefix(trimmed, "if "):
 		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "if "))
 		offset := headerOffset + strings.Index(trimmed, header)
@@ -199,6 +204,53 @@ func (c *BodyContext) parseFor(header string, headerOffset int, pos Position, co
 		return nil, c.ErrorAt(c.offset, "expected {/for}")
 	}
 	return &ForNode{Kind: "template:for", Pos: pos, Context: context, Variable: variable, Index: index, Iterable: iterable, Body: body}, nil
+}
+
+// parseVal reads one value binding. It has no closer, because a binding that
+// delimited its own subtree would indent the markup it scopes for a reason the
+// markup does not have. The nodes it scopes are its later siblings, so the node
+// is parsed as a leaf and Body is filled later by whoever needs a subtree.
+//
+// Duplicate names are not checked here. A second binding of one name in the
+// same block is the same mistake whether it is written in this node's list or
+// in the next node's, so DuplicateValBinding reports both against the whole
+// list rather than this reporting half of it.
+func (c *BodyContext) parseVal(header string, headerOffset int, pos Position, context string) (*ValNode, error) {
+	node := &ValNode{Kind: "template:val", Pos: pos, Context: context}
+	for _, part := range splitTopLevel(header, ',') {
+		text := strings.TrimSpace(part.text)
+		offset := headerOffset + part.offset + (len(part.text) - len(strings.TrimLeftFunc(part.text, unicode.IsSpace)))
+		name, valueText, found := strings.Cut(text, "=")
+		if !found {
+			return nil, c.ErrorAt(offset, "val binding syntax is {val name = expression}")
+		}
+		name = strings.TrimSpace(name)
+		if !lowerCamelIdentifier(name) {
+			return nil, c.ErrorAt(offset, "val binding name must be lowerCamelCase")
+		}
+		valueBody := strings.TrimSpace(valueText)
+		valueOffset := offset + strings.Index(text, valueBody)
+		value, err := ParseExpressionAt(c.filename, valueBody, valueOffset, c.Position(valueOffset))
+		if err != nil {
+			return nil, err
+		}
+		// The bindings of one directive are independent, so a value is read
+		// against what was in scope before the directive. Go reads a
+		// comma-separated declaration the same way — `a, b := f(), g(a)` does
+		// not compile — and an await clause has to, because its bindings settle
+		// concurrently. One comma cannot mean two things.
+		for _, existing := range node.Bindings {
+			if ExprReads(value, existing.Name) {
+				return nil, c.ErrorAt(offset, "val binding "+name+" reads "+existing.Name+
+					", which the same directive binds; the bindings of one directive are independent, so write "+name+" as its own {val}")
+			}
+		}
+		node.Bindings = append(node.Bindings, ValBinding{Pos: c.Position(offset), Name: name, Value: value})
+	}
+	if len(node.Bindings) == 0 {
+		return nil, c.ErrorAt(headerOffset, "val needs at least one binding")
+	}
+	return node, nil
 }
 
 // parseAwait reads one boundary. The clause binds its own asynchronous calls,

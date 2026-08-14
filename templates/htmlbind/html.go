@@ -311,9 +311,14 @@ func rawTextElement(context string) string {
 
 // insertionKeywords open a control block. They are recognized before the value
 // shapes below because a keyword is never a bare value.
+// val is here for the same reason as the rest: without it the shapes below read
+// `{val a = f()}` as content, because an identifier followed by another one is
+// not a bare value, a member access, or a call. It costs no new ambiguity, since
+// no valid JavaScript opens a tight brace with `val` the way `{let x = 1}` does.
 var insertionKeywords = map[string]bool{
 	"if": true, "else": true, "for": true,
 	"await": true, "recover": true, "fallback": true,
+	"val": true,
 }
 
 // rawInsertionAhead reports whether the brace at the parser position opens a
@@ -775,9 +780,13 @@ func isHTMLName(name string) bool {
 
 func isControl(value string) bool {
 	switch {
+	// A value binding has no closer, but it still scopes the nodes after it, so
+	// it is as much a block here as the rest: an attribute value has no later
+	// siblings for it to reach.
 	case strings.HasPrefix(value, "if "), strings.HasPrefix(value, "for "),
 		strings.HasPrefix(value, "await "), strings.HasPrefix(value, "else if "),
-		strings.HasPrefix(value, "recover "), strings.HasPrefix(value, "/"):
+		strings.HasPrefix(value, "recover "), strings.HasPrefix(value, "val "),
+		strings.HasPrefix(value, "/"):
 		return true
 	}
 	return value == "else" || value == "fallback" || value == "recover"

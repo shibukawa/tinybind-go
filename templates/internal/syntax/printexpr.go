@@ -122,6 +122,17 @@ func literalText(l *LiteralExpr) string {
 	return fmt.Sprintf("%v", l.Value)
 }
 
+// ValString renders a value binding without the braces the format owns. It is
+// not a control node: the binding has no closer, so a printer writes it as a
+// leaf and lets the nodes it scopes stay where the author put them.
+func ValString(n *ValNode) string {
+	parts := make([]string, 0, len(n.Bindings))
+	for _, binding := range n.Bindings {
+		parts = append(parts, binding.Name+" = "+ExprString(binding.Value))
+	}
+	return "val " + strings.Join(parts, ", ")
+}
+
 // ControlOpen renders the opening marker of a shared control node, without the
 // braces the format owns. It reports false for a node that is not a control
 // node.

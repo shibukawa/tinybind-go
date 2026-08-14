@@ -577,6 +577,10 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 			if err := e.emitForOp(p, node); err != nil {
 				return err
 			}
+		case *syntax.ValNode:
+			if err := e.emitValOp(p, node); err != nil {
+				return err
+			}
 		case *syntax.AwaitNode:
 			if err := e.emitAwaitOp(p, node); err != nil {
 				return err
@@ -1021,6 +1025,52 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) []%s { return %s },\n\tfunc(%s %s, item %s, index int) %s { return %s{Outer: %s, Item: item, Index: index} },\n%s)",
 		ctxOp("For", withContext), closureParams(p.scope.goType, withContext), goType(elem), iterable,
 		receiverIdent, p.scope.goType, goType(elem), scopeType, scopeType, receiverIdent,
+		indentBlock(body.literal(), "\t")))
+	return nil
+}
+
+// emitValOp writes one value binding. It is emitForOp without the iteration:
+// the value is computed once, a generated scope struct carries it beside the
+// enclosing parameters, and the body reads it as a statically typed field
+// rather than as a lookup.
+//
+// Normalization split a node binding several names into one node per name, so
+// the loop below runs once in practice; it is written to nest anyway, because a
+// binding that reads an earlier one has to see it in an enclosing scope and
+// nesting is what puts it there.
+func (e *goEmitter) emitValOp(p *planEmitter, node *syntax.ValNode) error {
+	return e.emitValBinding(p, node, 0)
+}
+
+func (e *goEmitter) emitValBinding(p *planEmitter, node *syntax.ValNode, index int) error {
+	if index == len(node.Bindings) {
+		return e.emitOps(p, node.Body)
+	}
+	binding := node.Bindings[index]
+	value, err := e.exprCode(binding.Value, p.scope)
+	if err != nil {
+		return err
+	}
+	t := e.c.exprTypes[binding.Value]
+	e.scopeCount++
+	scopeType := fmt.Sprintf("%sVal%d", p.scope.builder, e.scopeCount)
+	builder := scopeType + "Ops"
+	inner := p.scope.child(scopeType, builder)
+	field := goPublicName(binding.Name)
+	inner.paths[binding.Name] = field
+	inner.types[binding.Name] = t
+	fmt.Fprintf(&e.declarations, "type %s struct {\n\tOuter %s\n\t%s %s\n}\n\n", scopeType, p.scope.goType, field, goType(t))
+	fmt.Fprintf(&e.declarations, "var %s = htmlbind.Builder[%s]{}\n\n", builder, scopeType)
+
+	body := &planEmitter{e: e, scope: inner}
+	if err := e.emitValBinding(body, node, index+1); err != nil {
+		return err
+	}
+	p.flush()
+	withContext := e.usesRenderContext(binding.Value)
+	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) %s { return %s },\n\tfunc(%s %s, value %s) %s { return %s{Outer: %s, %s: value} },\n%s)",
+		ctxOp("Val", withContext), closureParams(p.scope.goType, withContext), goType(t), value,
+		receiverIdent, p.scope.goType, goType(t), scopeType, scopeType, receiverIdent, field,
 		indentBlock(body.literal(), "\t")))
 	return nil
 }
@@ -1582,6 +1632,8 @@ func (c *compiler) calledComponents(info *componentInfo) []string {
 				walk(node.Then)
 				walk(node.Else)
 			case *syntax.ForNode:
+				walk(node.Body)
+			case *syntax.ValNode:
 				walk(node.Body)
 			case *syntax.AwaitNode:
 				walk(node.Primary)

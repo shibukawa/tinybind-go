@@ -231,6 +231,10 @@ func (w *htmlWriter) node(node syntax.Node, kind container) error {
 		return w.component(n)
 	case *syntax.ExpressionNode:
 		w.p.Write("{" + syntax.ExprString(n.Expression) + "}")
+	case *syntax.ValNode:
+		// A leaf, not a control block. The nodes it scopes are its siblings and
+		// stay at this level, which is the whole reason it has no closer.
+		w.p.Write("{" + syntax.ValString(n) + "}")
 	case *syntax.IfNode, *syntax.ForNode, *syntax.AwaitNode:
 		return w.control(node, kind)
 	default:

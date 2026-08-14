@@ -18,7 +18,7 @@ included:
   - requirement:template-code-generation
 deferred:
   - requirement:html-slot-syntax named slots
-  - immutable let bindings
+  - immutable let bindings, taken up as requirement:template-value-binding after a downstream request 2026-08-14 and spelled val there, per decision:value-binding-form
   - explicit enum underlying values and field mapping annotations
   - anonymous SQL row types if named rows suffice for the first milestone
   - typed SQL identifier abstraction and affected-row annotations

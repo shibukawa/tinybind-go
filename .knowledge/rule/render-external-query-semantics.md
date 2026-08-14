@@ -24,4 +24,8 @@ actions:
   status: future explicit action or command API with CSRF, method, validation, idempotency, and redirect or delta semantics
 cache:
   - undeclared request, user, locale, or authorization dependencies make component output ineligible for reuse
+call_count:
+  guaranteed: none; the rationale above lists five reasons the same component may run again
+  licenses: proposed requirement:template-value-binding, which reduces repeated calls to one without changing any guaranteed behavior, because there was never a guaranteed count to change
+  does_not_license: an optimizer collapsing identical calls, since authors would then depend on a number this rule leaves open; decision:value-binding-form rejects it
 ```

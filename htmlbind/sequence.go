@@ -102,6 +102,13 @@ func sequenceOf[P any](ops []Op[P]) []SeqNode {
 				Else: sequenceOf(typed.fallback),
 			})
 		default:
+			// An op that runs one body exactly once contributes no marker of its
+			// own, so its nodes are spliced where it stands rather than becoming
+			// a node the client has to walk into.
+			if inline, ok := op.(interface{ sequenceInline() []SeqNode }); ok {
+				nodes = append(nodes, inline.sequenceInline()...)
+				continue
+			}
 			if body, ok := op.(interface{ sequenceBody() []SeqNode }); ok {
 				nodes = append(nodes, SeqNode{Kind: SeqRepeat, Then: body.sequenceBody()})
 				continue

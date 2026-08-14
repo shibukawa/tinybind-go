@@ -379,6 +379,54 @@ func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
 	return nil
 }
 
+// Val runs body once against a scope carrying one computed value. scope builds
+// the body's parameter value from the enclosing parameters and that value, so a
+// bound name stays statically typed instead of becoming an untyped lookup.
+//
+// It exists so a template can name a synchronous external's result: without it
+// every mention of the result is another call, which is cheap for a small
+// lookup and is not cheap for a component that loads its own data.
+func Val[P, V, S any](value func(P) V, scope func(P, V) S, body []Op[S]) Op[P] {
+	return valOp[P, V, S]{value: value, scope: scope, body: body}
+}
+
+// ValCtx is Val for a value whose expression needs the render context.
+func ValCtx[P, V, S any](value func(context.Context, P) V, scope func(P, V) S, body []Op[S]) Op[P] {
+	return valCtxOp[P, V, S]{value: value, scope: scope, body: body}
+}
+
+type valOp[P, V, S any] struct {
+	value func(P) V
+	scope func(P, V) S
+	body  []Op[S]
+}
+
+// sequenceInline splices the body into the enclosing sequence. A binding runs
+// its body exactly once, so unlike a loop it has no count to report and unlike
+// a conditional it has no branch to record: it contributes nothing to the value
+// stream, and its nodes belong where the binding stands.
+//
+// Without this the sequence walk would fall through to an opaque node and every
+// bound subtree would stop decomposing, which is a working render with a silently
+// degraded delta path.
+func (o valOp[P, V, S]) sequenceInline() []SeqNode { return sequenceOf(o.body) }
+
+func (o valOp[P, V, S]) Exec(r *Renderer, params P) error {
+	return execOps(r, o.body, o.scope(params, o.value(params)))
+}
+
+type valCtxOp[P, V, S any] struct {
+	value func(context.Context, P) V
+	scope func(P, V) S
+	body  []Op[S]
+}
+
+func (o valCtxOp[P, V, S]) sequenceInline() []SeqNode { return sequenceOf(o.body) }
+
+func (o valCtxOp[P, V, S]) Exec(r *Renderer, params P) error {
+	return execOps(r, o.body, o.scope(params, o.value(r.boundaryContext(), params)))
+}
+
 // Require fails the render when check rejects the parameters. Generation emits
 // it ahead of an await boundary that binds a required async parameter, so a
 // caller who left one unset gets an error before the boundary commits its

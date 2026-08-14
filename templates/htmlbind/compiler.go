@@ -403,6 +403,13 @@ func (c *compiler) analyze() error {
 		if err != nil {
 			return err
 		}
+		// Value bindings are folded into subtrees after whitespace is settled,
+		// so whitespace still sees the flat list the author wrote and cannot
+		// decide a run differently for having a binding in the middle of it.
+		body, err = c.normalizeBindings(body)
+		if err != nil {
+			return err
+		}
 		component.Body = body
 		c.current = info
 		c.slotUsed = map[string]bool{}
@@ -929,6 +936,10 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			if err := c.analyzeSlot(node, scope); err != nil {
 				return err
 			}
+		case *syntax.ValNode:
+			if err := c.analyzeVal(node, scope); err != nil {
+				return err
+			}
 		case *syntax.AwaitNode:
 			if err := c.analyzeAwait(node, scope); err != nil {
 				return err
@@ -1058,6 +1069,8 @@ func (c *compiler) rejectNestedScriptBlocks(info *componentInfo, nodes []Node) e
 			children = [][]Node{node.Then, node.Else}
 		case *syntax.ForNode:
 			children = [][]Node{node.Body}
+		case *syntax.ValNode:
+			children = [][]Node{node.Body}
 		case *syntax.AwaitNode:
 			children = [][]Node{node.Primary, node.Fallback, node.Recover}
 		default:
@@ -1093,6 +1106,8 @@ func (c *compiler) collectHead(info *componentInfo, body []Node) error {
 				walk(node.Then)
 				walk(node.Else)
 			case *syntax.ForNode:
+				walk(node.Body)
+			case *syntax.ValNode:
 				walk(node.Body)
 			case *syntax.AwaitNode:
 				walk(node.Primary)
@@ -1240,6 +1255,51 @@ func (c *compiler) awaitedType(expr Expr, scope map[string]valueType) (valueType
 	c.awaitSource = expr
 	defer func() { c.awaitSource = outer }()
 	return c.infer(expr, scope)
+}
+
+// analyzeVal types one value binding. Normalization has already made the nodes
+// it scopes its body and split a multi-name binding into one node per name, so
+// there is exactly one name here and it is visible in the body alone.
+//
+// What may be bound is a value. An async or live external is refused because a
+// boundary is the only place it can be called, and an html result is refused
+// because it is a subtree rather than a value: it is already rendered where it
+// is written, and naming it would promise an operand position it cannot fill.
+func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) error {
+	inner := copyScope(scope)
+	for _, binding := range node.Bindings {
+		if binding.Name == "outer" {
+			return c.error(binding.Pos, "val binding cannot be named outer; the generated scope reserves that name")
+		}
+		if call, ok := binding.Value.(*CallExpr); ok {
+			if identifier, ok := call.Callee.(*IdentifierExpr); ok {
+				if sig, known := c.externals[identifier.Name]; known && (sig.async || sig.live) {
+					return c.error(binding.Pos, identifier.Name+" is async; bind it in an await clause, which is the only place it can be called")
+				}
+			}
+		}
+		// Typed against the enclosing scope, never against a sibling of the same
+		// directive: parseVal refuses a directive whose bindings depend on each
+		// other, so a dependency is always two directives and the outer one is
+		// already in scope by the time the inner is analyzed.
+		t, err := c.infer(binding.Value, scope)
+		if err != nil {
+			return err
+		}
+		if t.kind == kindHTML {
+			return c.error(binding.Pos, "val binding "+binding.Name+" is html, which renders where it is written rather than becoming a value; call it in place instead of binding it")
+		}
+		// A binding nothing reads still calls its external on every render, and
+		// an external may only answer a query, so the call is paid for and
+		// discarded. Generated Go would accept it, because the value becomes a
+		// struct field rather than a local, which is exactly why saying so is
+		// this analysis's job and not the Go compiler's.
+		if !valueRead(node.Body, binding.Name) {
+			return c.error(binding.Pos, "val binding "+binding.Name+" is never read; its call would run on every render and be discarded, so read it or remove it")
+		}
+		inner[binding.Name] = t
+	}
+	return c.analyzeNodes(node.Body, inner)
 }
 
 // analyzeAwait types one boundary. The bindings are visible only in the primary
@@ -2116,6 +2176,10 @@ func (c *compiler) rejectStatefulControls(nodes []Node) error {
 				return err
 			}
 		case *syntax.ForNode:
+			if err := c.rejectStatefulControls(node.Body); err != nil {
+				return err
+			}
+		case *syntax.ValNode:
 			if err := c.rejectStatefulControls(node.Body); err != nil {
 				return err
 			}

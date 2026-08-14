@@ -200,6 +200,88 @@ type AwaitBinding struct {
 	Call Expr     `json:"call"`
 }
 
+// ValNode binds expression results to names for the rest of the enclosing
+// block. It is written without a closer, so the nodes it scopes are its later
+// siblings rather than a subtree the source delimits.
+//
+// Parsing therefore leaves Body nil. A format whose lowering needs a real
+// subtree fills it by normalization before analysis; a format whose target has
+// block scoping of its own reads the flat form directly. Printing always works
+// from the flat form, so a source round-trips with no closer and no added
+// indentation.
+type ValNode struct {
+	Kind     string       `json:"kind"`
+	Pos      Position     `json:"pos"`
+	Context  string       `json:"context"`
+	Bindings []ValBinding `json:"bindings"`
+	Body     []Node       `json:"body,omitempty"`
+}
+
+func (n *ValNode) NodeType() string { return n.Kind }
+
+// ValBinding names one value the following nodes read. Unlike an await
+// binding, which settles concurrently with its siblings, a value binding is
+// evaluated in order, so a later binding of the same node may read an earlier
+// one.
+type ValBinding struct {
+	Pos   Position `json:"pos"`
+	Name  string   `json:"name"`
+	Value Expr     `json:"value"`
+}
+
+// ExprReads reports whether expr names an identifier. Both formats need it to
+// answer what a binding is worth: one that nothing reads called its external
+// for no one, which is a mistake in markup and a local Go could not compile in
+// a statement.
+func ExprReads(expr Expr, name string) bool {
+	switch x := expr.(type) {
+	case *IdentifierExpr:
+		return x.Name == name
+	case *MemberExpr:
+		return ExprReads(x.Object, name)
+	case *IndexExpr:
+		return ExprReads(x.Object, name) || ExprReads(x.Index, name)
+	case *CallExpr:
+		for _, argument := range x.Arguments {
+			if ExprReads(argument, name) {
+				return true
+			}
+		}
+	case *UnaryExpr:
+		return ExprReads(x.Operand, name)
+	case *BinaryExpr:
+		return ExprReads(x.Left, name) || ExprReads(x.Right, name)
+	case *ConditionalExpr:
+		return ExprReads(x.Condition, name) || ExprReads(x.Then, name) || ExprReads(x.Else, name)
+	}
+	return false
+}
+
+// DuplicateValBinding reports the first binding whose name a previous binding
+// in the same block already introduced, counting both the bindings of one node
+// and those of separate nodes in the list.
+//
+// Shadowing from further out stays legal, so this looks at one list and never
+// recurses. It has to run on the flat list: a lowering that nests the nodes
+// after a binding under it turns two consecutive bindings into an enclosing and
+// an enclosed one, which is indistinguishable from a legal shadow by then.
+func DuplicateValBinding(nodes []Node) (ValBinding, bool) {
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		binding, ok := node.(*ValNode)
+		if !ok {
+			continue
+		}
+		for _, b := range binding.Bindings {
+			if seen[b.Name] {
+				return b, true
+			}
+			seen[b.Name] = true
+		}
+	}
+	return ValBinding{}, false
+}
+
 type Parameter struct {
 	Pos  Position `json:"pos"`
 	Name string   `json:"name"`

@@ -575,6 +575,10 @@ func findHeadNode(nodes []Node) *HeadNode {
 			if found := findHeadNode(node.Body); found != nil {
 				return found
 			}
+		case *syntax.ValNode:
+			if found := findHeadNode(node.Body); found != nil {
+				return found
+			}
 		case *syntax.AwaitNode:
 			for _, branch := range [][]Node{node.Primary, node.Fallback, node.Recover} {
 				if found := findHeadNode(branch); found != nil {
@@ -652,6 +656,10 @@ func (r *hookRun) walk(nodes []Node, foreign bool) error {
 				return err
 			}
 		case *syntax.ForNode:
+			if err := r.walk(node.Body, foreign); err != nil {
+				return err
+			}
+		case *syntax.ValNode:
 			if err := r.walk(node.Body, foreign); err != nil {
 				return err
 			}

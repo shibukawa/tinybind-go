@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/shibukawa/tinybind-go/templates/internal/syntax"
 )
 
 type valueKind string
@@ -232,7 +234,19 @@ func (c *compiler) resolveOutput(ref TypeRef) (string, valueType, error) {
 }
 
 func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner string) error {
-	for _, node := range nodes {
+	// A binding scopes the nodes after it. Unlike the HTML lowering, nothing is
+	// rewritten to say so: generation emits straight-line Go where a control
+	// body is already a Go block, so the binding is a local and the target's own
+	// block scoping is the scope. The caller always hands this a copy, so adding
+	// to it reaches the following nodes and nothing beyond them.
+	if binding, ok := syntax.DuplicateValBinding(nodes); ok {
+		return c.error(binding.Pos, "duplicate value binding "+binding.Name+
+			"; a second binding of one name in the same block is a redeclaration, so rename it or move it inside a nested block to shadow deliberately")
+	}
+	for index, node := range nodes {
+		// What a binding scopes is what follows it, which is also what decides
+		// whether anything reads it.
+		rest := nodes[index+1:]
 		switch n := node.(type) {
 		case *TextNode:
 		case *ExpressionNode:
@@ -281,6 +295,34 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 			if err := c.analyzeNodes(n.Else, copyScope(scope), owner); err != nil {
 				return err
 			}
+		case *ValNode:
+			for _, binding := range n.Bindings {
+				t, err := c.infer(binding.Value, scope)
+				if err != nil {
+					return err
+				}
+				// A binding nothing reads still calls its external every time
+				// the statement is built, and the result goes nowhere. Left to
+				// generation it would surface as an unused Go local, which
+				// names a line of emitted code rather than the template line
+				// that caused it, so it is refused here instead.
+				//
+				if !valueRead(rest, binding.Name) {
+					return c.error(binding.Pos, "val binding "+binding.Name+
+						" is never read; its call would run every time the statement is built and be discarded, so read it or remove it")
+				}
+				// What reaches a statement is a value. A predicate call is a
+				// fragment of the statement itself, so naming one would promise
+				// a value position it cannot fill.
+				if t.kind == kindPredicate {
+					return c.error(binding.Pos, "val binding "+binding.Name+" is "+t.String()+
+						", which composes the statement rather than producing a value; call it in place instead of binding it")
+				}
+				if t.kind == kindInvalid {
+					return c.error(binding.Pos, "cannot bind "+t.String()+" as a SQL value")
+				}
+				scope[binding.Name] = t
+			}
 		case *ForNode:
 			return c.error(n.Pos, "general SQL loops are forbidden; bind an array expression to expand a value list")
 		default:
@@ -288,6 +330,46 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 		}
 	}
 	return nil
+}
+
+// valueRead reports whether anything in a binding's extent reads name. The
+// extent is the nodes that follow it: a sibling binding of the same directive
+// cannot read it, because parseVal refuses a directive whose bindings depend on
+// each other.
+//
+// A block that rebinds the name is not scanned past that point: a reference
+// there resolves to the inner local and leaves the outer one still unread. That
+// makes the answer exact rather than conservative, which it has to be, because
+// a name wrongly reported unread refuses a working statement.
+func valueRead(nodes []Node, name string) bool {
+	for _, node := range nodes {
+		switch n := node.(type) {
+		case *ExpressionNode:
+			if syntax.ExprReads(n.Expression, name) {
+				return true
+			}
+		case *RelationNode:
+			for _, argument := range n.Arguments {
+				if syntax.ExprReads(argument, name) {
+					return true
+				}
+			}
+		case *IfNode:
+			if syntax.ExprReads(n.Condition, name) || valueRead(n.Then, name) || valueRead(n.Else, name) {
+				return true
+			}
+		case *ValNode:
+			for _, binding := range n.Bindings {
+				if syntax.ExprReads(binding.Value, name) {
+					return true
+				}
+				if binding.Name == name {
+					return false
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, error) {

@@ -316,7 +316,9 @@ func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	}
 	e.b.WriteString(") error {\n")
 	e.indent = 1
-	if err := e.emitNodes(statement.Body.([]Node), info.params); err != nil {
+	// A copy, because a value binding adds to the scope it is handed and the
+	// declared parameters outlive this emission.
+	if err := e.emitNodes(statement.Body.([]Node), copyScope(info.params)); err != nil {
 		return err
 	}
 	e.line("return nil")
@@ -544,6 +546,20 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 			}
 			e.line("if err := _tinybindBuild" + n.Name + "(b" + suffix + "); err != nil { return err }")
 			e.line("b.WriteString(" + strconv.Quote(") AS "+n.Alias) + ")")
+		case *ValNode:
+			// One Go local per binding. There is nothing to generate to carry
+			// the scope: a control body is already a Go block, so the binding
+			// falls out of scope exactly where the template says it does.
+			for _, binding := range n.Bindings {
+				code, err := e.expr(binding.Value, scope)
+				if err != nil {
+					return err
+				}
+				// No blank assignment: analysis refused an unread binding
+				// already, so every local emitted here has a reader.
+				e.line(goLocalName(binding.Name) + " := " + code)
+				scope[binding.Name] = e.c.exprTypes[binding.Value]
+			}
 		case *IfNode:
 			condition, err := e.expr(n.Condition, scope)
 			if err != nil {

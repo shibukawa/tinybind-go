@@ -807,6 +807,72 @@ subtree, so a whole element can come back instead of a bare value.
 > rather than through the context. See
 > [htmlbind_frameworkowner.md](htmlbind_frameworkowner.md#own-the-csrf-tokens-lifecycle).
 
+### Naming a result
+
+An external call is an ordinary expression, so each mention of it is another
+call. A component showing four fields of one record calls its loader four times:
+
+```text
+export component Card(id: string): html {
+<h1>{LoadData(id).title}</h1>
+<p>{LoadData(id).summary}</p>
+}
+```
+
+`{val}` gives the result a name:
+
+```text
+export component Card(id: string): html {
+{val record = LoadData(id)}
+<h1>{record.title}</h1>
+<p>{record.summary}</p>
+}
+```
+
+One name, one call. There is no closing tag — the binding scopes whatever
+follows it, up to the end of the element, control body, or component body it sits
+in. Read it anywhere a value goes: interpolation, an attribute, an `if`
+condition, a loop's collection, a component argument, or an argument to another
+external.
+
+Bind several names with commas, and read a binding in a later one by writing a
+second `{val}`:
+
+```text
+{val user = LoadUser(id), theme = LoadTheme(id)}
+{val greeting = Greet(user.name)}
+<h1>{greeting}</h1>
+<p class={theme.class}>{user.bio}</p>
+```
+
+The bindings of one `{val}` are independent, the way Go evaluates every right
+side of `a, b := f(), g()` before assigning either. Reading a sibling of the same
+directive is an error that says to split it.
+
+Two more rules, both there to catch a call you did not mean to make:
+
+- Binding a name a second time in the same block is a redeclaration. Shadow
+  deliberately by binding inside a nested element, not beside the first one.
+- A binding nothing reads is an error. The call would run on every render and
+  the result would go nowhere.
+
+Only a value can be bound. An `external async` still belongs in an
+[`await` clause](#await-fallback-recover), and an external declared `: html`
+renders where it is written rather than becoming a value.
+
+The construct is what lets a component load its own data and cache the load and
+the render as one unit — see [Cached components](#cached-components). The key
+covers the declared parameters, so a hit skips the fetch as well as the markup:
+
+```text
+@cache(ttl: "5m")
+export component Card(id: string): html {
+{val record = LoadData(id)}
+<h1>{record.title}</h1>
+<p>{record.summary}</p>
+}
+```
+
 ## Async components
 
 An `external async` function runs concurrently while the page renders. Your Go
