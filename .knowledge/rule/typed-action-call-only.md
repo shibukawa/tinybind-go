@@ -6,7 +6,13 @@ title: Typed Action Is Call Only
 A template naming a typed server action is a generation error, reporting the template position and the function.
 
 ```yaml
-status: proposed
+status: implemented 2026-08-13
+as_built:
+  refusal_channel: htmlbind GenerateOptions.ServerActionRefusals, a name-to-reason map checked before the URL map and before the resolver
+  wins_over_both: a name is declined whether or not something could have answered for it
+  supplied_by: routetree actionRefusals, which also keeps a typed action out of actionURLs and actionSelectors so no lowering can reach one
+  reason_text: names the published identifier, so the diagnostic says how the action is reached rather than only how it is not
+  tests: templates/htmlbind/action_test.go over a form, a bare button, a refusal beating a resolvable URL, and an unrefused name still lowering
 source:
   - downstream framework change request 2026-08-13, ask 5
   - requirement:typed-server-action

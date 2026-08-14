@@ -21,10 +21,12 @@ func {{ .RegisterFunc }}(mux {{ .Symbols.MuxType }}, options ...{{ .Symbols.Runt
 {{- end }}
 {{- if .Actions }}
 
-	// Server function endpoints. Each handler owns its whole response, so
-	// nothing is generated around it; registration is all there is.
+	// Server function endpoints. A raw handler owns its whole response, so
+	// nothing is generated around it and registration is all there is. A typed
+	// one is registered as the entry point generated beside it, which decodes
+	// the call, invokes the function and encodes what it returned.
 {{- range .Actions }}
-	mux.HandleFunc({{ .Pattern | quote }}, {{ .Selector }}{{ .Name }})
+	mux.HandleFunc({{ .Pattern | quote }}, {{ .Selector }}{{ .Symbol }})
 {{- end }}
 {{- end }}
 }
@@ -72,7 +74,7 @@ type RouteInfo struct {
 // token, so each handler still authenticates and authorizes its own caller.
 var {{ .ActionTableVar }} = []ActionInfo{
 {{- range .Actions }}
-	{Pattern: {{ .Pattern | quote }}, Path: {{ .Path | quote }}, Dir: {{ .RelDir | quote }}, Handler: {{ .Name | quote }}, Hash: {{ .Hash | quote }}},
+	{Pattern: {{ .Pattern | quote }}, Path: {{ .Path | quote }}, Dir: {{ .RelDir | quote }}, Handler: {{ .Name | quote }}, Hash: {{ .Hash | quote }}, Published: {{ .Published | quote }}, Typed: {{ .Typed }}},
 {{- end }}
 }
 
@@ -88,6 +90,11 @@ type ActionInfo struct {
 	Handler string
 	// Hash is the stable half of the path.
 	Hash string
+	// Published is the identifier client script calls this action through, and
+	// Typed reports that a declaration admitted it rather than its signature.
+	// A typed action is reached only by a call; no template can name one.
+	Published string
+	Typed     bool
 }
 
 {{- define "handler" }}

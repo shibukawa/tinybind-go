@@ -790,6 +790,13 @@ func listShapeConst(shape string) string {
 // written by [goEmitter.emitActionFormFields], once the start tag is closed.
 func (e *goEmitter) emitServerAction(p *planEmitter, node *ElementNode, attribute Attribute) error {
 	name, _ := staticAttributeText(attribute)
+	// A refused name is one the caller resolved and then declined, so it is
+	// reported as what it is rather than as unknown. Leaving it merely absent
+	// would name a missing registration, which is the wrong cause and points an
+	// author at the wrong fix.
+	if reason, refused := e.refusedActions[name]; refused {
+		return e.c.error(attribute.Pos, "server action "+quoteName(name)+" cannot be reached from a template: "+reason)
+	}
 	url, ok := e.actions[name]
 	if !ok && e.resolveAction != nil {
 		url, ok = e.resolveAction(name)

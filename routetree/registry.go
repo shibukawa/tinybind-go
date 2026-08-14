@@ -31,6 +31,13 @@ type RegistryAction struct {
 	// Selector qualifies the handler's package, such as "id_." It is empty for
 	// a handler in the root package itself.
 	Selector string
+	// Symbol is what the registration names: the handler itself for a raw
+	// action, the generated entry point for a typed one.
+	Symbol string
+	// Published is the identifier client script calls the action through, and
+	// Typed reports which admission rule let it in.
+	Published string
+	Typed     bool
 }
 
 // RegistryRoute is one route lowered to what the registry template writes.
@@ -311,11 +318,14 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 	errs = append(errs, checkActionCollisions(actions)...)
 	for _, action := range actions {
 		entry := RegistryAction{
-			Pattern: action.Pattern(),
-			Path:    action.Path,
-			Hash:    action.Hash,
-			Name:    action.Name,
-			RelDir:  action.RelDir,
+			Pattern:   action.Pattern(),
+			Path:      action.Path,
+			Hash:      action.Hash,
+			Name:      action.Name,
+			RelDir:    action.RelDir,
+			Symbol:    orDefault(action.Wrapper, action.Name),
+			Published: orDefault(action.Published, PublishedName(action.Name)),
+			Typed:     action.Typed,
 		}
 		if action.RelDir != "" {
 			entry.Selector = addImport(action.ImportPath, action.Package)

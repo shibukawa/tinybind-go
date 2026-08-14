@@ -7,7 +7,7 @@ Admit a second server function shape, a declared function of an arbitrary signat
 
 ```yaml
 priority: should
-status: implemented 2026-08-13, asks 1 to 4; the registry side and rule:typed-action-call-only are not built
+status: implemented 2026-08-13, asks 1 to 5
 as_built:
   annotation: httpbind.ServerAction, taking the function symbol and an optional published name, returning a zero-size Declaration so the call can be a package-level var
   discovery: routetree/typedaction.go, matching the annotation's import against the file's own import list, beside the shape filter rather than replacing it
@@ -22,10 +22,12 @@ as_built:
   error_only_answers_no_content: nothing was produced, and an empty document would claim something was
   published_name: routetree.PublishedName, initialism-aware, with the declaration's optional string overriding it
   tests: routetree/typedaction_test.go over admission, the signature, the override, an unexported function and nine diagnostics; generator/serveraction_test.go over the emitted wrapper, a struct parameter, an error-only action, and a compiled entry point answering a real POST
+  registry: the registration names Action.Wrapper rather than the function, so a typed action is installed under the generated entry point and the declared function may stay unexported; the action table gained Published and Typed beside the handler name
+  refusal: routetree keeps a typed action out of the URL map the template compiler resolves through, and supplies a name-to-reason map beside it, per rule:typed-action-call-only
+  fixtures: internal/pagesfixture and internal/fasthttppagesfixture regenerated for the two added table fields; every raw registration is byte for byte what it was
 not_built_yet:
-  registry_side: routetree registers no route for a typed action yet, so the entry point exists and nothing addresses it
-  ordering: the registry-last sequencing that ordering describes
-  template_refusal: rule:typed-action-call-only
+  ordering: the registry-last sequencing that ordering describes; the two phases are wired to each other but a caller still has to write the registry after the binding phase
+  caller_wiring: nothing yet passes Result.Actions into the binding phase's Options, so the two halves are reachable and not yet joined by the generate command
 source:
   - downstream framework change request 2026-08-13, asks 1 to 3
   - requirement:template-server-functions

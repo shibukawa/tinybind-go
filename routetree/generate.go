@@ -48,6 +48,14 @@ type Result struct {
 	// that URL resolves. A page declaring a script block whose asset is dropped
 	// leaves a reference to a file that answers 404.
 	Assets []htmlbind.Asset
+	// Actions is every server function the tree discovered, raw and typed
+	// alike, in the order the registry registers them.
+	//
+	// A caller needs the typed ones: the entry point each is registered under
+	// is emitted by the binding phase, which runs after this, so the signature
+	// read here has to reach that phase. The raw ones are reported beside them
+	// because one table is what every other consumer already reads.
+	Actions []Action
 }
 
 // GenerateOptions configures one whole-tree generation run.
@@ -260,7 +268,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 		return Result{}, err
 	}
 	out = append(out, Generated{Path: filepath.Join(tree.Root, registryOut), Source: registry})
-	return Result{Files: out, Assets: assets}, nil
+	return Result{Files: out, Assets: assets, Actions: allActions}, nil
 }
 
 // Write writes generated files to disk, creating directories as needed.
@@ -338,6 +346,7 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 		ComponentParameters:       answers.Parameters,
 		ComponentParameterAttr:    emitter.ComponentParameterAttr,
 		ServerActions:             actionURLs(actions),
+		ServerActionRefusals:      actionRefusals(actions),
 		ServerActionSelectors:     actionSelectors(actions),
 		ServerActionSelectorField: emitter.ActionSelectorField,
 		ServerActionResolver:      options.ActionResolver,

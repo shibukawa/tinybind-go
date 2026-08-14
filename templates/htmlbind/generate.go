@@ -54,6 +54,18 @@ type GenerateOptions struct {
 	// The map wins, so configuring a resolver cannot retarget an action a
 	// discovered package already declares.
 	ServerActionResolver func(name string) (url string, ok bool)
+	// ServerActionRefusals maps a handler name the caller resolved and then
+	// declined to the reason, which a template naming it is refused with.
+	//
+	// A refusal is stated rather than left as an absence, because an absent
+	// name is indistinguishable from one nobody registered: the diagnostic
+	// would name a missing registration where the truth is that the handler
+	// exists and this is not how it is reached. It is the shape ClientHandlers
+	// already takes for an unresolved name, and for the same reason.
+	//
+	// The refusals win over the map and the resolver alike, since a name is
+	// declined whether or not something could have answered for it.
+	ServerActionRefusals map[string]string
 	// ServerActionAttr is the attribute the lowering writes. Empty uses
 	// [DefaultActionAttr]. A framework driving an existing client library points
 	// it at that library's vocabulary, such as hx-post.
@@ -329,9 +341,10 @@ type goEmitter struct {
 	// options, which together decide what a server-action attribute lowers to.
 	// resolveAction mirrors ServerActionResolver and answers what actions does
 	// not hold.
-	actions       map[string]string
-	resolveAction func(string) (string, bool)
-	actionAttr    string
+	actions        map[string]string
+	refusedActions map[string]string
+	resolveAction  func(string) (string, bool)
+	actionAttr     string
 	// actionSelectors and actionSelectorField mirror the options of the same
 	// name. A form whose handler has a selector also carries the native markup,
 	// so a submit reaches the handler with no browser runtime.
@@ -376,6 +389,7 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 		c:                c,
 		contextExternals: options.ContextExternals,
 		actions:          options.ServerActions,
+		refusedActions:   options.ServerActionRefusals,
 		resolveAction:    options.ServerActionResolver,
 		actionAttr:       options.ServerActionAttr,
 		actionSelectors:  options.ServerActionSelectors,

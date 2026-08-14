@@ -313,3 +313,59 @@ func TestFormWithNoSelectorStaysTokenFree(t *testing.T) {
 		t.Errorf("a GET form carried a token:\n%s", out)
 	}
 }
+
+// A typed server action is reached by a call and never by a template. Refusing
+// it here is what makes its fixed response hold: a form cannot reach one, so
+// the case where a native submit is shown a JSON document does not arise
+// rather than being handled.
+func TestServerActionRefusedByName(t *testing.T) {
+	for _, tc := range []struct{ name, source string }{
+		{"form", `export component Page(): html { <form server-action="GetUser"></form> }`},
+		{"bare button", `export component Page(): html { <button server-action="GetUser">go</button> }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := GenerateModule("page.tb.html", []byte(tc.source), GenerateOptions{
+				Package: "page",
+				ServerActionRefusals: map[string]string{
+					"GetUser": "it is a typed server action, which is called from script as getUser and has no form to submit",
+				},
+			})
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			for _, want := range []string{"GetUser", "cannot be reached from a template", "typed server action", "getUser"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q missing %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// The refusal wins over a resolvable name, since a name is declined whether or
+// not something could have answered for it.
+func TestServerActionRefusalWinsOverAResolvedURL(t *testing.T) {
+	_, err := GenerateModule("page.tb.html", []byte(`export component Page(): html { <button server-action="GetUser">go</button> }`), GenerateOptions{
+		Package:              "page",
+		ServerActions:        map[string]string{"GetUser": "/_action/abc/GetUser"},
+		ServerActionRefusals: map[string]string{"GetUser": "it is a typed server action"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be reached from a template") {
+		t.Fatalf("want the refusal, got %v", err)
+	}
+}
+
+// A name nobody refused still resolves, so the shipped path is unchanged.
+func TestServerActionRefusalsLeaveOtherNamesAlone(t *testing.T) {
+	result, err := GenerateModule("page.tb.html", []byte(`export component Page(): html { <button server-action="Rename">go</button> }`), GenerateOptions{
+		Package:              "page",
+		ServerActions:        map[string]string{"Rename": "/_action/abc/Rename"},
+		ServerActionRefusals: map[string]string{"GetUser": "it is a typed server action"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result.GoSource), "/_action/abc/Rename") {
+		t.Fatalf("the resolvable name should still lower:\n%s", result.GoSource)
+	}
+}

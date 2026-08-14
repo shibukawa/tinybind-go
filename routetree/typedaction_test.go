@@ -224,3 +224,69 @@ func TestDeclarationDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+// The registry registers a typed action under the generated entry point rather
+// than under the declared function. That is what lets the function be
+// unexported and what makes its signature free: the registry names a symbol of
+// a fixed shape either way.
+func TestRegistryRegistersTheGeneratedEntryPoint(t *testing.T) {
+	dir := writeActionPackage(t, typedActionHeader+`
+var _ = httpbind.ServerAction(getUser)
+
+func getUser(id string) (User, error) { return User{}, nil }
+`)
+	actions, err := DiscoverActions(dir, "users", "users", "example.com/app/users", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := onlyAction(t, actions, err)
+	if action.Wrapper != "ActionGetUser" {
+		t.Fatalf("wrapper %q", action.Wrapper)
+	}
+
+	e := NewEmitter()
+	source, err := e.Registry(&Tree{}, "app", nil, nil, actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// The registration names the wrapper, in the action's own package.
+		"users.ActionGetUser)",
+		// The table carries the published name a script calls through.
+		`Published: "getUser"`,
+		"Typed: true",
+	} {
+		if !strings.Contains(string(source), want) {
+			t.Fatalf("registry missing %q:\n%s", want, source)
+		}
+	}
+	if strings.Contains(string(source), "users.getUser)") {
+		t.Fatalf("the declared function must not be registered directly:\n%s", source)
+	}
+}
+
+// A raw handler is still registered as itself, so nothing about the shipped
+// shape moves.
+func TestRegistryStillRegistersARawHandlerDirectly(t *testing.T) {
+	dir := writeActionPackage(t, `package users
+
+import "net/http"
+
+func Rename(w http.ResponseWriter, r *http.Request) {}
+`)
+	actions, err := DiscoverActions(dir, "users", "users", "example.com/app/users", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewEmitter()
+	source, err := e.Registry(&Tree{}, "app", nil, nil, actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "users.Rename)") {
+		t.Fatalf("registry missing the raw registration:\n%s", source)
+	}
+	if !strings.Contains(string(source), "Typed: false") {
+		t.Fatalf("registry should mark a raw action untyped:\n%s", source)
+	}
+}

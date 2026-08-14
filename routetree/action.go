@@ -77,6 +77,29 @@ type Action struct {
 	// reached only by a script, never by a template.
 	Typed     bool
 	Signature TypedSignature
+	// Wrapper is the symbol the registry registers for this action.
+	//
+	// A raw handler is registered as itself: it is the whole response and
+	// nothing is generated around it. A typed one is registered as the
+	// generated entry point emitted beside it, which is what lets the declared
+	// function be unexported and what makes its signature free.
+	Wrapper string
+}
+
+// ActionWrapperName is the entry point generated for a typed action.
+//
+// This module owns the name because it is what the registry writes; the phase
+// that emits the wrapper is told it rather than deriving its own, so the two
+// cannot drift.
+func ActionWrapperName(goName string) string {
+	if goName == "" {
+		return goName
+	}
+	runes := []rune(goName)
+	if runes[0] >= 'a' && runes[0] <= 'z' {
+		runes[0] = runes[0] - 'a' + 'A'
+	}
+	return "Action" + string(runes)
 }
 
 // Pattern returns the stdlib ServeMux pattern for the endpoint, which is always
@@ -158,6 +181,7 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 				Hash:       hash,
 				Path:       ActionPath(prefix, hash, fn.Name.Name),
 				Published:  PublishedName(fn.Name.Name),
+				Wrapper:    fn.Name.Name,
 			})
 		}
 	}
@@ -190,6 +214,7 @@ func DiscoverActionsWith(dir, relDir, pkg, importPath, prefix string, shape Hand
 			Published:  ref.Published,
 			Typed:      true,
 			Signature:  ref.Signature,
+			Wrapper:    ActionWrapperName(ref.Name),
 		})
 	}
 	if len(errs) > 0 {
@@ -244,6 +269,9 @@ func actionSelectors(actions []Action) map[string]string {
 	}
 	out := make(map[string]string, len(actions))
 	for _, action := range actions {
+		if action.Typed {
+			continue
+		}
 		out[action.Name] = action.Selector()
 	}
 	return out
@@ -314,7 +342,35 @@ func actionURLs(actions []Action) map[string]string {
 	}
 	out := make(map[string]string, len(actions))
 	for _, action := range actions {
+		// A typed action is reached by a call and never by a template, so it
+		// contributes no URL for one to lower to. It is refused by name
+		// instead, per actionRefusals.
+		if action.Typed {
+			continue
+		}
 		out[action.Name] = action.Path
+	}
+	return out
+}
+
+// actionRefusals names every typed action, so a template reaching for one is
+// told what it is rather than told the name is unknown.
+//
+// This is what makes the fixed response of a typed action hold. A form cannot
+// reach one, so the case where a native submit is shown a JSON document does
+// not arise rather than being handled — which is the whole reason the response
+// could be fixed while the raw shape's could not.
+func actionRefusals(actions []Action) map[string]string {
+	var out map[string]string
+	for _, action := range actions {
+		if !action.Typed {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[action.Name] = "it is a typed server action, which is called from script as " +
+			action.Published + " and has no form to submit"
 	}
 	return out
 }
