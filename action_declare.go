@@ -1,5 +1,31 @@
 package httpbind
 
+import (
+	"net/http"
+
+	"github.com/shibukawa/tinybind-go/jsonbind"
+)
+
+// ReadActionBody reads the JSON payload of a typed server action call, under
+// the configured body limit.
+//
+// A generated wrapper calls this rather than reading the body itself, so the
+// limit and the error mapping live in one place instead of being written into
+// every emitted entry point.
+func ReadActionBody(r *http.Request) ([]byte, error) {
+	if r == nil || r.Body == nil {
+		return nil, nil
+	}
+	data, err := jsonbind.ReadLimit(r.Body, jsonbind.MaxJSONBodyBytes())
+	if err != nil {
+		if err == jsonbind.ErrBodyTooLarge {
+			return nil, PayloadTooLarge(Problem{Code: "payload_too_large", Message: "request body too large"}, err)
+		}
+		return nil, BadRequest(Problem{Code: "body_read", Message: "cannot read request body"}, err)
+	}
+	return data, nil
+}
+
 // Declaration is what [ServerAction] returns. It carries nothing: the value
 // exists only so the annotation can be written as a package-level declaration,
 // which is where generation reads it.

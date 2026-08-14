@@ -222,6 +222,9 @@ type PackagePlan struct {
 	Package     string
 	PackagePath string
 	Types       []TypePlan
+	// ServerActions are the typed server actions this package emits an entry
+	// point for, carried from Options so emission needs no second input.
+	ServerActions []ServerAction
 	// Discovered lists type names referenced by configured generic call sites.
 	Discovered []string
 }
@@ -254,6 +257,14 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 	}
 	symbols := normalized.symbols
 	fset := pkg.Fset
+	// Merged across the package's files, for the synthesized argument struct of
+	// a typed server action. That struct belongs to no file, so it is analyzed
+	// against everything the package can name rather than against one file's
+	// imports. Two files aliasing different packages alike would collapse here,
+	// which no analyzed file has ever done and which a type checker would catch
+	// downstream anyway.
+	packageBinderNames := map[string]bool{}
+	packageForeignCodecs := map[string]ForeignCodec{}
 	for _, f := range pkg.Syntax {
 		if f == nil {
 			continue
@@ -283,6 +294,12 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)
 		foreignCodecs := codecCapableTypeNames(f, pkg.TypesInfo)
+		for name, ok := range binderNames {
+			packageBinderNames[name] = ok
+		}
+		for name, codec := range foreignCodecs {
+			packageForeignCodecs[name] = codec
+		}
 		discoveredInFile, err := discoverGenericTypeArgs(f, pkg.TypesInfo, symbols)
 		if err != nil {
 			return nil, err
@@ -335,6 +352,13 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 		}
 	}
 	propagateNestedUsage(plan.Types)
+	// A typed server action's argument struct and result type are named by a
+	// call this phase is about to write, and rule:generated-source-not-discovered
+	// requires every analysis to skip such a call. The declaration is what marks
+	// them instead, which is why this runs after usage is otherwise settled.
+	if err := planServerActions(plan, opts.ServerActions, packageBinderNames, packageForeignCodecs); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 

@@ -215,6 +215,15 @@ type Options struct {
 
 	DisableFeatures []Feature
 	GenerateAll     bool
+
+	// ServerActions are the typed server actions to emit an entry point for in
+	// the package being generated.
+	//
+	// They are supplied rather than discovered because the annotation admitting
+	// one is read by routetree, which parses a route package before that
+	// package can compile. This phase type-checks, which is why the argument
+	// struct and the codecs are built here and the declaration is read there.
+	ServerActions []ServerAction `json:"-"`
 }
 
 const (
