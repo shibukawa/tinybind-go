@@ -247,3 +247,81 @@ func TestASlotFragmentIsNotPrepared(t *testing.T) {
 		t.Fatalf("calls = %d, output = %q", calls, out.String())
 	}
 }
+
+type wrapperParams struct {
+	Title    string
+	Children Fragment
+}
+
+type wrapperScope struct {
+	Outer wrapperParams
+	Value string
+}
+
+// A wrapper is not prepared, because its parameters are not complete until the
+// chain installs the child fragment. Its bindings therefore run where they
+// stand — which has to still work, and has to still see the slot.
+func TestAWrapperWithABindingRendersAroundItsChild(t *testing.T) {
+	calls := 0
+	body := Builder[wrapperScope]{}
+	layout := &Plan[wrapperParams]{Ops: []Op[wrapperParams]{
+		Val(
+			func(p wrapperParams) string { calls++; return "banner-" + p.Title },
+			func(p wrapperParams, v string) wrapperScope { return wrapperScope{Outer: p, Value: v} },
+			[]Op[wrapperScope]{
+				body.Static("<header>"),
+				body.Text(func(p wrapperScope) string { return p.Value }),
+				body.Static("</header>"),
+				body.Slot(func(p wrapperScope) Fragment { return p.Outer.Children }, nil),
+			}),
+	}}
+	leaf := &Plan[valParams]{Ops: []Op[valParams]{
+		Builder[valParams]{}.Text(func(p valParams) string { return "page-" + p.ID }),
+	}}
+
+	var out strings.Builder
+	wrapper := layout.BindWrapper(wrapperParams{Title: "home"},
+		func(p *wrapperParams, children Fragment) { p.Children = children })
+	if err := RenderChain(&out, []Wrapper{wrapper}, Bind(leaf, valParams{ID: "7"})); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("the layout's loader ran %d times, want once", calls)
+	}
+	// The slot has to survive. A prepared wrapper would have built its scope
+	// before the chain installed the child, and this is what would have gone
+	// missing.
+	if want := "<header>banner-home</header>page-7"; out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+}
+
+// Hoisting moves nodes into a binding's body, and the binding splices that body
+// back into the sequence. The static half a client caches therefore has to be
+// the same tree it would be with the binding written first, or two spellings of
+// one page would disagree about their own address.
+func TestHoistingDoesNotChangeTheSequence(t *testing.T) {
+	body := Builder[valScope]{}
+	plain := Builder[valParams]{}
+	// The shape hoisting produces: markup that was written before the binding
+	// now sits inside its body.
+	hoisted := &Plan[valParams]{Ops: []Op[valParams]{
+		Val(
+			func(p valParams) string { return p.ID },
+			func(p valParams, v string) valScope { return valScope{Outer: p, Value: v} },
+			[]Op[valScope]{
+				body.Static("<p>before</p><h1>"),
+				body.Text(func(p valScope) string { return p.Value }),
+				body.Static("</h1>"),
+			}),
+	}}
+	// The same page with no binding at all.
+	unbound := &Plan[valParams]{Ops: []Op[valParams]{
+		plain.Static("<p>before</p><h1>"),
+		plain.Text(func(p valParams) string { return p.ID }),
+		plain.Static("</h1>"),
+	}}
+	if got, want := hoisted.Sequence().Address, unbound.Sequence().Address; got != want {
+		t.Fatalf("address = %q, want the unbound page's %q", got, want)
+	}
+}
