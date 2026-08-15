@@ -21,7 +21,12 @@ rule:
   block: an if branch, a for body, an await subtree, or the declaration body; markup nesting is not one, per requirement:template-value-binding what_a_block_is
   uniform: every block, so a for body evaluates at the top of each iteration and an if branch at the top of the branch; one sentence rather than a rule with an exception
   past_markup_nesting: a binding written inside a div is evaluated before the div's opening tag, since the div opens no block
-  chain_members: a leaf or wrapper's declaration-body bindings run during assemble, which validates every member before anything is written
+  chain_members: the leaf's declaration-body bindings run during assemble, which validates every member before anything is written
+  leaf_only:
+    found: on implementation 2026-08-14
+    why: a wrapper's parameters are not complete until the chain installs the child fragment, so a scope built during assembly would carry an unset slot and the layout would render around nothing
+    principled_rather_than_arbitrary: the leaf's parameters are final at Bind and a wrapper's are not, which is the property that decides it
+    consequence: a layout that loads its own data computes it where it runs, and its failure lands after the shell has written
   what_it_buys: any binding of a chain member that is not inside a control block can answer 404, 403, or a redirect while the rest of the page still streams, wherever in the markup it happens to be written
 scope_does_not_hoist:
   rule: the name is visible from the directive onward, exactly as it is today; only the evaluation moves
@@ -58,9 +63,12 @@ lowering:
   order_preserved: the non-binding nodes keep their written order inside the innermost body, so output is byte-identical
   the_shape_is_already_right: a component whose block holds one binding compiles to leading static whitespace plus one instruction wrapping the rest, and hoisting is running that instruction's value early and its body at render
 carry_mechanism:
-  fragment: holds validate and render as closures built together by Bind, so both can capture one shared slot
-  consequence: the hoisted scope is stored by the pre-pass closure and read by the render closure, with no change to the Fragment surface
-  copies_are_safe: a Fragment is a value but the closures share the slot, so passing it by value does not lose the hoisted value
+  chosen: the prologue returns a prepared instruction list, and assembly swaps the fragment's render for one that executes it
+  rejected: a slot on the Fragment written by the pre-pass and read by the render, which was this file's first design
+  why_rejected: one Fragment rendered twice would share the slot, and the value belongs to a render rather than to a binding
+  prepared_op: a value binding whose value is computed becomes an instruction holding the built scope, so nothing about it is left to do when it runs
+  leading_only_in_practice: preparation walks the leading instructions and stops at the first that is not preparable, stepping over static output, because anything after that point runs once something is written and has nothing to gain
+  not_prepared_is_safe: a fragment that is not a chain member has no prologue run, and its bindings compute where they stand
 scope:
   synchronous_only: an await binding opens a boundary by definition, and its failure is what a recover subtree is for; nothing about it wants hoisting
   chain_members_for_the_status: a leaf or wrapper's declaration-body bindings run before the first byte, wherever in the markup they are written; one inside an if, for, or await block runs when that block does

@@ -1195,3 +1195,90 @@ func (s *liveState[S]) failure() error {
 	defer s.mu.Unlock()
 	return s.err
 }
+
+// preparable is implemented by the instructions whose value can be computed
+// before anything is written. Generation puts a value binding at the top of its
+// block, so the leading instructions of a chain member's plan are exactly the
+// ones a loader occupies, and computing them during assembly is what lets a
+// failure still choose the response status.
+//
+// prepare returns the instruction to run in this one's place. It holds the
+// computed value, so the body runs against it without calling again.
+type preparable[P any] interface {
+	prepare(ctx context.Context, params P) (Op[P], error)
+}
+
+// prepareOps computes the leading preparable instructions of one list. It stops
+// at the first instruction that is not preparable, because everything after
+// that point runs after something has been written and has nothing to gain.
+//
+// A value binding's body is prepared too, since consecutive bindings compile to
+// a nest and a chain member's loaders are usually more than one.
+func prepareOps[P any](ctx context.Context, params P, ops []Op[P]) ([]Op[P], error) {
+	for i, op := range ops {
+		ready, ok := op.(preparable[P])
+		if !ok {
+			// Static output carries no failure and blocks nothing, so a leading
+			// run of it is stepped over rather than ending the walk.
+			if _, isStatic := op.(staticOp[P]); isStatic {
+				continue
+			}
+			return ops, nil
+		}
+		replacement, err := ready.prepare(ctx, params)
+		if err != nil {
+			return nil, err
+		}
+		prepared := make([]Op[P], len(ops))
+		copy(prepared, ops)
+		prepared[i] = replacement
+		return prepared, nil
+	}
+	return ops, nil
+}
+
+// valPreparedOp is a value binding whose value is already computed. It carries
+// the built scope rather than the value, so nothing about the binding is left
+// to do when it runs.
+type valPreparedOp[P, S any] struct {
+	scope S
+	body  []Op[S]
+}
+
+func (o valPreparedOp[P, S]) sequenceInline() []SeqNode { return sequenceOf(o.body) }
+
+func (o valPreparedOp[P, S]) Exec(r *Renderer, _ P) error { return execOps(r, o.body, o.scope) }
+
+func (o valOp[P, V, S]) prepare(ctx context.Context, params P) (Op[P], error) {
+	return prepareVal[P, S](ctx, o.scope(params, o.value(params)), o.body)
+}
+
+func (o valCtxOp[P, V, S]) prepare(ctx context.Context, params P) (Op[P], error) {
+	return prepareVal[P, S](ctx, o.scope(params, o.value(ctx, params)), o.body)
+}
+
+func (o valErrOp[P, V, S]) prepare(ctx context.Context, params P) (Op[P], error) {
+	value, err := o.value(params)
+	if err != nil {
+		return nil, err
+	}
+	return prepareVal[P, S](ctx, o.scope(params, value), o.body)
+}
+
+func (o valErrCtxOp[P, V, S]) prepare(ctx context.Context, params P) (Op[P], error) {
+	value, err := o.value(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	return prepareVal[P, S](ctx, o.scope(params, value), o.body)
+}
+
+// prepareVal finishes one binding and continues into its body, so a nest of
+// bindings is computed in one pass.
+func prepareVal[P, S any](ctx context.Context, scope S, body []Op[S]) (Op[P], error) {
+	prepared, err := prepareOps(ctx, scope, body)
+	if err != nil {
+		return nil, err
+	}
+	return valPreparedOp[P, S]{scope: scope, body: prepared}, nil
+}

@@ -178,3 +178,72 @@ func TestValErrSplicesItsBodyIntoTheSequence(t *testing.T) {
 		t.Fatalf("sequence = %+v, want the body spliced in place", nodes)
 	}
 }
+
+// The reason the prologue exists: a chain member's loader fails while nothing
+// has been written, so the caller is still free to choose the status instead of
+// having committed one with the shell.
+func TestALeafsLeadingBindingFailsBeforeAnyByte(t *testing.T) {
+	want := errors.New("no such record")
+	body := Builder[valScope]{}
+	leaf := &Plan[valParams]{Ops: []Op[valParams]{
+		Builder[valParams]{}.Static(" "),
+		ValErr(
+			func(p valParams) (string, error) { return "", want },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	var out strings.Builder
+	err := Render(&out, Bind(leaf, valParams{ID: "7"}))
+	if !errors.Is(err, want) {
+		t.Fatalf("render error = %v, want %v", err, want)
+	}
+	// The static run written before the binding in source order is what the
+	// prologue has to beat: nothing at all may reach the writer.
+	if out.Len() != 0 {
+		t.Fatalf("wrote %q before the loader failed, want nothing", out.String())
+	}
+}
+
+// The value is computed once. Preparing it and then rendering must not call
+// again, which is the difference between this and Plan.Check.
+func TestAPreparedBindingIsNotRecomputed(t *testing.T) {
+	calls := 0
+	body := Builder[valScope]{}
+	leaf := &Plan[valParams]{Ops: []Op[valParams]{
+		Val(
+			func(p valParams) string { calls++; return "loaded-" + p.ID },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	var out strings.Builder
+	if err := Render(&out, Bind(leaf, valParams{ID: "7"})); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("loader ran %d times, want once", calls)
+	}
+	if out.String() != "loaded-7" {
+		t.Fatalf("output = %q, want the bound value", out.String())
+	}
+}
+
+// A fragment that is not a chain member is never assembled, so its bindings are
+// computed where they run and the render is unaffected.
+func TestASlotFragmentIsNotPrepared(t *testing.T) {
+	calls := 0
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		Val(
+			func(p valParams) string { calls++; return p.ID },
+			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
+			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	fragment := Bind(plan, valParams{ID: "9"})
+	var out strings.Builder
+	if err := Render(&out, fragment); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if calls != 1 || out.String() != "9" {
+		t.Fatalf("calls = %d, output = %q", calls, out.String())
+	}
+}

@@ -146,7 +146,17 @@ type Plan[P any] struct {
 }
 
 // Exec runs the plan against params.
-func (p *Plan[P]) Exec(r *Renderer, params P) error {
+func (p *Plan[P]) Exec(r *Renderer, params P) error { return p.exec(r, params, p.Ops) }
+
+// exec runs one instruction list against params. A chain member hands in the
+// list its assembly prepared, whose leading value bindings are already computed;
+// every other caller hands in the plan's own.
+//
+// Unlike Check, a prepared binding is not recomputed here. Check is a pure
+// predicate, so running it twice is cheaper than tracking what already ran; a
+// loader is neither pure nor free, and running it twice is the duplicate fetch
+// requirement:template-value-binding exists to remove.
+func (p *Plan[P]) exec(r *Renderer, params P, ops []Op[P]) error {
 	// Checked before the first byte of this component. A chain member is also
 	// checked earlier still, when the chain is assembled, so the common page
 	// and layout shape fails with nothing written at all; running the same pure
@@ -157,20 +167,20 @@ func (p *Plan[P]) Exec(r *Renderer, params P) error {
 		}
 	}
 	if p.Cache == nil || r.opts == nil || r.opts.cache == nil {
-		return execOps(r, p.Ops, params)
+		return execOps(r, ops, params)
 	}
-	return p.execCached(r, params)
+	return p.execCached(r, params, ops)
 }
 
 // execCached writes a stored rendering when one is current, and otherwise
 // renders into an isolated buffer and publishes it. Publishing after the whole
 // subtree renders is what keeps a failed render from storing partial output.
-func (p *Plan[P]) execCached(r *Renderer, params P) error {
+func (p *Plan[P]) execCached(r *Renderer, params P, ops []Op[P]) error {
 	// A private component with no scope value stores nothing. An entry written
 	// under an empty scope would be a shared entry wearing a private label, and
 	// this is the one case where rendering normally is the whole answer.
 	if p.Cache.Scoped && r.opts.cacheScope == "" {
-		return execOps(r, p.Ops, params)
+		return execOps(r, ops, params)
 	}
 	key := p.Cache.cacheKey(r.opts.cacheScope, params)
 	ctx := r.context()
@@ -183,7 +193,7 @@ func (p *Plan[P]) execCached(r *Renderer, params P) error {
 	// rejects an await boundary inside a cached component, so this only makes
 	// the runtime's behavior match that rule instead of storing a placeholder.
 	sub := &Renderer{w: &buffer, sw: &buffer, head: r.head, opts: r.opts}
-	if err := execOps(sub, p.Ops, params); err != nil {
+	if err := execOps(sub, ops, params); err != nil {
 		return err
 	}
 	rendered := buffer.Bytes()
@@ -252,7 +262,15 @@ type Fragment struct {
 	declaresPublic  bool
 	privateSource   string
 	validate        func() error
-	render          func(*Renderer) error
+	// prepare computes the leading value bindings of this fragment's plan
+	// before anything is written, and returns the render to run in place of the
+	// unprepared one. It is what lets a loader's failure still choose the
+	// response status, per decision:value-binding-hoisting.
+	//
+	// It is nil for a fragment that is not a chain member, because only a chain
+	// member is assembled; such a fragment computes its bindings where they run.
+	prepare func(context.Context) (func(*Renderer) error, error)
+	render  func(*Renderer) error
 	// opensBoundary marks a fragment that opens its own boundary when it renders,
 	// which a chain member does. Without it a slot holding one would be recorded
 	// as an inlined component while a boundary opened inside it, and the values
@@ -291,6 +309,13 @@ func (plan *Plan[P]) Bind(params P) Fragment {
 	}
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
+	}
+	fragment.prepare = func(ctx context.Context) (func(*Renderer) error, error) {
+		prepared, err := prepareOps(ctx, params, plan.Ops)
+		if err != nil {
+			return nil, err
+		}
+		return func(r *Renderer) error { return plan.exec(r, params, prepared) }, nil
 	}
 	return foldSlots(fragment, plan.Slots, params)
 }
@@ -691,3 +716,19 @@ func (r *Renderer) writeAttrEscaped(prefix, value string) error {
 
 // MergedHead returns the head contributions collected for this render.
 func (r *Renderer) MergedHead() []string { return r.head }
+
+// prepared runs this fragment's prologue and returns the fragment to render in
+// its place. A fragment with no prologue, or one already prepared, is returned
+// unchanged, so calling it twice is safe and costs nothing the second time.
+func (f Fragment) prepared(ctx context.Context) (Fragment, error) {
+	if f.prepare == nil || !f.Present() {
+		return f, nil
+	}
+	render, err := f.prepare(ctx)
+	if err != nil {
+		return Fragment{}, err
+	}
+	f.render = render
+	f.prepare = nil
+	return f, nil
+}

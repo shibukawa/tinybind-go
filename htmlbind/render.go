@@ -297,7 +297,7 @@ func Render(w io.Writer, leaf Fragment, options ...Option) error {
 // so render into a buffer when you want that failure to become an error status.
 func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) error {
 	opts := newRenderOptions(options)
-	composed, head, err := assemble(nil, wrappers, leaf)
+	composed, head, err := assembleContext(opts.renderContext(), nil, wrappers, leaf)
 	if err != nil {
 		return err
 	}
@@ -378,7 +378,7 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 		if collect != nil {
 			collect.Begin(coordinator.opts.validatorTag)
 		}
-		composed, head, err := assemble(collect, wrappers, leaf)
+		composed, head, err := assembleContext(coordinator.ctx, collect, wrappers, leaf)
 		if err != nil {
 			yield(Content{}, err)
 			return
@@ -440,6 +440,13 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 // instance identity, assigned before rendering, which is why an unchanged
 // chain shape yields comparable manifests even when parameters change.
 func assemble(collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
+	return assembleContext(context.Background(), collect, wrappers, leaf)
+}
+
+// assembleContext is assemble with the context a prepared value binding may
+// need. The context is all a prologue takes: it writes nothing, so there is no
+// renderer to hand it, and the renderer does not exist yet at this point.
+func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
 	if !leaf.Present() {
 		return nil, nil, ErrNoLeaf
 	}
@@ -457,6 +464,18 @@ func assemble(collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Rende
 		if err := wrapper.Validate(); err != nil {
 			return nil, nil, err
 		}
+	}
+	// The leaf's leading value bindings run here, for the same reason the checks
+	// above do: a loader that fails while nothing is written can still answer
+	// 404, 403, or a redirect. Its render is replaced by the one its prologue
+	// produced, so nothing is computed twice.
+	//
+	// A wrapper is not prepared. Its parameters are not complete until the chain
+	// installs the child fragment, so a scope built now would carry an unset
+	// slot and the layout would render around nothing.
+	leaf, err := leaf.prepared(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	head := MergeHead(wrappers, leaf)
 	if collect == nil {
@@ -628,4 +647,14 @@ func RenderLive(ctx context.Context, w io.Writer, leaf Fragment, options ...Opti
 // The sequence is single-use and single-consumer.
 func RenderChainLive(ctx context.Context, w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) iter.Seq2[Content, error] {
 	return renderStreaming(ctx, w, wrappers, leaf, append([]Option{WithLiveSubscriptions()}, options...))
+}
+
+// renderContext returns the context a synchronous render runs under. The
+// streaming entries take one directly; a synchronous one accepts it through
+// WithContext, and defaults to background when the caller supplied none.
+func (o *renderOptions) renderContext() context.Context {
+	if o != nil && o.ctx != nil {
+		return o.ctx
+	}
+	return context.Background()
 }
