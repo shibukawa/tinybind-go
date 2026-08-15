@@ -24,6 +24,8 @@ ladder:
     data: external declarations called from the template
     for: a page whose data needs no Go beyond the calls the template already makes
   rung_2:
+    deprecated: 2026-08-14, reported by generation and still emitting everything; removal waits behind a downstream framework's migration
+    why: its three reasons — decide, combine, fail — all have a rung 1 spelling now, per requirement:colocated-route-logic rung_2_is_replaceable_2026_08_14
     name: typed Load function
     files: page.tb.html and page.go declaring a typed func Load
     handler: generated around the function

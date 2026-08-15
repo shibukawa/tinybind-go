@@ -74,6 +74,13 @@ type Result struct {
 	// that URL resolves. A page declaring a script block whose asset is dropped
 	// leaves a reference to a file that answers 404.
 	Assets []htmlbind.Asset
+	// Deprecations are advisories about the tree as written: things that still
+	// generate and still work, and that a later release will stop accepting.
+	//
+	// They are returned rather than logged because this package writes nothing
+	// and prints nothing; the caller owns the output, so it owns how a warning
+	// reaches whoever is running the build.
+	Deprecations []Deprecation
 	// Actions is every server function the tree discovered, raw and typed
 	// alike, in the order the registry registers them.
 	//
@@ -142,6 +149,15 @@ func Generate(options GenerateOptions) ([]Generated, error) {
 	return result.Files, err
 }
 
+// Deprecation is one advisory about a route, naming the file it is about and
+// what to write instead.
+type Deprecation struct {
+	// Path is the file the advisory is about.
+	Path string
+	// Message says what is deprecated and what replaces it.
+	Message string
+}
+
 // GenerateTree discovers the tree and emits everything it needs: the compiled
 // components for each template, a typed decoder per route, one registry in the
 // route root carrying the integrated ServeMux, and the public files the
@@ -186,6 +202,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 	// serve, and registering one would claim a pattern an application is
 	// documented to be free to register itself.
 	nativeForm := map[string]bool{}
+	var deprecations []Deprecation
 	collect := func(relDir string, compiled htmlbind.Result) {
 		for _, asset := range compiled.Assets {
 			if seenAsset[asset.FileName()] {
@@ -259,6 +276,19 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 			continue
 		}
 		analyses = append(analyses, analysis)
+		// The typed rung exists for a page that needs Go to decide, combine, or
+		// fail. A component now names its own loader's result, its failure
+		// chooses the response before anything is written, and its parameter
+		// list is what the check compares — so all three have a rung 1 spelling
+		// and this rung is on its way out.
+		if analysis.Page != nil && analysis.Page.Rung == RungTypedPage {
+			deprecations = append(deprecations, Deprecation{
+				Path: analysis.Page.File,
+				Message: "func " + PageFuncName + " is the typed rung, which is deprecated; " +
+					"declare the component's inputs on the component and load with a {val} binding, " +
+					"whose failing external can answer a status or a redirect before anything is written",
+			})
+		}
 
 		pagePath := componentPath(route.PageFile, componentSuffix)
 		if !alreadyEmitted(out, pagePath) {
@@ -294,7 +324,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 		return Result{}, err
 	}
 	out = append(out, Generated{Path: filepath.Join(tree.Root, registryOut), Source: registry, Registry: true})
-	return Result{Files: out, Assets: assets, Actions: allActions}, nil
+	return Result{Files: out, Assets: assets, Actions: allActions, Deprecations: deprecations}, nil
 }
 
 // Write writes generated files to disk, creating directories as needed.
