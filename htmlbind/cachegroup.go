@@ -46,6 +46,16 @@ type cacheGroup struct {
 	ttl    time.Duration
 	ctx    context.Context
 	prefix string
+	// parent is the group of an enclosing cached component, if any. A cached
+	// component may contain another, and the outer one's stored form contains
+	// the inner one's output — so the outer cannot publish until the inner's
+	// boundaries have settled, or it stores a placeholder nothing will ever
+	// replace and a hit serves a permanent loading state.
+	//
+	// Every registration and every outcome therefore travels up as well. The
+	// fence ids are unique across the render and the outer's own shell holds
+	// the inner's fences, so one settled subtree splices into both.
+	parent *cacheGroup
 }
 
 // open registers one boundary with the group. A boundary opened inside a
@@ -57,6 +67,7 @@ func (g *cacheGroup) open() {
 	g.mu.Lock()
 	g.pending++
 	g.mu.Unlock()
+	g.parent.open()
 }
 
 // settle records one boundary's content. present is false for a boundary that
@@ -65,6 +76,7 @@ func (g *cacheGroup) settle(id string, html []byte, present bool, err error) {
 	if g == nil {
 		return
 	}
+	defer g.parent.settle(id, html, present, err)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.pending--

@@ -295,3 +295,41 @@ func TestASettledRecoverIsNotStored(t *testing.T) {
 		t.Fatal("the second request did not retry, so the failure was cached after all")
 	}
 }
+
+type cgOuterParams struct{ ID string }
+
+// A cached component may contain another one, and the inner may await. The
+// outer's stored form contains the inner's output, so the outer cannot publish
+// until the inner's boundaries have settled — otherwise it stores a placeholder
+// nothing will ever replace.
+func TestANestedCachedComponentDoesNotStoreAPlaceholder(t *testing.T) {
+	inner := settledPlan("seven")
+	outerBuilder := Builder[cgOuterParams]{}
+	outer := &Plan[cgOuterParams]{
+		HasAwaitBlock: true,
+		Cache: &CachePolicy[cgOuterParams]{
+			ID:  "Outer",
+			TTL: time.Minute,
+			Key: func(p cgOuterParams) string { return KeyString(p.ID) },
+		},
+		Ops: []Op[cgOuterParams]{
+			outerBuilder.Static("<section>"),
+			outerBuilder.Component(func(p cgOuterParams) Fragment { return Bind(inner, cgParams{ID: p.ID}) }),
+			outerBuilder.Static("</section>"),
+		},
+	}
+
+	store := newRecordingStore()
+	var out strings.Builder
+	for content, err := range RenderAsync(context.Background(), &out, Bind(outer, cgOuterParams{ID: "7"}), WithCache(store)) {
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		_ = content
+	}
+	for key, value := range store.entries {
+		if strings.Contains(string(value), "<!--") || strings.Contains(string(value), "loading") {
+			t.Fatalf("entry %q stored a placeholder:\n%s", key, value)
+		}
+	}
+}

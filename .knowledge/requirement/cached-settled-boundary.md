@@ -89,6 +89,12 @@ as_built:
   store_timing: on the last report, or on the capture of the initial pass when that comes later; the two race and the group holds one flag so only one of them writes
   splice: the fence comments this package wrote, replaced by the content of the id it issued, repeated until nothing is left because a nested boundary's fence sits inside another one's content
   recover_is_not_stored: a settled recover subtree reports as a failure to the group, so a rendered failure never becomes the value the key stands for
+  nested_cached_components:
+    found: on review 2026-08-14, after the first implementation shipped
+    bug: a cached component containing another one gave the inner its own group, so the outer never learned of the inner's boundaries, published immediately, and stored a placeholder nothing would ever replace — a hit would have served a permanent loading state
+    why_it_became_reachable: narrowing the refusal from await to live is what let a cached component reach an awaiting one at all, so the case did not exist before this change
+    fix: groups chain, and every registration and outcome travels to the enclosing group as well
+    why_that_is_enough: fence ids are unique across the render and the outer's own shell holds the inner's fences, so one settled subtree splices into both
 open_questions:
   - what a stored entry should be measured in once it holds fetched records rather than markup; safe to answer after building, because the entry stays a byte slice and a store can already bound itself by len, so only htmlbind MemoryCache capping by entry count would want an additive byte-bounded sibling
   - whether a hit should be distinguishable from a markup-only hit at the api:cache-store seam; worth asking the reporter what they actually need first, since decision:cache-key-derivation frames the component identity into the key in plaintext and a wrapping store may already be able to tell

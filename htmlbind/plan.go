@@ -195,7 +195,8 @@ func (p *Plan[P]) execCached(r *Renderer, params P, ops []Op[P]) error {
 	// template stream where no store is configured and wait where one is, which
 	// requirement:component-output-cache forbids by calling caching a deployment
 	// choice rather than a template rewrite. See decision:cached-boundary-delivery.
-	group := &cacheGroup{store: r.opts.cache, key: key, ttl: p.Cache.TTL, ctx: ctx, prefix: r.boundaryPrefix()}
+	group := &cacheGroup{store: r.opts.cache, key: key, ttl: p.Cache.TTL, ctx: ctx,
+		prefix: r.boundaryPrefix(), parent: r.group}
 	sub := &Renderer{w: &buffer, sw: &buffer, head: r.head, opts: r.opts, async: r.async,
 		group: group, idPrefix: r.idPrefix, idCount: r.idCount, boundaryCtx: r.boundaryCtx}
 	if err := execOps(sub, ops, params); err != nil {
