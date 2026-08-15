@@ -830,10 +830,16 @@ export component Card(id: string): html {
 ```
 
 One name, one call. There is no closing tag — the binding scopes whatever
-follows it, up to the end of the element, control body, or component body it sits
-in. Read it anywhere a value goes: interpolation, an attribute, an `if`
-condition, a loop's collection, a component argument, or an argument to another
-external.
+follows it, up to the end of its block. A block is an `{if}` branch, a `{for}`
+body, an `{await}` subtree, or the component body; a tag is not one, so a
+binding written inside a `<div>` is still readable after that `</div>`. Read it
+anywhere a value goes: interpolation, an attribute, an `if` condition, a loop's
+collection, a component argument, or an argument to another external.
+
+The value is computed at the top of its block, wherever in the block you write
+the binding. Only the computation moves — your markup keeps its order and your
+elements keep their shape — and it is what lets a page's loader fail before the
+first byte, which the [response section](#choosing-the-response) uses.
 
 Bind several names with commas, and read a binding in a later one by writing a
 second `{val}`:
@@ -851,10 +857,16 @@ directive is an error that says to split it.
 
 Two more rules, both there to catch a call you did not mean to make:
 
-- Binding a name a second time in the same block is a redeclaration. Shadow
-  deliberately by binding inside a nested element, not beside the first one.
+- A `{val}` may not take a name that is already visible — an enclosing binding, a
+  parameter, a `{for}` variable, an `{await}` binding. It is the one binder that
+  may not shadow, because it is the one that moves: hoisted above something
+  reading the same name from further out, it would change what that renders.
+  `{for}` and `{await}` still shadow as before.
 - A binding nothing reads is an error. The call would run on every render and
   the result would go nowhere.
+
+Reading a binding written later is still an error. The computation hoists; the
+name does not.
 
 Only a value can be bound. An `external async` still belongs in an
 [`await` clause](#await-fallback-recover), and an external declared `: html`
@@ -891,6 +903,33 @@ This is the same rule that keeps an `external async` inside an `await` clause.
 The difference is where the failure lands: an async one is the boundary's and a
 `recover` clause can absorb it, while a synchronous one has no boundary and ends
 the render.
+
+### Choosing the response
+
+A page's own loader can answer for the whole request. Return one of the status
+helpers and the render stops with nothing written, so the status is still free:
+
+```go
+func LoadRecord(id string) (Record, error) {
+	record, ok := lookup(id)
+	if !ok {
+		return Record{}, httpbind.NotFound(httpbind.Problem{Code: "absent"})
+	}
+	if record.MovedTo != "" {
+		return Record{}, httpbind.Redirect(record.MovedTo)
+	}
+	return record, nil
+}
+```
+
+`WriteError` turns the first into a 404 and the second into a 303 with a
+`Location`. It works because a component's own bindings run while the chain is
+being assembled, before the document shell writes anything — so a page needs no
+Go entry point beside it to decide, combine, or fail.
+
+A binding inside an `{if}`, `{for}`, or `{await}` block runs when that block
+does, which is after the shell. Its failure ends the render but cannot choose
+the status.
 
 The construct is what lets a component load its own data and cache the load and
 the render as one unit — see [Cached components](#cached-components). The key
@@ -1582,14 +1621,44 @@ bytes:
 
 - It cannot declare an `html` parameter, because a slot argument is a bound
   continuation rather than a value that can enter the key.
-- It cannot reach an `await` boundary, directly or through a component it calls.
-  A boundary is emitted as a placeholder now and a replacement later, so it is
-  not one byte range that can be stored.
+- It cannot reach an `external live` boundary, directly or through a component it
+  calls. A live source keeps delivering after the document ends, so it never
+  settles into anything a stored range could stand for. An `await` boundary over
+  an `external async` settles exactly once and **is** cacheable — see below.
 - It cannot own the document `head`, because the merged head depends on the
   chain rather than on its parameters.
 - It cannot reach an unsafe `<form>`, or a registered element backed by a
   provider, directly or through a component it calls. Both carry a per-request
   value, and a stored body would serve one session's to whoever asked next.
+
+### Caching a component that loads its own data
+
+A cached component may contain an `{await}` boundary, which is what lets one
+`@cache` cover the fetch and the render together:
+
+```text
+@cache(ttl: "5m")
+export component Card(id: string): html {
+{await record = LoadRecord(id)}
+  <h1>{record.title}</h1>
+{fallback}
+  <p>loading</p>
+{/await}
+}
+```
+
+The first request is delivered exactly as it would be with no store configured:
+the placeholder, the streamed fallback, and the completion frame. Configuring a
+store changes what is stored, never what is sent — caching is a deployment
+choice, not a template rewrite.
+
+What gets stored is the settled markup rather than the placeholder. Later
+requests write it in place, contiguously: no placeholder, no fallback, no
+completion frame, and no fetch. The `await` has become synchronous.
+
+A boundary that fails stores nothing, so the next request is a miss. A settled
+`recover` subtree counts as a failure for this purpose: a rendered error is not
+the answer the key stands for.
 
 ## Forms and CSRF tokens
 

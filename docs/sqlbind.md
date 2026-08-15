@@ -183,11 +183,12 @@ SELECT id, name FROM users WHERE
 {/if}
 ```
 
-Three rules keep a binding from being a call you did not mean to make. Binding
-the same name twice in one block is a redeclaration; the bindings of one `{val}`
-are independent, so one that reads another must be split into two; and a binding
-nothing reads is an error, because its call would run every time the statement is
-built and the result would go nowhere.
+Three rules keep a binding from being a call you did not mean to make. A `{val}`
+may not take a name that is already visible — an earlier binding, an enclosing
+one, or a parameter; the bindings of one `{val}` are independent, so one that
+reads another must be split into two; and a binding nothing reads is an error,
+because its call would run every time the statement is built and the result would
+go nowhere.
 
 An `external` may also return a trailing `error`, which fails the statement build
 and reaches the caller:
