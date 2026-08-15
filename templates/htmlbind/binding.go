@@ -23,64 +23,61 @@ import (
 // The flat form survives in whatever else reads the parser's output, so
 // printing round-trips the source the author wrote.
 func (c *compiler) normalizeBindings(nodes []Node) ([]Node, error) {
-	if binding, ok := syntax.DuplicateValBinding(nodes); ok {
-		return nil, c.error(binding.Pos, "duplicate value binding "+binding.Name+
-			"; a second binding of one name in the same block is a redeclaration, so rename it or move it inside a nested element to shadow deliberately")
+	var hoisted []hoistedBinding
+	body, err := c.stripBindings(nodes, &hoisted)
+	if err != nil {
+		return nil, err
 	}
+	for i := len(hoisted) - 1; i >= 0; i-- {
+		body = []Node{&syntax.ValNode{
+			Kind:     "template:val",
+			Pos:      hoisted[i].binding.Pos,
+			Context:  hoisted[i].context,
+			Bindings: []syntax.ValBinding{hoisted[i].binding},
+			Body:     body,
+		}}
+	}
+	return body, nil
+}
+
+type hoistedBinding struct {
+	binding syntax.ValBinding
+	context string
+}
+
+// stripBindings removes every binding directive of one block, in written order,
+// and normalizes each nested control block on the way.
+//
+// Markup nesting is walked with the same collector, because an element opens no
+// block: a binding written inside a div belongs to the block the div sits in,
+// and reaches past the div's closing tag. A control construct is walked as its
+// own block instead, so its bindings stay inside it.
+func (c *compiler) stripBindings(nodes []Node, into *[]hoistedBinding) ([]Node, error) {
 	out := make([]Node, 0, len(nodes))
-	for i, node := range nodes {
-		value, ok := node.(*syntax.ValNode)
-		if !ok {
-			rewritten, err := c.normalizeBindingChildren(node)
+	for _, node := range nodes {
+		if value, ok := node.(*syntax.ValNode); ok {
+			for _, binding := range value.Bindings {
+				*into = append(*into, hoistedBinding{binding: binding, context: value.Context})
+			}
+			continue
+		}
+		for _, list := range controlChildLists(node) {
+			rewritten, err := c.normalizeBindings(*list.nodes)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, rewritten)
-			continue
+			*list.nodes = rewritten
 		}
-		// Everything after this binding is what it scopes. The remainder is
-		// normalized as its own list, which is what gives a nested binding its
-		// own scope without this having to track depth.
-		rest, err := c.normalizeBindings(nodes[i+1:])
-		if err != nil {
-			return nil, err
+		for _, list := range markupChildLists(node) {
+			rewritten, err := c.stripBindings(*list.nodes, into)
+			if err != nil {
+				return nil, err
+			}
+			*list.nodes = rewritten
 		}
-		return append(out, nestValBindings(value, rest)), nil
+		out = append(out, node)
 	}
 	return out, nil
-}
-
-// nestValBindings turns one node binding several names into a chain of nodes
-// binding one name each, innermost holding the body. Evaluation order is the
-// written order, so a later binding reads an earlier one as an ordinary name.
-func nestValBindings(node *syntax.ValNode, body []Node) *syntax.ValNode {
-	for i := len(node.Bindings) - 1; i >= 0; i-- {
-		nested := &syntax.ValNode{
-			Kind:     node.Kind,
-			Pos:      node.Bindings[i].Pos,
-			Context:  node.Context,
-			Bindings: []syntax.ValBinding{node.Bindings[i]},
-			Body:     body,
-		}
-		body = []Node{nested}
-	}
-	return body[0].(*syntax.ValNode)
-}
-
-// normalizeBindingChildren rewrites the child lists a node owns. A node type
-// with no children is returned unchanged, which is why the default is to do
-// nothing rather than to fail: this walk is over markup, and a node that holds
-// no body holds no binding either.
-func (c *compiler) normalizeBindingChildren(node Node) (Node, error) {
-	lists := bindingChildLists(node)
-	for _, list := range lists {
-		rewritten, err := c.normalizeBindings(*list.nodes)
-		if err != nil {
-			return nil, err
-		}
-		*list.nodes = rewritten
-	}
-	return node, nil
 }
 
 // valueRead reports whether nodes read name.
@@ -90,8 +87,8 @@ func (c *compiler) normalizeBindingChildren(node Node) (Node, error) {
 // thrown away. That is a mistake rather than a style, which is why the caller
 // refuses it instead of dropping the instruction.
 //
-// A subtree that rebinds the name is not scanned past that point: a reference
-// there resolves to the inner binding and leaves the outer one still unread.
+// A for or await clause may still shadow, so the scan stops at one of those;
+// a value binding may not, so nothing stops it there.
 func valueRead(nodes []Node, name string) bool {
 	for _, node := range nodes {
 		switch node := node.(type) {
@@ -113,12 +110,12 @@ func valueRead(nodes []Node, name string) bool {
 				continue
 			}
 		case *syntax.ValNode:
+			// No stop on a rebind: a value binding may not shadow, so a nested
+			// one carrying this name is already a generation error and the scan
+			// must not pre-empt that diagnostic with an unread one.
 			for _, binding := range node.Bindings {
 				if syntax.ExprReads(binding.Value, name) {
 					return true
-				}
-				if binding.Name == name {
-					return false
 				}
 			}
 		case *syntax.AwaitNode:
@@ -174,10 +171,25 @@ func attributesRead(attributes []Attribute, name string) bool {
 
 type bindingChildList struct{ nodes *[]Node }
 
-// bindingChildLists names every body list a node owns. It is the one place the
-// walk knows about node types, so a new container type is added here rather
-// than in each pass that recurses.
-func bindingChildLists(node Node) []bindingChildList {
+// controlChildLists names the body lists that are their own block. They are the
+// constructs that decide whether their contents render at all, or how often, so
+// a binding inside one belongs to it.
+func controlChildLists(node Node) []bindingChildList {
+	switch node := node.(type) {
+	case *syntax.IfNode:
+		return []bindingChildList{{&node.Then}, {&node.Else}}
+	case *syntax.ForNode:
+		return []bindingChildList{{&node.Body}}
+	case *syntax.AwaitNode:
+		return []bindingChildList{{&node.Primary}, {&node.Fallback}, {&node.Recover}}
+	}
+	return nil
+}
+
+// markupChildLists names the body lists that are part of the enclosing block.
+// Markup structure carries no scope, so a binding written inside one of these
+// is hoisted out of it.
+func markupChildLists(node Node) []bindingChildList {
 	switch node := node.(type) {
 	case *ElementNode:
 		return []bindingChildList{{&node.Children}}
@@ -187,17 +199,21 @@ func bindingChildLists(node Node) []bindingChildList {
 		return []bindingChildList{{&node.Children}}
 	case *SlotNode:
 		return []bindingChildList{{&node.Default}}
-	case *syntax.IfNode:
-		return []bindingChildList{{&node.Then}, {&node.Else}}
-	case *syntax.ForNode:
-		return []bindingChildList{{&node.Body}}
-	case *syntax.ValNode:
-		// Only the usage scan reaches this, over a tree normalization has
-		// already rewritten. normalizeBindings handles a binding itself, so it
-		// never asks for its children here.
-		return []bindingChildList{{&node.Body}}
-	case *syntax.AwaitNode:
-		return []bindingChildList{{&node.Primary}, {&node.Fallback}, {&node.Recover}}
+	}
+	return nil
+}
+
+// bindingChildLists names every body list a node owns, for the usage scan, which
+// walks the tree after normalization and does not care which lists were blocks.
+func bindingChildLists(node Node) []bindingChildList {
+	if lists := controlChildLists(node); lists != nil {
+		return lists
+	}
+	if lists := markupChildLists(node); lists != nil {
+		return lists
+	}
+	if value, ok := node.(*syntax.ValNode); ok {
+		return []bindingChildList{{&value.Body}}
 	}
 	return nil
 }

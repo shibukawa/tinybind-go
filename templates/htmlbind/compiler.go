@@ -253,6 +253,12 @@ type compiler struct {
 	// awaitCall is the one call expression currently allowed to name an async
 	// external, so a nested async call inside an await header is still rejected.
 	awaitCall Expr
+	// valPos records, per visible value binding, the source position of the
+	// directive that introduced it. Hoisting evaluates a binding at the top of
+	// its block, so a node written earlier in that block is inside the binding's
+	// subtree by the time analysis runs, and this is what keeps the name from
+	// being readable there. See decision:value-binding-hoisting scope_does_not_hoist.
+	valPos map[string]Position
 	// valCall is the one call expression currently allowed to name an external
 	// that returns an error. A failing call has to be the whole value of a
 	// binding, because that is the only position whose lowering can carry the
@@ -288,6 +294,7 @@ func newCompiler(filename, source string, module *Module, collapseWhitespace boo
 		enumMembers: map[string]valueType{}, externals: map[string]functionSig{},
 		components: map[string]*componentInfo{}, exprTypes: map[Expr]valueType{},
 		liveBoundaries:     map[*syntax.AwaitNode]bool{},
+		valPos:             map[string]Position{},
 		collapseWhitespace: collapseWhitespace,
 	}
 }
@@ -1279,6 +1286,19 @@ func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) 
 		if binding.Name == "outer" {
 			return c.error(binding.Pos, "val binding cannot be named outer; the generated scope reserves that name")
 		}
+		// A value binding may not take a name that is already visible. One
+		// check covers every source of one, because the lowering nests: an
+		// earlier binding of this block, an enclosing block's binding, a
+		// parameter, a for variable, and an await binding are all in scope by
+		// the time this is analyzed.
+		//
+		// It is stricter than the shadowing every other binder allows, and it
+		// is what decision:value-binding-hoisting buys with: a binding whose
+		// name is unique cannot, when its evaluation moves to the top of the
+		// block, pass a node that reads the same name meaning something else.
+		if _, taken := scope[binding.Name]; taken {
+			return c.error(binding.Pos, "val binding "+binding.Name+" reuses a name that is already visible here; a value binding cannot shadow, because its evaluation moves to the top of its block")
+		}
 		if call, ok := binding.Value.(*CallExpr); ok {
 			if identifier, ok := call.Callee.(*IdentifierExpr); ok {
 				if sig, known := c.externals[identifier.Name]; known && (sig.async || sig.live) {
@@ -1314,8 +1334,25 @@ func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) 
 			return c.error(binding.Pos, "val binding "+binding.Name+" is never read; its call would run on every render and be discarded, so read it or remove it")
 		}
 		inner[binding.Name] = t
+		saved, had := c.valPos[binding.Name]
+		c.valPos[binding.Name] = binding.Pos
+		defer func() {
+			if had {
+				c.valPos[binding.Name] = saved
+			} else {
+				delete(c.valPos, binding.Name)
+			}
+		}()
 	}
 	return c.analyzeNodes(node.Body, inner)
+}
+
+// beforePosition reports whether a comes before b in the source.
+func beforePosition(a, b Position) bool {
+	if a.Line != b.Line {
+		return a.Line < b.Line
+	}
+	return a.Col < b.Col
 }
 
 // analyzeAwait types one boundary. The bindings are visible only in the primary
@@ -1709,6 +1746,14 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 	switch expr := expr.(type) {
 	case *IdentifierExpr:
 		if t, ok := scope[expr.Name]; ok {
+			// The evaluation of a binding hoists; its name does not. A read
+			// written before the directive is inside the binding's subtree only
+			// because of the lowering, and reading a value declared later is a
+			// mistake worth keeping.
+			if pos, bound := c.valPos[expr.Name]; bound && beforePosition(expr.Pos, pos) {
+				err = c.error(expr.Pos, expr.Name+" is read before its val binding; a binding's name is visible from the directive onward")
+				break
+			}
 			result = t
 		} else if t, ok := c.enumMembers[expr.Name]; ok {
 			result = t

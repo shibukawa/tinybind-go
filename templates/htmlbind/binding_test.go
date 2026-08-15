@@ -78,34 +78,44 @@ func TestIndependentBindingsShareOneDirective(t *testing.T) {
 	}
 }
 
-// Two bindings of one name in one block is a redeclaration rather than a
-// deliberate shadow, and the source has no closer to read the first one's extent
-// from. Both spellings are the same mistake and get the same diagnostic.
-func TestSameBlockRedeclarationIsRefused(t *testing.T) {
+// A value binding may not take a name that is already visible. It is stricter
+// than the shadowing every other binder allows, and it is what
+// decision:value-binding-hoisting buys with: a binding whose name is unique
+// cannot, when its evaluation moves to the top of its block, pass a node that
+// reads the same name meaning something else.
+//
+// One check covers every source of a visible name, because the lowering nests.
+func TestBindingCannotReuseAVisibleName(t *testing.T) {
 	for name, body := range map[string]string{
-		"two directives": "{val a = Norm(id)}\n{val a = Norm(id)}\n<p>{a}</p>",
-		"one directive":  "{val a = Norm(id), a = Norm(id)}\n<p>{a}</p>",
+		"an earlier binding": "{val a = Norm(id)}\n{val a = Norm(id)}\n<p>{a}</p>",
+		"a sibling binding":  "{val a = Norm(id), a = Norm(id)}\n<p>{a}</p>",
+		"an enclosing block": "{val a = Norm(id)}\n<p>{a}</p>\n{if true}{val a = Norm(id)}<p>{a}</p>{/if}",
+		"a parameter":        "{val id = Norm(id)}\n<p>{id}</p>",
+		"a loop variable":    "{for x in ids}{val x = Norm(id)}<p>{x}</p>{/for}",
 	} {
 		t.Run(name, func(t *testing.T) {
-			message := generateError(t, bindingSource(body), htmlbind.GenerateOptions{})
-			if !strings.Contains(message, "duplicate value binding a") {
-				t.Fatalf("want a redeclaration diagnostic, got %q", message)
+			source := bindingHead + "export component Card(id: string, ids: string[]): html {\n" + body + "\n}\n"
+			_, err := htmlbind.Generate("page.tb.html", []byte(source), htmlbind.GenerateOptions{})
+			if err == nil || !strings.Contains(err.Error(), "reuses a name that is already visible here") {
+				t.Fatalf("want the shadowing diagnostic, got %v", err)
 			}
 		})
 	}
 }
 
-// Shadowing from further out stays legal, because for and await already shadow
-// silently and a binding that did not would be the odd one. The outer binding
-// has to be read outside the shadowing subtree, which is what makes the shadow
-// deliberate rather than a name the author lost track of.
-func TestShadowingFromADeeperBlockIsAllowed(t *testing.T) {
+// A for variable and an await binding may still shadow. Neither hoists, so
+// neither can move past a read, which is the whole reason the value binding is
+// the one that may not.
+func TestOtherBindersMayStillShadow(t *testing.T) {
 	for name, body := range map[string]string{
-		"nested element": "{val a = Norm(id)}\n<p>{a}</p>\n<div>{val a = Norm(id)}<p>{a}</p></div>",
-		"a parameter":    "{val id = Norm(id)}\n<p>{id}</p>",
+		"a loop variable":  "{val a = Norm(id)}\n<p>{a}</p>\n{for a in ids}<p>{a}</p>{/for}",
+		"an await binding": "{val s = Norm(id)}\n<p>{s}</p>\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}",
 	} {
 		t.Run(name, func(t *testing.T) {
-			generateWith(t, bindingSource(body), htmlbind.GenerateOptions{})
+			source := bindingHead + "export component Card(id: string, ids: string[]): html {\n" + body + "\n}\n"
+			if _, err := htmlbind.Generate("page.tb.html", []byte(source), htmlbind.GenerateOptions{}); err != nil {
+				t.Fatalf("a permitted shadow was refused: %v", err)
+			}
 		})
 	}
 }
@@ -131,11 +141,11 @@ func TestUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
 }
 
 // A read inside a subtree that rebinds the name resolves to the inner binding,
-// so the outer one is unread and the shadow was pointless. Every binder that
-// introduces a name has to be recognized for this to hold.
+// so the outer one is unread and the shadow was pointless. Only the binders that
+// may still shadow can reach this; a value binding rebinding a name is refused
+// before the scan runs.
 func TestShadowedBindingCountsAsUnread(t *testing.T) {
 	for name, body := range map[string]string{
-		"a nested binding": "{val a = Norm(id)}\n<div>{val a = Norm(id)}<p>{a}</p></div>",
 		"a loop variable":  "{val a = Norm(id)}\n{for a in ids}<p>{a}</p>{/for}",
 		"an await binding": "{val s = Norm(id)}\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}",
 	} {
@@ -177,12 +187,65 @@ func TestABindingIsReadFromEveryValuePosition(t *testing.T) {
 	}
 }
 
-// The name is unresolved once the block that introduced it ends, which is what
-// makes the closerless form readable: the enclosing tag is the extent.
-func TestBindingDoesNotEscapeItsBlock(t *testing.T) {
-	message := generateError(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
-	if !strings.Contains(message, "unknown identifier a") {
-		t.Fatalf("want the trailing read to be unresolved, got %q", message)
+// A block is a control construct, not a tag. Markup structure carries no scope,
+// so a binding written inside a div reaches past the div's closing tag — which
+// is also what lets decision:value-binding-hoisting evaluate it before the div
+// opens.
+func TestMarkupNestingIsNotABlock(t *testing.T) {
+	generateWith(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
+}
+
+// A control construct is a block, so a binding inside one is unresolved after it.
+func TestBindingDoesNotEscapeAControlBlock(t *testing.T) {
+	for name, body := range map[string]string{
+		"an if branch": "{if true}{val a = Norm(id)}<p>{a}</p>{/if}\n<p>{a}</p>",
+		"a for body":   "{for x in ids}{val a = Norm(x)}<p>{a}</p>{/for}\n<p>{a}</p>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := bindingHead + "export component Card(id: string, ids: string[]): html {\n" + body + "\n}\n"
+			_, err := htmlbind.Generate("page.tb.html", []byte(source), htmlbind.GenerateOptions{})
+			if err == nil || !strings.Contains(err.Error(), "unknown identifier a") {
+				t.Fatalf("want the trailing read to be unresolved, got %v", err)
+			}
+		})
+	}
+}
+
+// The evaluation hoists but the name does not, so a read written before the
+// directive is still a mistake even though the lowering has put it inside the
+// binding's subtree.
+func TestReadingABindingBeforeItIsWrittenIsRefused(t *testing.T) {
+	message := generateError(t, bindingSource("<p>{a}</p>\n{val a = Norm(id)}\n<p>{a}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(message, "is read before its val binding") {
+		t.Fatalf("want the read-before diagnostic, got %q", message)
+	}
+}
+
+// The point of the hoist: a binding written after markup is evaluated before it,
+// so a chain member's loader can still choose the response status.
+func TestBindingIsEvaluatedAtTheTopOfItsBlock(t *testing.T) {
+	generated := generateWith(t, bindingSource("<div><p>hello</p></div>\n{val a = Norm(id)}\n<p>{a}</p>"), htmlbind.GenerateOptions{})
+	call := strings.Index(generated, "Norm(p.Id)")
+	markup := strings.Index(generated, "hello")
+	if call < 0 || markup < 0 || call > markup {
+		t.Fatalf("the binding was not hoisted above the markup written before it:\n%s", generated)
+	}
+	// Only the computation moves. The markup keeps its written order, which is
+	// what makes the hoist unobservable in the output.
+	if opening := strings.Index(generated, "<div>"); opening < 0 || opening > markup {
+		t.Fatalf("the markup was reordered:\n%s", generated)
+	}
+}
+
+// A binding written inside an element is hoisted out of it, and the element is
+// left whole: hoisting moves the evaluation, never the markup.
+func TestHoistingOutOfAnElementLeavesItIntact(t *testing.T) {
+	generated := generateWith(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(generated, "<div><p>") || !strings.Contains(generated, "</p></div>") {
+		t.Fatalf("the element was split by the hoist:\n%s", generated)
+	}
+	if calls := strings.Count(generated, "Norm("); calls != 1 {
+		t.Fatalf("want one call for two reads, got %d:\n%s", calls, generated)
 	}
 }
 

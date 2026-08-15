@@ -36,6 +36,8 @@ not_an_error_semantically:
   mitigation: the constructor name says redirect, so a reader at the call site sees intent rather than failure
 scope:
   applies_to: any code path that returns an httpbind error, so a flat-mode handler gains it too
+  widened_2026_08_14: decision:value-binding-hoisting adds a second position — a chain member's top-level value binding, whose failing external returns the same value; the constructor, the ordering rule, and the api:write-error behaviour are unchanged, only where the value may come from
+  why_it_transfers: requirement:template-value-binding propagates a failing external's error unwrapped, so the value arrives intact, and hoisting is what keeps the ordering rule above true for it
   openapi: a redirect status participates in rule:openapi-error-statuses like the other helpers, for documented API routes
   server_functions: requirement:template-server-functions handlers already hold a writer and use http.Redirect directly; this changes nothing for them
 constraints:

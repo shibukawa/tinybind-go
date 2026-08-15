@@ -84,12 +84,21 @@ func TestSQLEmitsNoBlankAssignment(t *testing.T) {
 	}
 }
 
-// A reference inside a block that rebinds the name resolves to the inner local,
-// so the outer binding is unread and the shadow was pointless.
-func TestSQLShadowedBindingCountsAsUnread(t *testing.T) {
-	message := bindingError(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE {if flag}{val key = Norm(name)}a = {key}{else}b = {name}{/if}")
-	if !strings.Contains(message, "val binding key is never read") {
-		t.Fatalf("want the shadowed binding reported unread, got %q", message)
+// A value binding may not take a name already visible, here as in markup: the
+// rule is the language's rather than either lowering's.
+func TestSQLBindingCannotReuseAVisibleName(t *testing.T) {
+	for name, body := range map[string]string{
+		"an earlier binding": "{val key = Norm(name)}{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}",
+		"a sibling binding":  "{val key = Norm(name), key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}",
+		"an enclosing block": "{val key = Norm(name)}\nSELECT id, name FROM users WHERE {if flag}{val key = Norm(name)}a = {key}{else}b = {key}{/if}",
+		"a parameter":        "{val name = Norm(name)}\nSELECT id, name FROM users WHERE a = {name}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := bindingError(t, body)
+			if !strings.Contains(message, "reuses a name that is already visible here") {
+				t.Fatalf("want the shadowing diagnostic, got %q", message)
+			}
+		})
 	}
 }
 
@@ -120,15 +129,6 @@ func TestSQLUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
 // statement varies rather than where the binding stops existing.
 func TestSQLBindingReadOnOneBranchIsRead(t *testing.T) {
 	generateBinding(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE {if flag}a = {key}{else}b = {name}{/if}")
-}
-
-// Without the template-level check the diagnostic would be a Go compile error
-// against generated code, which cannot point at the template line that caused it.
-func TestSQLSameBlockRedeclarationIsRefused(t *testing.T) {
-	message := bindingError(t, "{val key = Norm(name)}{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}")
-	if !strings.Contains(message, "duplicate value binding key") {
-		t.Fatalf("want a redeclaration diagnostic, got %q", message)
-	}
 }
 
 // A Go keyword is a legal binding name in the template and has to survive

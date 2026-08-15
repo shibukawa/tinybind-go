@@ -18,6 +18,7 @@ behavior:
   no_store: without a supplied store the component renders normally, so caching is a deployment choice rather than a template rewrite
 streaming:
   restriction: a cached component owns no decision:async-boundary-syntax boundary, so its output is one contiguous byte range
+  proposed_change: requirement:cached-settled-boundary keeps the contiguous range and drops the restriction for an await boundary, because the settled subtree is contiguous even though the boundary's delivery is not
   buffering: only the cached subtree is buffered; the rest of the document keeps streaming
 partial_update:
   boundary: independent from requirement:partial-update-boundaries; cache and client update flags may be enabled separately
@@ -59,7 +60,7 @@ opaque_unit:
     recorded_because: sending the key looks like a free way to let a client hold a cached fragment, and it would publish whatever the parameters are
 open_questions:
   - stale-while-revalidate and explicit invalidation
-  - caching a fully settled boundary set, which requirement:suspense-html-streaming currently excludes
+  - taken up 2026-08-14 as requirement:cached-settled-boundary: caching a fully settled boundary set, with a live boundary still refused because it never settles
   - what a rich entry costs the document path in practice, which is the one number that should be measured before the interface changes
 downstream_experience_2026_08_13:
   status: input, not a request; offered against the two open questions by a reporter who built both at its own data layer, per decision:cache-key-generator-seams
@@ -82,7 +83,8 @@ self_loading_component_2026_08_14:
   wanted: a component declaring a primary key as its parameter, loading its own data, and carrying one annotation over the load and the render together
   today: this cache saves the rendering and the reporter's own data cache saves the fetching, so one slow page is configured in two places for what an author thinks of as one thing
   already_covered_here: the load would sit inside the cached subtree and decision:cache-key-derivation keys on declared parameters, so a hit skips the loader with no change to this requirement
-  blocked_on: proposed requirement:template-value-binding, because a component cannot name a fetched value today and calls its loader once per field it renders
+  unblocked_by: requirement:template-value-binding, shipped 2026-08-14
+  what_writing_one_ran_into: requirement:cached-settled-boundary; the loader either reports failure through an await boundary and forfeits the cache, or is cached and cannot report failure
   still_open: a staleness policy over fetched data, which is the stale-while-revalidate question above rather than a new one
   not_requested_yet: the reporter asks for the binding alone and says the key routing for the combined form is unresolved on their side
 ```

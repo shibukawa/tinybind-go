@@ -257,31 +257,6 @@ func ExprReads(expr Expr, name string) bool {
 	return false
 }
 
-// DuplicateValBinding reports the first binding whose name a previous binding
-// in the same block already introduced, counting both the bindings of one node
-// and those of separate nodes in the list.
-//
-// Shadowing from further out stays legal, so this looks at one list and never
-// recurses. It has to run on the flat list: a lowering that nests the nodes
-// after a binding under it turns two consecutive bindings into an enclosing and
-// an enclosed one, which is indistinguishable from a legal shadow by then.
-func DuplicateValBinding(nodes []Node) (ValBinding, bool) {
-	seen := map[string]bool{}
-	for _, node := range nodes {
-		binding, ok := node.(*ValNode)
-		if !ok {
-			continue
-		}
-		for _, b := range binding.Bindings {
-			if seen[b.Name] {
-				return b, true
-			}
-			seen[b.Name] = true
-		}
-	}
-	return ValBinding{}, false
-}
-
 type Parameter struct {
 	Pos  Position `json:"pos"`
 	Name string   `json:"name"`

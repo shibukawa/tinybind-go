@@ -54,7 +54,13 @@ shape:
     what_it_costs_the_author: one more directive, and the dependency becomes visible instead of hiding inside a line read left to right
     where_checked: parseVal, since it is a syntactic property of one directive; both formats inherit it from the shared parser
     lowering_unchanged: normalization still nests a comma list into one node per binding, which is lowering rather than meaning
-  scope: from the directive to the end of the enclosing block, which is the enclosing element, control body, or declaration body
+  scope: from the directive to the end of the enclosing block
+  what_a_block_is:
+    decided: 2026-08-14 by the owner
+    is: an if branch, a for body, an await primary, fallback, or recover subtree, and the declaration body
+    is_not: element, component, head, or slot nesting; markup structure carries no scope of its own
+    why_it_matters: a binding written inside a div reaches past the div, and decision:value-binding-hoisting therefore evaluates it before the div's opening tag, which is what lets any binding outside a control block choose the response status
+  evaluation_position: decision:value-binding-hoisting; the value is evaluated at the top of that block rather than where the directive stands, while the name stays visible only from the directive onward
   meaning: the siblings that follow are the binding's subtree; decision:value-binding-form desugars to exactly that before analysis
   immutable: no reassignment; the binding is a name for one evaluation
   name_form: lowerCamelCase, per rule:template-name-casing dsl_values, matching the check parseFor and parseAwait already apply
@@ -77,13 +83,15 @@ typing:
   duplicate_name: an error within one binding construct, as await already reports
   any_expression: the right side need not be an external call; a field path or a nested call binds the same way, because the analysis is over the typed expression rather than over the callee
   shadowing:
-    decided: 2026-08-14 by the owner
-    allowed: shadowing a name bound further out — a parameter, a for variable, an await binding, or a binding in an enclosing block; for and await already shadow silently and a binding that did not would be the odd one
-    error: two bindings of one name introduced into the same source-level block, whether by one directive's comma list or by two consecutive directives
-    reason: at one level the second is a redeclaration rather than a deliberate shadow, and the source gives the author no closer to read the first one's extent from
-    where_checked: decision:value-binding-form same_level_check; the desugaring makes consecutive directives nest, so this cannot be a plain scope-occupancy test at analysis time
-    unchanged_for_others: a for or await clause is unaffected by this rule and keeps the silent shadow it has today
+    rule: a value binding may not use a name already visible where it is written — an enclosing binding, a parameter, a for variable, an await binding, or a recover error name
+    revised: 2026-08-14 by the owner, from "same block is a redeclaration, everything outer is a deliberate shadow" to a flat refusal for this binder
+    why_it_tightened: decision:value-binding-hoisting moves a binding's evaluation to the top of its block, and a binding that shadowed could move past a node reading the outer name, which changes what that node renders rather than merely when it is computed
+    what_it_bought: the hoist needs no exception; with no shadow possible there is no read whose meaning could change, so hoisting is unconditional
+    for_and_await_unchanged: they keep the silent shadow they have today, because neither hoists and neither can therefore move past a read
+    same_block_case_now_included: with markup nesting no longer a block, a binding inside an element and another after it are in one block, so the redeclaration rule already covered that pair and now the outer-shadow rule covers the rest
+    where_checked: the same walk as decision:value-binding-form same_level_check, widened from one list to the names visible at the position
   failing_external:
+    downstream_asked_for_it_independently: the same reporter raised it as its own ask 2026-08-14, unaware it had landed; it stated no preference between a render-time failure and a clause at the call site, and this is the first with a placement restriction they did not ask for
     rule: a synchronous external whose Go implementation returns a trailing error may be called only as the whole value of a binding; every other position is a generation error naming the function and saying what to write instead
     decided: 2026-08-14 by the owner, answering the requirement:render-context-externals open question on whether a sync external may have an error result
     declaration_unchanged: the template says `external LoadData(id: string): Record` either way; the trailing error is read from the Go source, exactly as a leading context.Context already is
@@ -93,6 +101,8 @@ typing:
     difference_from_async: an async failure is the boundary's and a recover clause may absorb it; a synchronous one has no boundary, so it ends the render and reaches the caller
     nested_call_refused: only the outermost call of a binding's value qualifies, so a failing external as an argument to another call is refused with the same diagnostic
     nothing_written_first: the value is computed before the body renders, so a failure leaves the bound subtree absent rather than half-rendered
+    error_carries_intent: the render path wraps nothing, so the error reaches the caller as the value the external returned; an error carrying HTTP intent, as requirement:redirect-error defines one, is recognizable by api:write-error with no change here
+    position_decides_whether_it_can_be_a_status: decision:value-binding-hoisting; a chain member's top-level bindings run during assembly with nothing written, wherever in the block they are written, and a binding inside an element still fails after that element's opening tag
   attribute_position: refused by name, per decision:value-binding-form attribute_context; requirement:template-v1-scope excludes block control inside attribute values and a binding has a body even without a closer
   unread_binding:
     rule: a generation error in both formats, decided 2026-08-14 by the owner over two rounds — HTML first, then SQL once the asymmetry was named
@@ -155,10 +165,15 @@ acceptance:
   - several bindings in one directive each bind one value, and a duplicate name fails generation
   - two consecutive directives binding one name in the same block fail generation, with the same diagnostic as the one-directive duplicate
   - the same two directives separated by an enclosing element compile, because the inner one shadows from a deeper block
-  - a binding shadowing a parameter, a for variable, or an await binding compiles, provided the outer name is read outside the shadowing subtree
+  - a binding's name is unresolved after its enclosing control block ends, and resolvable after an enclosing element ends
   - a binding no position reads fails generation in both formats, including one written beside a read binding in the same directive
   - the unread diagnostic names the template file and position, never a line of generated Go
   - a SQL statement emits no blank assignment, because no unread binding reaches emission
+  - a binding written after markup in its block is evaluated before that markup, and the rendered bytes are unchanged
+  - a binding written inside an element is readable after that element closes, because markup nesting is not a block
+  - a binding using a name already visible at its position fails generation, whether that name is an enclosing binding, a parameter, a for variable, or an await binding
+  - a for variable or an await binding may still shadow, unchanged
+  - a node written before a binding still cannot read it
   - every read position counts as a read: text, bare and quoted attributes, an if condition, a for iterable, a for body, an await binding expression, an await primary and fallback, a later directive's bound expression, a nested element, and a component argument or child
   - a directive whose binding reads a sibling of the same directive fails generation in both formats, and the diagnostic says to write it as its own directive
   - two independent bindings in one directive both compile and both count as read

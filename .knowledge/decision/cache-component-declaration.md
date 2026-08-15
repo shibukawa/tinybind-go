@@ -45,12 +45,17 @@ eligibility:
   no_slots:
     rule: follows from the parameter rule, so a component that stores is never a requirement:chain-render-pipeline member
     narrowed: 2026-08-09; it was read as barring `@cache` from a layout outright, which decision:cache-scope-seams found is what made the round's own chain-union example unwritable
-  no_await: the component and every component reachable from it must be free of decision:async-boundary-syntax boundaries
+  no_await:
+    was: the component and every component reachable from it must be free of decision:async-boundary-syntax boundaries
+    narrowing_proposed: 2026-08-14, to a live boundary alone, per requirement:cached-settled-boundary; an await boundary settles once so a settled form exists to store, and a live one never settles
   no_shell: a cached component cannot own the document head, because requirement:head-merging output depends on the chain rather than on parameters
 await_rationale:
   problem: a boundary emits a placeholder now and a completion later, so its output is not one byte range that can be stored and replayed
   v1: reject at generation time with the declaration position, instead of silently caching only the initial pass
-  future: caching a fully settled boundary set requires storing completions too, and is deferred with requirement:suspense-html-streaming
+  future: caching a fully settled boundary set requires storing completions too, and was deferred with requirement:suspense-html-streaming
+  taken_up: requirement:cached-settled-boundary, 2026-08-14, which keeps the reason for a live boundary and drops it for an await one
+  what_the_problem_statement_missed: the settled contiguous form already exists at runtime, because awaitOp falls back to a blocking in-place render when no coordinator is present and a cached subtree is rendered without one; the placeholder is what a miss emits, not what a cached subtree emits
+  what_remains_hard: delivering the miss with its fallback while still storing the settled form, which is decision:cached-boundary-delivery
 execution:
   hit: write stored bytes into the current stream; the component body does not run
   miss: render the subtree into an isolated buffer, then publish and write it

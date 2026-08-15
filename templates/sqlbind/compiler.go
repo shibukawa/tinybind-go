@@ -245,10 +245,6 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 	// body is already a Go block, so the binding is a local and the target's own
 	// block scoping is the scope. The caller always hands this a copy, so adding
 	// to it reaches the following nodes and nothing beyond them.
-	if binding, ok := syntax.DuplicateValBinding(nodes); ok {
-		return c.error(binding.Pos, "duplicate value binding "+binding.Name+
-			"; a second binding of one name in the same block is a redeclaration, so rename it or move it inside a nested block to shadow deliberately")
-	}
 	for index, node := range nodes {
 		// What a binding scopes is what follows it, which is also what decides
 		// whether anything reads it.
@@ -303,6 +299,13 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 			}
 		case *ValNode:
 			for _, binding := range n.Bindings {
+				// A value binding may not take a name already visible here. The
+				// scope carries every earlier binding of this block and every
+				// enclosing one, so one check covers both.
+				if _, taken := scope[binding.Name]; taken {
+					return c.error(binding.Pos, "val binding "+binding.Name+
+						" reuses a name that is already visible here; a value binding cannot shadow, because its evaluation moves to the top of its block")
+				}
 				// The one position a failing external may occupy. Only the
 				// outermost call qualifies: an argument to it is typed with the
 				// mark still pointing at the outer call and is refused.
@@ -349,10 +352,9 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 // cannot read it, because parseVal refuses a directive whose bindings depend on
 // each other.
 //
-// A block that rebinds the name is not scanned past that point: a reference
-// there resolves to the inner local and leaves the outer one still unread. That
-// makes the answer exact rather than conservative, which it has to be, because
-// a name wrongly reported unread refuses a working statement.
+// A value binding may not shadow, so nothing stops the scan at a rebind; the
+// answer is exact rather than conservative, which it has to be, because a name
+// wrongly reported unread refuses a working statement.
 func valueRead(nodes []Node, name string) bool {
 	for _, node := range nodes {
 		switch n := node.(type) {
@@ -371,12 +373,11 @@ func valueRead(nodes []Node, name string) bool {
 				return true
 			}
 		case *ValNode:
+			// No stop on a rebind: a value binding may not shadow, so a nested
+			// one carrying this name is already a generation error.
 			for _, binding := range n.Bindings {
 				if syntax.ExprReads(binding.Value, name) {
 					return true
-				}
-				if binding.Name == name {
-					return false
 				}
 			}
 		}
