@@ -9,7 +9,7 @@ Keep delivery a property of the template — inline without an await boundary, f
 source:
   - requirement:cached-settled-boundary
   - owner correction 2026-08-14
-review_gate: approved 2026-08-14 by the owner
+review_gate: approved and implemented 2026-08-14
 rule:
   without_await: the component renders inline, cached or not
   with_await: the component emits its fallback and settles later, cached or not
@@ -51,6 +51,14 @@ flag_consequence:
   conservative_on_a_hit: no boundary opens, so the flag promised something that did not happen
   benign: a streamed response whose boundaries all resolve immediately is a complete document written through the streaming path, which is what a fast page already produces
   but: the flag stops promising that a boundary will open, so anything reading it for more than path selection has to be checked
+as_built:
+  when: 2026-08-14
+  grouping: built as predicted, since the coordinator ties no boundary to its owner; a group per cached miss, carried on the renderer and through every subtree
+  splice: one recursive expansion over the shell rather than a scan per boundary, which the first implementation did and a cached list of many awaiting rows would have paid for by the row
+  found_on_review:
+    nested_cached_components: an inner cached component replaced the outer's group, so the outer published a placeholder nothing would replace; groups chain now and every registration and outcome travels up
+    why_it_was_new: narrowing the refusal from await to live is what let a cached component reach an awaiting one at all
+  the_rule_held: a miss delivers byte for byte what the same component delivers with no store configured, asserted by rendering both and comparing
 consequence:
   - the eligibility narrowing at validateCachedComponents is unchanged by this decision; it is the runtime half that this decides
   - api:cache-store is unchanged, because the stored value stays one contiguous range

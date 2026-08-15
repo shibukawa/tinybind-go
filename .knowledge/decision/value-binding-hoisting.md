@@ -10,7 +10,7 @@ source:
   - requirement:template-value-binding failing_external
   - requirement:redirect-error
   - owner decision 2026-08-14
-review_gate: approved 2026-08-14 by the owner
+review_gate: approved and implemented 2026-08-14
 problem:
   what_works_already: a failing external's error reaches the caller unwrapped, so an error value carrying HTTP intent — a redirect target, a not-found, a forbidden — is recognizable by api:write-error exactly as requirement:redirect-error already defines for a rung 2 page function
   verified: no wrapping anywhere in the render path, so errors.As reaches the value
@@ -82,6 +82,15 @@ consequence:
   - a page whose loader fails can answer 404, 403, or a redirect while still streaming everything else
   - requirement:redirect-error widens from a rung 2 return value to any chain member's top-level binding, with its value and its api:write-error behaviour unchanged
   - the unread-binding scan gains the hoist rule's boundary, since a node preceding the binding is inside its body after normalization but cannot read it
+as_built:
+  when: 2026-08-14
+  scope_rule: the compiler records each visible binding's source position and refuses a read that precedes it, checked on the identifier rather than on the node, because an element opening before the binding holds children that come after it
+  prologue: prepareOps walks the leading instructions, steps over static output, and stops at the first that cannot be prepared; a prepared binding holds its built scope
+  per_entry_context: every render entry passes its own render's context, which the collecting entry did not until review caught it assembling with a background one
+  found_on_review:
+    cached_components_excluded: a storing cache is not prepared, per not_a_storing_cached_component; the prologue runs during assembly and the store is consulted during the render, so hoisting made a cached loader fetch on every hit
+    wrapper_excluded: leaf_only above, discovered while wiring assembly rather than while designing it
+  the_shape_held: the lowering already produced leading static plus one instruction wrapping the rest, exactly as this file predicted, so hoisting is running that instruction's value early and its body at render
 open_questions:
   - whether a failure after the first byte should be distinguishable to the caller from one before it, so a framework can tell a status it could have set from one it could not
 ```

@@ -10,7 +10,7 @@ source:
   - requirement:template-value-binding
   - downstream framework change request 2026-08-14, which named this as the one design question it could not answer
   - owner decision 2026-08-14
-review_gate: approved 2026-08-14 by the owner, against the reporter's stated preference and against this file's first reading
+review_gate: approved and implemented 2026-08-14, against the reporter's stated preference and against this file's first reading
 candidates:
   statement:
     shape: "{val a = f()}" with no closer, written {var ...} in the request
@@ -104,6 +104,12 @@ rejected:
     what: recognizing two identical external calls and evaluating one
     why_not: it would make the call count depend on an optimizer, and rule:render-external-query-semantics leaves the count open precisely so nothing depends on it
     who_rejected_it: the reporter, in the same request that asked for the binding
+as_built:
+  when: 2026-08-14
+  parser: one case in ParseEmbedded and a leaf node with no body, since the closerless form has no subtree to parse
+  normalization: in the HTML compiler beside normalizeWhitespace, as placed here; the SQL compiler runs none, as predicted
+  what_the_rewrite_became: not "split the list at the binding" but "collect the block's bindings and nest them at the front", once decision:value-binding-hoisting made every binding leading
+  the_contract_stayed_shut: the parse-time desugaring this file rejected was never needed, so the five ParseEmbedded call sites are untouched and the silent-drop failure it warned about never became reachable
 consequence:
   - after normalization the construct reuses the generated-scope lowering for and await already use, so no new lowering concept enters decision:generated-render-plan
   - the source is flat and the tree is nested, so authors get no nesting and analyses get containment
