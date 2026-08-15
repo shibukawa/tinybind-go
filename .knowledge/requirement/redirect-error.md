@@ -10,7 +10,7 @@ priority: should
 source:
   - requirement:colocated-route-logic
   - user redirect decision 2026-07-27
-review_gate: proposed
+review_gate: approved and implemented 2026-08-14
 problem:
   shape: a rung 2 func Page from decision:route-handler-shape returns values and an error; it holds no http.ResponseWriter
   need: a page that must send the browser somewhere, such as an unauthenticated visitor going to a sign-in page, has no way to express that
@@ -36,6 +36,10 @@ not_an_error_semantically:
   mitigation: the constructor name says redirect, so a reader at the call site sees intent rather than failure
 scope:
   applies_to: any code path that returns an httpbind error, so a flat-mode handler gains it too
+  implemented_2026_08_14:
+    value: Redirect(target, status...) beside the other status helpers, carrying a Location on the shared error value; a status outside 301, 302, 303, 307, and 308 is refused where it is written rather than emitted for a client that will not follow it
+    write_path: both WriteError surfaces recognize it before building a problem document and emit the status with a Location and no body, kept pair-wise so the net/http and fasthttp surfaces stay symmetric
+    reached_from_three_places: a page function's return, a handler's return, and a template's failing external, which all express a redirect as the same value
   widened_2026_08_14: decision:value-binding-hoisting adds a second position — a chain member's top-level value binding, whose failing external returns the same value; the constructor, the ordering rule, and the api:write-error behaviour are unchanged, only where the value may come from
   why_it_transfers: requirement:template-value-binding propagates a failing external's error unwrapped, so the value arrives intact, and hoisting is what keeps the ordering rule above true for it
   openapi: a redirect status participates in rule:openapi-error-statuses like the other helpers, for documented API routes

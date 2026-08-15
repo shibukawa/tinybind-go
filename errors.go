@@ -41,6 +41,19 @@ func NotFound(problem Problem, cause ...error) error {
 	return bindcore.NotFound(problem, cause...)
 }
 
+// Redirect returns a value that sends the browser to target, travelling the
+// error return because a caller returning values holds no ResponseWriter.
+//
+// [WriteError] recognizes it and emits the status with a Location header
+// instead of a problem document. The status defaults to 303; pass one of 301,
+// 302, 307, or 308 to choose another.
+//
+// It is an ordinary error value, so a page function, a handler, and a template's
+// failing external all express a redirect the same way.
+func Redirect(target string, status ...int) error {
+	return bindcore.Redirect(target, status...)
+}
+
 // Conflict returns a 409 Conflict error.
 func Conflict(problem Problem, cause ...error) error {
 	return bindcore.Conflict(problem, cause...)

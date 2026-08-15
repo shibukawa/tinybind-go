@@ -43,6 +43,15 @@ func WriteStatus[T any](ctx *fasthttp.RequestCtx, status int, value T) error {
 // The document is derived by the same shared code the net/http runtime calls,
 // so both transports emit identical bytes for identical errors.
 func WriteError(ctx *fasthttp.RequestCtx, err error) {
+	// A redirect travels the error return, so it is recognized here rather than
+	// needing a second channel on every page function. It emits a Location and
+	// no problem document, because the browser is being sent somewhere rather
+	// than told what went wrong.
+	if target, status, ok := bindcore.RedirectTarget(err); ok {
+		ctx.Response.Header.Set("Location", target)
+		ctx.SetStatusCode(status)
+		return
+	}
 	status, body, ok := bindcore.ProblemResponse(err)
 	if !ok {
 		return

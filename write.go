@@ -56,6 +56,15 @@ func WriteStatus[T any](w http.ResponseWriter, r *http.Request, status int, valu
 // writes the same bytes for the same error rather than reimplementing the rule.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	_ = r
+	// A redirect travels the error return, so it is recognized here rather than
+	// needing a second channel on every page function. It emits a Location and
+	// no problem document, because the browser is being sent somewhere rather
+	// than told what went wrong.
+	if target, status, ok := bindcore.RedirectTarget(err); ok {
+		w.Header().Set("Location", target)
+		w.WriteHeader(status)
+		return
+	}
 	status, body, ok := bindcore.ProblemResponse(err)
 	if !ok {
 		return

@@ -7,6 +7,8 @@
 // It imports no transport package.
 package bindcore
 
+import "strconv"
+
 // Problem is an application error payload carried by status helpers.
 type Problem struct {
 	Code    string
@@ -35,7 +37,11 @@ type HTTPError struct {
 	Title   string
 	Problem Problem
 	Fields  []FieldError
-	cause   error
+	// Location carries a redirect target. It is empty for every ordinary error,
+	// and set only by Redirect, whose value travels the error return because a
+	// redirect and an error both end the normal response before it starts.
+	Location string
+	cause    error
 }
 
 func (e *HTTPError) Error() string {
@@ -151,6 +157,46 @@ func Forbidden(problem Problem, cause ...error) error {
 // NotFound returns a 404 Not Found error.
 func NotFound(problem Problem, cause ...error) error {
 	return statusError(404, "Not Found", problem, cause...)
+}
+
+// Redirect returns a value that sends the browser to target. It travels the
+// error return because a caller that returns values rather than holding a
+// ResponseWriter has no other channel, and because a redirect and an error both
+// end the normal response before it starts.
+//
+// The value is an ordinary error: nothing panics and no control-flow exception
+// is thrown, which is the difference from how a server-function ecosystem built
+// on exceptions expresses this.
+//
+// status defaults to 303, which is what a page wants after a POST. Pass one of
+// 301, 302, 307, or 308 to choose another; anything else is refused here rather
+// than emitted as a status no client will follow.
+func Redirect(target string, status ...int) error {
+	code := 303
+	if len(status) > 0 {
+		code = status[0]
+	}
+	switch code {
+	case 301, 302, 303, 307, 308:
+	default:
+		return statusError(500, "Internal Server Error",
+			Problem{Code: "invalid_redirect", Message: "redirect status " + strconv.Itoa(code) + " is not a redirect"})
+	}
+	return &HTTPError{
+		Status:   code,
+		Title:    StatusText(code),
+		Problem:  Problem{Code: "redirect", Message: "redirect to " + target},
+		Location: target,
+	}
+}
+
+// RedirectTarget reports the location a redirect value carries.
+func RedirectTarget(err error) (string, int, bool) {
+	he, ok := AsHTTPError(err)
+	if !ok || he.Location == "" {
+		return "", 0, false
+	}
+	return he.Location, he.Status, true
 }
 
 // Conflict returns a 409 Conflict error.
