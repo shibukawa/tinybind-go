@@ -325,3 +325,40 @@ func TestHoistingDoesNotChangeTheSequence(t *testing.T) {
 		t.Fatalf("address = %q, want the unbound page's %q", got, want)
 	}
 }
+
+// Every render entry has to hand its own context to the prologue. The
+// collecting entry builds its options and then assembles, and assembling with a
+// background context instead would lose the request for a hoisted loader that
+// asked for one — silently, since a background context works right up until the
+// loader reads a value from it.
+func TestEveryEntryGivesThePrologueItsOwnContext(t *testing.T) {
+	type key struct{}
+	body := Builder[valScope]{}
+	plan := &Plan[valParams]{Ops: []Op[valParams]{
+		ValErrCtx(
+			func(ctx context.Context, p valParams) (string, error) {
+				value, _ := ctx.Value(key{}).(string)
+				if value == "" {
+					return "", errors.New("the prologue did not get the render's context")
+				}
+				return value, nil
+			},
+			func(p valParams, v string) valScope { return valScope{Outer: p, Value: v} },
+			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
+	}}
+	ctx := context.WithValue(context.Background(), key{}, "from-request")
+
+	var direct strings.Builder
+	if err := Render(&direct, Bind(plan, valParams{}), WithContext(ctx)); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var collected strings.Builder
+	if _, err := CollectChain(&collected, nil, nil, Bind(plan, valParams{}), WithContext(ctx)); err != nil {
+		t.Fatalf("CollectChain: %v", err)
+	}
+	for name, out := range map[string]string{"Render": direct.String(), "CollectChain": collected.String()} {
+		if out != "from-request" {
+			t.Errorf("%s wrote %q, want the context value", name, out)
+		}
+	}
+}

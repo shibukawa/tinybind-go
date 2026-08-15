@@ -61,7 +61,7 @@ func CollectChain(w io.Writer, collect Collector, wrappers []Wrapper, leaf Fragm
 	if collect != nil {
 		collect.Begin(opts.validatorTag)
 	}
-	composed, head, err := assemble(collect, wrappers, leaf)
+	composed, head, err := assembleContext(opts.renderContext(), collect, wrappers, leaf)
 	if err != nil {
 		return nil, err
 	}

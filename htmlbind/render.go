@@ -439,13 +439,13 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 // declaring a boundary opens one around its own output. The chain index is the
 // instance identity, assigned before rendering, which is why an unchanged
 // chain shape yields comparable manifests even when parameters change.
-func assemble(collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
-	return assembleContext(context.Background(), collect, wrappers, leaf)
-}
-
-// assembleContext is assemble with the context a prepared value binding may
-// need. The context is all a prologue takes: it writes nothing, so there is no
-// renderer to hand it, and the renderer does not exist yet at this point.
+// assembleContext composes the chain and runs what has to run before the first
+// byte. It takes a context because a prepared value binding may need one; that
+// is all a prologue takes, since it writes nothing and the renderer does not
+// exist yet at this point.
+//
+// Every entry passes its own render's context rather than a background one, or
+// a hoisted loader on that entry would lose the request.
 func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
 	if !leaf.Present() {
 		return nil, nil, ErrNoLeaf
