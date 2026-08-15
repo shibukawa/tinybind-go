@@ -319,12 +319,23 @@ func (plan *Plan[P]) Bind(params P) Fragment {
 	if plan.Check != nil {
 		fragment.validate = func() error { return plan.Check(params) }
 	}
-	fragment.prepare = func(ctx context.Context) (func(*Renderer) error, error) {
-		prepared, err := prepareOps(ctx, params, plan.Ops)
-		if err != nil {
-			return nil, err
+	// A storing cache is not prepared. The prologue runs during assembly and the
+	// store is consulted during the render, so hoisting a cached component's
+	// loader would fetch on every request and throw the value away on a hit —
+	// which is the one thing the annotation exists to stop.
+	//
+	// What that gives up is the status choice on a miss, and only there: on a
+	// hit the stored bytes are the answer and there is no failure to report.
+	// Paying a fetch per hit to keep a choice that half the requests cannot use
+	// is the wrong trade.
+	if plan.Cache == nil || plan.Cache.TTL <= 0 {
+		fragment.prepare = func(ctx context.Context) (func(*Renderer) error, error) {
+			prepared, err := prepareOps(ctx, params, plan.Ops)
+			if err != nil {
+				return nil, err
+			}
+			return func(r *Renderer) error { return plan.exec(r, params, prepared) }, nil
 		}
-		return func(r *Renderer) error { return plan.exec(r, params, prepared) }, nil
 	}
 	return foldSlots(fragment, plan.Slots, params)
 }

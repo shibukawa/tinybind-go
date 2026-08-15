@@ -333,3 +333,116 @@ func TestANestedCachedComponentDoesNotStoreAPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+// The prologue runs during assembly, and the cache is consulted during the
+// render. A cached component whose loader is hoisted would therefore fetch on
+// every request and throw the value away on a hit, which is the one thing the
+// annotation exists to stop.
+func TestACachedComponentsLoaderDoesNotRunOnAHit(t *testing.T) {
+	calls := 0
+	body := Builder[cgScope]{}
+	plan := &Plan[cgParams]{
+		Cache: &CachePolicy[cgParams]{
+			ID:  "Loading",
+			TTL: time.Minute,
+			Key: func(p cgParams) string { return KeyString(p.ID) },
+		},
+		Ops: []Op[cgParams]{
+			Val(
+				func(p cgParams) string { calls++; return "loaded-" + p.ID },
+				func(p cgParams, v string) cgScope { return cgScope{Outer: p, Value: v} },
+				[]Op[cgScope]{body.Static("<h1>"), body.Text(func(p cgScope) string { return p.Value }), body.Static("</h1>")}),
+		},
+	}
+
+	store := newRecordingStore()
+	var first strings.Builder
+	if err := Render(&first, Bind(plan, cgParams{ID: "7"}), WithCache(store)); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("the miss ran the loader %d times, want once", calls)
+	}
+	var second strings.Builder
+	if err := Render(&second, Bind(plan, cgParams{ID: "7"}), WithCache(store)); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("the hit ran the loader again: %d calls total", calls)
+	}
+	if first.String() != second.String() {
+		t.Fatalf("hit = %q, want the miss's %q", second.String(), first.String())
+	}
+}
+
+type cgLoop struct {
+	Outer cgParams
+	Item  string
+	Index int
+}
+
+type cgLoopScope struct {
+	Outer cgLoop
+	Value string
+}
+
+// A loop body opening a boundary hands out one id per iteration, and the splice
+// looks each id up by name. If two iterations shared an id the first settled
+// subtree would be written into both fences and the second would find none, so
+// the stored form would repeat one row and lose the other.
+func TestALoopOfBoundariesStoresEveryIteration(t *testing.T) {
+	outer := Builder[cgParams]{}
+	loop := Builder[cgLoop]{}
+	body := Builder[cgLoopScope]{}
+	plan := &Plan[cgParams]{
+		HasAwaitBlock: true,
+		Cache: &CachePolicy[cgParams]{
+			ID:  "Rows",
+			TTL: time.Minute,
+			Key: func(p cgParams) string { return KeyString(p.ID) },
+		},
+		Ops: []Op[cgParams]{
+			outer.Static("<ul>"),
+			For(
+				func(p cgParams) []string { return []string{"a", "b", "c"} },
+				func(p cgParams, item string, index int) cgLoop {
+					return cgLoop{Outer: p, Item: item, Index: index}
+				},
+				[]Op[cgLoop]{
+					loop.Static("<li>"),
+					Await(
+						func(_ context.Context, p cgLoop) (cgLoopScope, error) {
+							return cgLoopScope{Outer: p, Value: "row-" + p.Item}, nil
+						},
+						func(p cgLoop, _ AsyncError) cgLoop { return p },
+						[]Op[cgLoopScope]{body.Text(func(p cgLoopScope) string { return p.Value })},
+						[]Op[cgLoop]{loop.Static("...")},
+						nil),
+					loop.Static("</li>"),
+				}),
+			outer.Static("</ul>"),
+		},
+	}
+
+	store := newRecordingStore()
+	drain(t, plan, cgParams{ID: "7"}, WithCache(store))
+	var stored string
+	for _, value := range store.entries {
+		stored = string(value)
+	}
+	for _, want := range []string{"row-a", "row-b", "row-c"} {
+		if !strings.Contains(stored, want) {
+			t.Fatalf("the stored form lost %q:\n%s", want, stored)
+		}
+	}
+	if strings.Contains(stored, "<!--") {
+		t.Fatalf("a fence survived, so an iteration was never replaced:\n%s", stored)
+	}
+	document, boundaries := drain(t, plan, cgParams{ID: "7"}, WithCache(store))
+	if len(boundaries) != 0 {
+		t.Fatalf("a hit opened %d boundaries, want none", len(boundaries))
+	}
+	if strings.Count(document, "<li>") != 3 {
+		t.Fatalf("the hit did not replay every row: %q", document)
+	}
+}

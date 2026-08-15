@@ -71,7 +71,13 @@ carry_mechanism:
   not_prepared_is_safe: a fragment that is not a chain member has no prologue run, and its bindings compute where they stand
 scope:
   synchronous_only: an await binding opens a boundary by definition, and its failure is what a recover subtree is for; nothing about it wants hoisting
-  chain_members_for_the_status: a leaf or wrapper's declaration-body bindings run before the first byte, wherever in the markup they are written; one inside an if, for, or await block runs when that block does
+  chain_members_for_the_status: a leaf's declaration-body bindings run before the first byte, wherever in the markup they are written; one inside an if, for, or await block runs when that block does
+  not_a_storing_cached_component:
+    found: on review 2026-08-14, after the prologue shipped
+    bug: the prologue runs during assembly and the store is consulted during the render, so a cached leaf's loader ran on every request and its value was discarded on a hit — the one thing requirement:component-output-cache exists to stop
+    rule: a plan carrying a storing cache policy is not prepared
+    what_it_gives_up: the status choice on a miss, and only there; on a hit the stored bytes are the answer and there is no failure to report
+    why_that_trade: paying a fetch per hit to keep a choice half the requests cannot use is the wrong way round
 consequence:
   - a page whose loader fails can answer 404, 403, or a redirect while still streaming everything else
   - requirement:redirect-error widens from a rung 2 return value to any chain member's top-level binding, with its value and its api:write-error behaviour unchanged
