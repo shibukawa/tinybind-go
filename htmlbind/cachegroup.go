@@ -120,35 +120,59 @@ func (g *cacheGroup) publishLocked() {
 //
 // The fences are comment markers this package wrote around each fallback, and
 // the ids are ones it issued, so this is a rewrite of its own bytes rather than
-// a second implementation of the client's apply logic. It repeats until nothing
-// is left to replace, because a boundary nested inside a settled subtree arrives
-// as its own entry and its fence is inside another one's content.
+// a second implementation of the client's apply logic.
+//
+// It expands recursively: a boundary nested inside a settled subtree arrives as
+// its own entry, and its fence is inside another one's content, so substituting
+// content means expanding that content too. One walk over the bytes replaces
+// every depth, where scanning the whole document once per boundary would cost a
+// pass per row of an awaiting list.
 func spliceSettled(prefix string, shell []byte, settled map[string][]byte) []byte {
-	out := shell
-	for range len(settled) + 1 {
-		replaced := false
-		for id, html := range settled {
-			open := []byte(awaitFenceOpen(prefix, id))
-			close := []byte(awaitFenceClose(prefix, id))
-			start := bytes.Index(out, open)
-			if start < 0 {
-				continue
-			}
-			end := bytes.Index(out[start:], close)
-			if end < 0 {
-				continue
-			}
-			end += start + len(close)
-			next := make([]byte, 0, len(out)-(end-start)+len(html))
-			next = append(next, out[:start]...)
-			next = append(next, html...)
-			next = append(next, out[end:]...)
-			out = next
-			replaced = true
-		}
-		if !replaced {
-			break
-		}
+	if len(settled) == 0 {
+		return shell
 	}
-	return out
+	// expanding guards against a fence that names a boundary already being
+	// expanded. Ids are unique and a subtree never holds its own fence, so this
+	// cannot happen; it is here because the alternative to a wrong answer would
+	// be a render goroutine that never returns.
+	expanding := map[string]bool{}
+	var expand func([]byte) []byte
+	expand = func(in []byte) []byte {
+		out := make([]byte, 0, len(in))
+		for len(in) > 0 {
+			id, start, end, ok := nextFence(prefix, in, settled)
+			if !ok {
+				return append(out, in...)
+			}
+			out = append(out, in[:start]...)
+			if !expanding[id] {
+				expanding[id] = true
+				out = append(out, expand(settled[id])...)
+				delete(expanding, id)
+			}
+			in = in[end:]
+		}
+		return out
+	}
+	return expand(shell)
+}
+
+// nextFence finds the first settled boundary's fence pair in data, returning its
+// id and the byte range the pair spans.
+func nextFence(prefix string, data []byte, settled map[string][]byte) (id string, start, end int, ok bool) {
+	start = -1
+	for candidate := range settled {
+		open := []byte(awaitFenceOpen(prefix, candidate))
+		at := bytes.Index(data, open)
+		if at < 0 || (start >= 0 && at >= start) {
+			continue
+		}
+		close := []byte(awaitFenceClose(prefix, candidate))
+		closeAt := bytes.Index(data[at:], close)
+		if closeAt < 0 {
+			continue
+		}
+		id, start, end, ok = candidate, at, at+closeAt+len(close), true
+	}
+	return id, start, end, ok
 }
