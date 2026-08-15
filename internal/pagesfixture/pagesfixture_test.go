@@ -270,8 +270,8 @@ func TestRouteTableDescribesTheTree(t *testing.T) {
 	for _, info := range pages.Routes {
 		byPath[info.Path] = routetreeInfo{Pattern: info.Pattern, Dir: info.Dir, Params: info.Params}
 	}
-	if len(byPath) != 4 {
-		t.Fatalf("Routes = %+v, want four entries", pages.Routes)
+	if len(byPath) != 5 {
+		t.Fatalf("Routes = %+v, want five entries", pages.Routes)
 	}
 	users, ok := byPath["/users/{id}"]
 	if !ok {

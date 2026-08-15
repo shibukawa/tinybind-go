@@ -2179,6 +2179,16 @@ func copyScope(in map[string]valueType) map[string]valueType {
 func (c *compiler) error(pos Position, message string) error {
 	return &CompileError{Filename: c.filename, Pos: pos, Message: message}
 }
+// FieldName returns the Go struct field a declared template name becomes: a
+// component parameter, a record field, or a binding.
+//
+// It is exported because a caller building one of those structs has to spell
+// the field the same way. Route generation does, and it has its own
+// initialism-aware conversion for the structs it emits itself, which is right
+// there and wrong here — the two are different structs and only one of them is
+// this compiler's.
+func FieldName(name string) string { return goPublicName(name) }
+
 func goPublicName(name string) string {
 	if name == "" {
 		return name

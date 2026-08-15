@@ -1,0 +1,12 @@
+export component Page(id: string): html {
+  {val record = LoadRecord(id)}
+  <h1>record {record.title}</h1>
+  <p>{record.summary}</p>
+}
+
+external LoadRecord(id: string): Record
+
+type Record {
+  title: string
+  summary: string
+}

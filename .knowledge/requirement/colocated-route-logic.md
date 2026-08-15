@@ -19,6 +19,18 @@ location:
   template: page.tb.html in the route directory
   logic: page.go in the same directory, optional
   package: ordinary Go package whose clause matches the directory name
+rung_2_is_replaceable_2026_08_14:
+  demonstrated: a route serving one record with no page.go entry point at all — the component takes the path parameter, binds its own loader, and the loader's error answers 404 or a redirect
+  what_made_it_possible: requirement:template-value-binding for the name, decision:value-binding-hoisting for a failure that lands before the first byte, and requirement:redirect-error for the value that carries the intent
+  what_rung_2_was_for: decision:route-handler-shape says a page that needs Go to decide, combine, or fail; all three now have a rung 1 spelling
+  the_typed_check_moves_rather_than_disappears: rung 2 compared the function's results against the component's parameters, and a component taking its own inputs is checked by its own parameter list instead
+  what_rung_3_keeps: streaming, downloads, and conditional statuses, which the generated handler does not model
+  not_yet_retired: removing rung 2 is a breaking change for a downstream framework, so it waits behind a deprecation and that framework's migration
+bug_found_on_the_way:
+  what: the registry filled a component's parameter struct using this package's initialism-aware ExportedName, so a rung 1 page declaring a parameter named id emitted ID where the template compiler emits Id, and the route package did not compile
+  why_it_was_never_seen: no fixture had a rung 1 page taking an initialism path parameter, because such a page was written at rung 2
+  why_it_mattered_now: retiring rung 2 makes every page rung 1, and id is the most common path parameter there is
+  fix: the two structs are named by their own owners — the decoded route by ExportedName, the component's parameters by the template compiler's exported FieldName
 input_rule:
   applies_to: the component parameter list at rung 1 and the func Page parameter list at rung 2
   order: every dynamic path segment first, in route order, then the query parameters

@@ -6,6 +6,8 @@ import (
 	"go/format"
 	"sort"
 	"strings"
+
+	templatehtml "github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
 // TemplateRegistry is the name of the template that renders the integrated
@@ -393,8 +395,15 @@ func pageBinding(route Route, analysis Analysis, symbols Symbols) (fields []Comp
 	component := analysis.Component
 	if analysis.Page == nil || analysis.Page.Rung != RungTypedPage {
 		for _, input := range component.Inputs {
-			name := ExportedName(input.Name)
-			fields = append(fields, ComposerArg{Field: name, From: "route." + name})
+			// Two structs, two spellings. The decoded route is this package's,
+			// so its field is ExportedName and reads id as ID; the component's
+			// parameter struct is the template compiler's, which uppercases the
+			// first rune and reads it as Id. Using one name for both compiles
+			// only while no input is an initialism.
+			fields = append(fields, ComposerArg{
+				Field: templatehtml.FieldName(input.Name),
+				From:  "route." + ExportedName(input.Name),
+			})
 		}
 		return fields, "", "", nil
 	}

@@ -9,7 +9,8 @@ import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/about"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
-	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/users/id_"
+	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/records/id_"
+	id_1 "github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/users/id_"
 )
 
 // Register installs every discovered route on mux.
@@ -75,7 +76,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				httpbind.WriteError(w, r, err)
 			}
 		})
-	mux.HandleFunc("GET /users/{id}",
+	mux.HandleFunc("GET /records/{id}",
 		func(w http.ResponseWriter, r *http.Request) {
 			route, err := id_.DecodeRoute(r)
 			if err != nil {
@@ -83,13 +84,8 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageName, err := id_.Load(route.ID)
-			if err != nil {
-				httpbind.WriteError(w, r, err)
-				return
-			}
 			params := id_.PageParams{
-				Name: pageName,
+				Id: route.ID,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
@@ -98,11 +94,34 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				httpbind.WriteError(w, r, err)
 			}
 		})
+	mux.HandleFunc("GET /users/{id}",
+		func(w http.ResponseWriter, r *http.Request) {
+			route, err := id_1.DecodeRoute(r)
+			if err != nil {
+				httpbind.WriteError(w, r, err)
+				return
+			}
+			_ = route // a route with no dynamic segment and no query input reads nothing
+			pageName, err := id_1.Load(route.ID)
+			if err != nil {
+				httpbind.WriteError(w, r, err)
+				return
+			}
+			params := id_1.PageParams{
+				Name: pageName,
+			}
+			wrappers := []htmlbind.Wrapper{
+				BindLayout(LayoutParams{}),
+			}
+			if err := htmlbind.RenderChain(w, wrappers, id_1.Page(params), append(options[:len(options):len(options)], htmlbind.WithContext(r.Context()))...); err != nil {
+				httpbind.WriteError(w, r, err)
+			}
+		})
 	mux.HandleFunc("POST /users/{id}",
 		func(w http.ResponseWriter, r *http.Request) {
 			switch httpbind.ActionSelector(r, "_action") {
 			case "d71506d06c1e/Retire":
-				httpbind.DispatchAction(w, r, id_.Retire)
+				httpbind.DispatchAction(w, r, id_1.Retire)
 			default:
 				httpbind.WriteError(w, r, httpbind.BadRequest(httpbind.Problem{Code: "unknown_action", Message: "no server function on this page matches the submitted selector"}))
 			}
@@ -112,8 +131,8 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 	// nothing is generated around it and registration is all there is. A typed
 	// one is registered as the entry point generated beside it, which decodes
 	// the call, invokes the function and encodes what it returned.
-	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_.Rename)
-	mux.HandleFunc("POST /_action/d71506d06c1e/Retire", id_.Retire)
+	mux.HandleFunc("POST /_action/00369cf962b6/Rename", id_1.Rename)
+	mux.HandleFunc("POST /_action/d71506d06c1e/Retire", id_1.Retire)
 }
 
 // NewServeMux returns a router carrying every discovered route.
@@ -133,6 +152,7 @@ var Routes = []RouteInfo{
 	{Pattern: "GET /{$}", Path: "/", Dir: "", Params: nil},
 	{Pattern: "GET /about", Path: "/about", Dir: "about", Params: nil},
 	{Pattern: "GET /archive", Path: "/archive", Dir: "archive", Params: nil},
+	{Pattern: "GET /records/{id}", Path: "/records/{id}", Dir: "records/id_", Params: []string{"id"}},
 	{Pattern: "GET /users/{id}", Path: "/users/{id}", Dir: "users/id_", Params: []string{"id"}},
 }
 
