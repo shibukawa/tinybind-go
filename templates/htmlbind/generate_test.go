@@ -896,19 +896,19 @@ component Bad(children: html): html {<p><slot required /></p>}`,
 			"a slot owner stores nothing; drop the ttl to declare scope alone",
 		},
 		{
-			"cached component owning an await boundary",
-			`external async Load(): string
+			"cached component owning a live boundary",
+			`external live Load(): string
 @cache(ttl: "5m")
 component Bad(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}`,
-			"cannot reach an await boundary",
+			"cannot reach a live boundary",
 		},
 		{
-			"cached component reaching an await boundary through a call",
-			`external async Load(): string
+			"cached component reaching a live boundary through a call",
+			`external live Load(): string
 component Inner(): html {{await v = Load()}<p>{v}</p>{fallback}p{/await}}
 @cache(ttl: "5m")
 component Bad(): html {<Inner />}`,
-			"cannot reach an await boundary; Inner declares one",
+			"cannot reach a live boundary; Inner declares one",
 		},
 		{
 			"annotation on a type declaration",

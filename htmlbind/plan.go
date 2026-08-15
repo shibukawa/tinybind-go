@@ -189,15 +189,23 @@ func (p *Plan[P]) execCached(r *Renderer, params P, ops []Op[P]) error {
 		return err
 	}
 	var buffer bytes.Buffer
-	// A cached subtree renders without the boundary coordinator. Generation
-	// rejects an await boundary inside a cached component, so this only makes
-	// the runtime's behavior match that rule instead of storing a placeholder.
-	sub := &Renderer{w: &buffer, sw: &buffer, head: r.head, opts: r.opts}
+	// The coordinator is carried into the subtree rather than dropped, so a miss
+	// delivers exactly what the same component delivers uncached: placeholder,
+	// streamed fallback, completion frame. Dropping it would make the same
+	// template stream where no store is configured and wait where one is, which
+	// requirement:component-output-cache forbids by calling caching a deployment
+	// choice rather than a template rewrite. See decision:cached-boundary-delivery.
+	group := &cacheGroup{store: r.opts.cache, key: key, ttl: p.Cache.TTL, ctx: ctx, prefix: r.boundaryPrefix()}
+	sub := &Renderer{w: &buffer, sw: &buffer, head: r.head, opts: r.opts, async: r.async,
+		group: group, idPrefix: r.idPrefix, idCount: r.idCount, boundaryCtx: r.boundaryCtx}
 	if err := execOps(sub, ops, params); err != nil {
 		return err
 	}
 	rendered := buffer.Bytes()
-	r.opts.cache.Set(ctx, key, rendered, p.Cache.TTL)
+	// The store happens when the last boundary settles, not here: what this pass
+	// produced still holds a placeholder for anything that has not settled yet.
+	// A component with no boundary completes the set immediately.
+	group.capture(rendered)
 	_, err := r.w.Write(rendered)
 	return err
 }
@@ -486,6 +494,10 @@ type Renderer struct {
 	// async is set only by the streaming render entries. When it is nil an
 	// await boundary blocks and renders its settled subtree in place.
 	async *asyncCoordinator
+	// group is set inside a cached component's miss. Every boundary opened
+	// beneath it reports its settled markup there, so what gets stored is the
+	// settled form rather than the placeholder the miss delivered.
+	group *cacheGroup
 	// idPrefix and idCount name boundary placeholders by their position in the
 	// render tree rather than by when they happened to be allocated.
 	//
@@ -586,7 +598,7 @@ func (r *Renderer) context() context.Context {
 func (r *Renderer) subtree(w io.Writer, id string, ctx context.Context) *Renderer {
 	count := 0
 	return &Renderer{w: w, sw: stringWriterOf(w), head: r.head, opts: r.opts, async: r.async,
-		idPrefix: id, idCount: &count, boundaryCtx: ctx}
+		group: r.group, idPrefix: id, idCount: &count, boundaryCtx: ctx}
 }
 
 // stringWriterOf resolves a writer's io.StringWriter face for the field every

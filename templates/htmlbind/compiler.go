@@ -583,12 +583,17 @@ func (c *compiler) validateCachedComponents() error {
 		if info.shell {
 			return c.error(component.Pos, "cached component "+component.Name+" cannot own the document head, because the merged head depends on the chain rather than on its parameters")
 		}
-		if owner := c.reachesAwait(component.Name, map[string]bool{}); owner != "" {
+		// An await boundary settles exactly once, so a settled form exists and
+		// there is something to store; a live one keeps delivering after the
+		// document ends, so nothing a stored byte range could be. That
+		// distinction is the whole eligibility test, per
+		// requirement:cached-settled-boundary.
+		if owner := c.reachesLive(component.Name, map[string]bool{}); owner != "" {
 			where := "it"
 			if owner != component.Name {
 				where = owner
 			}
-			return c.error(component.Pos, "cached component "+component.Name+" cannot reach an await boundary; "+where+" declares one")
+			return c.error(component.Pos, "cached component "+component.Name+" cannot reach a live boundary; "+where+" declares one, and a live source never settles into something a stored range could stand for")
 		}
 		// A stored body outlives the request that produced it, so a per-request
 		// value inside one is served to whoever asks next. For a CSRF token that

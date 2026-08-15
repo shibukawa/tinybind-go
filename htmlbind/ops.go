@@ -553,6 +553,12 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 		return err
 	}
 	boundaryCtx := r.boundaryContext()
+	// A cached component's miss collects what its boundaries settle to, so the
+	// stored form is the settled markup rather than the placeholder just
+	// written. Registering here, before the work starts, is what keeps a
+	// boundary that settles fast from completing the set before it is known.
+	group := r.group
+	group.open()
 	coordinator.start(boundaryCtx, func(ctx context.Context) (Content, bool, error) {
 		var buffer bytes.Buffer
 		// The subtree renders into its own buffer, so boundary work never
@@ -565,6 +571,7 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 			if coordinator.ctx.Err() != nil {
 				// Expected request cancellation, including an early consumer
 				// stop. The committed fallback is the final content.
+				group.settle(id, nil, false, nil)
 				return Content{}, false, nil
 			}
 			r.reportError(err)
@@ -573,16 +580,23 @@ func (o awaitOp[P, S, R]) Exec(r *Renderer, params P) error {
 				// the sequence instead of being dropped. Leaving it out would
 				// leave the committed fallback as the final content, and that
 				// fallback says the value is still coming.
+				group.settle(id, nil, false, err)
 				return Content{}, false, &UnrecoveredError{BoundaryID: id, Err: err}
 			}
 			if err := execOps(sub, o.handler, o.recovery(params, normalizeAsyncError(err))); err != nil {
+				group.settle(id, nil, false, err)
 				return Content{}, false, err
 			}
+			// A settled recover subtree is a rendered failure rather than a
+			// rendered answer, so it is not the value the key stands for.
+			group.settle(id, nil, false, err)
 			return Content{BoundaryID: id, HTML: buffer.Bytes()}, true, nil
 		}
 		if err := execOps(sub, o.primary, value); err != nil {
+			group.settle(id, nil, false, err)
 			return Content{}, false, err
 		}
+		group.settle(id, buffer.Bytes(), true, nil)
 		return Content{BoundaryID: id, HTML: buffer.Bytes()}, true, nil
 	})
 	return nil

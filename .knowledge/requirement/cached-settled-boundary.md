@@ -11,7 +11,7 @@ source:
   - downstream framework change request 2026-08-14, against v0.5.9 and v0.5.10
   - requirement:component-output-cache open question "caching a fully settled boundary set"
   - decision:cache-component-declaration await_rationale future
-review_gate: proposed
+review_gate: approved and implemented 2026-08-14
 motivating_case:
   what: a component takes a primary key, loads its own record through an await boundary, and one annotation covers the load and the render
   first_request: the fallback, so the page commits immediately and the record arrives when it arrives
@@ -80,6 +80,15 @@ acceptance:
   - a boundary that fails stores nothing, and the next request is a miss
   - a component reaching a nested reloadable component still fails generation
   - a cached component with no await boundary generates exactly the bytes it generates today
+as_built:
+  when: 2026-08-14
+  generation: the refusal at validateCachedComponents swaps reachesAwait for reachesLive, exactly as predicted; both walks already existed
+  runtime: execCached carries the coordinator into its buffer renderer instead of dropping it, so a miss streams
+  grouping: a cacheGroup per cached miss, carried on the Renderer and through every subtree, with each boundary registering before its work starts and reporting on each of its exits
+  why_registration_precedes_the_work: a boundary that settles fast would otherwise complete the set before the rest of it is known
+  store_timing: on the last report, or on the capture of the initial pass when that comes later; the two race and the group holds one flag so only one of them writes
+  splice: the fence comments this package wrote, replaced by the content of the id it issued, repeated until nothing is left because a nested boundary's fence sits inside another one's content
+  recover_is_not_stored: a settled recover subtree reports as a failure to the group, so a rendered failure never becomes the value the key stands for
 open_questions:
   - what a stored entry should be measured in once it holds fetched records rather than markup; safe to answer after building, because the entry stays a byte slice and a store can already bound itself by len, so only htmlbind MemoryCache capping by entry count would want an additive byte-bounded sibling
   - whether a hit should be distinguishable from a markup-only hit at the api:cache-store seam; worth asking the reporter what they actually need first, since decision:cache-key-derivation frames the component identity into the key in plaintext and a wrapping store may already be able to tell
