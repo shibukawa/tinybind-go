@@ -562,9 +562,8 @@ func EmitDecoder(route Route, inputs []Value) ([]byte, error) {
 // Decoder renders the typed route decoder for one route.
 //
 // inputs is the page's declared input list: the route's dynamic segments in
-// order, followed by the query parameters. It is the component parameter list
-// at RungTemplateOnly and the func Page parameter list at RungTypedPage. The
-// caller has already checked the shape with [Validate]; Decoder assumes it.
+// order, followed by the query parameters, read from the component's parameter
+// list. The caller has already checked the shape; Decoder assumes it.
 func (e *Emitter) Decoder(route Route, inputs []Value) ([]byte, error) {
 	model, err := e.decoderModel(route, inputs)
 	if err != nil {

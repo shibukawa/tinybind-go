@@ -60,18 +60,6 @@ type PageFunc struct {
 	File string
 	// Line is the line of the func Page declaration, zero when absent.
 	Line int
-	// Params and Results are populated at RungTypedPage only. Params excludes a
-	// leading context.Context and Results excludes the trailing error.
-	Params  []Value
-	Results []Value
-	// TakesContext records that the declaration opened with a context.Context.
-	//
-	// It is trimmed out of Params rather than counted in them, so "Params are
-	// the URL inputs, in route order" stays true and neither the route-order
-	// check nor the generated decoder has to carry an offset. A context is not
-	// a URL input: it arrives from the request rather than from the address,
-	// which is why it cannot be spelled as one.
-	TakesContext bool
 }
 
 // scalarTypes are the parameter types a generated decoder can bind from a URL.
@@ -274,7 +262,7 @@ func isHandlerSignature(file *ast.File, shape HandlerShape, params, results []Va
 	return true
 }
 
-// takesLeadingContext reports whether a typed entry point opens with a
+// takesLeadingContext reports whether a declaration opens with a
 // context.Context. Like isHandlerSignature it resolves the import name from the
 // file, because the check runs before the package compiles.
 //

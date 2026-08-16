@@ -53,12 +53,6 @@ type RegistryRoute struct {
 	Selector string
 	// Raw registers the route's own handler directly and generates no body.
 	Raw bool
-	// Call is set when a typed func Page must run before rendering.
-	Call bool
-	// CallResults is the assignment prefix for that call, such as "u, err :=".
-	CallResults string
-	// CallArgs is the argument list for that call, read from the decoded route.
-	CallArgs string
 	// PageFields fills the page component parameter struct.
 	PageFields []ComposerArg
 	// Layouts are the ancestor wrappers, outermost first.
