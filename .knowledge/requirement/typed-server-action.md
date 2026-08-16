@@ -29,6 +29,26 @@ as_built:
   conversion_lives_in_generator: routetree imports nothing from it and generator already sits above the same layer, so the adapter goes there rather than into every caller
   ordering_is_expressed: Generated.Registry marks the one file whose write has an order, and SplitRegistry partitions on it
   end_to_end: a whole tree generated in that order, compiled, and served through the emitted registry, answering a real POST with the encoded result
+two_defects_a_real_page_tree_found:
+  reported: downstream wiring report 2026-08-14, against v0.5.10, after declaring one in a real route package
+  why_the_tests_missed_both: each needs a package with more than one generated artifact, and every test emitted with a nil selection, which is the one-artifact path
+  the_wrapper_and_its_decoder_landed_in_different_artifacts:
+    what: the synthesized argument struct was analyzed with an empty source path, so it grouped under the degenerate artifact while the entry point was written into every per-source one
+    symptom: 'the entry point called decodeactionProfileInputBytes, which was emitted into another file; the encode half reached the right artifact, so only the decode half broke'
+    second_consequence: a package with two sources carrying bindings declared the entry point and the argument struct once per source
+    fix: the action carries the file it was declared in, the struct takes that source path, and the artifact loop scopes which actions each artifact writes
+    scoped_rather_than_filtered_in_the_emitter: the grouping belongs to the artifact loop, and an emitter handed the whole list cannot know which artifact it is writing
+    no_parameter_case: an action declaring no parameter contributes no type, so the loop seeds its source from the action list or the entry point would be written nowhere
+    path_spellings_need_not_match: routetree reports the file as it walked it and the plan carries what the loader reported, so the match is on the base name, which identifies a file within the one directory a package is
+  a_generated_wrapper_was_rediscovered_as_a_raw_action:
+    what: the entry point is an exported function of exactly the transport types returning nothing, in a route package, which is the raw admission rule to the letter
+    symptom: it acquired its own hash, address, published name and registration, beside the typed action it exists to serve
+    cause: action discovery implemented no part of rule:generated-source-not-discovered, which names route discovery and the call-site analysis and not this pass
+    fix: discovery skips a file whose header gensource.IsGenerated recognizes
+    the_header_was_not_even_parsed: ParseFile was called without ParseComments, so the file arrived with no comments to recognize; the skip did nothing until that changed
+    no_coupling_asked_of_a_caller: this module's own prefix is recognized without configuration, so a framework never lists another module's header string to avoid rediscovering that module's output
+    a_framework_registers_its_own: HandlerShape.GeneratedHeaders, the way every other pass takes it
+    rejected_alternatives: naming the entry point so discovery excludes it by construction, which is fragile; emitting it unexported, which the registry in another package cannot reach
 source:
   - downstream framework change request 2026-08-13, asks 1 to 3
   - requirement:template-server-functions

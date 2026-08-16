@@ -118,6 +118,11 @@ type HandlerShape struct {
 	// with a leading * where the parameter is a pointer: ResponseWriter and
 	// *Request name the net/http pair.
 	Types []string
+	// GeneratedHeaders names header prefixes, beside this module's own, whose
+	// files action discovery must skip. A framework branding its generated
+	// output writes a header nothing here recognizes on its own; this module's
+	// own prefix is always recognized, so a caller never lists it.
+	GeneratedHeaders []string
 	// Declaration names the annotation that admits a typed server action, whose
 	// signature this shape says nothing about. A zero value uses the annotation
 	// this module ships.

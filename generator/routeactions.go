@@ -28,6 +28,9 @@ func ServerActionsFor(actions []routetree.Action, relDir string) []ServerAction 
 			Wrapper:      action.Wrapper,
 			TakesContext: action.Signature.TakesContext,
 			Result:       action.Signature.Result,
+			// The declaring file, so the argument struct, its decoder and the
+			// entry point all land in one artifact.
+			SourcePath: action.File,
 		}
 		for _, p := range action.Signature.Params {
 			converted.Params = append(converted.Params, ServerActionParam{Name: p.Name, Type: p.Type})

@@ -38,6 +38,14 @@ type ServerAction struct {
 	// Result is the type of the single non-error result. Empty means the
 	// function returns only an error, and the entry point answers no content.
 	Result string
+	// SourcePath is the file declaring the function.
+	//
+	// Generation is per source file: the argument struct, its decoder and the
+	// entry point all belong to the artifact of the file the action was
+	// declared in. Without it the struct grouped under the empty path while the
+	// entry point was written into every artifact, so the wrapper named a
+	// decoder emitted into a different file.
+	SourcePath string
 }
 
 // WrapperName is the exported entry point emitted for this action.
@@ -100,7 +108,9 @@ func planServerActions(plan *PackagePlan, actions []ServerAction, binderNames ma
 			continue
 		}
 		// The wrapper decodes it and nothing else touches it, so it carries the
-		// decode usage alone.
+		// decode usage alone. It owns the source the action was declared in, so
+		// its decoder lands in the artifact the entry point naming it lands in.
+		tp.SourcePath = action.SourcePath
 		tp.Usage = UsageDecodeJSON
 		tp.DirectUsage = UsageDecodeJSON
 		plan.Types = append(plan.Types, tp)
