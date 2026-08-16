@@ -68,9 +68,9 @@ admission:
 signature:
   parameters: bound by name from the call's JSON payload
   one_source: the direct entry point holds no path parameter, so every argument comes from the caller and no precedence rule is needed
-  context: a leading context.Context is optional and trimmed, on the terms requirement:typed-page-context-parameter already implements for a typed Load; non-leading keeps the ordinary not-an-input error
+  context: a leading context.Context is optional and trimmed, on the terms requirement:typed-page-context-parameter implemented for the typed page entry point; that entry point was retired 2026-08-14 and this is now the only caller of the trim, which stays because a server action's own signature still wants it
   results: one value and an error, or an error alone
-  read_from: the AST, as decision:route-handler-shape rung 2 parameters already are, because generation runs before the package compiles
+  read_from: the AST, because generation runs before the package compiles
 glue:
   emitted: an http.HandlerFunc wrapper whose body decodes the payload, calls the function, and writes either the error or the result, plus the POST registration that installs it
   expanded_not_dispatched: the wrapper names the generated encoder of the result type directly, per the_glue_calls_the_generated_encoder_rather_than_the_registry below

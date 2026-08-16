@@ -40,10 +40,10 @@ composition_pipeline:
     - dispatch template external calls through data:html-route-dependencies
     - apply async, cache, partial-update, bootstrap, and compression behavior from component capabilities
     - classify the assembled chain through requirement:chain-render-pipeline and range the merged decision:async-component-signature sequence, writing each data:async-boundary-content item as an identified template plus update record
-  failure_before_commit: the configured mapping on rungs 1 and 2, or an error returned to a rung 3 handler so it still chooses the status
+  failure_before_commit: the configured mapping at rung 1, including a failing binding's error per decision:value-binding-hoisting, or an error returned to a rung 3 handler so it still chooses the status
   failure_after_commit: server observability and decision:async-boundary-syntax recover content only
 never_generated:
-  - what a page loads at rung 2 and rung 3
+  - what a page loads, which is its own external calls at rung 1 and the handler's business at rung 3
   - the rung 3 handler body
   - authentication, authorization, and any per-route policy, which the application wraps around the mux
 errors:

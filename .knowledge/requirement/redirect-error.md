@@ -12,7 +12,7 @@ source:
   - user redirect decision 2026-07-27
 review_gate: approved and implemented 2026-08-14
 problem:
-  shape: a rung 2 func Page from decision:route-handler-shape returns values and an error; it holds no http.ResponseWriter
+  shape: the typed page function of the day returned values and an error and held no http.ResponseWriter; that rung was retired 2026-08-14, and the value it needed now serves a rung 1 binding and a rung 3 handler alike
   need: a page that must send the browser somewhere, such as an unauthenticated visitor going to a sign-in page, has no way to express that
   today: only rung 3 can redirect, which forces a whole page down a rung for one branch
 model:
