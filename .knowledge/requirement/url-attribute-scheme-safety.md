@@ -6,6 +6,22 @@ title: URL Attribute Scheme Safety
 A value rendered into a URL-bearing attribute carries an allowed scheme or is neutralized; the attribute position decides the escaping, which today it does not.
 
 ```yaml
+amended_2026_08_16:
+  what: a declared requirement:embedder-implicit-bindings path-segment binding may appear in a URL attribute, which the type gate below otherwise refuses
+  approved: 2026-08-16 by the owner
+  why_the_gate_had_to_move: an application carrying its language in a path prefix cannot write `href="/{lang}/about"` at all under the unamended gate, and the withdrawn alternative emits `//about`, which a browser reads as another host
+  what_keeps_it_narrow:
+    recognizer: only a bare identifier reading a declared path-segment binding qualifies, so no expression built out of one carries a plain string into a URL attribute
+    unchanged: an ordinary binding and a plain string are refused exactly as before, both as tests rather than as claims
+    provider_type: a path-segment binding's provider must return a string, refused at registration otherwise
+  why_embedder_supplied_is_not_the_argument:
+    stated: the value is attacker-influenced by definition, because a locale is resolved from an Accept-Language header or a path prefix
+    therefore: the exception rests on encoding rather than on trust in its source
+  encoding:
+    rule: percent-encode everything outside the RFC 3986 unreserved set, stricter than a general path escaper because a segment stands for one name the application chose
+    dot_segments: '"." and ".." become %2E forms, since the unreserved set contains the dot and a dot segment instructs the resolver rather than names anything'
+    verified_against: path traversal, a leading slash, a leading double slash, a scheme, a query, a fragment, a backslash, a pre-encoded slash, and both dot segments; none composes a path the template did not describe, and a pre-encoded slash double-encodes rather than passing through
+  where_it_runs: inside the URLAttr op, beside the scheme policy, which is where decision:url-context-escaper already put the check a value closure cannot make
 source: security review 2026-08-06
 review_gate: implemented 2026-08-06
 shipped:

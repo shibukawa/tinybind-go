@@ -22,6 +22,7 @@ type CallExpr = syntax.CallExpr
 type UnaryExpr = syntax.UnaryExpr
 type BinaryExpr = syntax.BinaryExpr
 type ConditionalExpr = syntax.ConditionalExpr
+type MessageExpr = syntax.MessageExpr
 type ExpressionNode = syntax.ExpressionNode
 type IfNode = syntax.IfNode
 type ForNode = syntax.ForNode

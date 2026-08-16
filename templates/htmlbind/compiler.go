@@ -181,6 +181,10 @@ type componentInfo struct {
 	// contributions do.
 	builtinAssets []Asset
 	vary          []string
+	// bindings names the implicit bindings this component's own body reads, in
+	// first-read order. It is what the cache refusal, the vary fold and the
+	// import collection all walk.
+	bindings []string
 	// builtins names the builtin elements this component writes, in source
 	// order, so emission can resolve each occurrence without re-walking.
 	builtins []string
@@ -199,6 +203,16 @@ type compiler struct {
 	// elements is the resolved hyphenated-element whitelist, frozen before
 	// analysis.
 	elements *elementSet
+	// bindings is the resolved implicit-binding table, frozen before analysis.
+	bindings *bindingSet
+	// messages mirrors GenerateOptions.Messages, keyed by resolved id, and
+	// messageContextBinding mirrors GenerateOptions.MessageContextBinding.
+	messages              map[string]MessageSymbol
+	messageContextBinding string
+	// usesMessageBlock records that a rich-text message was analyzed. A block
+	// is a node rather than an expression, so it never enters exprTypes and the
+	// import decision cannot be read off that map.
+	usesMessageBlock bool
 	// csrfMode, csrfField, and attrPrefix decide whether an unsafe form carries
 	// a token, what the field is called, and what the opt-out attribute is named.
 	csrfMode   CSRFMode
@@ -385,6 +399,16 @@ func (c *compiler) analyze() error {
 				// so there is nothing for a caller to have started.
 				if t.async && t.kind == kindHTML {
 					return c.error(parameter.Pos, "html parameter "+parameter.Name+" cannot be async")
+				}
+				// A parameter taking a declared binding's name is an error
+				// rather than a shadow: a silently shadowed framework value
+				// renders whatever the parameter holds, in every position the
+				// binding was meant to serve, and the author who wrote the
+				// parameter is not the one who declared the binding. See
+				// .knowledge decision:implicit-binding-declaration-site.
+				if _, declared := c.bindings.lookup(parameter.Name); declared {
+					return c.error(parameter.Pos, "parameter "+parameter.Name+" shadows the implicit binding "+
+						parameter.Name+", which every template already has in scope")
 				}
 				info.params[parameter.Name] = t
 			}
@@ -841,6 +865,23 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 	for _, node := range nodes {
 		switch node := node.(type) {
 		case *TextNode, *CommentNode, *DoctypeNode:
+		case *syntax.MessageBlockNode:
+			// The reference resolves as it does anywhere, and the hole markup
+			// is analyzed as the ordinary markup it is, which is what keeps
+			// rule:template-context-safety unchanged for the rich form.
+			if err := c.resolveMessage(node.Message, scope); err != nil {
+				return err
+			}
+			c.usesMessageBlock = true
+			if len(node.Holes) == 0 {
+				return c.error(node.Pos, "message block "+node.Message.Written+
+					" binds no hole; a message with no structure is written {t "+node.Message.Written+"} without a block")
+			}
+			for _, hole := range node.Holes {
+				if err := c.analyzeNodes(hole.Nodes, scope); err != nil {
+					return err
+				}
+			}
 		case *syntax.ExpressionNode:
 			t, err := c.infer(node.Expression, scope)
 			if err != nil {
@@ -881,6 +922,12 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			}
 			if t.kind != kindArray || t.optional || t.elem == nil {
 				return c.error(exprPos(node.Iterable), "for expression must be an array")
+			}
+			if err := c.refuseBindingShadow(node.Variable, "loop variable", node.Pos); err != nil {
+				return err
+			}
+			if err := c.refuseBindingShadow(node.Index, "loop index", node.Pos); err != nil {
+				return err
 			}
 			inner := copyScope(scope)
 			inner[node.Variable] = *t.elem
@@ -1291,6 +1338,9 @@ func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) 
 		if binding.Name == "outer" {
 			return c.error(binding.Pos, "val binding cannot be named outer; the generated scope reserves that name")
 		}
+		if err := c.refuseBindingShadow(binding.Name, "val binding", binding.Pos); err != nil {
+			return err
+		}
 		// A value binding may not take a name that is already visible. One
 		// check covers every source of one, because the lowering nests: an
 		// earlier binding of this block, an enclosing block's binding, a
@@ -1520,7 +1570,7 @@ func (c *compiler) analyzeAttribute(element string, attribute Attribute, scope m
 		if err != nil {
 			return err
 		}
-		if isURLAttribute(attribute.Name) && t.required().kind != kindURL {
+		if isURLAttribute(attribute.Name) && t.required().kind != kindURL && !c.isPathSegmentRead(part.Expression) {
 			return c.error(part.Pos, "attribute "+attribute.Name+" requires url, got "+t.String())
 		}
 		if mixed && t.optional {
@@ -1762,6 +1812,17 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 			result = t
 		} else if t, ok := c.enumMembers[expr.Name]; ok {
 			result = t
+		} else if binding, ok := c.bindings.lookup(expr.Name); ok {
+			// An embedder-declared name is in every template's scope, which is
+			// the whole point: it is not threaded through a parameter list. See
+			// .knowledge requirement:embedder-implicit-bindings.
+			if !bindingIsString(binding) {
+				err = c.error(expr.Pos, "implicit binding "+expr.Name+" returns "+binding.Provider.Result+
+					" and cannot be written into markup; it carries a value this module has no escaping rule for")
+				break
+			}
+			c.recordBindingRead(expr.Name)
+			result.kind = kindString
 		} else {
 			err = c.error(expr.Pos, "unknown identifier "+expr.Name)
 		}
@@ -1782,6 +1843,12 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 		default:
 			err = c.error(expr.Pos, "unknown literal type")
 		}
+	case *MessageExpr:
+		err = c.resolveMessage(expr, scope)
+		// A reference is a plain string, which is what lets it reach every
+		// position an expression may reach with no rule of its own. See
+		// .knowledge decision:message-reference-syntax string_valued.
+		result.kind = kindString
 	case *MemberExpr:
 		var object valueType
 		object, err = c.infer(expr.Object, scope)
@@ -1887,6 +1954,96 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 	}
 	c.exprTypes[expr] = result
 	return result, nil
+}
+
+// resolveMessage fills a reference's resolved id and types its arguments.
+//
+// Resolution is here rather than in the parser because it needs the whole
+// module: a `messages` line may follow the declaration that uses it, and a
+// positional rule would be a surprise the header form does not otherwise carry.
+// See .knowledge requirement:message-scope-declaration.
+func (c *compiler) resolveMessage(message *MessageExpr, scope map[string]valueType) error {
+	if strings.Contains(message.Written, ".") {
+		// A dotted id leaves the file's scope, the same rule a
+		// package-qualified name follows in Go.
+		message.ID = message.Written
+	} else {
+		if c.module.Messages == nil {
+			return c.error(message.Pos, "message reference "+message.Written+
+				" needs a messages declaration; nothing is derived from the file path or the component name")
+		}
+		message.ID = c.module.Messages.Name + "." + message.Written
+	}
+	// The reference reads the context binding, which is what makes a message's
+	// dependency structural: the cache key, the vary axis and the
+	// context-carrying instruction all follow from the same read any other
+	// expression would have made. See
+	// .knowledge decision:implicit-binding-cache-identity.
+	if c.messageContextBinding != "" {
+		if _, declared := c.bindings.lookup(c.messageContextBinding); !declared {
+			return c.error(message.Pos, "message context binding "+c.messageContextBinding+
+				" is not a declared implicit binding")
+		}
+		c.recordBindingRead(c.messageContextBinding)
+	}
+	for _, arg := range message.Args {
+		if _, err := c.infer(arg.Value, scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMessages matches every reference against the symbol table the caller
+// supplied. It runs after analysis rather than during it, because the table is
+// a generation input: an analysis-only entry point such as Signatures or
+// ComponentScripts has no table and must still be able to read a template that
+// uses messages.
+//
+// It is the same split ServerActions already has, where an unresolved name is
+// an emission error rather than an analysis one.
+func (c *compiler) checkMessages() error {
+	for _, message := range moduleMessages(c.module) {
+		if err := c.checkMessageArguments(message); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMessageArguments matches a reference against the symbol table the caller
+// supplied. A missing entry is an error rather than an empty string, the same
+// rule ServerActions follows: a template naming a message nobody resolved must
+// not ship as inert output. [MessageRefs] is what a caller reports with before
+// it can answer.
+//
+// Argument checking is by name and arity against the parameter list the table
+// carries. Type identity is not checked here: the symbols are generated Go that
+// this module never compiles, which is the limit
+// .knowledge requirement:message-symbol-resolution records for reusing the
+// external path.
+func (c *compiler) checkMessageArguments(message *MessageExpr) error {
+	symbol, ok := c.messages[message.ID]
+	if !ok {
+		return c.error(message.Pos, "unknown message "+message.ID)
+	}
+	declared := map[string]bool{}
+	for _, name := range symbol.Params {
+		declared[name] = true
+	}
+	supplied := map[string]bool{}
+	for _, arg := range message.Args {
+		if !declared[arg.Name] {
+			return c.error(arg.Pos, "message "+message.ID+" has no argument "+arg.Name)
+		}
+		supplied[arg.Name] = true
+	}
+	for _, name := range symbol.Params {
+		if !supplied[name] {
+			return c.error(message.Pos, "message "+message.ID+" needs argument "+name)
+		}
+	}
+	return nil
 }
 
 func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueType, error) {
@@ -2179,6 +2336,7 @@ func copyScope(in map[string]valueType) map[string]valueType {
 func (c *compiler) error(pos Position, message string) error {
 	return &CompileError{Filename: c.filename, Pos: pos, Message: message}
 }
+
 // FieldName returns the Go struct field a declared template name becomes: a
 // component parameter, a record field, or a binding.
 //
@@ -2213,6 +2371,8 @@ func exprPos(expr Expr) Position {
 	case *BinaryExpr:
 		return expr.Pos
 	case *ConditionalExpr:
+		return expr.Pos
+	case *MessageExpr:
 		return expr.Pos
 	}
 	return Position{Line: 1, Col: 1}

@@ -138,6 +138,19 @@ func (p *moduleParser) parse() (*Module, error) {
 			}
 			module.Package = &PackageDecl{Kind: "template:" + keyword, Pos: positionAt(p.source, start), Name: name}
 			p.optionalSemicolon()
+		case "messages":
+			// One per file, because the scope is a property of the file rather
+			// than of a declaration. See .knowledge
+			// requirement:message-scope-declaration declaration_site.
+			if module.Messages != nil {
+				return nil, p.errAt(start, "messages may only be declared once")
+			}
+			name, err := p.qualifiedName()
+			if err != nil {
+				return nil, err
+			}
+			module.Messages = &MessagesDecl{Kind: "template:messages", Pos: positionAt(p.source, start), Name: name}
+			p.optionalSemicolon()
 		case "import":
 			path, err := p.stringLiteral()
 			if err != nil {

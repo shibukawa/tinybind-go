@@ -175,6 +175,25 @@ type Options struct {
 	// through the transform registered here, so the compiler is this command's
 	// dependency and never the module's.
 	ContentHooks []htmlbind.ContentHook
+	// ImplicitBindings are the names an embedder puts in every HTML template's
+	// scope, so an application does not thread a framework value through every
+	// component and every layout in a chain.
+	//
+	// They reach every compile path this command drives. That is a
+	// checklist item rather than a consequence: the same field on the
+	// context-external seam once reached one path and not the other, which
+	// shipped a feature that was simply absent on filesystem routes. See
+	// .knowledge requirement:route-package-context-externals.
+	ImplicitBindings []htmlbind.ImplicitBinding
+	// Messages maps a resolved message id to the Go symbol it calls, and
+	// MessageContextBinding names the ImplicitBindings entry supplying those
+	// symbols' leading argument.
+	//
+	// The mapping is data because an id is not a Go identifier; whoever owns
+	// the catalog decides how a slug becomes a symbol. [htmlbind.MessageRefs]
+	// reports what a template needs before this can be filled.
+	Messages              map[string]htmlbind.MessageSymbol
+	MessageContextBinding string
 	// ConversionCacheDir stores the outcome of each conversion, keyed by what
 	// the hook's CacheKey declared it depends on. An unchanged asset then costs
 	// a digest instead of an encode, and a source that once lost a size

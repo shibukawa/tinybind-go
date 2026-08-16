@@ -135,6 +135,17 @@ type GenerateOptions struct {
 	// the URL it produces is written into the generated component and nothing
 	// downstream can correct it.
 	PublicURLBase string
+	// ImplicitBindings are the names an embedder puts in every template's
+	// scope, and Messages plus MessageContextBinding are the message symbol
+	// table and the binding supplying those symbols' leading argument.
+	//
+	// They are here because a page tree is a second compile path: a seam filled
+	// only where templates are compiled as a package would leave every
+	// filesystem route without the feature, which is the shape of
+	// .knowledge requirement:route-package-context-externals.
+	ImplicitBindings      []htmlbind.ImplicitBinding
+	Messages              map[string]htmlbind.MessageSymbol
+	MessageContextBinding string
 }
 
 // Generate discovers the tree and emits its Go files, discarding the public
@@ -250,7 +261,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 				continue
 			}
 			seenLayout[layout.RelDir] = true
-			signature, err := LayoutComponent(layout.File)
+			signature, err := LayoutComponent(layout.File, htmlbind.WithAnalysisBindings(options.ImplicitBindings))
 			if err != nil {
 				errs = append(errs, err)
 				continue
@@ -267,7 +278,7 @@ func GenerateTree(options GenerateOptions) (Result, error) {
 		}
 		discoverActions(route.Dir, route.RelDir, route.Package, route.ImportPath)
 
-		analysis, err := AnalyzeWith(route, emitter.handlerShape())
+		analysis, err := AnalyzeWith(route, emitter.handlerShape(), htmlbind.WithAnalysisBindings(options.ImplicitBindings))
 		if err != nil {
 			errs = append(errs, err)
 			// A failed analysis still contributes a placeholder, so route and
@@ -384,7 +395,7 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 		// The blocks are reported before the compile that consumes the answers,
 		// which is why this parses once more. Only a tree configuring a resolver
 		// pays it.
-		scripts, err := htmlbind.ComponentScripts(path, source)
+		scripts, err := htmlbind.ComponentScripts(path, source, htmlbind.WithAnalysisBindings(options.ImplicitBindings))
 		if err != nil {
 			return htmlbind.Result{}, err
 		}
@@ -411,6 +422,9 @@ func compileTemplate(path, pkg string, emitter *Emitter, actions []Action, optio
 		ErrorExternals:            signatures.Error,
 		DataAttributePrefix:       options.DataAttributePrefix,
 		PublicURLBase:             options.PublicURLBase,
+		ImplicitBindings:          options.ImplicitBindings,
+		Messages:                  options.Messages,
+		MessageContextBinding:     options.MessageContextBinding,
 	})
 }
 

@@ -368,6 +368,12 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			DataAttributePrefix: g.Options.DataAttributePrefix,
 			ReferenceHooks:      hooks,
 			ContentHooks:        g.Options.ContentHooks,
+			// Every seam an embedder supplies has to reach every path a
+			// template is compiled on, or the feature is absent on one of them
+			// with nothing to report it.
+			ImplicitBindings:      g.Options.ImplicitBindings,
+			Messages:              g.Options.Messages,
+			MessageContextBinding: g.Options.MessageContextBinding,
 		})
 		if err != nil {
 			return nil, htmlbind.Result{}, err
@@ -385,8 +391,8 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		Package:        pkg,
 		Dialect:        g.Options.SQLDialect,
 		ErrorExternals: signatures.Error,
-		ContextAPI:  g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
-		ContextOnly: g.Options.SQLContextOnlyAPI,
+		ContextAPI:     g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
+		ContextOnly:    g.Options.SQLContextOnlyAPI,
 	}
 	if resolver := g.Options.SQLExecutorResolver; resolver != nil {
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}

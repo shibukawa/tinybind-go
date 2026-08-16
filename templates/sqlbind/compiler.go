@@ -500,8 +500,14 @@ func (c *compiler) infer(expr Expr, scope map[string]valueType) (valueType, erro
 				result = a
 			}
 		}
+	case *MessageExpr:
+		// The shared parser recognizes a message reference in every format,
+		// because it sits in the body grammar rather than in one format's. Only
+		// the HTML dialect resolves one, so this is where the scope is stated
+		// and the diagnostic names the reference rather than a Go type.
+		err = c.error(x.Pos, "message reference {t "+x.Written+"} is only available in HTML templates")
 	default:
-		err = c.error(Position{Line: 1, Col: 1}, fmt.Sprintf("unsupported expression %T", expr))
+		err = c.error(exprPos(expr), fmt.Sprintf("unsupported expression %T", expr))
 	}
 	if err != nil {
 		return valueType{}, err
@@ -971,6 +977,8 @@ func exprPos(expr Expr) Position {
 	case *BinaryExpr:
 		return x.Pos
 	case *ConditionalExpr:
+		return x.Pos
+	case *MessageExpr:
 		return x.Pos
 	}
 	return Position{Line: 1, Col: 1}

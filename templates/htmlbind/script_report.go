@@ -40,12 +40,17 @@ type ComponentScript struct {
 // It is called before the caller has resolved anything, so no compile option is
 // taken: a component with no entry in GenerateOptions.ClientHandlers is
 // unchecked, which is what lets this pass run first.
-func ComponentScripts(filename string, source []byte) ([]ComponentScript, error) {
+func ComponentScripts(filename string, source []byte, options ...AnalysisOption) ([]ComponentScript, error) {
 	module, err := Parse(filename, source)
 	if err != nil {
 		return nil, err
 	}
+	bindings, err := applyAnalysisOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	compiler := newCompiler(filename, string(source), module, true)
+	compiler.bindings = bindings
 	if err := compiler.analyze(); err != nil {
 		return nil, err
 	}

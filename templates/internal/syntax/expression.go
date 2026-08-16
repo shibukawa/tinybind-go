@@ -329,6 +329,8 @@ func expressionPosition(expr Expr) Position {
 		return expr.Pos
 	case *ConditionalExpr:
 		return expr.Pos
+	case *MessageExpr:
+		return expr.Pos
 	default:
 		return Position{Line: 1, Col: 1}
 	}

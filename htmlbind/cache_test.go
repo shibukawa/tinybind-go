@@ -2,6 +2,7 @@ package htmlbind
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,5 +75,43 @@ func TestCacheKeyTimeIgnoresLocation(t *testing.T) {
 	elsewhere := instant.In(time.FixedZone("JST", 9*60*60))
 	if KeyTime(instant) != KeyTime(elsewhere) {
 		t.Fatal("the same instant encoded differently in two locations")
+	}
+}
+
+// TestCacheKeySeparatesBindingValues is the correctness property the Bindings
+// field exists for: an implicit binding is not a declared parameter, so nothing
+// else in the key would tell two of its values apart, and a stored body would be
+// served across them.
+//
+// See .knowledge decision:implicit-binding-cache-identity.
+func TestCacheKeySeparatesBindingValues(t *testing.T) {
+	type params struct{ Name string }
+	bindingOf := func(value string) func(context.Context) string {
+		return func(context.Context) string { return KeyString(value) }
+	}
+	policy := CachePolicy[params]{ID: "p", Key: func(p params) string { return KeyString(p.Name) }}
+
+	policy.Bindings = bindingOf("ja")
+	ja := policy.cacheKey(context.Background(), "", params{Name: "x"})
+	policy.Bindings = bindingOf("en")
+	en := policy.cacheKey(context.Background(), "", params{Name: "x"})
+	if ja == en {
+		t.Fatalf("two binding values share the key %q", ja)
+	}
+
+	// A component reading no binding keeps exactly the key it had before the
+	// field existed, so a project declaring none is untouched.
+	policy.Bindings = nil
+	none := policy.cacheKey(context.Background(), "", params{Name: "x"})
+	if none != KeyString("p")+KeyString("x") {
+		t.Fatalf("a component reading no binding changed key shape: %q", none)
+	}
+
+	// The scope stays the prefix, so deleting one remains a key range.
+	policy.Scoped = true
+	policy.Bindings = bindingOf("ja")
+	scoped := policy.cacheKey(context.Background(), "user-7", params{Name: "x"})
+	if !strings.HasPrefix(scoped, KeyString("user-7")) {
+		t.Fatalf("the binding displaced the scope prefix: %q", scoped)
 	}
 }

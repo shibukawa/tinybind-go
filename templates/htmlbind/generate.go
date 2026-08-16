@@ -43,6 +43,35 @@ type GenerateOptions struct {
 	// Discovered the same way as ContextExternals, from the package's Go
 	// sources, so the template declaration is unchanged either way.
 	ErrorExternals map[string]bool
+	// ImplicitBindings are the names the embedder puts in every template's
+	// scope, so an application does not thread a framework value through every
+	// component and every layout in a chain.
+	//
+	// A project declaring none generates byte-identical Go, and one declaring
+	// bindings no template reads imports nothing for them.
+	ImplicitBindings []ImplicitBinding
+	// Messages maps a resolved message id to the Go symbol it calls. A
+	// reference with no entry here is a compile error, so a template naming a
+	// message nobody resolved never silently emits an empty string; the same
+	// rule ServerActions follows, and [MessageRefs] reports what needs
+	// resolving.
+	Messages map[string]MessageSymbol
+	// MessageContextBinding names the ImplicitBindings entry whose value is
+	// written as the leading argument of every message call, for a catalog
+	// whose generated functions take one. Empty writes no leading argument.
+	//
+	// It is a binding rather than a free expression because a cached component
+	// has to key on what its output depends on, and a message reference names
+	// nothing the reach walk could find. Routing it through a binding makes the
+	// dependency structural: `{t title}` reads the binding, so the cache key,
+	// the vary axis and the context-carrying instruction all follow with no
+	// rule about messages anywhere. See
+	// .knowledge decision:implicit-binding-cache-identity.
+	//
+	// The binding's provider may return a named type through
+	// BindingProvider.Result, which is what lets a catalog take its own locale
+	// type; such a binding cannot also be written into markup.
+	MessageContextBinding string
 	// PreserveWhitespace turns off requirement:static-whitespace-normalization,
 	// so static output keeps the authoring indentation and newlines byte for
 	// byte. It exists for a project comparing generated markup against
@@ -255,6 +284,16 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	// have to agree, or a form gets a token it puts in a query string.
 	compiler.actionSelectors = options.ServerActionSelectors
 	compiler.clientHandlerSets = options.ClientHandlers
+	// Analysis needs the table, not only emission: an unknown id and a
+	// mismatched argument are both reported against the reference the author
+	// wrote rather than against a line of emitted Go.
+	bindings, err := normalizeImplicitBindings(options.ImplicitBindings)
+	if err != nil {
+		return Result{}, err
+	}
+	compiler.bindings = bindings
+	compiler.messages = options.Messages
+	compiler.messageContextBinding = options.MessageContextBinding
 	compiler.componentParameters = options.ComponentParameters
 	compiler.attrPrefix = options.DataAttributePrefix
 	if compiler.attrPrefix == "" {
@@ -265,6 +304,12 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 	// call site rather than a line of emitted Go.
 	compiler.errorExternals = options.ErrorExternals
 	if err := compiler.analyze(); err != nil {
+		return Result{}, err
+	}
+	// The message table is a generation input, so it is checked here rather
+	// than during analysis: an analysis-only entry point has no table and must
+	// still read a template that uses messages.
+	if err := compiler.checkMessages(); err != nil {
 		return Result{}, err
 	}
 	result.ActionRefs = compiler.actions
@@ -334,6 +379,11 @@ type goEmitter struct {
 	// providerImports collects the packages the builtin elements actually used
 	// need, so a project using none imports none.
 	providerImports map[string]string
+	// messageImports collects the packages holding the message symbols this
+	// module actually references, keyed by import path, and bindingImports does
+	// the same for implicit-binding providers.
+	messageImports map[string]string
+	bindingImports map[string]string
 	// cacheRecords names the record types needing a generated cache key
 	// encoder, on the same terms.
 	cacheRecords []valueType
@@ -451,6 +501,8 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e.canonRecords = e.collectCanonRecords()
 	e.cacheRecords = e.collectCacheRecords()
 	e.providerImports = e.collectProviderImports()
+	e.messageImports = e.collectMessageImports()
+	e.bindingImports = e.collectBindingImports()
 	e.emitImports()
 	e.emitDeclaredTypes()
 	if err := e.emitComponentParams(); err != nil {
@@ -511,6 +563,26 @@ func (e *goEmitter) emitImports() {
 	// one is actually written, so a project using none imports none.
 	for _, path := range sortedKeys(e.providerImports) {
 		alias := e.providerImports[path]
+		if alias == pathBase(path) {
+			fmt.Fprintf(&e.b, "\t%s\n", strconv.Quote(path))
+			continue
+		}
+		fmt.Fprintf(&e.b, "\t%s %s\n", alias, strconv.Quote(path))
+	}
+	// A binding provider's package is imported only where a template actually
+	// reads that binding.
+	for _, path := range sortedKeys(e.bindingImports) {
+		alias := e.bindingImports[path]
+		if alias == pathBase(path) {
+			fmt.Fprintf(&e.b, "\t%s\n", strconv.Quote(path))
+			continue
+		}
+		fmt.Fprintf(&e.b, "\t%s %s\n", alias, strconv.Quote(path))
+	}
+	// A message symbol's package is imported only where a reference resolving
+	// to it is actually written.
+	for _, path := range sortedKeys(e.messageImports) {
+		alias := e.messageImports[path]
 		if alias == pathBase(path) {
 			fmt.Fprintf(&e.b, "\t%s\n", strconv.Quote(path))
 			continue

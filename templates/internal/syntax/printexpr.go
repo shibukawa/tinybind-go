@@ -87,6 +87,8 @@ func writeExpr(b *strings.Builder, e Expr, min int) {
 		writeExpr(b, v.Then, 0)
 		b.WriteString(" : ")
 		writeExpr(b, v.Else, 0)
+	case *MessageExpr:
+		b.WriteString(MessageString(v))
 	default:
 		b.WriteString(fmt.Sprintf("%v", e))
 	}
@@ -131,6 +133,17 @@ func ValString(n *ValNode) string {
 		parts = append(parts, binding.Name+" = "+ExprString(binding.Value))
 	}
 	return "val " + strings.Join(parts, ", ")
+}
+
+// MessageString renders a message reference as written, without the braces the
+// format owns. It prints the authored id rather than the resolved one, because
+// printing back a template must not rewrite what the author chose to qualify.
+func MessageString(n *MessageExpr) string {
+	out := messageKeyword + " " + n.Written
+	for _, arg := range n.Args {
+		out += ", " + arg.Name + ": " + ExprString(arg.Value)
+	}
+	return out
 }
 
 // ControlOpen renders the opening marker of a shared control node, without the

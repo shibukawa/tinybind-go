@@ -231,6 +231,19 @@ func (w *htmlWriter) node(node syntax.Node, kind container) error {
 		return w.component(n)
 	case *syntax.ExpressionNode:
 		w.p.Write("{" + syntax.ExprString(n.Expression) + "}")
+	case *syntax.MessageBlockNode:
+		// The block is written back as the author wrote it: the reference, the
+		// bound elements, and the closer. Each hole is one element, so the
+		// children printer already knows how to lay them out.
+		w.p.Write("{" + syntax.MessageString(n.Message) + "}")
+		var bound []syntax.Node
+		for _, hole := range n.Holes {
+			bound = append(bound, hole.Nodes...)
+		}
+		if err := w.children(bound, kind, modeFlat); err != nil {
+			return err
+		}
+		w.p.Write("{/t}")
 	case *syntax.ValNode:
 		// A leaf, not a control block. The nodes it scopes are its siblings and
 		// stay at this level, which is the whole reason it has no closer.

@@ -209,6 +209,13 @@ func (m *modulePrinter) print(module *Module) error {
 		m.p.Line()
 		m.wrote = true
 	}
+	if module.Messages != nil {
+		m.flushBefore(module.Messages.Pos)
+		m.separateFor(module.Messages.Pos)
+		m.p.Write("messages " + module.Messages.Name)
+		m.p.Line()
+		m.wrote = true
+	}
 	for i, imp := range module.Imports {
 		m.flushBefore(imp.Pos)
 		// Imports form one block, so only the first is preceded by a blank line.

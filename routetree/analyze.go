@@ -64,8 +64,8 @@ func Analyze(route Route) (Analysis, error) {
 
 // AnalyzeWith is [Analyze] against a named rung 3 signature. A zero shape uses
 // [DefaultHandlerShape].
-func AnalyzeWith(route Route, shape HandlerShape) (Analysis, error) {
-	component, err := PageComponent(route.PageFile)
+func AnalyzeWith(route Route, shape HandlerShape, options ...htmlbind.AnalysisOption) (Analysis, error) {
+	component, err := PageComponent(route.PageFile, options...)
 	if err != nil {
 		return Analysis{}, err
 	}
@@ -103,21 +103,25 @@ func AnalyzeWith(route Route, shape HandlerShape) (Analysis, error) {
 }
 
 // PageComponent reads a page template and returns its reserved declaration.
-func PageComponent(path string) (ComponentSignature, error) {
-	return readComponent(path, PageComponentName)
+//
+// A tree whose templates read an implicit binding passes the same list its
+// generate options carry, because a binding's name has to be known to analyze
+// the template that reads it.
+func PageComponent(path string, options ...htmlbind.AnalysisOption) (ComponentSignature, error) {
+	return readComponent(path, PageComponentName, options...)
 }
 
 // LayoutComponent reads a layout template and returns its reserved declaration.
-func LayoutComponent(path string) (ComponentSignature, error) {
-	return readComponent(path, LayoutComponentName)
+func LayoutComponent(path string, options ...htmlbind.AnalysisOption) (ComponentSignature, error) {
+	return readComponent(path, LayoutComponentName, options...)
 }
 
-func readComponent(path, name string) (ComponentSignature, error) {
+func readComponent(path, name string, options ...htmlbind.AnalysisOption) (ComponentSignature, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return ComponentSignature{}, err
 	}
-	signatures, err := htmlbind.Signatures(path, source)
+	signatures, err := htmlbind.Signatures(path, source, options...)
 	if err != nil {
 		return ComponentSignature{}, err
 	}

@@ -35,6 +35,15 @@ type CachePolicy[P any] struct {
 	TTL time.Duration
 	// Key appends the canonical encoding of every declared parameter.
 	Key func(P) string
+	// Bindings appends the framed value of every implicit binding this
+	// component's call graph reads, in the order they were declared to the
+	// generator. It is nil for a component reading none, which is every
+	// component in a project that declares no binding.
+	//
+	// A binding is not a declared parameter, so nothing else in this key would
+	// tell two values of it apart, and a stored body would be served across
+	// them. See .knowledge decision:implicit-binding-cache-identity.
+	Bindings func(context.Context) string
 	// Scoped marks a component declared private, whose key is prefixed with the
 	// render's scope value so one key yields a separate entry per reader.
 	//
@@ -52,11 +61,18 @@ type CachePolicy[P any] struct {
 // prefix, which a store that organizes by key range can use. A public component
 // passes an empty scope and gets no prefix at all, which is what keeps its key
 // identical to the one it had before scoping existed.
-func (c *CachePolicy[P]) cacheKey(scope string, params P) string {
-	if !c.Scoped {
-		return KeyString(c.ID) + c.Key(params)
+func (c *CachePolicy[P]) cacheKey(ctx context.Context, scope string, params P) string {
+	// Binding values sit after the scope prefix and before the parameters. They
+	// cannot go first: the scope is the prefix a store deletes by range, and
+	// putting anything ahead of it would break that.
+	bindings := ""
+	if c.Bindings != nil {
+		bindings = c.Bindings(ctx)
 	}
-	return KeyString(scope) + KeyString(c.ID) + c.Key(params)
+	if !c.Scoped {
+		return KeyString(c.ID) + bindings + c.Key(params)
+	}
+	return KeyString(scope) + KeyString(c.ID) + bindings + c.Key(params)
 }
 
 // Framing rule for the helpers below: every value is written as its byte

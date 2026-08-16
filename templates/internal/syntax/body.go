@@ -24,6 +24,11 @@ const (
 	TerminatorFallback TerminatorKind = "fallback"
 	TerminatorRecover  TerminatorKind = "recover"
 	TerminatorEndAwait TerminatorKind = "end-await"
+	// TerminatorEndMessage closes a rich-text message block. It is discovered
+	// rather than opened: `{t id}` is the same leaf either way, and the closer is
+	// what says the siblings after it are its holes. The same shape ValNode uses,
+	// per .knowledge decision:value-binding-form desugaring.
+	TerminatorEndMessage TerminatorKind = "end-message"
 )
 
 // Terminator is discovered by a format parser and interpreted by the shared
@@ -101,6 +106,8 @@ func (c *BodyContext) ParseEmbedded(fragment Embedded, context string) (Node, *T
 		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "recover"))
 		offset := headerOffset + len(trimmed) - len(header)
 		return nil, &Terminator{Kind: TerminatorRecover, Pos: pos, Header: header, HeaderOffset: offset, ContentOffset: fragment.ContentOffset}, nil
+	case trimmed == "/t":
+		return nil, &Terminator{Kind: TerminatorEndMessage, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
 	case trimmed == "/await":
 		return nil, &Terminator{Kind: TerminatorEndAwait, Pos: pos, HeaderOffset: headerOffset, ContentOffset: fragment.ContentOffset}, nil
 	case strings.HasPrefix(trimmed, "await "):
@@ -124,12 +131,158 @@ func (c *BodyContext) ParseEmbedded(fragment Embedded, context string) (Node, *T
 		node, err := c.parseFor(header, offset, pos, context)
 		return node, nil, err
 	default:
+		// A message reference is recognized only when the whole body reads as
+		// one, so `{t}`, `{t.field}`, `{t(x)}` and `{t == "x"}` keep meaning
+		// the parameter. See .knowledge decision:message-reference-syntax.
+		if message, ok, err := c.parseMessage(trimmed, headerOffset); ok {
+			if err != nil {
+				return nil, nil, err
+			}
+			return &ExpressionNode{Kind: "template:expression", Pos: pos, Context: context, Expression: message}, nil, nil
+		}
 		expr, err := ParseExpressionAt(c.filename, trimmed, headerOffset, c.Position(headerOffset))
 		if err != nil {
 			return nil, nil, err
 		}
 		return &ExpressionNode{Kind: "template:expression", Pos: pos, Context: context, Expression: expr}, nil, nil
 	}
+}
+
+// CloseMessageBlock turns the node list a format parser has collected into a
+// rich-text message, when it reaches `{/t}`.
+//
+// The block is discovered at its closer rather than opened, because `{t id}`
+// has to keep meaning the same thing whether or not holes follow it: a parser
+// deciding at the opening would need lookahead, and a second keyword would make
+// an author choose between two spellings of one reference. ValNode already
+// takes this shape, per .knowledge decision:value-binding-form desugaring.
+//
+// nameHole is supplied by the format, because what names a hole is markup the
+// shared parser cannot read.
+func (c *BodyContext) CloseMessageBlock(nodes []Node, closer Position, nameHole func(Node) (string, Position, bool, error)) ([]Node, error) {
+	for i := len(nodes) - 1; i >= 0; i-- {
+		expression, ok := nodes[i].(*ExpressionNode)
+		if !ok {
+			continue
+		}
+		message, ok := expression.Expression.(*MessageExpr)
+		if !ok {
+			continue
+		}
+		block := &MessageBlockNode{Kind: "template:message-block", Pos: expression.Pos,
+			Context: expression.Context, Message: message}
+		seen := map[string]bool{}
+		for _, node := range nodes[i+1:] {
+			name, pos, bound, err := nameHole(node)
+			if err != nil {
+				return nil, err
+			}
+			if !bound {
+				// Whitespace between holes is layout; anything else is text the
+				// translation owns, so writing it in the template would put the
+				// same sentence in two places.
+				continue
+			}
+			if seen[name] {
+				return nil, c.errorAtPosition(pos, "duplicate message hole "+name+
+					"; two holes sharing a tag need a hole attribute to tell them apart")
+			}
+			seen[name] = true
+			block.Holes = append(block.Holes, MessageHole{Pos: pos, Name: name, Nodes: []Node{node}})
+		}
+		return append(nodes[:i:i], block), nil
+	}
+	return nil, c.errorAtPosition(closer, "{/t} closes a message block, but no {t ...} reference opens one here")
+}
+
+// errorAtPosition reports against a position a node already carries, for a
+// check that runs over parsed nodes rather than over the cursor.
+func (c *BodyContext) errorAtPosition(pos Position, message string) error {
+	return &ParseError{Filename: c.filename, Line: pos.Line, Column: pos.Col, Message: message}
+}
+
+// messageKeyword is the contextual keyword introducing a message reference. It
+// is not reserved: every existing directive is recognized the same way, by a
+// keyword and a body that reads as that directive's header.
+const messageKeyword = "t"
+
+// parseMessage reads `t <id>` and `t <id>, name: expression, ...`.
+//
+// The second result reports whether this body is a message reference at all. It
+// is false for anything whose first part is not an id, which is what keeps an
+// ordinary expression over a parameter named t working. Once the id is valid
+// the reference is committed, so a malformed argument is reported as a bad
+// message reference rather than as a confusing expression.
+func (c *BodyContext) parseMessage(trimmed string, headerOffset int) (*MessageExpr, bool, error) {
+	rest, ok := strings.CutPrefix(trimmed, messageKeyword)
+	if !ok || rest == "" {
+		return nil, false, nil
+	}
+	// The keyword has to be followed by space, or `title` would be read as the
+	// tail of a longer identifier.
+	if r, _ := utf8.DecodeRuneInString(rest); !unicode.IsSpace(r) {
+		return nil, false, nil
+	}
+	parts := splitTopLevel(rest, ',')
+	id := strings.TrimSpace(parts[0].text)
+	if !messageID(id) {
+		return nil, false, nil
+	}
+	node := &MessageExpr{Kind: "template:message", Pos: c.Position(headerOffset), Written: id}
+	for _, part := range parts[1:] {
+		text := strings.TrimSpace(part.text)
+		offset := headerOffset + len(messageKeyword) + part.offset +
+			(len(part.text) - len(strings.TrimLeftFunc(part.text, unicode.IsSpace)))
+		name, valueText, found := strings.Cut(text, ":")
+		if !found {
+			return nil, true, c.ErrorAt(offset, "message argument syntax is {t "+id+", name: expression}")
+		}
+		name = strings.TrimSpace(name)
+		if !lowerCamelIdentifier(name) {
+			return nil, true, c.ErrorAt(offset, "message argument name must be lowerCamelCase")
+		}
+		for _, existing := range node.Args {
+			if existing.Name == name {
+				return nil, true, c.ErrorAt(offset, "duplicate message argument "+name)
+			}
+		}
+		valueBody := strings.TrimSpace(valueText)
+		if valueBody == "" {
+			return nil, true, c.ErrorAt(offset, "message argument "+name+" has no value")
+		}
+		valueOffset := offset + strings.Index(text, valueBody)
+		value, err := ParseExpressionAt(c.filename, valueBody, valueOffset, c.Position(valueOffset))
+		if err != nil {
+			return nil, true, err
+		}
+		node.Args = append(node.Args, MessageArg{Pos: c.Position(offset), Name: name, Value: value})
+	}
+	return node, true, nil
+}
+
+// messageID reports whether the token is a message id: dot-separated segments
+// of letters, digits, underscores and hyphens, carrying no whitespace, with no
+// segment beginning or ending in a hyphen.
+//
+// The hyphen rule is what keeps `{t -x}` a subtraction. A leading hyphen fails
+// the id form, so the body falls through to the expression arm and the
+// established meaning survives. See .knowledge
+// decision:message-reference-syntax id_lexical_form.
+func messageID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, segment := range strings.Split(value, ".") {
+		if segment == "" || strings.HasPrefix(segment, "-") || strings.HasSuffix(segment, "-") {
+			return false
+		}
+		for _, r := range segment {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (c *BodyContext) parseIf(header string, headerOffset int, pos Position, context string) (*IfNode, error) {

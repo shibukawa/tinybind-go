@@ -1296,3 +1296,70 @@ func prepareVal[P, S any](ctx context.Context, scope S, body []Op[S]) (Op[P], er
 	}
 	return valPreparedOp[P, S]{scope: scope, body: prepared}, nil
 }
+
+// URLPathSegment frames a path-segment binding's value inside a URL attribute.
+//
+// It does two things the ordinary attribute path cannot. It percent-encodes the
+// value against the unreserved set, so a value carrying a slash, a colon or a
+// dot segment composes no path the template did not describe — the binding's
+// value is embedder-supplied but often request-derived, so it is not trusted
+// content. And when the value is empty it collapses the separator that precedes
+// it, so a URL whose first segment is optional does not emit a doubled slash.
+//
+// collapse is false where the segment is the whole tail of the value, because
+// "/{seg}" with an empty seg is the root rather than the empty string. See
+// .knowledge requirement:embedder-implicit-bindings path_segment_collapse.
+func URLPathSegment(prefix, value string, collapse bool) string {
+	if value == "" && collapse {
+		return ""
+	}
+	return prefix + encodePathSegment(value)
+}
+
+// encodePathSegment percent-encodes everything outside the unreserved set of
+// RFC 3986. It is deliberately stricter than a general path escaper: a segment
+// here stands for one name the application chose, so sub-delimiters buy nothing
+// and every one of them is a way to mean something else.
+func encodePathSegment(value string) string {
+	// A dot segment is not a name, it is an instruction to the resolver. The
+	// unreserved set contains the dot, so a value of "." or ".." would pass
+	// through untouched and move the path somewhere the template never wrote.
+	// Encoding the dots keeps the segment a name.
+	if value == "." || value == ".." {
+		return strings.Repeat("%2E", len(value))
+	}
+	safe := true
+	for i := 0; i < len(value); i++ {
+		if !unreservedByte(value[i]) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return value
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	const hex = "0123456789ABCDEF"
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if unreservedByte(c) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&0x0f])
+	}
+	return b.String()
+}
+
+func unreservedByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	case c == '-', c == '.', c == '_', c == '~':
+		return true
+	}
+	return false
+}

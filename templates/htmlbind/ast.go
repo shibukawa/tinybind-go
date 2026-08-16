@@ -25,6 +25,8 @@ type CallExpr = syntax.CallExpr
 type UnaryExpr = syntax.UnaryExpr
 type BinaryExpr = syntax.BinaryExpr
 type ConditionalExpr = syntax.ConditionalExpr
+type MessageExpr = syntax.MessageExpr
+type MessageArg = syntax.MessageArg
 type ParseError = syntax.ParseError
 type ExpressionNode = syntax.ExpressionNode
 type IfNode = syntax.IfNode
@@ -41,10 +43,29 @@ type Node = syntax.Node
 // Body is the body stored in TemplateDecl.Body.
 type Body = []Node
 
+// messageInnerNode marks where a rich-text hole's translated text goes. It is
+// synthesized at emission from the bound element's empty content, so no author
+// writes one and no analysis sees one.
+type messageInnerNode struct{ Pos Position }
+
+func (n *messageInnerNode) NodeType() string { return "html:message-inner" }
+
 type TextNode struct {
 	Kind string   `json:"kind"`
 	Pos  Position `json:"pos"`
 	Text string   `json:"text"`
+	// Start and End are file-global byte offsets of the source this text came
+	// from, for a tool that rewrites a template in place. They are excluded
+	// from the serialized AST because they are a tool-facing detail rather than
+	// part of the parse's published shape, and because adding them there would
+	// move every parser fixture.
+	//
+	// The range is source rather than content: an escaped brace contributes one
+	// character to Text and two to the range, so a rewriter replacing the range
+	// replaces the escape as well, which is what an extractor wants. See
+	// .knowledge requirement:template-parse-introspection.
+	Start int `json:"-"`
+	End   int `json:"-"`
 }
 
 func (n *TextNode) NodeType() string { return n.Kind }
@@ -132,4 +153,9 @@ type AttributePart struct {
 	Context    string   `json:"context,omitempty"`
 	Text       string   `json:"text,omitempty"`
 	Expression Expr     `json:"expression,omitempty"`
+	// Start and End are file-global byte offsets of the source this part came
+	// from, on the same terms as TextNode.Start: excluded from the serialized
+	// AST, and a range of source rather than of content.
+	Start int `json:"-"`
+	End   int `json:"-"`
 }

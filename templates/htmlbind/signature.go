@@ -37,12 +37,17 @@ type SignatureParam struct {
 //
 // It runs the same analysis [Generate] does, so a module that fails to compile
 // fails here with the same diagnostic rather than yielding a partial answer.
-func Signatures(filename string, source []byte) ([]Signature, error) {
+func Signatures(filename string, source []byte, options ...AnalysisOption) ([]Signature, error) {
 	module, err := Parse(filename, source)
 	if err != nil {
 		return nil, err
 	}
+	bindings, err := applyAnalysisOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	compiler := newCompiler(filename, string(source), module, true)
+	compiler.bindings = bindings
 	if err := compiler.analyze(); err != nil {
 		return nil, err
 	}

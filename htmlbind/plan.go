@@ -182,8 +182,8 @@ func (p *Plan[P]) execCached(r *Renderer, params P, ops []Op[P]) error {
 	if p.Cache.Scoped && r.opts.cacheScope == "" {
 		return execOps(r, ops, params)
 	}
-	key := p.Cache.cacheKey(r.opts.cacheScope, params)
 	ctx := r.context()
+	key := p.Cache.cacheKey(ctx, r.opts.cacheScope, params)
 	if cached, ok := r.opts.cache.Get(ctx, key); ok {
 		_, err := r.w.Write(cached)
 		return err
@@ -532,6 +532,10 @@ type Renderer struct {
 	// boundary gives each delivery its own, so the previous delivery's nested
 	// boundaries are cancelled before their placeholders are reused.
 	boundaryCtx context.Context
+	// messageInner is the translated text inside the rich-text hole currently
+	// rendering, empty outside one. It is set for the length of one hole's ops,
+	// so a nested render sees the hole it is actually inside.
+	messageInner string
 	// scratch is reused for the string-to-bytes conversion Write needs when the
 	// writer has no WriteString. Each renderer owns its own, because boundary
 	// subtrees render in their own goroutines.

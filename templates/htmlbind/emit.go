@@ -56,7 +56,23 @@ func (e *goEmitter) takesRenderContext(name string) bool {
 // anywhere. Imports are written before any plan is emitted, so the answer has to
 // come from the typed expressions rather than from what emission produced.
 func (e *goEmitter) usesSyncRenderContext() bool {
+	// A rich-text message calls its catalog function with the context binding
+	// and is a node, so it is not reachable through the expression map below.
+	if e.c.usesMessageBlock {
+		return true
+	}
 	for expr := range e.c.exprTypes {
+		// A binding lowers to a provider call taking the context, so reading
+		// one is what pulls the context import in, exactly as a context-taking
+		// external does.
+		if identifier, ok := expr.(*IdentifierExpr); ok {
+			if _, declared := e.c.bindings.lookup(identifier.Name); declared {
+				return true
+			}
+		}
+		if _, isMessage := expr.(*MessageExpr); isMessage && e.c.messageContextBinding != "" {
+			return true
+		}
 		call, ok := expr.(*CallExpr)
 		if !ok {
 			continue
@@ -74,6 +90,22 @@ func (e *goEmitter) usesSyncRenderContext() bool {
 func (e *goEmitter) usesRenderContext(expr Expr) bool {
 	found := false
 	walkExpr(expr, func(node Expr) {
+		// A binding lowers to a provider call taking the render context, so an
+		// expression reading one needs the context-carrying instruction for the
+		// same reason a context-taking external does.
+		if identifier, ok := node.(*IdentifierExpr); ok {
+			// Nothing else can be spelled this way: a parameter, a val binding
+			// and a loop variable taking a declared name are all refused at
+			// analysis, so the name here is the binding.
+			if _, declared := e.c.bindings.lookup(identifier.Name); declared {
+				found = true
+			}
+		}
+		if _, isMessage := node.(*MessageExpr); isMessage && e.c.messageContextBinding != "" {
+			// A reference reads the context binding, whose provider takes the
+			// render context, so the instruction holding it needs one.
+			found = true
+		}
 		call, ok := node.(*CallExpr)
 		if !ok {
 			return
@@ -112,6 +144,13 @@ func walkExpr(expr Expr, visit func(Expr)) {
 	case *CallExpr:
 		for _, argument := range expr.Arguments {
 			walkExpr(argument, visit)
+		}
+	case *MessageExpr:
+		// A message argument is an ordinary expression, so it may itself reach
+		// a context-taking external. Skipping it here would emit a plain
+		// instruction whose closure then names a context it was never given.
+		for _, argument := range expr.Args {
+			walkExpr(argument.Value, visit)
 		}
 	case *UnaryExpr:
 		walkExpr(expr.Operand, visit)
@@ -413,8 +452,21 @@ func (e *goEmitter) emitCachePolicy(component *TemplateDecl, prefix, params, hea
 	if !info.cache.public {
 		scoped = "\tScoped: true,\n"
 	}
-	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n%s\tKey: func(%s %s) string { return %s },\n}\n\n",
-		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, scoped, receiverIdent, params, key)
+	// A binding is not a declared parameter, so nothing above would tell two of
+	// its values apart. The line is written only for a component that reaches
+	// one, so a project declaring none emits exactly what it did before.
+	bindings := ""
+	if reached := e.c.transitiveBindings(component.Name); len(reached) > 0 {
+		var framed []string
+		for _, name := range reached {
+			binding, _ := e.c.bindings.lookup(name)
+			framed = append(framed, "htmlbind.KeyString("+bindingCall(binding)+")")
+		}
+		bindings = fmt.Sprintf("\tBindings: func(%s context.Context) string { return %s },\n",
+			contextIdent, strings.Join(framed, " + "))
+	}
+	fmt.Fprintf(&e.b, "var %sCache = htmlbind.CachePolicy[%s]{\n\tID: %s,\n\tTTL: %d, // %s\n%s%s\tKey: func(%s %s) string { return %s },\n}\n\n",
+		prefix, params, strconv.Quote(id), int64(info.cache.ttl), info.cache.ttl, scoped, bindings, receiverIdent, params, key)
 	return nil
 }
 
@@ -581,6 +633,13 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 			if err := e.emitValOp(p, node); err != nil {
 				return err
 			}
+		case *syntax.MessageBlockNode:
+			if err := e.emitMessageBlockOp(p, node); err != nil {
+				return err
+			}
+		case *messageInnerNode:
+			p.flush()
+			p.op("MessageInner()")
 		case *syntax.AwaitNode:
 			if err := e.emitAwaitOp(p, node); err != nil {
 				return err
@@ -899,11 +958,17 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, ra
 		}, nil
 	}
 	var parts []string
-	for _, part := range attribute.Value {
+	for index, part := range attribute.Value {
 		if part.Expression == nil {
 			text := part.Text
 			if attribute.Name == "class" {
 				text = e.scopedClassList(text)
+			}
+			// A separator immediately before a path segment is written by the
+			// segment helper instead, because collapsing it is what an empty
+			// segment has to do. Emitting it here too would double it.
+			if e.segmentConsumesTrailingSlash(attribute, index) {
+				text = strings.TrimSuffix(text, "/")
 			}
 			parts = append(parts, strconv.Quote(text))
 			continue
@@ -912,12 +977,47 @@ func (e *goEmitter) attributeValueCode(attribute Attribute, scope *emitScope, ra
 		if err != nil {
 			return "", nil, err
 		}
+		if prefix, ok := e.pathSegmentPrefix(attribute, index); ok {
+			// collapse only where something follows: "/{seg}" with an empty seg
+			// is the root, not the empty string.
+			collapse := index < len(attribute.Value)-1
+			parts = append(parts, fmt.Sprintf("htmlbind.URLPathSegment(%s, %s, %t)",
+				strconv.Quote(prefix), code, collapse))
+			continue
+		}
 		parts = append(parts, escaped(valueString(code, e.c.exprTypes[part.Expression]), e.c.exprTypes[part.Expression]))
 	}
 	if len(parts) == 0 {
 		parts = append(parts, `""`)
 	}
 	return strings.Join(parts, " + "), func(v string) string { return "return " + v + ", true" }, nil
+}
+
+// pathSegmentPrefix reports whether the part at index is a path-segment binding
+// in a URL attribute, and the separator the helper takes over writing.
+func (e *goEmitter) pathSegmentPrefix(attribute Attribute, index int) (string, bool) {
+	part := attribute.Value[index]
+	if part.Expression == nil || !isURLAttribute(attribute.Name) || !e.c.isPathSegmentRead(part.Expression) {
+		return "", false
+	}
+	if index == 0 {
+		return "", true
+	}
+	previous := attribute.Value[index-1]
+	if previous.Expression != nil || !strings.HasSuffix(previous.Text, "/") {
+		return "", true
+	}
+	return "/", true
+}
+
+// segmentConsumesTrailingSlash reports whether the static part at index ends in
+// a separator the next part's segment helper writes instead.
+func (e *goEmitter) segmentConsumesTrailingSlash(attribute Attribute, index int) bool {
+	if index+1 >= len(attribute.Value) {
+		return false
+	}
+	prefix, ok := e.pathSegmentPrefix(attribute, index+1)
+	return ok && prefix == "/"
 }
 
 func (e *goEmitter) emitValueOp(p *planEmitter, expr Expr, context string) error {
@@ -1001,6 +1101,66 @@ func (e *goEmitter) emitIfOp(p *planEmitter, node *syntax.IfNode) error {
 	p.op(fmt.Sprintf("%s(func(%s) bool { return %s },\n%s,\n%s)",
 		ctxOp("If", withContext), closureParams(p.scope.goType, withContext), condition,
 		indentBlock(then.literal(), "\t"), indentBlock(otherwise.literal(), "\t")))
+	return nil
+}
+
+// emitMessageBlockOp lowers a rich-text message. The catalog decides the order
+// of the text and the holes at render time, so the template contributes one ops
+// list per hole and this module interleaves them; the text runs go through the
+// ordinary escaper on the way out.
+//
+// See .knowledge decision:message-hole-lowering.
+func (e *goEmitter) emitMessageBlockOp(p *planEmitter, node *syntax.MessageBlockNode) error {
+	symbol, ok := e.c.messages[node.Message.ID]
+	if !ok {
+		return fmt.Errorf("unknown message %s", node.Message.ID)
+	}
+	var holes []string
+	for _, hole := range node.Holes {
+		// The bound element is written empty and its content comes from the
+		// translation, so the children position becomes the inner-text op.
+		bound := make([]Node, 0, len(hole.Nodes))
+		for _, boundNode := range hole.Nodes {
+			element, ok := boundNode.(*ElementNode)
+			if !ok {
+				bound = append(bound, boundNode)
+				continue
+			}
+			filled := *element
+			filled.Children = []Node{&messageInnerNode{Pos: element.Pos}}
+			filled.SelfClosing = false
+			bound = append(bound, &filled)
+		}
+		holeEmitter := &planEmitter{e: e, scope: p.scope}
+		if err := e.emitOps(holeEmitter, bound); err != nil {
+			return err
+		}
+		holes = append(holes, fmt.Sprintf("{Name: %s, Ops: %s}",
+			strconv.Quote(hole.Name), indentBlock(holeEmitter.literal(), "\t")))
+	}
+	call := symbol.Name
+	if alias := messageAlias(symbol); alias != "" {
+		call = alias + "." + symbol.Name
+	}
+	var args []string
+	if binding, ok := e.c.bindings.lookup(e.c.messageContextBinding); ok {
+		args = append(args, bindingCall(binding))
+	}
+	byName := map[string]MessageArg{}
+	for _, arg := range node.Message.Args {
+		byName[arg.Name] = arg
+	}
+	for _, name := range symbol.Params {
+		code, err := e.exprCode(byName[name].Value, p.scope)
+		if err != nil {
+			return err
+		}
+		args = append(args, code)
+	}
+	p.flush()
+	p.op(fmt.Sprintf("Message(func(%s context.Context, %s %s) []htmlbind.MessageSegment { return %s(%s) },\n[]htmlbind.MessageHoleOps[%s]{\n%s,\n})",
+		contextIdent, receiverIdent, p.scope.goType, call, strings.Join(args, ", "),
+		p.scope.goType, strings.Join(holes, ",\n")))
 	return nil
 }
 
@@ -1432,6 +1592,11 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 		}
 		path, ok := scope.paths[expr.Name]
 		if !ok {
+			// A declared binding is not in the params struct; it is read from
+			// the render context through the provider the embedder named.
+			if binding, declared := e.c.bindings.lookup(expr.Name); declared {
+				return bindingCall(binding), nil
+			}
 			return "", fmt.Errorf("unknown identifier %s", expr.Name)
 		}
 		return receiverIdent + "." + path, nil
@@ -1482,6 +1647,33 @@ func (e *goEmitter) exprCode(expr Expr, scope *emitScope) (string, error) {
 			return args[0], nil
 		}
 		return callee.Name + "(" + strings.Join(args, ", ") + ")", nil
+	case *MessageExpr:
+		symbol, ok := e.c.messages[expr.ID]
+		if !ok {
+			return "", fmt.Errorf("unknown message %s", expr.ID)
+		}
+		// Arguments are written by name at the reference and by position in Go,
+		// so the parameter list the table carries is what fixes the order.
+		byName := map[string]MessageArg{}
+		for _, arg := range expr.Args {
+			byName[arg.Name] = arg
+		}
+		var args []string
+		if binding, ok := e.c.bindings.lookup(e.c.messageContextBinding); ok {
+			args = append(args, bindingCall(binding))
+		}
+		for _, name := range symbol.Params {
+			code, err := e.exprCode(byName[name].Value, scope)
+			if err != nil {
+				return "", err
+			}
+			args = append(args, code)
+		}
+		call := symbol.Name
+		if alias := messageAlias(symbol); alias != "" {
+			call = alias + "." + symbol.Name
+		}
+		return call + "(" + strings.Join(args, ", ") + ")", nil
 	case *UnaryExpr:
 		operand, err := e.exprCode(expr.Operand, scope)
 		if err != nil {

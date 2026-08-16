@@ -4,6 +4,7 @@ package syntax
 type Module struct {
 	Pos          Position      `json:"pos"`
 	Package      *PackageDecl  `json:"package,omitempty"`
+	Messages     *MessagesDecl `json:"messages,omitempty"`
 	Imports      []ImportDecl  `json:"imports,omitempty"`
 	Declarations []Declaration `json:"declarations"`
 	// Comments holds every comment in the declaration part of the file, in
@@ -14,6 +15,15 @@ type Module struct {
 }
 
 type PackageDecl struct {
+	Kind string   `json:"kind"`
+	Pos  Position `json:"pos"`
+	Name string   `json:"name"`
+}
+
+// MessagesDecl names the namespace this file's MessageNode references resolve
+// against. It is import-like: the parser learns a name and nothing about what
+// the name contains.
+type MessagesDecl struct {
 	Kind string   `json:"kind"`
 	Pos  Position `json:"pos"`
 	Name string   `json:"name"`
@@ -143,6 +153,59 @@ type ExpressionNode struct {
 
 func (n *ExpressionNode) NodeType() string { return n.Kind }
 
+// MessageExpr is one `{t <id>}` reference. It is an expression because the
+// reference evaluates to a plain string, which is what lets it flow through
+// escaping, attribute analysis and component arguments with no rule of its own.
+//
+// It is recognized only when a whole brace body reads as a reference, so it can
+// never be written as an operand: `{f(t title)}` is not a reference and never
+// becomes one. Representation and recognition are separate on purpose. See
+// .knowledge decision:message-reference-syntax.
+//
+// The parser fills Written and leaves ID empty, because resolution needs the
+// whole module and a `messages` line may follow the declaration that uses it.
+// Whoever holds the module fills ID.
+type MessageExpr struct {
+	Kind    string       `json:"kind"`
+	Pos     Position     `json:"pos"`
+	Written string       `json:"written"`
+	ID      string       `json:"id,omitempty"`
+	Args    []MessageArg `json:"args,omitempty"`
+}
+
+func (*MessageExpr) exprNode() {}
+
+// MessageBlockNode is a rich-text message: a reference whose translation
+// carries structure, with each hole bound to markup written in the template.
+//
+// It is a node rather than an expression because it produces structure. The
+// plain form stays MessageExpr and stays a string, so only the form that needs
+// markup pays for it.
+type MessageBlockNode struct {
+	Kind    string        `json:"kind"`
+	Pos     Position      `json:"pos"`
+	Context string        `json:"context"`
+	Message *MessageExpr  `json:"message"`
+	Holes   []MessageHole `json:"holes,omitempty"`
+}
+
+func (n *MessageBlockNode) NodeType() string { return n.Kind }
+
+// MessageHole is one named hole and the markup bound to it. The name comes from
+// the bound element's own tag, which is what a translation spells the hole with,
+// unless a hole attribute overrides it for two holes sharing a tag.
+type MessageHole struct {
+	Pos   Position `json:"pos"`
+	Name  string   `json:"name"`
+	Nodes []Node   `json:"nodes"`
+}
+
+type MessageArg struct {
+	Pos   Position `json:"pos"`
+	Name  string   `json:"name"`
+	Value Expr     `json:"value"`
+}
+
 type IfNode struct {
 	Kind      string   `json:"kind"`
 	Pos       Position `json:"pos"`
@@ -253,6 +316,14 @@ func ExprReads(expr Expr, name string) bool {
 		return ExprReads(x.Left, name) || ExprReads(x.Right, name)
 	case *ConditionalExpr:
 		return ExprReads(x.Condition, name) || ExprReads(x.Then, name) || ExprReads(x.Else, name)
+	case *MessageExpr:
+		// A message argument is an ordinary expression, so it reads names like
+		// any other; missing it here would hide a val binding a reference uses.
+		for _, argument := range x.Args {
+			if ExprReads(argument.Value, name) {
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -47,7 +47,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 			if end < 0 {
 				return nil, nil, p.errAt(p.pos, "unterminated escaped template text")
 			}
-			nodes = appendText(nodes, "{"+p.source[p.pos+2:p.pos+2+end]+"}", p.position(start))
+			nodes = appendText(nodes, "{"+p.source[p.pos+2:p.pos+2+end]+"}", p.position(start), p.offsetAt(start), p.offsetAt(p.pos+2+end+2))
 			p.pos += end + 4
 			continue
 		}
@@ -56,7 +56,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 			// can close a declaration body or a control block; the authored
 			// language owns it.
 			if raw {
-				nodes = appendText(nodes, "}", p.position(p.pos))
+				nodes = appendText(nodes, "}", p.position(p.pos), p.offsetAt(p.pos), p.offsetAt(p.pos+2))
 				p.pos++
 				continue
 			}
@@ -106,7 +106,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 		}
 		if p.source[p.pos] == '{' {
 			if raw && !p.rawInsertionAhead() {
-				nodes = appendText(nodes, "{", p.position(p.pos))
+				nodes = appendText(nodes, "{", p.position(p.pos), p.offsetAt(p.pos), p.offsetAt(p.pos+2))
 				p.pos++
 				continue
 			}
@@ -126,6 +126,18 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 			}
 			p.pos = p.context.Offset()
 			if terminator != nil {
+				// A message closer is handled here rather than returned,
+				// because the block it closes was never opened: the reference
+				// is a leaf and the closer is what makes its later siblings
+				// holes. Every other terminator belongs to a caller.
+				if terminator.Kind == syntax.TerminatorEndMessage {
+					grouped, err := p.context.CloseMessageBlock(nodes, terminator.Pos, messageHoleName)
+					if err != nil {
+						return nil, nil, err
+					}
+					nodes = grouped
+					continue
+				}
 				return nodes, terminator, nil
 			}
 			nodes = append(nodes, node)
@@ -135,7 +147,7 @@ func (p *htmlParser) parseNodes(stopTag, context string) ([]Node, *syntax.Termin
 		for p.pos < len(p.source) && p.source[p.pos] != '<' && p.source[p.pos] != '{' && p.source[p.pos] != '}' {
 			p.pos++
 		}
-		nodes = appendText(nodes, p.source[start:p.pos], p.position(start))
+		nodes = appendText(nodes, p.source[start:p.pos], p.position(start), p.offsetAt(start), p.offsetAt(p.pos))
 	}
 	if stopTag != "" {
 		return nil, nil, p.errAt(p.pos, "missing closing tag </"+stopTag+">")
@@ -182,7 +194,8 @@ func (p *htmlParser) parseElement(context string) (Node, error) {
 		}
 		var children []Node
 		if text != "" {
-			children = []Node{&TextNode{Kind: "html:text", Pos: p.position(start), Text: text}}
+			children = []Node{&TextNode{Kind: "html:text", Pos: p.position(start), Text: text,
+				Start: p.offsetAt(p.pos - len(text)), End: p.offsetAt(p.pos)}}
 		}
 		return &ElementNode{Kind: "html:element", Pos: p.position(start), Name: name, Attributes: attrs, Children: children}, nil
 	}
@@ -555,7 +568,8 @@ func (p *htmlParser) parseAttributeValue() ([]AttributePart, error) {
 		for p.pos < len(p.source) && !unicode.IsSpace(rune(p.source[p.pos])) && p.source[p.pos] != '>' {
 			p.pos++
 		}
-		return []AttributePart{{Kind: "html:text", Pos: p.position(start), Text: p.source[start:p.pos]}}, nil
+		return []AttributePart{{Kind: "html:text", Pos: p.position(start), Text: p.source[start:p.pos],
+			Start: p.offsetAt(start), End: p.offsetAt(p.pos)}}, nil
 	}
 	p.pos++
 	var parts []AttributePart
@@ -566,7 +580,8 @@ func (p *htmlParser) parseAttributeValue() ([]AttributePart, error) {
 			continue
 		}
 		if textStart < p.pos {
-			parts = append(parts, AttributePart{Kind: "html:text", Pos: p.position(textStart), Text: p.source[textStart:p.pos]})
+			parts = append(parts, AttributePart{Kind: "html:text", Pos: p.position(textStart), Text: p.source[textStart:p.pos],
+				Start: p.offsetAt(textStart), End: p.offsetAt(p.pos)})
 		}
 		start := p.pos
 		content, offset, err := p.readDirective()
@@ -594,7 +609,8 @@ func (p *htmlParser) parseAttributeValue() ([]AttributePart, error) {
 		return nil, p.errAt(textStart, "unterminated quoted attribute value")
 	}
 	if textStart < p.pos {
-		parts = append(parts, AttributePart{Kind: "html:text", Pos: p.position(textStart), Text: p.source[textStart:p.pos]})
+		parts = append(parts, AttributePart{Kind: "html:text", Pos: p.position(textStart), Text: p.source[textStart:p.pos],
+			Start: p.offsetAt(textStart), End: p.offsetAt(p.pos)})
 	}
 	p.pos++
 	return parts, nil
@@ -699,18 +715,64 @@ func (p *htmlParser) errAt(offset int, message string) error {
 	return syntax.ErrorAtPosition(p.filename, p.source, offset, p.baseOffset, p.basePos, message)
 }
 
-func appendText(nodes []Node, text string, pos Position) []Node {
+// messageHoleAttribute overrides the hole name a bound element's tag would give
+// it, for a translation whose holes share a tag.
+const messageHoleAttribute = "hole"
+
+// messageHoleName reports what names a hole inside a message block.
+//
+// The name is the bound element's own tag, because that is what a translation
+// spells a hole with: a translator writing `<a>開始</a>` and an author writing
+// `<a href="/start"></a>` line up with nothing in between to explain. See
+// .knowledge requirement:message-hole-binding.
+func messageHoleName(node Node) (string, Position, bool, error) {
+	switch n := node.(type) {
+	case *TextNode:
+		if strings.TrimSpace(n.Text) == "" {
+			return "", n.Pos, false, nil
+		}
+		return "", n.Pos, false, &syntax.ParseError{Line: n.Pos.Line, Column: n.Pos.Col,
+			Message: "text inside a message block belongs to the translation; only hole markup may be written here"}
+	case *CommentNode:
+		return "", n.Pos, false, nil
+	case *ElementNode:
+		for _, attribute := range n.Attributes {
+			if attribute.Name != messageHoleAttribute {
+				continue
+			}
+			name, ok := staticAttributeText(attribute)
+			if !ok || name == "" {
+				return "", n.Pos, false, &syntax.ParseError{Line: n.Pos.Line, Column: n.Pos.Col,
+					Message: "the hole attribute needs a static name"}
+			}
+			return name, n.Pos, true, nil
+		}
+		return n.Name, n.Pos, true, nil
+	default:
+		return "", Position{}, false, &syntax.ParseError{
+			Message: "only elements may be written inside a message block"}
+	}
+}
+
+func appendText(nodes []Node, text string, pos Position, start, end int) []Node {
 	if text == "" {
 		return nodes
 	}
 	if len(nodes) > 0 {
 		if previous, ok := nodes[len(nodes)-1].(*TextNode); ok {
+			// Adjacent runs merge into one node, so the range grows to cover
+			// everything the merged text came from.
 			previous.Text += text
+			previous.End = end
 			return nodes
 		}
 	}
-	return append(nodes, &TextNode{Kind: "html:text", Pos: pos, Text: text})
+	return append(nodes, &TextNode{Kind: "html:text", Pos: pos, Text: text, Start: start, End: end})
 }
+
+// offsetAt turns a parser-local offset into the file-global one a rewriting
+// tool needs, since a body is parsed as a fragment of the file.
+func (p *htmlParser) offsetAt(offset int) int { return p.baseOffset + offset }
 
 func (p *htmlParser) position(offset int) Position {
 	return positionInHTMLFragment(p.source, offset, p.basePos)
