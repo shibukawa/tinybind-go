@@ -3,6 +3,8 @@
 package id_
 
 import (
+	"context"
+
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
@@ -27,8 +29,8 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		htmlbind.ValErr(
-			func(p PageParams) (Record, error) { return LoadRecord(p.Id) },
+		htmlbind.ValErrCtx(
+			func(ctx context.Context, p PageParams) (Record, error) { return LoadRecord(ctx, p.Id) },
 			func(p PageParams, value Record) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Record: value} },
 			[]htmlbind.Op[planPageOpsVal1]{
 				planPageOpsVal1Ops.Static("  <h1>record "),
