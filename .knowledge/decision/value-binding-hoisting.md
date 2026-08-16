@@ -91,6 +91,25 @@ as_built:
     cached_components_excluded: a storing cache is not prepared, per not_a_storing_cached_component; the prologue runs during assembly and the store is consulted during the render, so hoisting made a cached loader fetch on every hit
     wrapper_excluded: leaf_only above, discovered while wiring assembly rather than while designing it
   the_shape_held: the lowering already produced leading static plus one instruction wrapping the rest, exactly as this file predicted, so hoisting is running that instruction's value early and its body at render
+binding_is_transparent_to_the_root_scan:
+  found: reported by the framework 2026-08-14 against v0.5.11, which held adoption on it
+  bug: boundaryRoot walks a component's body for exactly one element and refuses any node kind it does not recognise, and after hoisting a component that binds anything presents a value binding where its root element used to be
+  why_it_became_reachable: this decision; before it, normalization split a body at the binding's written position, so a binding after the root element left that element a sibling, and hoisting is what puts the root inside the binding's body
+  callers: three, not the two reported — the boundary candidate, the script block's marker, and a reloadable component's id and kind
+  symptoms:
+    silent: the boundary one, which is not an error by design, so a page kept rendering and quietly stopped being an update boundary
+    loud: the other two, which refuse a component that does render exactly one root element
+  worst_case_shape: the typed page rung is retired, so a discovered page that loads its own data must use a binding, and every such page lost its boundary at once
+  fix: a binding renders nothing, so its body's root is the component's root, on the same terms that already step over a comment or a doctype
+  threaded_not_recursed: the scan carries the element found so far into the binding's body rather than scanning it fresh, so two elements still fail when one is inside the binding and one beside it
+  every_depth: normalization nests one node per bound name, so stepping over exactly one level would have left a block's second binding failing the way its first did
+  what_it_is_not: a relaxation of the single-root rule; a component rendering two elements is still no boundary, binding or not
+why_the_module_did_not_catch_it:
+  not_a_missing_assertion_but_a_missing_shape: every fixture page that binds renders several root elements, so none of them was ever a boundary candidate and the defect had nothing to land on
+  the_golden_hid_it: the route fixtures compare committed generated files and regenerate on request, so the output was rewritten with the defect already in place and the comparison then agreed with itself
+  closed_by: one fixture page given a single root with a binding inside it, asserted by running the generated code through the delta collector rather than by reading the generated file
+  both_halves_verified: reverting the fix fails the staleness comparison, and regenerating with the defect fails the collector assertion, so neither path can accept the loss again
+  the_general_shape: a golden is only a guard against a change nobody meant; against a change made and regenerated, only a test that reads the meaning is
 open_questions:
   - whether a failure after the first byte should be distinguishable to the caller from one before it, so a framework can tell a status it could have set from one it could not
 ```

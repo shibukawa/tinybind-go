@@ -54,7 +54,8 @@ desugaring:
       contract: ParseEmbedded's callers all treat a node and a terminator as exclusive, returning early on a terminator and dropping the node
       spread: the binding would have to return its own node and the terminator that ended the enclosing body together, changing five call sites across templates/htmlbind, templates/internal/rawparse, and templates/sqlbind
       failure_mode: a site left unconverted drops the node silently, so the binding and everything after it vanish from the output with no diagnostic
-  order: it runs before whitespace normalization, which walks the same lists and gains the new node either way
+  order: it runs after whitespace normalization, corrected 2026-08-16 from the reverse, which this file predicted and the implementation did not do
+  why_that_order: whitespace still sees the flat list the author wrote, so a run is not collapsed differently for having a binding in the middle of it; the nested tree everything downstream reads is produced after that is settled
   what_it_destroys: the source-level distinction between a sibling and a nested binding, since after the rewrite everything following a binding is nested inside it
 same_level_check:
   rule: requirement:template-value-binding forbids two bindings of one name in the same source-level block while allowing every shadow from further out
