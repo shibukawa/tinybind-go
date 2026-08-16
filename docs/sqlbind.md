@@ -208,6 +208,11 @@ The template declaration is unchanged either way. Such a function may only be th
 whole value of a `{val}`; written anywhere else there is nowhere for the failure
 to go, and generation says so.
 
+Generation discovers the trailing error by reading your package's Go sources.
+The generator command does it for you; calling the compiler yourself, it is
+`GenerateOptions.ErrorExternals`. Leaving it empty emits a one-result call
+against a two-result function, which does not compile.
+
 ## Declaring result cardinality
 
 | Output | Contract | High-level result |
