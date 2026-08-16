@@ -121,6 +121,46 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 })
 ```
 
+**A loader that can fail declares a trailing error.** The same scan reports it,
+and the template declaration is unchanged either way:
+
+```go
+func LoadRecord(id string) (Record, error) { ... }
+```
+
+Such a function may only be the whole value of a `{val}` binding, which is the
+one position whose lowering can carry a failure out. Return one of the status
+helpers and a page answers for itself:
+
+```go
+return Record{}, httpbind.NotFound(httpbind.Problem{Code: "absent"})
+return Record{}, httpbind.Redirect("/sign-in")
+```
+
+`WriteError` turns those into a 404 and a 303 with a `Location`. A component's
+own leading bindings run while the chain is assembled, before the shell writes,
+so the status is still free.
+
+Driving generation through the generator command fills this too. Calling the
+compiler yourself, it is `GenerateOptions.ErrorExternals`, beside the context
+map:
+
+```go
+out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
+	ContextExternals: map[string]bool{"RequestID": true},
+	ErrorExternals:   map[string]bool{"LoadRecord": true},
+})
+```
+
+Leaving it empty is not a silent downgrade to something that works: the template
+binds a one-result call against a two-result Go function, and the generated file
+does not compile. `templates/sqlbind` takes the same field for SQL statements.
+
+**Reading what generation wants to tell you.** `routetree.GenerateTree` returns
+`Result.Deprecations`, one entry per route with a path and a message. Nothing is
+logged or printed — you own the output, so you own how a warning reaches whoever
+ran the build. The typed `Load` rung is reported there today.
+
 **Return a fragment, not a string, when the value is markup.** An external
 declared `: html` renders as a subtree rather than as escaped text or trusted
 raw bytes — so a framework can return a whole element instead of a bare value,

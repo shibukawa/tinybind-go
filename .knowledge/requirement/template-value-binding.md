@@ -101,6 +101,11 @@ typing:
     difference_from_async: an async failure is the boundary's and a recover clause may absorb it; a synchronous one has no boundary, so it ends the render and reaches the caller
     nested_call_refused: only the outermost call of a binding's value qualifies, so a failing external as an argument to another call is refused with the same diagnostic
     nothing_written_first: the value is computed before the body renders, so a failure leaves the bound subtree absent rather than half-rendered
+    caller_scope:
+      rule: the detection reaches the compiler through GenerateOptions.ErrorExternals on both formats, so this holds only where the caller fills it, exactly as requirement:render-context-externals caller_scope records for the context map
+      filled_by: the generator on both template paths, and routetree for a route package
+      not_a_silent_downgrade: an unfilled map does not fall back to something that works; the template binds a one-result call against a two-result Go function and the generated file does not compile
+      documented: the framework-facilities guide, beside the context map it sits next to in the options struct
     error_carries_intent: the render path wraps nothing, so the error reaches the caller as the value the external returned; an error carrying HTTP intent, as requirement:redirect-error defines one, is recognizable by api:write-error with no change here
     position_decides_whether_it_can_be_a_status: decision:value-binding-hoisting; a chain member's top-level bindings run during assembly with nothing written, wherever in the block they are written, and a binding inside an element still fails after that element's opening tag
   attribute_position: refused by name, per decision:value-binding-form attribute_context; requirement:template-v1-scope excludes block control inside attribute values and a binding has a body even without a closer

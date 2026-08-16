@@ -110,6 +110,44 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 })
 ```
 
+**失敗しうるローダーは末尾に error を宣言します。** 同じスキャンが検出し、テンプ
+レート側の宣言はどちらでも変わりません。
+
+```go
+func LoadRecord(id string) (Record, error) { ... }
+```
+
+この関数は `{val}` の値そのものにしか書けません。失敗を外へ運べる lowering を持つ
+唯一の位置だからです。ステータスヘルパーを返せば、ページが自分で応答を決めます。
+
+```go
+return Record{}, httpbind.NotFound(httpbind.Problem{Code: "absent"})
+return Record{}, httpbind.Redirect("/sign-in")
+```
+
+`WriteError` が前者を 404 に、後者を `Location` 付きの 303 にします。component
+自身の先頭の束縛はチェーンの組み立て中、シェルが書き出す前に走るので、ステータスは
+まだ自由です。
+
+generator コマンド経由ならこれも埋まります。コンパイラを直接呼ぶ場合は
+`GenerateOptions.ErrorExternals` で、context のマップと並びます。
+
+```go
+out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
+	ContextExternals: map[string]bool{"RequestID": true},
+	ErrorExternals:   map[string]bool{"LoadRecord": true},
+})
+```
+
+空のままにしても、動く形に静かに落ちるわけではありません。テンプレートは戻り値 1 つ
+の呼び出しを 2 つ返す Go 関数に対して生成するので、**生成ファイルがコンパイルできま
+せん**。`templates/sqlbind` も SQL statement 用に同じフィールドを取ります。
+
+**生成側が伝えたいことを読む。** `routetree.GenerateTree` は `Result.Deprecations`
+を返します。ルートごとにパスとメッセージが 1 件です。ログにも標準出力にも出しません
+——出力はあなたのものなので、警告をビルドの実行者にどう届けるかもあなたのものです。
+今日は typed な `Load` の段がここに報告されます。
+
 **値が markup なら文字列ではなく fragment を返してください。** `: html` と宣言し
 た external は、エスケープされたテキストでも信頼された生バイト列でもなく、部分木
 として描画されます。つまりフレームワークはトークンだけでなく hidden input 全体を
