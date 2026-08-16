@@ -582,6 +582,22 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				}
 				scope[binding.Name] = e.c.exprTypes[binding.Value]
 			}
+		case *CheckNode:
+			// The builder already returns an error, so a check needs no plumbing
+			// of its own: the statement stops being built where the directive
+			// stands, and the caller sees the check's own error.
+			code, err := e.expr(n.Call, scope)
+			if err != nil {
+				return err
+			}
+			// A declared result is dropped on the floor. The template asked
+			// whether the call failed, so the error is taken and the value it
+			// came with is not.
+			if e.c.exprTypes[n.Call].kind == kindNone {
+				e.line("if err := " + code + "; err != nil { return err }")
+			} else {
+				e.line("if _, err := " + code + "; err != nil { return err }")
+			}
 		case *IfNode:
 			condition, err := e.expr(n.Condition, scope)
 			if err != nil {

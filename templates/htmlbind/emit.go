@@ -633,6 +633,10 @@ func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
 			if err := e.emitValOp(p, node); err != nil {
 				return err
 			}
+		case *syntax.CheckNode:
+			if err := e.emitCheckOp(p, node); err != nil {
+				return err
+			}
 		case *syntax.MessageBlockNode:
 			if err := e.emitMessageBlockOp(p, node); err != nil {
 				return err
@@ -1247,6 +1251,30 @@ func (e *goEmitter) emitValBinding(p *planEmitter, node *syntax.ValNode, index i
 		op, closureParams(p.scope.goType, withContext), results, returns,
 		receiverIdent, p.scope.goType, goType(t), scopeType, scopeType, receiverIdent, field,
 		indentBlock(body.literal(), "\t")))
+	return nil
+}
+
+// emitCheckOp lowers one check directive to a Require instruction: it runs
+// where it stands, writes nothing, and ends the render when the call fails.
+//
+// The instruction needs no scope struct and no body, because the directive binds
+// no name. Normalization has already put it at the top of its block, which is
+// what leaves the response status free for the error to choose.
+func (e *goEmitter) emitCheckOp(p *planEmitter, node *syntax.CheckNode) error {
+	call, err := e.exprCode(node.Call, p.scope)
+	if err != nil {
+		return err
+	}
+	// A declared result is dropped on the floor. The template asked whether the
+	// call failed, so the error is taken and the value it came with is not.
+	body := "return " + call
+	if e.c.exprTypes[node.Call].kind != kindNone {
+		body = "_, err := " + call + "; return err"
+	}
+	p.flush()
+	withContext := e.usesRenderContext(node.Call)
+	p.op(fmt.Sprintf("%s(func(%s) error { %s })",
+		ctxOp("Require", withContext), closureParams(p.scope.goType, withContext), body))
 	return nil
 }
 

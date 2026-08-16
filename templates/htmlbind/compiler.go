@@ -34,6 +34,11 @@ const (
 	kindTrustedJS   valueKind = "trusted_javascript"
 	kindScriptJSON  valueKind = "script_json"
 	kindError       valueKind = "error"
+	// kindNone is the result of an external declared without one: a call whose
+	// whole answer is whether it failed. resolveType never produces it, because
+	// no type name spells it; it comes from the absence of the type clause, and
+	// a check directive is the one position that accepts it.
+	kindNone valueKind = "none"
 )
 
 // errorFields are the presentation-safe fields an await recover clause may read.
@@ -278,6 +283,11 @@ type compiler struct {
 	// binding, because that is the only position whose lowering can carry the
 	// failure out; nested in a larger expression there is nowhere to put it.
 	valCall Expr
+	// checkCall is the call of the check directive being analyzed. It carries a
+	// failure out the way a binding's value does, and unlike a binding it also
+	// accepts a call that yields no value at all, which is the only position such
+	// a call has.
+	checkCall Expr
 	// awaitSource is the one expression currently allowed to evaluate to an
 	// async type. It is the binding source of the await clause being analyzed,
 	// so an async value read anywhere else is a local error with a position.
@@ -365,9 +375,15 @@ func (c *compiler) analyze() error {
 				}
 				sig.params = append(sig.params, t)
 			}
-			result, err := c.resolveType(declaration.Result)
-			if err != nil {
-				return err
+			// No result clause means no result: the function answers with an
+			// error or with nothing, which is what a check directive calls.
+			result := valueType{kind: kindNone}
+			if declaration.Result.Name != "" {
+				resolved, err := c.resolveType(declaration.Result)
+				if err != nil {
+					return err
+				}
+				result = resolved
 			}
 			if result.async {
 				return c.error(declaration.Pos, "external "+declaration.Name+" cannot return an async type; declare the function external async instead")
@@ -1007,6 +1023,10 @@ func (c *compiler) analyzeNodes(nodes []syntax.Node, scope map[string]valueType)
 			if err := c.analyzeVal(node, scope); err != nil {
 				return err
 			}
+		case *syntax.CheckNode:
+			if err := c.analyzeCheck(node, scope); err != nil {
+				return err
+			}
 		case *syntax.AwaitNode:
 			if err := c.analyzeAwait(node, scope); err != nil {
 				return err
@@ -1400,6 +1420,73 @@ func (c *compiler) analyzeVal(node *syntax.ValNode, scope map[string]valueType) 
 		}()
 	}
 	return c.analyzeNodes(node.Body, inner)
+}
+
+// analyzeCheck types one check directive: a call made for its error alone.
+//
+// It binds nothing, so the two rules a value binding needs — no shadowing, and
+// no unread name — have no subject here. What is left is the call itself, typed
+// in the one position that accepts a call with no result and, like a binding's
+// value, accepts a call that can fail.
+//
+// The result of a call that has one is discarded. The directive asks whether the
+// call failed, and a function that also answers something is still allowed to be
+// asked only that.
+func (c *compiler) analyzeCheck(node *syntax.CheckNode, scope map[string]valueType) error {
+	if call, ok := node.Call.(*CallExpr); ok {
+		if identifier, ok := call.Callee.(*IdentifierExpr); ok {
+			if sig, known := c.externals[identifier.Name]; known && (sig.async || sig.live) {
+				return c.error(node.Pos, identifier.Name+" is async; bind it in an await clause, which is the only place it can be called. A check runs before anything is written, and a boundary's failure lands after that")
+			}
+		}
+	}
+	outer := c.checkCall
+	c.checkCall = node.Call
+	t, err := c.infer(node.Call, scope)
+	c.checkCall = outer
+	if err != nil {
+		return err
+	}
+	// A call that cannot fail has nothing a check can ask it, and the two ways
+	// to arrive there want different answers: one has no outcome at all, and the
+	// other has an outcome this directive is the wrong way to read.
+	if !c.checkableCall(node.Call) {
+		name := checkedName(node.Call)
+		if t.kind == kindNone {
+			return c.error(node.Pos, name+" returns nothing at all, so a check has no outcome to read; give it an error result in Go")
+		}
+		return c.error(node.Pos, name+" returns a value and no error, so there is nothing to check; write {val name = "+name+"(...)} and read the name instead")
+	}
+	return nil
+}
+
+// checkedName is the callee a diagnostic names. parseCheck has already refused
+// anything that is not a call, so the fallback covers only a call through
+// something other than a plain name.
+func checkedName(expr Expr) string {
+	if call, ok := expr.(*CallExpr); ok {
+		if identifier, ok := call.Callee.(*IdentifierExpr); ok {
+			return identifier.Name
+		}
+	}
+	return "the checked call"
+}
+
+// checkableCall reports whether the checked call names an external whose Go
+// implementation returns an error. The scan that answers this is filled by the
+// generator and by routetree; a caller that fills neither map gets the
+// permissive reading, and a mismatch is a Go compile error at the generated call
+// site, exactly as it is for every other signature property.
+func (c *compiler) checkableCall(expr Expr) bool {
+	call, ok := expr.(*CallExpr)
+	if !ok {
+		return false
+	}
+	identifier, ok := call.Callee.(*IdentifierExpr)
+	if !ok {
+		return false
+	}
+	return c.errorExternals == nil || c.errorExternals[identifier.Name]
 }
 
 // beforePosition reports whether a comes before b in the source.
@@ -2084,8 +2171,15 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	// where the lowering can carry an error out, so nested in a larger
 	// expression there is nothing to carry it. An async external is excluded
 	// because its error is already the boundary's, recoverable at the clause.
-	if c.errorExternals[identifier.Name] && !sig.async && !sig.live && c.valCall != call {
+	//
+	// A check directive is the other position that can carry one out, and it is
+	// the only position a call with no result can occupy at all: everywhere else
+	// wants a value, and this call has none to give.
+	if c.errorExternals[identifier.Name] && !sig.async && !sig.live && c.valCall != call && c.checkCall != call {
 		return valueType{}, c.error(call.Pos, identifier.Name+" returns an error, so it can only be the whole value of a val binding; write {val name = "+identifier.Name+"(...)} and read the name here")
+	}
+	if sig.result.kind == kindNone && c.checkCall != call {
+		return valueType{}, c.error(call.Pos, identifier.Name+" declares no result, so it is not a value; write {check "+identifier.Name+"(...)} to call it for its error")
 	}
 	if len(call.Arguments) != len(sig.params) {
 		return valueType{}, c.error(call.Pos, fmt.Sprintf("%s expects %d arguments", identifier.Name, len(sig.params)))

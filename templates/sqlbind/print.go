@@ -154,6 +154,11 @@ func (b *docBuilder) elements(nodes []syntax.Node) ([]element, error) {
 				kind: atomNode, text: "{" + syntax.ValString(n) + "}",
 				depth: b.lexer.depth, spaced: b.takeSpace(), node: n,
 			}})
+		case *syntax.CheckNode:
+			out = append(out, element{atom: atom{
+				kind: atomNode, text: "{" + syntax.CheckString(n) + "}",
+				depth: b.lexer.depth, spaced: b.takeSpace(), node: n,
+			}})
 		default:
 			doc, err := b.control(node)
 			if err != nil {

@@ -209,6 +209,29 @@ if err != nil {
 経由なら自動です。コンパイラを直接呼ぶ場合は `GenerateOptions.ErrorExternals` で、
 空のままにすると戻り値 2 つの関数に対して 1 つの呼び出しを吐き、コンパイルできません。
 
+値を返さず、失敗だけを答える関数もあります。結果型を書かずに宣言して、`{check}` で
+呼びます。束縛のない `{val}` だと思ってください。
+
+```text
+external Validate(name: string)
+
+export statement FindUser(name: string): sql.many<UserRow> {
+{check Validate(name)}
+SELECT id, name FROM users WHERE name = {name}
+}
+```
+
+```go
+if err := Validate(name); err != nil {
+	return err
+}
+```
+
+ディレクティブ自体は SQL を 1 バイトも吐きません。1 つのディレクティブに 1 呼び出し
+で、結果型のない external はここ以外に書けません。この形は `ErrorExternals` を必要と
+しません——`{check}` と書いた時点で末尾の error が前提になるので、Go 側が error を
+返さなければ生成コードが普通のコンパイルエラーになります。
+
 ## 戻り件数の宣言
 
 | 出力型 | 契約 | 高レベル API の結果 |

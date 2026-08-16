@@ -292,6 +292,22 @@ type ValBinding struct {
 	Value Expr     `json:"value"`
 }
 
+// CheckNode calls an external for its error alone. It is a value binding minus
+// the binding: it is written without a closer, it is evaluated where a binding
+// of the same block would be, and a failure ends the render the same way.
+//
+// It has no Body, because it opens no scope. A binding needs a subtree so the
+// name it introduces has an extent; a check introduces nothing, so the nodes
+// after it are its siblings and stay that way through analysis and printing.
+type CheckNode struct {
+	Kind    string   `json:"kind"`
+	Pos     Position `json:"pos"`
+	Context string   `json:"context"`
+	Call    Expr     `json:"call"`
+}
+
+func (n *CheckNode) NodeType() string { return n.Kind }
+
 // ExprReads reports whether expr names an identifier. Both formats need it to
 // answer what a binding is worth: one that nothing reads called its external
 // for no one, which is a mistake in markup and a local Go could not compile in

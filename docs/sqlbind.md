@@ -213,6 +213,30 @@ The generator command does it for you; calling the compiler yourself, it is
 `GenerateOptions.ErrorExternals`. Leaving it empty emits a one-result call
 against a two-result function, which does not compile.
 
+Some functions answer with a failure and nothing else. Declare the external with
+no result type and call it with `{check}` — a `{val}` minus the binding:
+
+```text
+external Validate(name: string)
+
+export statement FindUser(name: string): sql.many<UserRow> {
+{check Validate(name)}
+SELECT id, name FROM users WHERE name = {name}
+}
+```
+
+```go
+if err := Validate(name); err != nil {
+	return err
+}
+```
+
+The directive contributes no SQL of its own. One call per directive, and a
+value-less external has nowhere else it can be written. This form needs no
+`ErrorExternals` entry: writing `{check}` is what asserts the trailing error, so
+a Go function that returns none is an ordinary compile error at the generated
+call site.
+
 ## Declaring result cardinality
 
 | Output | Contract | High-level result |

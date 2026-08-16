@@ -143,6 +143,14 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 の呼び出しを 2 つ返す Go 関数に対して生成するので、**生成ファイルがコンパイルできま
 せん**。`templates/sqlbind` も SQL statement 用に同じフィールドを取ります。
 
+**check はどちらのマップも要りません。** 結果型を書かずに宣言した external ——
+`{check Authorize(user)}` が呼ぶ形 —— は error だけを答え、そう宣言しているのは
+ディレクティブ自身です。lowering がテンプレートの宣言だけで決まるので、
+`ErrorExternals` の有無にかかわらず、テンプレートをコンパイルするどの経路でも同じ
+意味になります。Go 側が error を返さなければ、生成された呼び出し位置で普通の
+コンパイルエラーになるだけです。HTML では `Require` 命令に落ち、何も書かずに組み立て
+中に走るので、拒否はローダーの失敗とまったく同じようにレスポンスを選びます。
+
 **生成側が伝えたいことを読む。** `routetree.GenerateTree` は `Result.Deprecations`
 を返します。ルートごとにパスとメッセージが 1 件です。ログにも標準出力にも出しません
 ——出力はあなたのものなので、警告をビルドの実行者にどう届けるかもあなたのものです。

@@ -107,6 +107,7 @@ typing:
       not_a_silent_downgrade: an unfilled map does not fall back to something that works; the template binds a one-result call against a two-result Go function and the generated file does not compile
       documented: the framework-facilities guide, beside the context map it sits next to in the options struct
     error_carries_intent: the render path wraps nothing, so the error reaches the caller as the value the external returned; an error carrying HTTP intent, as requirement:redirect-error defines one, is recognizable by api:write-error with no change here
+    error_is_the_whole_answer: requirement:template-check-directive, proposed 2026-08-16, for a call that returns nothing else; it needs no ErrorExternals entry, because a check directive asserts the trailing error where a binding cannot
     position_decides_whether_it_can_be_a_status: decision:value-binding-hoisting; a chain member's top-level bindings run during assembly with nothing written, wherever in the block they are written, and a binding inside an element still fails after that element's opening tag
   attribute_position: refused by name, per decision:value-binding-form attribute_context; requirement:template-v1-scope excludes block control inside attribute values and a binding has a body even without a closer
   unread_binding:
@@ -120,6 +121,7 @@ typing:
     what_it_retired: the SQL blank-assignment path, which existed only to make an unread local compile; no unread binding reaches emission now
     what_it_makes_of_shadowing: a shadow whose outer binding is read nowhere else is an error, so deliberate shadowing stays legal and pointless shadowing does not
     escape_hatch: none, and none is wanted; a call worth making for its result is worth reading, and one worth making for its effect is already forbidden
+    a_call_with_no_result_is_a_third_thing: requirement:template-check-directive binds no name and reads its external for the error alone, so it has no discarded result for this rule to catch and the rule keeps its shape
 lowering:
   precondition: decision:value-binding-form desugaring has run, so the tree reaching analysis already nests the following siblings under the binding
   op: a Val form beside htmlbind For, minus iteration; value builds the bound value from the enclosing parameters, scope builds the child scope struct, body is the subtree's instruction list

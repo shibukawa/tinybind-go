@@ -46,13 +46,14 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head:     nil,
 	Boundary: planPageBoundary,
 	Ops: []htmlbind.Op[PageParams]{
+		planPageOps.Require(func(p PageParams) error { return RequireVisible(p.Id) }),
 		htmlbind.ValErrCtx(
 			func(ctx context.Context, p PageParams) (Record, error) { return LoadRecord(ctx, p.Id) },
 			func(p PageParams, value Record) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Record: value} },
 			[]htmlbind.Op[planPageOpsVal1]{
 				planPageOpsVal1Ops.Static(" <section"),
 				planPageOpsVal1Ops.BoundaryAttr(),
-				planPageOpsVal1Ops.Static(">  <h1>record "),
+				planPageOpsVal1Ops.Static(">   <h1>record "),
 				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Record.Title }),
 				planPageOpsVal1Ops.Static("</h1> <p>"),
 				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Record.Summary }),

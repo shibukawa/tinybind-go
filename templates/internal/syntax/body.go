@@ -120,6 +120,11 @@ func (c *BodyContext) ParseEmbedded(fragment Embedded, context string) (Node, *T
 		offset := headerOffset + strings.Index(trimmed, header)
 		node, err := c.parseVal(header, offset, pos, context)
 		return node, nil, err
+	case strings.HasPrefix(trimmed, "check "):
+		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "check "))
+		offset := headerOffset + strings.Index(trimmed, header)
+		node, err := c.parseCheck(header, offset, pos, context)
+		return node, nil, err
 	case strings.HasPrefix(trimmed, "if "):
 		header := strings.TrimSpace(strings.TrimPrefix(trimmed, "if "))
 		offset := headerOffset + strings.Index(trimmed, header)
@@ -404,6 +409,28 @@ func (c *BodyContext) parseVal(header string, headerOffset int, pos Position, co
 		return nil, c.ErrorAt(headerOffset, "val needs at least one binding")
 	}
 	return node, nil
+}
+
+// parseCheck reads one call made for its error alone.
+//
+// One call per directive, where a val takes a comma list. A comma list buys
+// several names on one line, and a check introduces no name, so a second call
+// is a second directive and the source says so.
+func (c *BodyContext) parseCheck(header string, headerOffset int, pos Position, context string) (*CheckNode, error) {
+	if parts := splitTopLevel(header, ','); len(parts) > 1 {
+		return nil, c.ErrorAt(headerOffset, "check takes one call; write a second {check} rather than a comma list, because a check binds no name to share the line with")
+	}
+	call, err := ParseExpressionAt(c.filename, header, headerOffset, c.Position(headerOffset))
+	if err != nil {
+		return nil, err
+	}
+	// Refused here rather than by typing, because the position wants a call
+	// whatever the callee turns out to be: a field path or a literal has no
+	// error to check, and saying so against the syntax names the mistake.
+	if _, ok := call.(*CallExpr); !ok {
+		return nil, c.ErrorAt(headerOffset, "check syntax is {check Name(...)}; it calls an external for its error and has nothing to do with a value")
+	}
+	return &CheckNode{Kind: "template:check", Pos: pos, Context: context, Call: call}, nil
 }
 
 // parseAwait reads one boundary. The clause binds its own asynchronous calls,

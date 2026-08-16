@@ -135,6 +135,11 @@ func ValString(n *ValNode) string {
 	return "val " + strings.Join(parts, ", ")
 }
 
+// CheckString renders a check directive without the braces the format owns. Like
+// a value binding it is a leaf with no closer, so the nodes after it stay where
+// the author put them.
+func CheckString(n *CheckNode) string { return "check " + ExprString(n.Call) }
+
 // MessageString renders a message reference as written, without the braces the
 // format owns. It prints the authored id rather than the resolved one, because
 // printing back a template must not rewrite what the author chose to qualify.

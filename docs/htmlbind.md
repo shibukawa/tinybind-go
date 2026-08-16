@@ -904,6 +904,55 @@ The difference is where the failure lands: an async one is the boundary's and a
 `recover` clause can absorb it, while a synchronous one has no boundary and ends
 the render.
 
+### A call made only to fail
+
+Some calls answer nothing. An authorization test, a precondition — what you want
+back is whether rendering may continue, and there is no value to name. Declare
+the external with no result type and write `{check}`:
+
+```text
+external Authorize(user: User)
+```
+
+```go
+func Authorize(user User) error { ... }
+```
+
+```text
+{check Authorize(user)}
+<h1>{user.name}</h1>
+```
+
+A check is a `{val}` minus the binding. It has no closer, it is evaluated where a
+binding of the same block would be, and its failure ends the render the same way
+— so, written outside any control block, it chooses the response exactly as a
+loader does. Order is what you wrote: a check before a binding runs before it, so
+a refused request never reaches the loader; a check after one can read the name.
+
+One call per directive. A comma list buys several names on one line, and a check
+binds no name to share the line with, so a second call is a second `{check}`.
+
+A value-less external has nowhere else to go, and saying so names the position:
+
+```text
+<h1>{Authorize(user)}</h1>
+```
+
+```text
+Authorize declares no result, so it is not a value; write {check Authorize(...)}
+to call it for its error
+```
+
+The reverse is allowed: `{check LoadData(id)}` calls a function that also returns
+a value and drops it, because the directive asked whether the call failed and
+nothing else. There is no async form — a boundary's failure lands after the
+response is committed, which is the one thing a check must beat.
+
+A check inside a `@cache`d component is part of what the cache stores, so a hit
+skips it exactly as it skips the loader beside it. That is right for a check that
+reads only its declared parameters and wrong for one that reads the request, and
+it is the same rule that already governs what a cached component may depend on.
+
 ### Choosing the response
 
 A page's own loader can answer for the whole request. Return one of the status

@@ -501,11 +501,34 @@ func Require[P any](check func(P) error) Op[P] { return Builder[P]{}.Require(che
 // boundary goroutine that runs after the response is already committed.
 func (Builder[P]) Require(check func(P) error) Op[P] { return requireOp[P]{check: check} }
 
+// RequireCtx is Require for a check that needs the render context, which is
+// what a template's check directive lowers to when the external's Go
+// implementation declares a leading context.Context.
+func (Builder[P]) RequireCtx(check func(context.Context, P) error) Op[P] {
+	return requireCtxOp[P]{check: check}
+}
+
 type requireOp[P any] struct {
 	check func(P) error
 }
 
+// sequenceInline contributes no node at all. The op runs once and writes
+// nothing, so it has neither a body to splice nor output to stand for; without
+// this it would fall through to an opaque SeqSlot, and a slot consumes one value
+// during reassembly that this op never produced.
+func (o requireOp[P]) sequenceInline() []SeqNode { return nil }
+
 func (o requireOp[P]) Exec(_ *Renderer, params P) error { return o.check(params) }
+
+type requireCtxOp[P any] struct {
+	check func(context.Context, P) error
+}
+
+func (o requireCtxOp[P]) sequenceInline() []SeqNode { return nil }
+
+func (o requireCtxOp[P]) Exec(r *Renderer, params P) error {
+	return o.check(r.boundaryContext(), params)
+}
 
 // Await opens an await boundary. resolve runs the clause's bindings and builds
 // the primary subtree's scope; recovery builds the recover subtree's scope from
@@ -1222,14 +1245,44 @@ type preparable[P any] interface {
 	prepare(ctx context.Context, params P) (Op[P], error)
 }
 
+// preparableInPlace is implemented by an instruction that runs to completion
+// during assembly and swallows none of the list it stands in. A check is the
+// one such instruction: it opens no scope, so the siblings after it are still
+// leading instructions and are still worth preparing.
+type preparableInPlace[P any] interface {
+	prepareInPlace(ctx context.Context, params P) (Op[P], error)
+}
+
 // prepareOps computes the leading preparable instructions of one list. It stops
 // at the first instruction that is not preparable, because everything after
 // that point runs after something has been written and has nothing to gain.
 //
 // A value binding's body is prepared too, since consecutive bindings compile to
-// a nest and a chain member's loaders are usually more than one.
+// a nest and a chain member's loaders are usually more than one. A binding ends
+// the walk of this list because it nested the rest of the list inside itself; a
+// check does not, so the walk goes on past it and the loader written after a
+// guard is still prepared.
 func prepareOps[P any](ctx context.Context, params P, ops []Op[P]) ([]Op[P], error) {
+	prepared, copied := ops, false
+	// The list is copied on the first replacement and not before, so a plan with
+	// nothing to prepare hands back the one it was given.
+	replace := func(i int, op Op[P]) {
+		if !copied {
+			prepared = make([]Op[P], len(ops))
+			copy(prepared, ops)
+			copied = true
+		}
+		prepared[i] = op
+	}
 	for i, op := range ops {
+		if inPlace, ok := op.(preparableInPlace[P]); ok {
+			replacement, err := inPlace.prepareInPlace(ctx, params)
+			if err != nil {
+				return nil, err
+			}
+			replace(i, replacement)
+			continue
+		}
 		ready, ok := op.(preparable[P])
 		if !ok {
 			// Static output carries no failure and blocks nothing, so a leading
@@ -1237,18 +1290,16 @@ func prepareOps[P any](ctx context.Context, params P, ops []Op[P]) ([]Op[P], err
 			if _, isStatic := op.(staticOp[P]); isStatic {
 				continue
 			}
-			return ops, nil
+			return prepared, nil
 		}
 		replacement, err := ready.prepare(ctx, params)
 		if err != nil {
 			return nil, err
 		}
-		prepared := make([]Op[P], len(ops))
-		copy(prepared, ops)
-		prepared[i] = replacement
+		replace(i, replacement)
 		return prepared, nil
 	}
-	return ops, nil
+	return prepared, nil
 }
 
 // valPreparedOp is a value binding whose value is already computed. It carries
@@ -1286,6 +1337,32 @@ func (o valErrCtxOp[P, V, S]) prepare(ctx context.Context, params P) (Op[P], err
 	}
 	return prepareVal[P, S](ctx, o.scope(params, value), o.body)
 }
+
+// prepareInPlace runs the check during assembly, where a refusal can still
+// choose the response status. What is left to run is nothing, and the walk
+// continues to the siblings the check did not enclose.
+func (o requireOp[P]) prepareInPlace(_ context.Context, params P) (Op[P], error) {
+	if err := o.check(params); err != nil {
+		return nil, err
+	}
+	return checkedOp[P]{}, nil
+}
+
+func (o requireCtxOp[P]) prepareInPlace(ctx context.Context, params P) (Op[P], error) {
+	if err := o.check(ctx, params); err != nil {
+		return nil, err
+	}
+	return checkedOp[P]{}, nil
+}
+
+// checkedOp is a check that already answered during assembly. It writes nothing
+// and contributes no sequence node, exactly as the check it replaces does, so a
+// prepared plan and an unprepared one decompose the same way.
+type checkedOp[P any] struct{}
+
+func (checkedOp[P]) sequenceInline() []SeqNode { return nil }
+
+func (checkedOp[P]) Exec(*Renderer, P) error { return nil }
 
 // prepareVal finishes one binding and continues into its body, so a nest of
 // bindings is computed in one pass.

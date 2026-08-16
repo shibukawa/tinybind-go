@@ -72,7 +72,11 @@ func scanBoundaryRoot(nodes []Node, root *ElementNode) (*ElementNode, bool) {
 			if strings.TrimSpace(node.Text) != "" {
 				return nil, false
 			}
-		case *CommentNode, *DoctypeNode, *HeadNode:
+		// A check renders nothing and opens no body, so it is stepped over
+		// outright. It hoists to the top of its block for the same reason a
+		// binding does, which puts it in front of the root element that used to
+		// be first.
+		case *CommentNode, *DoctypeNode, *HeadNode, *CheckNode:
 		case *ValNode:
 			// Every depth, not one level: normalization nests one node per bound
 			// name, so a block binding twice is this case twice.
