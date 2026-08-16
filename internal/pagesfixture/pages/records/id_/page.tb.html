@@ -1,5 +1,6 @@
 export component Page(id: string): html {
   <section>
+    {check RequireVisible(id)}
     {val record = LoadRecord(id)}
     <h1>record {record.title}</h1>
     <p>{record.summary}</p>
@@ -7,6 +8,8 @@ export component Page(id: string): html {
 }
 
 external LoadRecord(id: string): Record
+
+external RequireVisible(id: string)
 
 type Record {
   title: string

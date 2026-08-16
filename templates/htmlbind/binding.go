@@ -29,6 +29,15 @@ func (c *compiler) normalizeBindings(nodes []Node) ([]Node, error) {
 		return nil, err
 	}
 	for i := len(hoisted) - 1; i >= 0; i-- {
+		// A check opens no scope, so it is put back as a sibling rather than
+		// wrapped around what follows. Rebuilding from the end is what keeps the
+		// written order: a check before a binding stays before it and runs first,
+		// and one after it lands inside that binding's subtree and can read the
+		// name.
+		if check := hoisted[i].check; check != nil {
+			body = append([]Node{check}, body...)
+			continue
+		}
 		body = []Node{&syntax.ValNode{
 			Kind:     "template:val",
 			Pos:      hoisted[i].binding.Pos,
@@ -40,8 +49,11 @@ func (c *compiler) normalizeBindings(nodes []Node) ([]Node, error) {
 	return body, nil
 }
 
+// hoistedBinding is one directive lifted to the top of its block: either one
+// value binding or one check, never both.
 type hoistedBinding struct {
 	binding syntax.ValBinding
+	check   *syntax.CheckNode
 	context string
 }
 
@@ -59,6 +71,14 @@ func (c *compiler) stripBindings(nodes []Node, into *[]hoistedBinding) ([]Node, 
 			for _, binding := range value.Bindings {
 				*into = append(*into, hoistedBinding{binding: binding, context: value.Context})
 			}
+			continue
+		}
+		// A check hoists for the reason a binding does rather than for the reason
+		// a binding must: nothing forces it out of the markup it was written in,
+		// but a refusal is only worth writing where it can still refuse, and that
+		// is before the block's first byte.
+		if check, ok := node.(*syntax.CheckNode); ok {
+			*into = append(*into, hoistedBinding{check: check, context: check.Context})
 			continue
 		}
 		for _, list := range controlChildLists(node) {
@@ -117,6 +137,13 @@ func valueRead(nodes []Node, name string) bool {
 				if syntax.ExprReads(binding.Value, name) {
 					return true
 				}
+			}
+		case *syntax.CheckNode:
+			// A check is a reader like any other. Without this a binding read only
+			// by a check would be reported unread, and the author would be told to
+			// remove the loader the check exists to inspect.
+			if syntax.ExprReads(node.Call, name) {
+				return true
 			}
 		case *syntax.AwaitNode:
 			for _, binding := range node.Bindings {

@@ -133,6 +133,11 @@ func ValString(n *ValNode) string {
 	return "val " + strings.Join(parts, ", ")
 }
 
+// CheckString renders a check directive without the braces the format owns. Like
+// a value binding it is a leaf with no closer, so the nodes after it stay where
+// the author put them.
+func CheckString(n *CheckNode) string { return "check " + ExprString(n.Call) }
+
 // ControlOpen renders the opening marker of a shared control node, without the
 // braces the format owns. It reports false for a node that is not a control
 // node.

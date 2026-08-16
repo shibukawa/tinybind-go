@@ -34,6 +34,7 @@ type AwaitNode = syntax.AwaitNode
 type AwaitBinding = syntax.AwaitBinding
 type ValNode = syntax.ValNode
 type ValBinding = syntax.ValBinding
+type CheckNode = syntax.CheckNode
 type Annotation = syntax.Annotation
 
 type Node = syntax.Node

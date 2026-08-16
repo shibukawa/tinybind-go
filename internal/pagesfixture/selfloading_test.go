@@ -54,6 +54,25 @@ func TestASelfLoadingRouteChoosesItsOwnResponse(t *testing.T) {
 	}
 }
 
+// A check answers with an error and nothing else, and it answers before the
+// loader runs, because it is written before the binding. The response it picks
+// is its own error's, on the same terms as a failing loader's: nothing has been
+// written when it refuses.
+func TestACheckRefusesBeforeTheLoaderRuns(t *testing.T) {
+	rec := get(t, serveMux(), "/records/hidden")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "<h1>record") {
+		t.Fatalf("the page rendered before its check refused: %s", rec.Body)
+	}
+	// The id the check refuses is one the loader would have answered, so a
+	// rendered page here would mean the check never ran.
+	if allowed := get(t, serveMux(), "/records/seven"); allowed.Code != http.StatusOK {
+		t.Fatalf("an allowed id no longer renders: %d %s", allowed.Code, allowed.Body)
+	}
+}
+
 // Loading its own data must not cost the page its update boundary.
 //
 // Reported by the framework 2026-08-14: hoisting moves a binding in front of

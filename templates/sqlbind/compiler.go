@@ -27,6 +27,10 @@ const (
 	kindEnum      valueKind = "enum"
 	kindArray     valueKind = "array"
 	kindPredicate valueKind = "sql.predicate"
+	// kindNone is the result of an external declared without one: a call whose
+	// whole answer is whether it failed. resolveType never produces it, and a
+	// check directive is the one position that accepts it.
+	kindNone valueKind = "none"
 )
 
 type valueType struct {
@@ -82,6 +86,10 @@ type compiler struct {
 	// failing call has to be the whole value of a binding, because that is the
 	// only position the emitter can put an error check beside.
 	valValue Expr
+	// checkCall is the call of the check directive being analyzed. It carries a
+	// failure out the way a binding's value does, and unlike a binding it also
+	// accepts a call that yields no value at all.
+	checkCall Expr
 }
 
 type CompileError struct {
@@ -148,9 +156,15 @@ func (c *compiler) analyze() error {
 				}
 				sig.params = append(sig.params, t)
 			}
-			result, err := c.resolveType(d.Result)
-			if err != nil {
-				return err
+			// No result clause means no result: the function answers with an
+			// error or with nothing, which is what a check directive calls.
+			result := valueType{kind: kindNone}
+			if d.Result.Name != "" {
+				resolved, err := c.resolveType(d.Result)
+				if err != nil {
+					return err
+				}
+				result = resolved
 			}
 			sig.result = result
 			c.externals[d.Name] = sig
@@ -338,6 +352,27 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 				}
 				scope[binding.Name] = t
 			}
+		case *CheckNode:
+			// A check binds nothing, so the shadowing and unread rules a binding
+			// needs have no subject here. What is left is the call, typed in the
+			// one position that accepts a call with no result and, like a
+			// binding's value, accepts one that can fail.
+			outerCheck := c.checkCall
+			c.checkCall = n.Call
+			t, err := c.infer(n.Call, scope)
+			c.checkCall = outerCheck
+			if err != nil {
+				return err
+			}
+			// A call that cannot fail has nothing a check can ask it, and the
+			// two ways to arrive there want different answers.
+			if !c.checkableCall(n.Call) {
+				name := checkedName(n.Call)
+				if t.kind == kindNone {
+					return c.error(n.Pos, name+" returns nothing at all, so a check has no outcome to read; give it an error result in Go")
+				}
+				return c.error(n.Pos, name+" returns a value and no error, so there is nothing to check; write {val name = "+name+"(...)} and read the name instead")
+			}
 		case *ForNode:
 			return c.error(n.Pos, "general SQL loops are forbidden; bind an array expression to expand a value list")
 		default:
@@ -345,6 +380,35 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 		}
 	}
 	return nil
+}
+
+// checkedName is the callee a diagnostic names. parseCheck has already refused
+// anything that is not a call, so the fallback covers only a call through
+// something other than a plain name.
+func checkedName(expr Expr) string {
+	if call, ok := expr.(*CallExpr); ok {
+		if id, ok := call.Callee.(*IdentifierExpr); ok {
+			return id.Name
+		}
+	}
+	return "the checked call"
+}
+
+// checkableCall reports whether the checked call names an external whose Go
+// implementation returns an error. The scan that answers this is filled by the
+// generator; a caller that fills nothing gets the permissive reading, and a
+// mismatch is a Go compile error at the generated call site, exactly as it is
+// for every other signature property.
+func (c *compiler) checkableCall(expr Expr) bool {
+	call, ok := expr.(*CallExpr)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*IdentifierExpr)
+	if !ok {
+		return false
+	}
+	return c.errorExternals == nil || c.errorExternals[id.Name]
 }
 
 // valueRead reports whether anything in a binding's extent reads name. The
@@ -379,6 +443,12 @@ func valueRead(nodes []Node, name string) bool {
 				if syntax.ExprReads(binding.Value, name) {
 					return true
 				}
+			}
+		case *CheckNode:
+			// A check is a reader like any other, so a binding inspected by one
+			// and nothing else is read.
+			if syntax.ExprReads(n.Call, name) {
+				return true
 			}
 		}
 	}
@@ -538,8 +608,15 @@ func (c *compiler) inferCall(call *CallExpr, scope map[string]valueType) (valueT
 	// A failing external has one legal position: the whole value of a binding,
 	// which is where emission can put the error check beside the assignment.
 	// Nested in a larger expression there is nothing to check.
-	if c.errorExternals[id.Name] && c.valValue != call {
+	//
+	// A check directive is the other position that can carry one out, and it is
+	// the only position a call with no result can occupy at all: everywhere else
+	// wants a value, and this call has none to give.
+	if c.errorExternals[id.Name] && c.valValue != call && c.checkCall != call {
 		return valueType{}, c.error(call.Pos, id.Name+" returns an error, so it can only be the whole value of a val binding; write {val name = "+id.Name+"(...)} and read the name here")
+	}
+	if sig.result.kind == kindNone && c.checkCall != call {
+		return valueType{}, c.error(call.Pos, id.Name+" declares no result, so it is not a value; write {check "+id.Name+"(...)} to call it for its error")
 	}
 	if len(call.Arguments) != len(sig.params) {
 		return valueType{}, c.error(call.Pos, fmt.Sprintf("%s expects %d arguments", id.Name, len(sig.params)))

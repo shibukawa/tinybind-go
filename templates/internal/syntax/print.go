@@ -404,7 +404,13 @@ func (m *modulePrinter) externalDecl(d *ExternalDecl) {
 	case d.Live:
 		head += "live "
 	}
-	m.p.Write(head + d.Name + parameterList(d.Parameters) + ": " + TypeRefString(d.Result))
+	line := head + d.Name + parameterList(d.Parameters)
+	// A declaration with no result type round-trips without one; writing the
+	// colon back would print a type the author did not name.
+	if d.Result.Name != "" {
+		line += ": " + TypeRefString(d.Result)
+	}
+	m.p.Write(line)
 	m.p.Line()
 }
 

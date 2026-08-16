@@ -156,6 +156,15 @@ Leaving it empty is not a silent downgrade to something that works: the template
 binds a one-result call against a two-result Go function, and the generated file
 does not compile. `templates/sqlbind` takes the same field for SQL statements.
 
+**A check needs neither map.** An external declared with no result type — the
+shape a `{check Authorize(user)}` directive calls — answers with an error and
+nothing else, and the directive is what says so. Its lowering follows from the
+template declaration alone, so it means the same thing through every path that
+compiles a template, with or without `ErrorExternals`. A Go function that returns
+no error is an ordinary compile error at the generated call site. In HTML it
+lowers to a `Require` instruction, which writes nothing and runs during assembly,
+so a refusal chooses the response exactly as a failing loader does.
+
 **Reading what generation wants to tell you.** `routetree.GenerateTree` returns
 `Result.Deprecations`, one entry per route with a path and a message. Nothing is
 logged or printed — you own the output, so you own how a warning reaches whoever

@@ -357,12 +357,17 @@ func (p *moduleParser) parseExternalDecl(start int) (*ExternalDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := p.expect(':'); err != nil {
-		return nil, err
-	}
-	result, err := p.parseTypeRef()
-	if err != nil {
-		return nil, err
+	// A missing result type is the declaration a check directive calls: the
+	// function answers with an error or it answers with nothing, so there is no
+	// type to name. Result stays zero, and every format reads an empty Name as
+	// "no result" rather than as a type it failed to resolve.
+	var result TypeRef
+	if p.accept(':') {
+		if result, err = p.parseTypeRef(); err != nil {
+			return nil, err
+		}
+	} else if async || live {
+		return nil, p.errAt(start, "external "+name+" must declare a result type; a call with no result is checked rather than awaited, and a check has no async form because a boundary's failure lands after the response is committed")
 	}
 	p.optionalSemicolon()
 	return &ExternalDecl{Kind: "template:external", Pos: positionAt(p.source, start), Name: name, Async: async, Live: live, Parameters: params, Result: result}, nil

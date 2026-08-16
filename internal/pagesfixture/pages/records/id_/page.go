@@ -12,6 +12,23 @@ import (
 	httpbind "github.com/shibukawa/tinybind-go"
 )
 
+// RequireVisible answers whether this record may be rendered at all, and
+// answers with nothing else. It is the shape a check directive calls: no result
+// type in the template, an error alone in Go.
+//
+// Written before the binding, it runs before it, so a refused id never reaches
+// the loader — and because nothing has been written yet, its error still picks
+// the response.
+func RequireVisible(id string) error {
+	if id == "hidden" {
+		return httpbind.Forbidden(httpbind.Problem{
+			Code:    "record_hidden",
+			Message: "record " + id + " is not visible",
+		})
+	}
+	return nil
+}
+
 // LoadRecord answers for one id. Record is declared in the template and emitted
 // beside this file, so the external's result type is the generated one.
 //

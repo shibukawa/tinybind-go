@@ -318,7 +318,7 @@ func rawTextElement(context string) string {
 var insertionKeywords = map[string]bool{
 	"if": true, "else": true, "for": true,
 	"await": true, "recover": true, "fallback": true,
-	"val": true,
+	"val": true, "check": true,
 }
 
 // rawInsertionAhead reports whether the brace at the parser position opens a
@@ -768,7 +768,7 @@ func isControl(value string) bool {
 	case strings.HasPrefix(value, "if "), strings.HasPrefix(value, "for "),
 		strings.HasPrefix(value, "await "), strings.HasPrefix(value, "else if "),
 		strings.HasPrefix(value, "recover "), strings.HasPrefix(value, "val "),
-		strings.HasPrefix(value, "/"):
+		strings.HasPrefix(value, "check "), strings.HasPrefix(value, "/"):
 		return true
 	}
 	return value == "else" || value == "fallback" || value == "recover"

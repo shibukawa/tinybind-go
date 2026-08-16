@@ -27,6 +27,7 @@ type IfNode = syntax.IfNode
 type ForNode = syntax.ForNode
 type ValNode = syntax.ValNode
 type ValBinding = syntax.ValBinding
+type CheckNode = syntax.CheckNode
 type ParseError = syntax.ParseError
 type Node = syntax.Node
 type Body = []Node
