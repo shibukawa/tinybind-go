@@ -61,14 +61,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageLatest, err := archive.Load(r.Context())
-			if err != nil {
-				httpbind.WriteError(w, r, err)
-				return
-			}
-			params := archive.PageParams{
-				Latest: pageLatest,
-			}
+			params := archive.PageParams{}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),
 			}
@@ -102,13 +95,8 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageName, err := id_1.Load(route.ID)
-			if err != nil {
-				httpbind.WriteError(w, r, err)
-				return
-			}
 			params := id_1.PageParams{
-				Name: pageName,
+				Id: route.ID,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),

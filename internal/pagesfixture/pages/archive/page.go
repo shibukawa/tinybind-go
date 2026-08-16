@@ -3,9 +3,9 @@
 //
 // Its reader is not in the path and not in the query: it is put on the context
 // before the handler runs, the way an authenticated session or a database pool
-// is. Both shapes that can reach it are exercised here — a synchronous external
-// called from the template, and the typed entry point — so neither has to drop
-// to the handler rung to read one value.
+// is. Both shapes that can reach it are exercised here — one read inline where
+// it is written, and one bound to a name — so neither has to drop to the
+// handler rung to read one value.
 package archive
 
 import "context"
@@ -31,8 +31,9 @@ func reader(ctx context.Context) string {
 // without travelling through this page's parameters.
 func CurrentReader(ctx context.Context) string { return reader(ctx) }
 
-// Load is the typed rung. The leading context is not a URL input, so it is not
-// one of the page's decoded parameters; everything after it would be.
-func Load(ctx context.Context) (string, error) {
-	return reader(ctx) + "'s latest memo", nil
+// LatestMemo is the same value bound to a name rather than read in place. It
+// declares the context for the same reason CurrentReader does, and the template
+// binds it with {val}, which is what the typed entry point used to be for.
+func LatestMemo(ctx context.Context) string {
+	return reader(ctx) + "'s latest memo"
 }

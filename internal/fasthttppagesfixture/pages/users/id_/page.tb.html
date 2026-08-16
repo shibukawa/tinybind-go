@@ -1,4 +1,7 @@
-export component Page(name: string, page: int?): html {
+external ReaderName(id: string): string
+
+export component Page(id: string, page: int?): html {
+  {val name = ReaderName(id)}
   <h1>user {name}</h1>
   {if page == null} <p>every page</p> {else} <p>page {page}</p> {/if}
   <button server-action="Rename" data-target="#name">rename</button>

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"go/format"
 	"sort"
-	"strings"
 
 	templatehtml "github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
@@ -268,17 +267,7 @@ func (e *Emitter) registryModel(tree *Tree, rootPackage string, analyses []Analy
 		}
 		needsRequest = true
 
-		fields, callArgs, callResults, err := pageBinding(route, analysis, model.Symbols)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		entry.PageFields = fields
-		if analysis.Page != nil && analysis.Page.Rung == RungTypedPage {
-			entry.Call = true
-			entry.CallArgs = callArgs
-			entry.CallResults = callResults
-		}
+		entry.PageFields = pageBinding(analysis)
 
 		for _, layout := range route.Layouts {
 			signature, ok := layouts[layout.RelDir]
@@ -386,54 +375,22 @@ func groupImports(head, tail []Import) []Import {
 	return out
 }
 
-// pageBinding works out how the page component's parameter struct is filled.
-//
-// At RungTemplateOnly every field comes from the decoded route. At
-// RungTypedPage the function's results supply them, and the decoded route
-// supplies the function's arguments instead.
-func pageBinding(route Route, analysis Analysis, symbols Symbols) (fields []ComposerArg, callArgs, callResults string, err error) {
-	component := analysis.Component
-	if analysis.Page == nil || analysis.Page.Rung != RungTypedPage {
-		for _, input := range component.Inputs {
-			// Two structs, two spellings. The decoded route is this package's,
-			// so its field is ExportedName and reads id as ID; the component's
-			// parameter struct is the template compiler's, which uppercases the
-			// first rune and reads it as Id. Using one name for both compiles
-			// only while no input is an initialism.
-			fields = append(fields, ComposerArg{
-				Field: templatehtml.FieldName(input.Name),
-				From:  "route." + ExportedName(input.Name),
-			})
-		}
-		return fields, "", "", nil
+// pageBinding fills the page component's parameter struct from the decoded
+// route. Every field comes from there: a page declares its inputs on the
+// component and loads what it needs with a {val} binding, so nothing is
+// threaded in from a Go entry point.
+func pageBinding(analysis Analysis) []ComposerArg {
+	var fields []ComposerArg
+	for _, input := range analysis.Component.Inputs {
+		// Two structs, two spellings. The decoded route is this package's, so
+		// its field is ExportedName and reads id as ID; the component's
+		// parameter struct is the template compiler's, which uppercases the
+		// first rune and reads it as Id. Using one name for both compiles only
+		// while no input is an initialism.
+		fields = append(fields, ComposerArg{
+			Field: templatehtml.FieldName(input.Name),
+			From:  "route." + ExportedName(input.Name),
+		})
 	}
-
-	if len(analysis.Page.Results) != len(component.Inputs) {
-		return nil, "", "", &Error{
-			Path: analysis.Page.File,
-			Message: fmt.Sprintf("func %s returns %d value(s) before the error, but component %s declares %d parameter(s)",
-				PageFuncName, len(analysis.Page.Results), component.Name, len(component.Inputs)),
-		}
-	}
-
-	args := make([]string, 0, len(analysis.Page.Params)+1)
-	// The context comes first because it is not one of the decoded inputs; the
-	// generated handler holds the request, so the call site reads it from there.
-	// How it is read is the transport's business: a request value that is
-	// already a context is passed as it stands.
-	if analysis.Page.TakesContext {
-		args = append(args, symbols.ContextOf(symbols.Request))
-	}
-	for _, param := range analysis.Page.Params {
-		args = append(args, "route."+ExportedName(param.Name))
-	}
-	names := make([]string, 0, len(component.Inputs)+1)
-	for _, input := range component.Inputs {
-		names = append(names, "page"+ExportedName(input.Name))
-	}
-	names = append(names, "err")
-	for i, input := range component.Inputs {
-		fields = append(fields, ComposerArg{Field: ExportedName(input.Name), From: names[i]})
-	}
-	return fields, strings.Join(args, ", "), strings.Join(names, ", ") + " := ", nil
+	return fields
 }

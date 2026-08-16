@@ -8,20 +8,30 @@ import (
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
-type PageParams struct {
+type PageParams struct{}
+
+type planPageOpsVal1 struct {
+	Outer  PageParams
 	Latest string
 }
+
+var planPageOpsVal1Ops = htmlbind.Builder[planPageOpsVal1]{}
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static(" <h1>archive for "),
-		planPageOps.TextCtx(func(ctx context.Context, p PageParams) string { return CurrentReader(ctx) }),
-		planPageOps.Static("</h1> <p>latest: "),
-		planPageOps.Text(func(p PageParams) string { return p.Latest }),
-		planPageOps.Static("</p> "),
+		htmlbind.ValCtx(
+			func(ctx context.Context, p PageParams) string { return LatestMemo(ctx) },
+			func(p PageParams, value string) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Latest: value} },
+			[]htmlbind.Op[planPageOpsVal1]{
+				planPageOpsVal1Ops.Static("  <h1>archive for "),
+				planPageOpsVal1Ops.TextCtx(func(ctx context.Context, p planPageOpsVal1) string { return CurrentReader(ctx) }),
+				planPageOpsVal1Ops.Static("</h1> <p>latest: "),
+				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Latest }),
+				planPageOpsVal1Ops.Static("</p> "),
+			}),
 	},
 }
 

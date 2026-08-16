@@ -3,37 +3,51 @@
 package id_
 
 import (
+	"context"
+
 	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 type PageParams struct {
-	Name string
+	Id   string
 	Page *int
 }
+
+type planPageOpsVal1 struct {
+	Outer PageParams
+	Name  string
+}
+
+var planPageOpsVal1Ops = htmlbind.Builder[planPageOpsVal1]{}
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static(" <h1>user "),
-		planPageOps.Text(func(p PageParams) string { return p.Name }),
-		planPageOps.Static("</h1> "),
-		planPageOps.If(func(p PageParams) bool { return (p.Page == nil) },
-			[]htmlbind.Op[PageParams]{
-				planPageOps.Static(" <p>every page</p> "),
-			},
-			[]htmlbind.Op[PageParams]{
-				planPageOps.Static(" <p>page "),
-				planPageOps.Raw(func(p PageParams) string {
-					if p.Page == nil {
-						return ""
-					}
-					return htmlbind.FormatInt(*(p.Page))
-				}),
-				planPageOps.Static("</p> "),
+		htmlbind.ValCtx(
+			func(ctx context.Context, p PageParams) string { return ReaderName(ctx, p.Id) },
+			func(p PageParams, value string) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Name: value} },
+			[]htmlbind.Op[planPageOpsVal1]{
+				planPageOpsVal1Ops.Static("  <h1>user "),
+				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Name }),
+				planPageOpsVal1Ops.Static("</h1> "),
+				planPageOpsVal1Ops.If(func(p planPageOpsVal1) bool { return (p.Outer.Page == nil) },
+					[]htmlbind.Op[planPageOpsVal1]{
+						planPageOpsVal1Ops.Static(" <p>every page</p> "),
+					},
+					[]htmlbind.Op[planPageOpsVal1]{
+						planPageOpsVal1Ops.Static(" <p>page "),
+						planPageOpsVal1Ops.Raw(func(p planPageOpsVal1) string {
+							if p.Outer.Page == nil {
+								return ""
+							}
+							return htmlbind.FormatInt(*(p.Outer.Page))
+						}),
+						planPageOpsVal1Ops.Static("</p> "),
+					}),
+				planPageOpsVal1Ops.Static(" <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> "),
 			}),
-		planPageOps.Static(" <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> "),
 	},
 }
 

@@ -8,15 +8,16 @@ import (
 	"github.com/shibukawa/tinygodriver/fasthttp"
 )
 
-// Load is the typed rung, opening with a context.Context. On this transport the
-// request value is itself a context, so the generated handler passes it as it
-// stands rather than calling a method that does not exist here.
-func Load(ctx context.Context, id string, page *int) (string, *int, error) {
+// ReaderName is the value the page renders, bound by the template. It declares
+// a leading context.Context and receives the render context; on this transport
+// the request value is itself a context, so the generated handler passes it as
+// it stands rather than calling a method that does not exist here.
+func ReaderName(ctx context.Context, id string) string {
 	name := strings.ToUpper(id)
 	if reader, ok := ctx.Value(readerKey{}).(string); ok {
 		name = name + " for " + reader
 	}
-	return name, page, nil
+	return name
 }
 
 type readerKey struct{}

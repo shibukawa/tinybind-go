@@ -115,63 +115,6 @@ func TestAnalyzeTemplateOnlyRejectsAnOptionalPathParameter(t *testing.T) {
 	}
 }
 
-func TestAnalyzeTypedPageUsesFunctionParameters(t *testing.T) {
-	route := routeDir(t, map[string]string{
-		"users/id_/page.tb.html": `
-type User { name: string }
-
-export component Page(user: User): html { <p>{user.name}</p> }
-`,
-		"users/id_/page.go": `package id_
-
-type User struct{ Name string }
-
-func Load(id string) (User, error) { return User{}, nil }
-`,
-	}, "/users/{id}")
-
-	analysis, err := Analyze(route)
-	if err != nil {
-		t.Fatalf("Analyze: %v", err)
-	}
-	if analysis.Page.Rung != RungTypedPage {
-		t.Fatalf("Rung = %v, want %v", analysis.Page.Rung, RungTypedPage)
-	}
-	// The decoder binds what the function takes, not what the component takes.
-	if len(analysis.Inputs) != 1 || analysis.Inputs[0].Name != "id" {
-		t.Errorf("Inputs = %+v, want the function parameters", analysis.Inputs)
-	}
-	if len(analysis.Component.Inputs) != 1 || analysis.Component.Inputs[0].Type != "User" {
-		t.Errorf("Component.Inputs = %+v", analysis.Component.Inputs)
-	}
-}
-
-func TestAnalyzeTypedPageRejectsResultMismatch(t *testing.T) {
-	route := routeDir(t, map[string]string{
-		"users/id_/page.tb.html": `
-type User { name: string }
-
-export component Page(user: User): html { <p>{user.name}</p> }
-`,
-		"users/id_/page.go": `package id_
-
-type Account struct{}
-
-func Load(id string) (Account, error) { return Account{}, nil }
-`,
-	}, "/users/{id}")
-
-	_, err := Analyze(route)
-	if err == nil {
-		t.Fatal("mismatched results accepted, want rejection")
-	}
-	for _, want := range []string{"Account", "User"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %v, want it to mention %q", err, want)
-		}
-	}
-}
-
 func TestAnalyzeHandlerPageBindsOnlyPathSegments(t *testing.T) {
 	route := routeDir(t, map[string]string{
 		"users/id_/page.tb.html": `
