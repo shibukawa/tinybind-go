@@ -26,9 +26,9 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 			func(ctx context.Context, p PageParams) string { return LatestMemo(ctx) },
 			func(p PageParams, value string) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Latest: value} },
 			[]htmlbind.Op[planPageOpsVal1]{
-				planPageOpsVal1Ops.Static("  <h1>archive for "),
+				planPageOpsVal1Ops.Static(" <h1>archive for "),
 				planPageOpsVal1Ops.TextCtx(func(ctx context.Context, p planPageOpsVal1) string { return CurrentReader(ctx) }),
-				planPageOpsVal1Ops.Static("</h1> <p>latest: "),
+				planPageOpsVal1Ops.Static("</h1>  <p>latest: "),
 				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Latest }),
 				planPageOpsVal1Ops.Static("</p> "),
 			}),

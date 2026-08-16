@@ -39,6 +39,8 @@ scope:
   implemented_2026_08_14:
     value: Redirect(target, status...) beside the other status helpers, carrying a Location on the shared error value; a status outside 301, 302, 303, 307, and 308 is refused where it is written rather than emitted for a client that will not follow it
     write_path: both WriteError surfaces recognize it before building a problem document and emit the status with a Location and no body, kept pair-wise so the net/http and fasthttp surfaces stay symmetric
+    parity_break_found_2026_08_14: fasthttp supplies a default Content-Type for any status set without one, so a redirect carrying no body answered text/plain where net/http answered nothing; the fasthttp path now suppresses the default
+    parity_harness_widened: it compared status, content-type, and body, and a redirect is the one error answering with a header rather than a document, so Location joined the comparison
     reached_from_three_places: a page function's return, a handler's return, and a template's failing external, which all express a redirect as the same value
   widened_2026_08_14: decision:value-binding-hoisting adds a second position — a chain member's top-level value binding, whose failing external returns the same value; the constructor, the ordering rule, and the api:write-error behaviour are unchanged, only where the value may come from
   why_it_transfers: requirement:template-value-binding propagates a failing external's error unwrapped, so the value arrives intact, and hoisting is what keeps the ordering rule above true for it

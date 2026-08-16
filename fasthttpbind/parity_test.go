@@ -168,6 +168,9 @@ func TestWriteErrorParity(t *testing.T) {
 		{"not_found", httpbind.NotFound(httpbind.Problem{Code: "no_user", Message: "user not found"})},
 		{"internal_is_hidden", httpbind.Internal(errDetail{})},
 		{"bare", httpbind.BadRequest(httpbind.Problem{})},
+		{"redirect", httpbind.Redirect("/sign-in")},
+		{"permanent_redirect", httpbind.Redirect("/moved", 308)},
+		{"refused_redirect_status", httpbind.Redirect("/nowhere", 200)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -184,6 +187,12 @@ func TestWriteErrorParity(t *testing.T) {
 			}
 			if got, want := ctx.Response.Body(), rec.Body.Bytes(); !bytes.Equal(got, want) {
 				t.Errorf("body differs\n net/http: %s\n fasthttp: %s", want, got)
+			}
+			// A redirect is the one error that answers with a header rather
+			// than a document, so the header it answers with is part of the
+			// parity rather than beside it.
+			if got, want := string(ctx.Response.Header.Peek("Location")), rec.Header().Get("Location"); got != want {
+				t.Errorf("location: fasthttp %q, net/http %q", got, want)
 			}
 			if tc.name == "internal_is_hidden" && bytes.Contains(ctx.Response.Body(), []byte("secret")) {
 				t.Error("5xx body leaked the internal cause")

@@ -48,6 +48,11 @@ func WriteError(ctx *fasthttp.RequestCtx, err error) {
 	// no problem document, because the browser is being sent somewhere rather
 	// than told what went wrong.
 	if target, status, ok := bindcore.RedirectTarget(err); ok {
+		// No body, so no content type. This transport supplies a default one
+		// for any status set without it, which would put text/plain on a
+		// response that carries nothing — and make the two surfaces disagree
+		// on a header only one of them writes.
+		ctx.Response.Header.SetNoDefaultContentType(true)
 		ctx.Response.Header.Set("Location", target)
 		ctx.SetStatusCode(status)
 		return
