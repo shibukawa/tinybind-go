@@ -27,9 +27,6 @@ const (
 	// The whole handler is generated and the template's own external calls
 	// supply the data.
 	RungTemplateOnly Rung = iota + 1
-	// RungTypedPage is a Page taking the route's inputs and returning the
-	// values the template renders, followed by an error.
-	RungTypedPage
 	// RungHandlerPage is a Page that is an ordinary http.HandlerFunc and owns
 	// the whole response.
 	RungHandlerPage
@@ -39,8 +36,6 @@ func (r Rung) String() string {
 	switch r {
 	case RungTemplateOnly:
 		return "template-only"
-	case RungTypedPage:
-		return "typed Page"
 	case RungHandlerPage:
 		return "handler Page"
 	default:
@@ -65,18 +60,6 @@ type PageFunc struct {
 	File string
 	// Line is the line of the func Page declaration, zero when absent.
 	Line int
-	// Params and Results are populated at RungTypedPage only. Params excludes a
-	// leading context.Context and Results excludes the trailing error.
-	Params  []Value
-	Results []Value
-	// TakesContext records that the declaration opened with a context.Context.
-	//
-	// It is trimmed out of Params rather than counted in them, so "Params are
-	// the URL inputs, in route order" stays true and neither the route-order
-	// check nor the generated decoder has to carry an offset. A context is not
-	// a URL input: it arrives from the request rather than from the address,
-	// which is why it cannot be spelled as one.
-	TakesContext bool
 }
 
 // scalarTypes are the parameter types a generated decoder can bind from a URL.
@@ -217,91 +200,17 @@ func InspectLogicWith(path string, shape HandlerShape) (*PageFunc, error) {
 		fn.Rung = RungHandlerPage
 		return fn, nil
 	}
-	// Anything that is not the handler shape is read as the typed shape, so a
-	// near-miss reports what is wrong with it rather than silently falling back
-	// to the other contract.
-	if len(results) == 0 || results[len(results)-1].Type != "error" {
-		return nil, &Error{
-			Path: fmt.Sprintf("%s:%d", path, fn.Line),
-			Message: fmt.Sprintf("func %s must be either func(%s) (values..., error) or %s; "+
-				"its last result is not error", PageFuncName, describe(params), shape.describeShape()),
-		}
+	// The handler shape is the only one left. A page that needs Go to decide,
+	// combine, or fail writes an external and binds it with {val}: the
+	// component names what it needs, and a failing loader chooses the response
+	// before anything is written. A near-miss is reported as the shape it is
+	// not, rather than accepted into a contract that no longer exists.
+	return nil, &Error{
+		Path: fmt.Sprintf("%s:%d", path, fn.Line),
+		Message: fmt.Sprintf("func %s must be %s; it is declared as func(%s). "+
+			"A page that loads its own data declares an external and binds it with {val} in the template",
+			PageFuncName, shape.describeShape(), describe(params)),
 	}
-	fn.Rung = RungTypedPage
-	// A leading context.Context is taken off the input list, after the shape
-	// check above so a near-miss still reports the signature as written. Only
-	// the first position counts: a context anywhere else keeps the ordinary
-	// not-a-URL-value error, which is the right answer there.
-	if takesLeadingContext(file, params) {
-		fn.TakesContext = true
-		params = params[1:]
-	}
-	fn.Params = params
-	fn.Results = results[:len(results)-1]
-	return fn, nil
-}
-
-// Validate cross-checks a typed Page against the route it serves. It returns
-// every problem it finds so one run reports more than the first.
-//
-// componentParams is the page component's declared parameter list, which a
-// typed Page must reproduce as its results. Passing nil skips that half of the
-// check, which is what a caller does before the template has been compiled.
-func Validate(route Route, fn *PageFunc, componentParams []Value) []error {
-	if fn == nil || fn.Rung != RungTypedPage {
-		return nil
-	}
-	where := fmt.Sprintf("%s:%d", fn.File, fn.Line)
-	var errs []error
-	fail := func(format string, args ...any) {
-		errs = append(errs, &Error{Path: where, Message: fmt.Sprintf(format, args...)})
-	}
-
-	// The leading parameters are the route's dynamic segments, in route order.
-	// Position carries the mapping, so nothing has to be annotated.
-	if len(fn.Params) < len(route.Params) {
-		fail("func %s must begin with the %d path parameter(s) of %s (%s); it declares %d parameter(s)",
-			PageFuncName, len(route.Params), route.Path, paramNames(route.Params), len(fn.Params))
-		return errs
-	}
-	for i, want := range route.Params {
-		got := fn.Params[i]
-		if got.Name != want.Name {
-			fail("parameter %d of func %s is %q, but %s binds %q at that position",
-				i+1, PageFuncName, got.Name, route.Path, want.Name)
-		}
-	}
-	for i, param := range fn.Params {
-		_, optional, ok := bindableType(param.Type)
-		if !ok {
-			kind := "query parameter"
-			if i < len(route.Params) {
-				kind = "path parameter"
-			}
-			fail("%s %q has type %s; a page input must be a scalar the decoder can bind from a URL",
-				kind, param.Name, param.Type)
-			continue
-		}
-		if optional && i < len(route.Params) {
-			fail("%s", optionalPathError(param.Name, param.Type, route.Params[i].Kind == CatchAllSegment))
-		}
-	}
-
-	if componentParams == nil {
-		return errs
-	}
-	if len(fn.Results) != len(componentParams) {
-		fail("func %s returns %d value(s) before the error, but the page component declares %d parameter(s) (%s)",
-			PageFuncName, len(fn.Results), len(componentParams), valueTypes(componentParams))
-		return errs
-	}
-	for i, want := range componentParams {
-		if got := fn.Results[i]; got.Type != want.Type {
-			fail("result %d of func %s is %s, but page component parameter %q is %s",
-				i+1, PageFuncName, got.Type, want.Name, want.Type)
-		}
-	}
-	return errs
 }
 
 func findFunc(file *ast.File, name string) *ast.FuncDecl {
@@ -353,7 +262,7 @@ func isHandlerSignature(file *ast.File, shape HandlerShape, params, results []Va
 	return true
 }
 
-// takesLeadingContext reports whether a typed entry point opens with a
+// takesLeadingContext reports whether a declaration opens with a
 // context.Context. Like isHandlerSignature it resolves the import name from the
 // file, because the check runs before the package compiles.
 //

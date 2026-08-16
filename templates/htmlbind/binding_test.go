@@ -413,3 +413,70 @@ func TestATotalExternalIsUnchanged(t *testing.T) {
 		t.Fatalf("a total external became an error-carrying instruction:\n%s", with)
 	}
 }
+
+// Reported by the framework 2026-08-14 against v0.5.11, held adoption.
+//
+// Hoisting puts every binding of a block in front of that block's markup, so a
+// component that binds anything presents a value binding where its root element
+// used to be. Three things ask a component for that root, and this one asks
+// silently: a component that loads its own data kept rendering and stopped
+// being an update boundary, with no diagnostic. That is the shape the retired
+// typed page rung leaves behind, so it landed on every discovered page at once.
+func TestAValueBindingLeavesTheComponentItsBoundaryRoot(t *testing.T) {
+	plain := generateWith(t, bindingSource("<section><h1>{id}</h1></section>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(plain, "BoundaryAttr()") {
+		t.Fatalf("the component is not a boundary before a binding is added, so this test proves nothing:\n%s", plain)
+	}
+	// Written inside the element, which is where an author puts it and which is
+	// what makes the binding hoist out past the root.
+	bound := generateWith(t, bindingSource("<section>{val record = LoadData(id)}<h1>{record.title}</h1></section>"), htmlbind.GenerateOptions{})
+	for _, want := range []string{"BoundaryAttr()", "htmlbind.Boundary[", "Boundary:"} {
+		if !strings.Contains(bound, want) {
+			t.Fatalf("the binding dropped %q from the generated boundary:\n%s", want, bound)
+		}
+	}
+}
+
+// One binding and two are the same question, because normalization nests them:
+// a fix that steps over exactly one level would leave the second binding
+// failing the way the first one did.
+func TestTwoValueBindingsLeaveTheComponentItsBoundaryRoot(t *testing.T) {
+	generated := generateWith(t, bindingSource(
+		"{val one = Norm(id)}\n{val record = LoadData(one)}\n<section><h1>{record.title}</h1></section>"), htmlbind.GenerateOptions{})
+	if !strings.Contains(generated, "BoundaryAttr()") {
+		t.Fatalf("two bindings dropped the boundary:\n%s", generated)
+	}
+}
+
+// The rule the binding must not disable. A component rendering two elements has
+// no root to carry the attribute, binding or no binding, so seeing through the
+// binding must not turn into inventing a root.
+func TestAValueBindingDoesNotInventARootTheComponentLacks(t *testing.T) {
+	generated := generateWith(t, bindingSource(
+		"{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>"), htmlbind.GenerateOptions{})
+	if strings.Contains(generated, "BoundaryAttr()") {
+		t.Fatalf("a two-element component became a boundary:\n%s", generated)
+	}
+}
+
+// The loud half of the same defect: the script block's marker lives on the root
+// element, so the same nil reads as "no single root" and refuses a component
+// that has one.
+func TestAValueBindingLeavesAScriptBlockItsRoot(t *testing.T) {
+	source := bindingHead + "export component Card(id: string): html {\n" +
+		"<script component>\nexport function setup(el) { return () => {} }\n</script>\n" +
+		"<section>{val record = LoadData(id)}<h1>{record.title}</h1></section>\n}\n"
+	if _, err := htmlbind.Generate("card.tb.html", []byte(source), htmlbind.GenerateOptions{}); err != nil {
+		t.Fatalf("a binding cost a component with one root element its script block: %v", err)
+	}
+}
+
+// The third caller, which the report did not name: a reloadable component
+// carries its id and kind on that same root, and refuses generation without it.
+func TestAValueBindingLeavesAReloadableComponentItsRoot(t *testing.T) {
+	source := bindingHead + "@reloadable\nexport component Card(id: string): html {\n" +
+		"<section>{val record = LoadData(id)}<h1>{record.title}</h1></section>\n}\n"
+	if _, err := htmlbind.Generate("card.tb.html", []byte(source), htmlbind.GenerateOptions{}); err != nil {
+		t.Fatalf("a binding cost a reloadable component its root: %v", err)
+	}
+}

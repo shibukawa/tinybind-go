@@ -39,24 +39,57 @@ func validatePrefix(prefix string) error {
 // conditional or a loop at the top level, leaves the node count unknown at
 // generation time and therefore yields no boundary.
 func boundaryRoot(nodes []Node) *ElementNode {
-	var root *ElementNode
+	root, ok := scanBoundaryRoot(nodes, nil)
+	if !ok {
+		return nil
+	}
+	return root
+}
+
+// scanBoundaryRoot threads the single-element rule through one body list,
+// carrying the element found so far so a value binding can be transparent to
+// it. The bool separates "nothing here yet" from "more than one thing here",
+// which the caller collapses back into a nil root.
+//
+// A binding renders nothing, so the root of its body is the root of the
+// component, on the same terms that already let this walk step over a comment
+// or a doctype. Threading the accumulator rather than recursing into a fresh
+// scan is what makes a binding transparent rather than merely skippable: two
+// elements still fail when one of them sits inside the binding and one beside
+// it.
+//
+// decision:value-binding-hoisting is what made this reachable. Before it,
+// normalization split a body at the binding's written position, so a binding
+// after the root element left that element a sibling; hoisting moves every
+// binding of a block in front of that block's markup, which puts the root
+// element inside the binding's body instead. Reported by the framework
+// 2026-08-14, against the shape the retired typed page rung now forces every
+// page that loads its own data into.
+func scanBoundaryRoot(nodes []Node, root *ElementNode) (*ElementNode, bool) {
 	for _, node := range nodes {
 		switch node := node.(type) {
 		case *TextNode:
 			if strings.TrimSpace(node.Text) != "" {
-				return nil
+				return nil, false
 			}
 		case *CommentNode, *DoctypeNode, *HeadNode:
+		case *ValNode:
+			// Every depth, not one level: normalization nests one node per bound
+			// name, so a block binding twice is this case twice.
+			var ok bool
+			if root, ok = scanBoundaryRoot(node.Body, root); !ok {
+				return nil, false
+			}
 		case *ElementNode:
 			if root != nil {
-				return nil
+				return nil, false
 			}
 			root = node
 		default:
-			return nil
+			return nil, false
 		}
 	}
-	return root
+	return root, true
 }
 
 // boundaryCandidate reports whether a component can become an update boundary.

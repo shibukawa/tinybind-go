@@ -7,13 +7,11 @@ import (
 	httpbind "github.com/shibukawa/tinybind-go"
 )
 
-// Load loads the display name for one user. It is the typed rung: the request
-// reaches Go first and the component parameters are this function's results.
-func Load(id string) (string, error) {
-	if id == "" {
-		return "", nil
-	}
-	return strings.ToUpper(id), nil
+// DisplayName is the page's own loader, bound by the template with {val}. The
+// component takes the path parameter and names what it needs, so nothing is
+// threaded from a Go entry point into its parameters.
+func DisplayName(id string) string {
+	return strings.ToUpper(id)
 }
 
 // RenameRequest is what the rename form submits. It is bound by the generated

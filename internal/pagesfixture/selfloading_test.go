@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/shibukawa/tinybind-go/htmlbind/delta"
+	records "github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/records/id_"
 )
 
 // A page that loads its own data needs no typed entry point. The component
@@ -48,5 +51,40 @@ func TestASelfLoadingRouteChoosesItsOwnResponse(t *testing.T) {
 				t.Fatalf("the page rendered before its loader failed: %s", rec.Body)
 			}
 		})
+	}
+}
+
+// Loading its own data must not cost the page its update boundary.
+//
+// Reported by the framework 2026-08-14: hoisting moves a binding in front of
+// the block's markup, so the page presented a value binding where its root
+// element used to be and the emitter read that as "no single root". Nothing
+// failed — the page rendered, and only the delta path was quietly degraded.
+// This is the shape the retired typed rung leaves behind, so it is the shape
+// worth holding: one root element, and a binding inside it that reaches past
+// it.
+//
+// It runs the generated code rather than reading the generated file, because a
+// golden regenerated with the defect in place is what let this ship.
+func TestASelfLoadingPageIsStillAnUpdateBoundary(t *testing.T) {
+	var out strings.Builder
+	manifest, err := delta.CollectChain(&out, []byte("k"), nil, records.Page(records.PageParams{Id: "seven"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Instances) != 1 {
+		t.Fatalf("the self-loading page contributed no boundary: %+v\n%s", manifest.Instances, out.String())
+	}
+	instance := manifest.Instances[0]
+	if instance.ComponentID != "templates.page.Page" {
+		t.Errorf("ComponentID = %q", instance.ComponentID)
+	}
+	if instance.FrameValidator == "" {
+		t.Error("the boundary carries no frame validator, so a navigation cannot compare it")
+	}
+	// The attribute lands on the root element the binding encloses, which is
+	// what makes the region addressable in the browser.
+	if want := `<section data-tb-id="` + instance.ID + `">`; !strings.Contains(out.String(), want) {
+		t.Errorf("body = %q, want it to contain %q", out.String(), want)
 	}
 }

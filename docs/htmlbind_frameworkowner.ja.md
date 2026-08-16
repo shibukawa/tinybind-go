@@ -646,7 +646,10 @@ out, err := htmlbind.Generate("page.tb.html", source, htmlbind.GenerateOptions{
 アクションが tinybind のものではなく既に使っているライブラリを動かせるようにする
 ためである。
 
-`GenerateOptions.ContextExternals` も同じ形で、こちらが前例として見る価値がある。
+`GenerateOptions.ContextExternals` と `ErrorExternals` も同じ形で、こちらが前例と
+して見る価値がある。エラーのマップは特に落とせない——空のままにしても動く形に落ちる
+のではなく、Go コンパイラが受け付けない呼び出しを吐く。
+[httpbind_framework_facilities.ja.md](httpbind_framework_facilities.ja.md) を参照。
 どちらも呼び出し側しか決められないテンプレートの事実であり、パスの間に Go の
 パッケージを読んで解決される。
 

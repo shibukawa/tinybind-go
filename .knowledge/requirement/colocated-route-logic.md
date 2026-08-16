@@ -3,7 +3,7 @@ id: requirement:colocated-route-logic
 type: requirement
 title: Colocated Route Logic
 ---
-Serve a page from a template alone, from a typed Page function beside it, or from a plain net/http handler, with one input rule shared across all three.
+Serve a page from a template alone or from a plain net/http handler beside it, with one input rule.
 
 ```yaml
 priority: must
@@ -25,14 +25,14 @@ rung_2_is_replaceable_2026_08_14:
   what_rung_2_was_for: decision:route-handler-shape says a page that needs Go to decide, combine, or fail; all three now have a rung 1 spelling
   the_typed_check_moves_rather_than_disappears: rung 2 compared the function's results against the component's parameters, and a component taking its own inputs is checked by its own parameter list instead
   what_rung_3_keeps: streaming, downloads, and conditional statuses, which the generated handler does not model
-  not_yet_retired: removing rung 2 is a breaking change for a downstream framework, so it waits behind a deprecation and that framework's migration
+  retired: 2026-08-14, with no deprecation period, because the owner confirmed nothing downstream had adopted it; the three fixture pages using it moved to a component parameter plus a {val} binding first, so the replacement was demonstrated before the shape was removed
 bug_found_on_the_way:
   what: the registry filled a component's parameter struct using this package's initialism-aware ExportedName, so a rung 1 page declaring a parameter named id emitted ID where the template compiler emits Id, and the route package did not compile
   why_it_was_never_seen: no fixture had a rung 1 page taking an initialism path parameter, because such a page was written at rung 2
   why_it_mattered_now: retiring rung 2 makes every page rung 1, and id is the most common path parameter there is
   fix: the two structs are named by their own owners — the decoded route by ExportedName, the component's parameters by the template compiler's exported FieldName
 input_rule:
-  applies_to: the component parameter list at rung 1 and the func Page parameter list at rung 2
+  applies_to: the component parameter list, which is the only list left since decision:route-handler-shape removed the typed rung
   order: every dynamic path segment first, in route order, then the query parameters
   path_prefix:
     required: the leading parameters must be exactly the route's dynamic segments, in order

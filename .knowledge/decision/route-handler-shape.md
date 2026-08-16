@@ -3,7 +3,7 @@ id: decision:route-handler-shape
 type: decision
 title: Route Handler Shape
 ---
-Offer three page shapes on one ladder, from a template with no Go file, through a typed Load function, to a plain net/http handler.
+Offer two page shapes: a template with no Go file, and a plain net/http handler.
 
 ```yaml
 source:
@@ -23,14 +23,12 @@ ladder:
     handler: fully generated
     data: external declarations called from the template
     for: a page whose data needs no Go beyond the calls the template already makes
-  rung_2:
-    deprecated: 2026-08-14, reported by generation and still emitting everything; removal waits behind a downstream framework's migration
-    why: its three reasons — decide, combine, fail — all have a rung 1 spelling now, per requirement:colocated-route-logic rung_2_is_replaceable_2026_08_14
-    name: typed Load function
-    files: page.tb.html and page.go declaring a typed func Load
-    handler: generated around the function
-    data: whatever the function returns
-    for: a page that needs Go to decide, combine, or fail
+  removed_rung_2:
+    was: a typed func Load returning the values the component renders, for a page that needs Go to decide, combine, or fail
+    removed: 2026-08-14 by the owner, without a deprecation period, because nothing downstream had adopted it yet
+    why: all three reasons have a rung 1 spelling, per requirement:colocated-route-logic rung_2_is_replaceable_2026_08_14
+    what_went_with_it: Validate, the Rung value, the registry's call path, and requirement:typed-page-context-parameter, which existed only to give that function a leading context
+    near_miss_now: a Load that is not the handler shape is a generation error naming what it must be and telling the author to bind an external with {val}
   rung_3:
     name: handler Load function
     files: page.tb.html and page.go declaring func Load as an http.HandlerFunc
@@ -48,9 +46,8 @@ one_name:
     kept: the file stays page.go and the component stays Page; only the Go entry point moved aside
 selection:
   rung_1: no page.go, or a page.go declaring no Load
-  rung_2: Load whose first parameter is not http.ResponseWriter
   rung_3: Load whose parameters are http.ResponseWriter and *http.Request
-  mismatch: a Load that matches neither shape is a generation error naming the signature it has and the two it could have
+  mismatch: any other Load is a generation error naming the signature it has, the one it must have, and the {val} binding that replaces what it was reaching for
 signature_detection_reversal:
   earlier: this decision rejected selecting between shapes by inspecting the parameter list, and used distinct names instead
   now: reinstated for rung 2 and rung 3, at user direction 2026-07-27

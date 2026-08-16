@@ -109,13 +109,6 @@ func({{ $t.Symbols.HandlerParams }}) {
 			return
 		}
 		_ = route // a route with no dynamic segment and no query input reads nothing
-{{- if $r.Call }}
-		{{ $r.CallResults }}{{ $r.Selector }}Load({{ $r.CallArgs }})
-		if err != nil {
-			{{ $t.Symbols.ErrorAlias }}.{{ $t.Symbols.WriteError }}({{ $t.Symbols.TransportArgs }}, err)
-			return
-		}
-{{- end }}
 		params := {{ $r.Selector }}PageParams{
 {{- range $r.PageFields }}
 			{{ .Field }}: {{ .From }},

@@ -32,12 +32,15 @@ the signature:
 
 | Files | Shape | What you get |
 | --- | --- | --- |
-| `page.tb.html` alone | template only | the whole handler is generated; the template's own `external` calls fetch the data |
-| `+ page.go` with `func Load(id string, page int) (User, error)` | typed | the generated handler decodes, calls `Load`, and renders its results |
+| `page.tb.html` alone | template only | the whole handler is generated; the page declares its inputs on the component and loads what it needs with a `{val}` binding |
 | `+ page.go` with `func Load(w http.ResponseWriter, r *http.Request)` | handler | only the registration is generated; you own the whole response |
 
-Because the signature selects the shape, a `Load` matching neither is a
-generation error that names what it has and the two contracts it could have had.
+A `Load` that is not the handler shape is a generation error naming what it has
+and what it must be. There used to be a third shape between these — a typed
+`Load` returning the values the component renders — and it is gone. Everything
+it was for now has a template spelling: the component names what it needs, binds
+its own loader, and that loader's error chooses the response before anything is
+written. See [htmlbind.md](htmlbind.md#choosing-the-response).
 
 `Load` is an odd name for the entry point of a page, and `Page` was the first
 choice. It does not survive contact with the compiler. The template compiler
@@ -45,12 +48,10 @@ already emits `func Page(params PageParams) htmlbind.Fragment` into that same
 package, so a second `Page` beside it is a Go redeclaration. The file is still
 `page.go` and the component is still `Page`; only the entry point moved aside.
 
-One rule covers the inputs at both rungs. The leading parameters are the route's
-dynamic segments, in route order, and everything after them is a query parameter
-keyed by its own name. Without `page.go` that rule reads the component's
-parameter list; with it, the `Load` parameter list. Moving a page up the ladder
-therefore never changes how its inputs are spelled. Only scalars are accepted,
-because a URL carries no object.
+One rule covers the inputs. The leading parameters are the route's dynamic
+segments, in route order, and everything after them is a query parameter keyed by
+its own name, read from the component's parameter list. Only scalars are
+accepted, because a URL carries no object.
 
 A query parameter may be optional, spelled as the pointer the template's own
 optional marker already produces:
@@ -65,10 +66,6 @@ from no page at all, and an unparsable `?page=x` still fails before rendering. A
 path segment cannot be optional — a single segment is always present when the
 route matches, and a catch-all binds an empty remainder as a string.
 
-One thing does change. At the typed rung the component's parameter list becomes
-`Load`'s return list, and generation checks it: a mismatch in count, order, or
-type fails, naming both lists.
-
 ## Reaching the request
 
 Most of what a page needs is in the URL. Some of it is not. A database pool, an
@@ -76,21 +73,8 @@ authenticated session, a request-scoped tracer — these arrive on the request
 context, put there by whatever ran before the handler, and no parameter list
 built out of path segments can express them.
 
-Two shapes can reach that context, and both opt in the same way: by declaring
-the parameter in Go. Nothing in the template changes.
-
-A typed `Load` may open with one:
-
-```go
-func Load(ctx context.Context, id string) (User, error)
-```
-
-The context is not a URL input, so it is not counted as one. It has to come
-first, which is Go's own convention, and everything after it stays a bindable
-scalar in route order. A `context.Context` anywhere else is still the error it
-always was, because at that position it really is being offered as a URL value.
-
-An `external`'s implementation may open with one too:
+An `external` reaches that context by declaring the parameter in Go. Nothing in
+the template changes:
 
 ```text
 external CurrentReader(): string
@@ -107,9 +91,8 @@ declaration says nothing about a context either way; the Go signature decides,
 function by function, and an implementation that takes none is called exactly as
 before.
 
-What neither shape gets is the request itself. `*http.Request` in a typed `Load`
-would pull the transport into a signature whose whole point is that it has none.
-If you need the request, you need the handler rung, and that is what it is for.
+What this does not get you is the request itself. If you need that, you need the
+handler rung, and that is what it is for.
 
 ## Segment notation, and why it is not `[id]`
 

@@ -11,8 +11,9 @@ source:
   - downstream framework request-context report 2026-08-05
   - requirement:colocated-route-logic
   - decision:route-handler-shape
-review_gate: proposed
-status: shipped 2026-08-05, as the reporter proposed it; the trim, the leading-only rule, and the unchanged diagnostic are all implemented
+review_gate: retired 2026-08-14
+status: shipped 2026-08-05 and retired 2026-08-14 with the rung it served; decision:route-handler-shape removed the typed page entry point, so there is no signature left for a leading context to open
+what_replaced_it: an external's own implementation declares the leading context, per requirement:render-context-externals, and a component binds its result with requirement:template-value-binding — so the value reaches the template without a page function to carry it
 answers: the open question both requirement:colocated-route-logic and decision:route-handler-shape have carried since 2026-07-27, whether rung 2 may take a leading context before the path parameters
 problem:
   today: routetree Validate checks every declared parameter with bindableType, so a leading context.Context is a generation error naming it a query parameter

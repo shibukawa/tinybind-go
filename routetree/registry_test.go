@@ -70,30 +70,32 @@ func TestRegistryRootRegistersAsAnExactMatch(t *testing.T) {
 	}
 }
 
-func TestRegistryCallsATypedPageBeforeRendering(t *testing.T) {
+// A page's parameters come from the decoded route and nothing else. The
+// component declares what it takes and loads what it needs with a {val}
+// binding, so the registry threads no values in from a Go entry point.
+func TestRegistryFillsPageParametersFromTheRoute(t *testing.T) {
 	route := Route{
-		Path: "/users/{id}", RelDir: "users/id_", Package: "id_",
+		Path:       "/users/{id}",
+		RelDir:     "users/id_",
+		Package:    "id_",
 		ImportPath: "example.com/m/pages/users/id_",
 		PageFile:   "pages/users/id_/page.tb.html",
 		Params:     []Segment{dyn("id")},
 	}
 	analysis := Analysis{
 		Route:     route,
-		Component: ComponentSignature{Name: "Page", Inputs: []Value{{Name: "name", Type: "string"}}},
-		Page: &PageFunc{
-			Rung:    RungTypedPage,
-			Params:  []Value{{Name: "id", Type: "string"}},
-			Results: []Value{{Type: "string"}},
-		},
-		Inputs: []Value{{Name: "id", Type: "string"}},
+		Component: ComponentSignature{Name: "Page", Inputs: []Value{{Name: "id", Type: "string"}}},
+		Inputs:    []Value{{Name: "id", Type: "string"}},
 	}
 
 	source := registry(t, nil, &Tree{Routes: []Route{route}}, []Analysis{analysis}, nil)
 	mustContain(t, source,
-		"pageName, err := id_.Load(route.ID)",
-		"Name: pageName,",
+		"Id: route.ID,",
 		"id_.Page(params)",
 	)
+	if strings.Contains(source, "id_.Load(") {
+		t.Errorf("the registry called a Go entry point:\n%s", source)
+	}
 }
 
 func TestRegistryRegistersARawHandlerDirectly(t *testing.T) {
@@ -172,22 +174,6 @@ func TestRegistryRejectsMismatchedAnalysisCount(t *testing.T) {
 	home, _ := templateOnly("/", "", "pages", "example.com/m/pages", nil, nil)
 	if _, err := NewEmitter().Registry(&Tree{Routes: []Route{home}}, "pages", nil, nil, nil); err == nil {
 		t.Fatal("missing analysis accepted, want rejection")
-	}
-}
-
-func TestRegistryRejectsATypedPageWhoseResultsDoNotFitTheComponent(t *testing.T) {
-	route := Route{Path: "/x", RelDir: "x", Package: "x", ImportPath: "example.com/m/pages/x", PageFile: "pages/x/page.tb.html"}
-	analysis := Analysis{
-		Route:     route,
-		Component: ComponentSignature{Name: "Page", Inputs: []Value{{Name: "a", Type: "string"}, {Name: "b", Type: "int"}}},
-		Page:      &PageFunc{Rung: RungTypedPage, File: "pages/x/page.go", Results: []Value{{Type: "string"}}},
-	}
-	_, err := NewEmitter().Registry(&Tree{Routes: []Route{route}}, "pages", []Analysis{analysis}, nil, nil)
-	if err == nil {
-		t.Fatal("arity mismatch accepted, want rejection")
-	}
-	if !strings.Contains(err.Error(), "2 parameter") {
-		t.Errorf("error = %v", err)
 	}
 }
 

@@ -1,6 +1,8 @@
 external CurrentReader(): string
+external LatestMemo(): string
 
-export component Page(latest: string): html {
+export component Page(): html {
   <h1>archive for {CurrentReader()}</h1>
+  {val latest = LatestMemo()}
   <p>latest: {latest}</p>
 }

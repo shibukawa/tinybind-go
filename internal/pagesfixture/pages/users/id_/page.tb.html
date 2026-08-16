@@ -1,4 +1,7 @@
-export component Page(name: string): html {
+external DisplayName(id: string): string
+
+export component Page(id: string): html {
+  {val name = DisplayName(id)}
   <h1>user {name}</h1>
   <button server-action="Rename" data-target="#name">rename</button>
   <form server-action="Retire">

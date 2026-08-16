@@ -566,3 +566,76 @@ func TestReadOnlyContextRejectsWrites(t *testing.T) {
 }`)
 	runGenerated(t, generated, runtimeTest)
 }
+
+// The binding's emitted Go had only ever been parsed, never run. Parsing proves
+// the locals are syntactically legal; it says nothing about the statement they
+// build or the error check beside them.
+func TestGenerateAndRunAValueBinding(t *testing.T) {
+	source := []byte(`package queries
+external Norm(s: string): string
+type User { id: int, name: string }
+export statement Find(name: string): sql.one<User> {
+SELECT id, name FROM users WHERE name = {val key = Norm(name)}{key} OR alias = {key}
+}`)
+	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeTest := []byte(`package queries
+import (
+	"strings"
+	"testing"
+)
+
+var calls int
+
+func Norm(s string) string { calls++; return strings.ToLower(s) }
+
+func TestBinding(t *testing.T) {
+	statement, err := BuildFind("ADA")
+	if err != nil { t.Fatal(err) }
+	// One call for two placeholders is the whole point of the binding.
+	if calls != 1 { t.Fatalf("Norm ran %d times, want once", calls) }
+	if len(statement.Args) != 2 || statement.Args[0] != "ada" || statement.Args[1] != "ada" {
+		t.Fatalf("Args = %#v", statement.Args)
+	}
+}`)
+	runGenerated(t, generated, runtimeTest)
+}
+
+// A failing external emits an error check beside the assignment. Whether that
+// check actually stops the build and hands the error back is a runtime fact.
+func TestGenerateAndRunAFailingValueBinding(t *testing.T) {
+	source := []byte(`package queries
+external Norm(s: string): string
+type User { id: int, name: string }
+export statement Find(name: string): sql.one<User> {
+SELECT id, name FROM users WHERE name = {val key = Norm(name)}{key}
+}`)
+	generated, err := sqlbind.Generate("users.tb.sql", source, sqlbind.GenerateOptions{
+		Dialect:        sqlbind.DialectPostgreSQL,
+		ErrorExternals: map[string]bool{"Norm": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeTest := []byte(`package queries
+import (
+	"errors"
+	"testing"
+)
+
+var boom = errors.New("cannot normalize")
+
+func Norm(s string) (string, error) {
+	if s == "bad" { return "", boom }
+	return s, nil
+}
+
+func TestFailingBinding(t *testing.T) {
+	if _, err := BuildFind("ok"); err != nil { t.Fatalf("good input failed: %v", err) }
+	_, err := BuildFind("bad")
+	if !errors.Is(err, boom) { t.Fatalf("err = %v, want the loader's own error", err) }
+}`)
+	runGenerated(t, generated, runtimeTest)
+}

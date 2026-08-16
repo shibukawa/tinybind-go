@@ -22,7 +22,7 @@ implemented:
   absent: nil when the key is missing or its value is empty
   present: a non-nil pointer to the parsed value
   invalid: a non-empty unparsable value stays the invalid query parameter error of requirement:typed-html-route-parameters
-  applies_to: the query tail only, at rung 1 and rung 2 alike
+  applies_to: the query tail only, read from the component's parameter list since decision:route-handler-shape removed the typed rung
   path_segments: unchanged; a missing single segment does not match the route, and a catch-all binds an empty remainder as a string
 rejected_presence_by_has:
   shape: query.Has decides presence, so ?q= yields a non-nil empty string
@@ -36,7 +36,7 @@ resolves:
 acceptance:
   - a page declaring 'page: int?' receives nil for /list and a pointer to 0 for /list?page=0
   - /list?page=x still fails with the invalid query parameter error before rendering
-  - a rung 2 Load taking '*int' receives the value its component would have received
+  - a component parameter declared 'int?' reaches the generated decoder as '*int', which is the one list left to read
   - a string query parameter without the marker behaves exactly as before
 related:
   - requirement:typed-html-route-parameters

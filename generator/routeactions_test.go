@@ -29,7 +29,9 @@ func writeActionTree(t *testing.T) (dir, importBase string) {
 			t.Fatal(err)
 		}
 	}
-	write("page.tb.html", `export component Page(name: string): html { <p>{name}</p> }`)
+	write("page.tb.html", `external LoadName(): string
+
+export component Page(): html { {val name = LoadName()} <p>{name}</p> }`)
 	write("page.go", `package pages
 
 import (
@@ -43,7 +45,7 @@ type User struct {
 	Name string `+"`json:\"name\"`"+`
 }
 
-func Load() (string, error) { return "ada", nil }
+func LoadName() string { return "ada" }
 
 var _ = httpbind.ServerAction(getUser, "fetchUser")
 

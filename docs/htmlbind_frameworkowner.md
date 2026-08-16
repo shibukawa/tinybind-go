@@ -660,9 +660,12 @@ what leaves `data-target`, `hx-swap`, or anything else to mean whatever your
 client runtime decides. `ServerActionAttr` is there so a generated action can
 drive a library you already use instead of one of ours.
 
-`GenerateOptions.ContextExternals` works the same way and is the precedent worth
-noticing: both are template facts only the caller can settle, resolved by reading
-the Go package between passes.
+`GenerateOptions.ContextExternals` and `ErrorExternals` work the same way and are
+the precedent worth noticing: all three are template facts only the caller can
+settle, resolved by reading the Go package between passes. The error map is the
+one to get right — leaving it empty does not degrade to something that works,
+it emits a call the Go compiler rejects. See
+[httpbind_framework_facilities.md](httpbind_framework_facilities.md).
 
 The discovered router does all of this for you. What it derives — the hash, the
 endpoint path, which handlers are exposed — is described in

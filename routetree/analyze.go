@@ -48,7 +48,6 @@ type Analysis struct {
 //
 //   - RungTemplateOnly: the component parameters, since the request renders the
 //     component directly.
-//   - RungTypedPage: the func Page parameters, since the request reaches Go
 //     first and the component parameters are that function's results.
 //   - RungHandlerPage: the route's dynamic segments as strings. The handler owns
 //     decoding, so the generated decoder is a convenience covering only what the
@@ -86,9 +85,6 @@ func AnalyzeWith(route Route, shape HandlerShape, options ...htmlbind.AnalysisOp
 	}
 
 	switch fn.Rung {
-	case RungTypedPage:
-		analysis.Inputs = fn.Params
-		errs = append(errs, Validate(route, fn, component.Inputs)...)
 	case RungHandlerPage:
 		analysis.Inputs = pathInputs(route)
 	default:

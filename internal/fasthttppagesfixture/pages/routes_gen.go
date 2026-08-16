@@ -63,14 +63,9 @@ func Register(mux interface {
 				return
 			}
 			_ = route // a route with no dynamic segment and no query input reads nothing
-			pageName, pagePage, err := id_.Load(ctx, route.ID, route.Page)
-			if err != nil {
-				httpbind.WriteError(ctx, err)
-				return
-			}
 			params := id_.PageParams{
-				Name: pageName,
-				Page: pagePage,
+				Id:   route.ID,
+				Page: route.Page,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),

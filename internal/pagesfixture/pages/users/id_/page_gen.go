@@ -7,19 +7,31 @@ import (
 )
 
 type PageParams struct {
-	Name string
+	Id string
 }
+
+type planPageOpsVal1 struct {
+	Outer PageParams
+	Name  string
+}
+
+var planPageOpsVal1Ops = htmlbind.Builder[planPageOpsVal1]{}
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		planPageOps.Static(" <h1>user "),
-		planPageOps.Text(func(p PageParams) string { return p.Name }),
-		planPageOps.Static("</h1> <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> <form data-tb-action=\"/_action/d71506d06c1e/Retire\" method=\"post\"><input type=\"hidden\" name=\"_action\" value=\"d71506d06c1e/Retire\" />"),
-		planPageOps.CSRFField("_csrf"),
-		planPageOps.Static(" <input name=\"reason\" /> <button type=\"submit\">retire</button> </form> "),
+		htmlbind.Val(
+			func(p PageParams) string { return DisplayName(p.Id) },
+			func(p PageParams, value string) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Name: value} },
+			[]htmlbind.Op[planPageOpsVal1]{
+				planPageOpsVal1Ops.Static("  <h1>user "),
+				planPageOpsVal1Ops.Text(func(p planPageOpsVal1) string { return p.Name }),
+				planPageOpsVal1Ops.Static("</h1> <button data-tb-action=\"/_action/00369cf962b6/Rename\" data-target=\"#name\">rename</button> <form data-tb-action=\"/_action/d71506d06c1e/Retire\" method=\"post\"><input type=\"hidden\" name=\"_action\" value=\"d71506d06c1e/Retire\" />"),
+				planPageOpsVal1Ops.CSRFField("_csrf"),
+				planPageOpsVal1Ops.Static(" <input name=\"reason\" /> <button type=\"submit\">retire</button> </form> "),
+			}),
 	},
 }
 
