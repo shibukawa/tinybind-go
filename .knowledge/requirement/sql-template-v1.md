@@ -29,6 +29,7 @@ dialect:
   selection: decision:sql-dialect-generation-time
 structured_lists:
   where: AND children by default; explicit and/or groups; omit when empty for SELECT
+  conditional_composition: requirement:sql-conditional-predicate-composition supplies the joiner and clause elision these list entries promise; the shipped emission is flat text
   joins: conditional; cannot vary result shape
   set: manage commas; require a statically provable non-empty item set per rule:sql-static-mutation-safety
   order_by: static branches or enums; manage commas and empty clause

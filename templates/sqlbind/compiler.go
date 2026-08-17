@@ -67,6 +67,9 @@ type statementInfo struct {
 	// the Context resolver a write statement must use, so a read-only executor
 	// rejects the statement before it reaches the database.
 	readOnly bool
+	// plan is the predicate group plan of rule:sql-predicate-group-elision, or nil
+	// when the body has nothing elidable in it and needs no group.
+	plan *groupPlan
 }
 
 type compiler struct {
@@ -212,6 +215,13 @@ func (c *compiler) analyze() error {
 			return err
 		}
 		c.statements[d.Name].readOnly = isReadOnly(body)
+		// The plan comes before the mutation proof, which reads it to tell a
+		// withheld token from one that fills the clause.
+		plan, err := c.planGroups(body)
+		if err != nil {
+			return err
+		}
+		c.statements[d.Name].plan = plan
 		if err := c.checkMutationSafety(d, body); err != nil {
 			return err
 		}

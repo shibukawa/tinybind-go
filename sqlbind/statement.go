@@ -102,6 +102,116 @@ type Builder struct {
 	strings.Builder
 	style PlaceholderStyle
 	args  []any
+	// groups are the open predicate groups of rule:sql-predicate-group-elision,
+	// outermost first. A group's opening text is withheld until something inside
+	// it emits, so a group that stays empty was never opened and nothing has to
+	// be taken back.
+	groups []group
+}
+
+// group is one open clause or grouping parenthesis whose opening text has not
+// necessarily reached the output yet.
+type group struct {
+	// opener is the whitespace run preceding the clause keyword or parenthesis,
+	// through that token. Keeping the leading whitespace here leaves no double
+	// space when the group survives and no missing space when it vanishes.
+	opener string
+	// written records that opener reached the output, which is also what makes
+	// the group non-empty: only Item writes an opener.
+	written bool
+	// joiner is a separator recorded but not yet written. It is written by the
+	// next Item in this group and dropped if none follows, which is what makes a
+	// trailing operator vanish.
+	joiner  string
+	pending bool
+}
+
+// OpenGroup begins a group whose opener is withheld. Nothing is written.
+func (b *Builder) OpenGroup(opener string) {
+	b.groups = append(b.groups, group{opener: opener})
+}
+
+// Joiner records the separator between two items of the innermost open group. It
+// is dropped when the group has written no item yet, which is what makes a
+// leading operator vanish along with the condition it was meant to join.
+func (b *Builder) Joiner(separator string) {
+	if len(b.groups) == 0 {
+		b.WriteString(separator)
+		return
+	}
+	top := &b.groups[len(b.groups)-1]
+	if !top.written {
+		return
+	}
+	top.joiner, top.pending = separator, true
+}
+
+// Space writes a run of whitespace that separates two items rather than being one.
+// It travels with the separator it follows, so an elided joiner takes its spacing
+// with it, and it is dropped in a group that has written no item, where it would
+// otherwise be spacing in front of nothing. The scanner does not tokenize
+// whitespace and alwaysEmits does not count it, so it can never fill a group.
+func (b *Builder) Space(text string) {
+	if len(b.groups) == 0 {
+		b.WriteString(text)
+		return
+	}
+	top := &b.groups[len(b.groups)-1]
+	switch {
+	case !top.written:
+		return
+	case top.pending:
+		top.joiner += text
+	default:
+		b.WriteString(text)
+	}
+}
+
+// Item is called immediately before every fragment that writes a token or binds
+// a value. It opens whatever groups are still withheld, outermost first, so that
+// each opener is preceded by the separator attaching it to its own parent.
+func (b *Builder) Item() {
+	// Everything inside an unwritten group is unwritten too, so scanning outward
+	// to the first unwritten frame finds where the openers start.
+	start := len(b.groups)
+	for start > 0 && !b.groups[start-1].written {
+		start--
+	}
+	for i := start; i < len(b.groups); i++ {
+		if i > 0 {
+			b.flushJoiner(i - 1)
+		}
+		b.WriteString(b.groups[i].opener)
+		b.groups[i].written = true
+	}
+	if len(b.groups) > 0 {
+		b.flushJoiner(len(b.groups) - 1)
+	}
+}
+
+// flushJoiner writes the separator group i has been holding, if any.
+func (b *Builder) flushJoiner(i int) {
+	if !b.groups[i].pending {
+		return
+	}
+	b.WriteString(b.groups[i].joiner)
+	b.groups[i].joiner, b.groups[i].pending = "", false
+}
+
+// CloseGroup ends the innermost group, writing closer only if the group was
+// opened. A clause group passes an empty closer: it ends at the keyword that
+// starts the next clause, which belongs outside it. A separator the group was
+// holding is dropped, because nothing followed it.
+func (b *Builder) CloseGroup(closer string) {
+	if len(b.groups) == 0 {
+		b.WriteString(closer)
+		return
+	}
+	written := b.groups[len(b.groups)-1].written
+	b.groups = b.groups[:len(b.groups)-1]
+	if written {
+		b.WriteString(closer)
+	}
 }
 
 // NewBuilder returns a Builder emitting placeholders in the given style.
