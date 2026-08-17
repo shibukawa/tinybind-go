@@ -415,7 +415,7 @@ SELECT id FROM t WHERE n = {p} AND (x OR y) ORDER BY id
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"OpenGroup", "Joiner", "b.Item()", "CloseGroup"} {
+	for _, call := range []string{"OpenGroup", "Joiner", "_b.Item()", "CloseGroup"} {
 		if strings.Contains(string(generated), call) {
 			t.Errorf("a body with no condition should emit no %s call", call)
 		}

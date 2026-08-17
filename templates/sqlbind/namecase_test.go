@@ -31,7 +31,7 @@ func TestPrivateStatementIsCallableUnderItsOwnName(t *testing.T) {
 	if !strings.Contains(out, "func buildFindUser(id int)") {
 		t.Errorf("no builder wrapper:\n%s", out)
 	}
-	if !strings.Contains(out, "func _tinybindBuildfindUser(b *") {
+	if !strings.Contains(out, "func _tinybindBuildfindUser(_b *") {
 		t.Errorf("fragment builder missing:\n%s", out)
 	}
 	if strings.Contains(out, "func FindUser(") || strings.Contains(out, "func BuildFindUser(") {

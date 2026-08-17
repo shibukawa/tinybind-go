@@ -40,7 +40,7 @@ func checkError(t *testing.T, body string, options sqlbind.GenerateOptions) stri
 // own: the statement stops being built where the directive stands.
 func TestSQLCheckEmitsAnErrorCheckedCall(t *testing.T) {
 	generated := generateCheck(t, "{check Authorize(name)}\nSELECT id, name FROM users WHERE name = {name}", sqlbind.GenerateOptions{})
-	want := "if err := Authorize(name); err != nil {"
+	want := "if _err := Authorize(name); _err != nil {"
 	if !strings.Contains(generated, want) {
 		t.Fatalf("generated code is missing %q:\n%s", want, generated)
 	}
@@ -50,7 +50,7 @@ func TestSQLCheckEmitsAnErrorCheckedCall(t *testing.T) {
 func TestSQLCheckDiscardsADeclaredResult(t *testing.T) {
 	generated := generateCheck(t, "{check Norm(name)}\nSELECT id, name FROM users WHERE name = {name}",
 		sqlbind.GenerateOptions{ErrorExternals: map[string]bool{"Norm": true}})
-	want := "if _, err := Norm(name); err != nil {"
+	want := "if _, _err := Norm(name); _err != nil {"
 	if !strings.Contains(generated, want) {
 		t.Fatalf("generated code is missing %q:\n%s", want, generated)
 	}
@@ -67,7 +67,7 @@ func TestSQLCheckEmitsNoSQL(t *testing.T) {
 		var written []string
 		for _, line := range strings.Split(generated, "\n") {
 			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "b.WriteString(") || strings.HasPrefix(line, "b.Arg(") {
+			if strings.HasPrefix(line, "_b.WriteString(") || strings.HasPrefix(line, "b.Arg(") {
 				written = append(written, line)
 			}
 		}
@@ -128,7 +128,7 @@ func TestSQLCheckRefusesAValueThatCannotFail(t *testing.T) {
 // directive existed.
 func TestSQLUnusedIsFree(t *testing.T) {
 	generated := generateCheck(t, "SELECT id, name FROM users WHERE name = {name}", sqlbind.GenerateOptions{})
-	if strings.Contains(generated, "err != nil { return err }") {
+	if strings.Contains(generated, "_err != nil { return _err }") {
 		t.Fatalf("a statement with no check emitted an error check:\n%s", generated)
 	}
 }

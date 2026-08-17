@@ -193,6 +193,9 @@ func (c *compiler) analyze() error {
 				if _, exists := info.params[p.Name]; exists {
 					return c.error(p.Pos, "duplicate parameter "+p.Name)
 				}
+				if err := c.checkGeneratedNameClash(p.Pos, p.Name, "parameter"); err != nil {
+					return err
+				}
 				t, err := c.resolveType(p.Type)
 				if err != nil {
 					return err
@@ -329,6 +332,9 @@ func (c *compiler) analyzeNodes(nodes []Node, scope map[string]valueType, owner 
 				if _, taken := scope[binding.Name]; taken {
 					return c.error(binding.Pos, "val binding "+binding.Name+
 						" reuses a name that is already visible here; a value binding cannot shadow, because its evaluation moves to the top of its block")
+				}
+				if err := c.checkGeneratedNameClash(binding.Pos, binding.Name, "val binding"); err != nil {
+					return err
 				}
 				// The one position a failing external may occupy. Only the
 				// outermost call qualifies: an argument to it is typed with the

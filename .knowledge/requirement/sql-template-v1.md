@@ -20,7 +20,7 @@ outputs:
   sql.predicate: reusable predicate list
   sql.relation<T>: private typed subquery relation from requirement:sql-relation-composition
 declaration: lowercase statement keyword with PascalCase name from decision:template-declaration-kinds
-naming: rule:template-name-casing
+naming: rule:template-name-casing; an author-chosen name may not collide with a generated one per rule:generated-identifier-namespace
 values: ordinary inserted expressions follow rule:sql-placeholder-emission
 statement: data:sql-statement
 generated_api: requirement:sql-generated-api-layers

@@ -325,7 +325,7 @@ func (e *goEmitter) emitDeclaredTypes() {
 func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	info := e.c.statements[statement.Name]
 	internal := "_tinybindBuild" + statement.Name
-	fmt.Fprintf(&e.b, "func %s(b *%s", internal, runtime("Builder"))
+	fmt.Fprintf(&e.b, "func %s(_b *%s", internal, runtime("Builder"))
 	for _, p := range statement.Parameters {
 		t, _ := e.c.resolveType(p.Type)
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
@@ -352,12 +352,12 @@ func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	}
 	fmt.Fprintf(&e.b, "func %s(", e.builderAPIName(statement))
 	e.emitParams(statement.Parameters)
-	fmt.Fprintf(&e.b, ") (%s, error) {\n\tb := %s(%s)\n\tif err := %s(&b", runtime("Statement"), runtime("NewBuilder"), e.builderStyle(), internal)
+	fmt.Fprintf(&e.b, ") (%s, error) {\n\t_b := %s(%s)\n\tif _err := %s(&_b", runtime("Statement"), runtime("NewBuilder"), e.builderStyle(), internal)
 	for _, p := range statement.Parameters {
 		e.b.WriteString(", " + goLocalName(p.Name))
 	}
-	fmt.Fprintf(&e.b, "); err != nil { return %s{}, err }\n", runtime("Statement"))
-	e.b.WriteString("\treturn b.Statement(), nil\n}\n\n")
+	fmt.Fprintf(&e.b, "); _err != nil { return %s{}, _err }\n", runtime("Statement"))
+	e.b.WriteString("\treturn _b.Statement(), nil\n}\n\n")
 	switch info.cardinality {
 	case "exec":
 		e.emitExecAPI(statement)
@@ -397,8 +397,8 @@ func (e *goEmitter) emitExecAPI(statement *TemplateDecl) {
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
 	}
 	e.b.WriteString(") (sql.Result, error) {\n")
-	fmt.Fprintf(&e.b, "\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
-	e.b.WriteString("\tif err != nil { return nil, err }\n\treturn db.ExecContext(ctx, statement.SQL, statement.Args...)\n}\n\n")
+	fmt.Fprintf(&e.b, "\t_statement, _err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	e.b.WriteString("\tif _err != nil { return nil, _err }\n\treturn db.ExecContext(ctx, _statement.SQL, _statement.Args...)\n}\n\n")
 }
 
 func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
@@ -417,29 +417,29 @@ func (e *goEmitter) emitQueryAPI(statement *TemplateDecl, info *statementInfo) {
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
 	}
 	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
-	fmt.Fprintf(&e.b, "\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\t_statement, _err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
 	zero := result + "{}"
 	if info.cardinality == "optional" {
 		zero = "nil"
 	}
-	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
-	fmt.Fprintf(&e.b, "\trows, err := %s(ctx, db, statement.SQL, statement.Args...)\n", runtime("Query"))
-	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n\tdefer rows.Close()\n", zero)
-	fmt.Fprintf(&e.b, "\tif !rows.Next() { if err := rows.Err(); err != nil { return %s, err }; ", zero)
+	fmt.Fprintf(&e.b, "\tif _err != nil { return %s, _err }\n", zero)
+	fmt.Fprintf(&e.b, "\t_rows, _err := %s(ctx, db, _statement.SQL, _statement.Args...)\n", runtime("Query"))
+	fmt.Fprintf(&e.b, "\tif _err != nil { return %s, _err }\n\tdefer _rows.Close()\n", zero)
+	fmt.Fprintf(&e.b, "\tif !_rows.Next() { if _err := _rows.Err(); _err != nil { return %s, _err }; ", zero)
 	if info.cardinality == "one" {
 		fmt.Fprintf(&e.b, "return %s, sql.ErrNoRows", zero)
 	} else {
 		e.b.WriteString("return nil, nil")
 	}
 	e.b.WriteString(" }\n")
-	fmt.Fprintf(&e.b, "\tvar result %s\n", result)
-	e.emitScan("\t", info.result, "result", zero)
-	fmt.Fprintf(&e.b, "\tif rows.Next() { return %s, fmt.Errorf(\"tinybind SQL: %s expected at most one row\") }\n", zero, statement.Name)
-	fmt.Fprintf(&e.b, "\tif err := rows.Err(); err != nil { return %s, err }\n", zero)
+	fmt.Fprintf(&e.b, "\tvar _result %s\n", result)
+	e.emitScan("\t", info.result, "_result", zero)
+	fmt.Fprintf(&e.b, "\tif _rows.Next() { return %s, fmt.Errorf(\"tinybind SQL: %s expected at most one row\") }\n", zero, statement.Name)
+	fmt.Fprintf(&e.b, "\tif _err := _rows.Err(); _err != nil { return %s, _err }\n", zero)
 	if info.cardinality == "optional" {
-		e.b.WriteString("\treturn &result, nil\n}\n\n")
+		e.b.WriteString("\treturn &_result, nil\n}\n\n")
 	} else {
-		e.b.WriteString("\treturn result, nil\n}\n\n")
+		e.b.WriteString("\treturn _result, nil\n}\n\n")
 	}
 }
 
@@ -450,15 +450,15 @@ func (e *goEmitter) emitManyAPI(statement *TemplateDecl, info *statementInfo, re
 		fmt.Fprintf(&e.b, ", %s %s", goLocalName(p.Name), goType(t))
 	}
 	fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
-	fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
-	fmt.Fprintf(&e.b, "\t\tstatement, err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
-	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
-	fmt.Fprintf(&e.b, "\t\trows, err := %s(ctx, db, statement.SQL, statement.Args...)\n", runtime("Query"))
-	fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n\t\tdefer rows.Close()\n", result)
-	fmt.Fprintf(&e.b, "\t\tfor rows.Next() {\n\t\t\tvar result %s\n", result)
-	fmt.Fprintf(&e.b, "\t\t\tif err := rows.Scan(%s); err != nil { yield(%s{}, err); return }\n", e.scanArgs(info.result, "result"), result)
-	e.b.WriteString("\t\t\tif !yield(result, nil) { return }\n\t\t}\n")
-	fmt.Fprintf(&e.b, "\t\tif err := rows.Err(); err != nil { yield(%s{}, err) }\n", result)
+	fmt.Fprintf(&e.b, "\treturn func(_yield func(%s, error) bool) {\n", result)
+	fmt.Fprintf(&e.b, "\t\t_statement, _err := %s(%s)\n", e.builderAPIName(statement), strings.TrimPrefix(e.callParams(statement.Parameters), ", "))
+	fmt.Fprintf(&e.b, "\t\tif _err != nil { _yield(%s{}, _err); return }\n", result)
+	fmt.Fprintf(&e.b, "\t\t_rows, _err := %s(ctx, db, _statement.SQL, _statement.Args...)\n", runtime("Query"))
+	fmt.Fprintf(&e.b, "\t\tif _err != nil { _yield(%s{}, _err); return }\n\t\tdefer _rows.Close()\n", result)
+	fmt.Fprintf(&e.b, "\t\tfor _rows.Next() {\n\t\t\tvar _result %s\n", result)
+	fmt.Fprintf(&e.b, "\t\t\tif _err := _rows.Scan(%s); _err != nil { _yield(%s{}, _err); return }\n", e.scanArgs(info.result, "_result"), result)
+	e.b.WriteString("\t\t\tif !_yield(_result, nil) { return }\n\t\t}\n")
+	fmt.Fprintf(&e.b, "\t\tif _err := _rows.Err(); _err != nil { _yield(%s{}, _err) }\n", result)
 	e.b.WriteString("\t}\n}\n\n")
 }
 
@@ -472,11 +472,11 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 	}
 	if info.cardinality == "many" {
 		fmt.Fprintf(&e.b, ") iter.Seq2[%s, error] {\n", result)
-		fmt.Fprintf(&e.b, "\treturn func(yield func(%s, error) bool) {\n", result)
-		fmt.Fprintf(&e.b, "\t\texecutor, err := %s\n", e.resolverCall(statement.Name, info.readOnly))
-		fmt.Fprintf(&e.b, "\t\tif err != nil { yield(%s{}, err); return }\n", result)
-		fmt.Fprintf(&e.b, "\t\tfor value, err := range %s(ctx, executor%s) {\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
-		e.b.WriteString("\t\t\tif !yield(value, err) { return }\n\t\t}\n\t}\n}\n\n")
+		fmt.Fprintf(&e.b, "\treturn func(_yield func(%s, error) bool) {\n", result)
+		fmt.Fprintf(&e.b, "\t\t_executor, _err := %s\n", e.resolverCall(statement.Name, info.readOnly))
+		fmt.Fprintf(&e.b, "\t\tif _err != nil { _yield(%s{}, _err); return }\n", result)
+		fmt.Fprintf(&e.b, "\t\tfor _value, _err := range %s(ctx, _executor%s) {\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
+		e.b.WriteString("\t\t\tif !_yield(_value, _err) { return }\n\t\t}\n\t}\n}\n\n")
 		return
 	}
 
@@ -489,13 +489,13 @@ func (e *goEmitter) emitContextAPI(statement *TemplateDecl, info *statementInfo)
 		returnType = "*" + result
 	}
 	fmt.Fprintf(&e.b, ") (%s, error) {\n", returnType)
-	fmt.Fprintf(&e.b, "\texecutor, err := %s\n", e.resolverCall(statement.Name, info.readOnly))
-	fmt.Fprintf(&e.b, "\tif err != nil { return %s, err }\n", zero)
-	fmt.Fprintf(&e.b, "\treturn %s(ctx, executor%s)\n}\n\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
+	fmt.Fprintf(&e.b, "\t_executor, _err := %s\n", e.resolverCall(statement.Name, info.readOnly))
+	fmt.Fprintf(&e.b, "\tif _err != nil { return %s, _err }\n", zero)
+	fmt.Fprintf(&e.b, "\treturn %s(ctx, _executor%s)\n}\n\n", e.executorAPIName(statement.Name), e.callParams(statement.Parameters))
 }
 
 func (e *goEmitter) emitScan(indent string, t valueType, target, zero string) {
-	fmt.Fprintf(&e.b, "%sif err := rows.Scan(%s); err != nil { return %s, err }\n", indent, e.scanArgs(t, target), zero)
+	fmt.Fprintf(&e.b, "%sif _err := _rows.Scan(%s); _err != nil { return %s, _err }\n", indent, e.scanArgs(t, target), zero)
 }
 
 func (e *goEmitter) scanArgs(t valueType, target string) string {
@@ -548,18 +548,18 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				if len(args) > 0 {
 					suffix = ", " + strings.Join(args, ", ")
 				}
-				e.line("if err := _tinybindBuild" + id.Name + "(b" + suffix + "); err != nil { return err }")
+				e.line("if _err := _tinybindBuild" + id.Name + "(_b" + suffix + "); _err != nil { return _err }")
 			} else if t.kind == kindArray {
 				if t.optional {
 					return e.c.error(n.Pos, "optional arrays cannot be expanded as SQL values")
 				}
-				e.line("if err := " + runtime("AppendValues") + "(b, " + code + "); err != nil { return err }")
+				e.line("if _err := " + runtime("AppendValues") + "(_b, " + code + "); _err != nil { return _err }")
 			} else {
-				e.line("b.Arg(" + code + ")")
+				e.line("_b.Arg(" + code + ")")
 			}
 		case *RelationNode:
 			e.item()
-			e.line("b.WriteByte('(')")
+			e.line("_b.WriteByte('(')")
 			var args []string
 			for _, argument := range n.Arguments {
 				value, err := e.expr(argument, scope)
@@ -572,8 +572,8 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 			if len(args) > 0 {
 				suffix = ", " + strings.Join(args, ", ")
 			}
-			e.line("if err := _tinybindBuild" + n.Name + "(b" + suffix + "); err != nil { return err }")
-			e.line("b.WriteString(" + strconv.Quote(") AS "+n.Alias) + ")")
+			e.line("if _err := _tinybindBuild" + n.Name + "(_b" + suffix + "); _err != nil { return _err }")
+			e.line("_b.WriteString(" + strconv.Quote(") AS "+n.Alias) + ")")
 		case *ValNode:
 			// One Go local per binding. There is nothing to generate to carry
 			// the scope: a control body is already a Go block, so the binding
@@ -590,8 +590,8 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 					// The builder already returns an error, so a failing
 					// external needs no new plumbing: the statement stops being
 					// built and the caller sees why.
-					e.line(local + ", err := " + code)
-					e.line("if err != nil { return err }")
+					e.line(local + ", _err := " + code)
+					e.line("if _err != nil { return _err }")
 				} else {
 					e.line(local + " := " + code)
 				}
@@ -609,9 +609,9 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 			// whether the call failed, so the error is taken and the value it
 			// came with is not.
 			if e.c.exprTypes[n.Call].kind == kindNone {
-				e.line("if err := " + code + "; err != nil { return err }")
+				e.line("if _err := " + code + "; _err != nil { return _err }")
 			} else {
-				e.line("if _, err := " + code + "; err != nil { return err }")
+				e.line("if _, _err := " + code + "; _err != nil { return _err }")
 			}
 		case *IfNode:
 			condition, err := e.expr(n.Condition, scope)
@@ -650,17 +650,17 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 // written whole, exactly as it always was.
 func (e *goEmitter) emitText(n *TextNode) {
 	if e.plan == nil {
-		e.line("b.WriteString(" + strconv.Quote(n.Text) + ")")
+		e.line("_b.WriteString(" + strconv.Quote(n.Text) + ")")
 		return
 	}
 	for _, chunk := range e.plan.chunks[n] {
 		switch chunk.kind {
 		case chunkClauseOpen, chunkParenOpen:
-			e.line("b.OpenGroup(" + strconv.Quote(chunk.text) + ")")
+			e.line("_b.OpenGroup(" + strconv.Quote(chunk.text) + ")")
 		case chunkJoiner:
-			e.line("b.Joiner(" + strconv.Quote(chunk.text) + ")")
+			e.line("_b.Joiner(" + strconv.Quote(chunk.text) + ")")
 		case chunkClose:
-			e.line("b.CloseGroup(" + strconv.Quote(chunk.text) + ")")
+			e.line("_b.CloseGroup(" + strconv.Quote(chunk.text) + ")")
 		default:
 			if chunk.text == "" {
 				continue
@@ -669,11 +669,11 @@ func (e *goEmitter) emitText(n *TextNode) {
 			// of it must not open the group it merely separates, and it has to
 			// follow the separator rather than precede it.
 			if !chunk.fills {
-				e.line("b.Space(" + strconv.Quote(chunk.text) + ")")
+				e.line("_b.Space(" + strconv.Quote(chunk.text) + ")")
 				continue
 			}
 			e.item()
-			e.line("b.WriteString(" + strconv.Quote(chunk.text) + ")")
+			e.line("_b.WriteString(" + strconv.Quote(chunk.text) + ")")
 		}
 	}
 }
@@ -686,7 +686,7 @@ func (e *goEmitter) item() {
 	if e.plan == nil {
 		return
 	}
-	e.line("b.Item()")
+	e.line("_b.Item()")
 }
 
 // branchCloses reports how many groups each branch of n must close at its own end.
@@ -699,7 +699,7 @@ func (e *goEmitter) branchCloses(n *IfNode) [2]int {
 
 func (e *goEmitter) emitCloses(count int) {
 	for i := 0; i < count; i++ {
-		e.line("b.CloseGroup(\"\")")
+		e.line("_b.CloseGroup(\"\")")
 	}
 }
 
@@ -858,6 +858,30 @@ func goLocalName(name string) string {
 	}
 	return name
 }
+
+// reservedGeneratedNames are the identifiers of the generated public signature that
+// an author-chosen name cannot take, per rule:generated-identifier-namespace. Every
+// other emitter-owned identifier is a local spelled with a leading underscore, so
+// these two are what is left: they read in the godoc signature of every executor
+// API, and prefixing them would put the emitter's bookkeeping there.
+var reservedGeneratedNames = map[string]string{
+	"ctx": "the request context of the generated executor API",
+	"db":  "the executor of the generated executor API",
+}
+
+// checkGeneratedNameClash refuses an author-chosen name that would collide with
+// something the emitter writes into the same Go scope.
+func (c *compiler) checkGeneratedNameClash(pos Position, name, kind string) error {
+	if strings.HasPrefix(name, "_") {
+		return c.error(pos, kind+" "+name+
+			" may not begin with an underscore, which names the variables generated code introduces")
+	}
+	if why, reserved := reservedGeneratedNames[name]; reserved {
+		return c.error(pos, kind+" "+name+" is reserved: it is "+why)
+	}
+	return nil
+}
+
 func goPublicName(name string) string {
 	if name == "" {
 		return name

@@ -131,7 +131,7 @@ SELECT id, link, backup FROM sites WHERE link = {link}
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "rows.Scan(&result.Id, _tinybindsql.ScanURL(&result.Link), _tinybindsql.ScanOptionalURL(&result.Backup))"
+	want := "_rows.Scan(&_result.Id, _tinybindsql.ScanURL(&_result.Link), _tinybindsql.ScanOptionalURL(&_result.Backup))"
 	if !bytes.Contains(generated, []byte(want)) {
 		t.Fatalf("url fields are not scanned through the adapter:\n%s", generated)
 	}

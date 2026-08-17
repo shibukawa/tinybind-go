@@ -45,7 +45,7 @@ SELECT id, name FROM users WHERE name = {val key = Norm(name)}{key}
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"key, err := Norm(name)", "if err != nil"} {
+	for _, want := range []string{"key, _err := Norm(name)", "if _err != nil"} {
 		if !bytes.Contains(generated, []byte(want)) {
 			t.Fatalf("generated output lacks %q:\n%s", want, generated)
 		}

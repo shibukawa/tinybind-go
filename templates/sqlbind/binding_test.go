@@ -46,7 +46,7 @@ func TestSQLValueBindingCallsItsExternalOnce(t *testing.T) {
 	if calls := strings.Count(generated, "Norm("); calls != 1 {
 		t.Fatalf("want one Norm call, got %d:\n%s", calls, generated)
 	}
-	if args := strings.Count(generated, "b.Arg(key)"); args != 2 {
+	if args := strings.Count(generated, "_b.Arg(key)"); args != 2 {
 		t.Fatalf("want the bound local used twice, got %d:\n%s", args, generated)
 	}
 }
@@ -149,7 +149,7 @@ func TestSQLFailingExternalIsCheckedAtTheBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-	for _, want := range []string{"key, err := Norm(name)", "if err != nil"} {
+	for _, want := range []string{"key, _err := Norm(name)", "if _err != nil"} {
 		if !strings.Contains(string(generated), want) {
 			t.Fatalf("generated code is missing %q:\n%s", want, generated)
 		}
