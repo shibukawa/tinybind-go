@@ -426,6 +426,21 @@ error; put the whole `BETWEEN` inside the condition. A parenthesis that follows 
 word is data rather than a group, so an `IN ({names})` list and a function argument
 list keep their parentheses in every branch.
 
+A `CASE` is the one place a conditional may not be able to disappear. A `CASE` arm is
+neither a clause nor a list, so there is no keyword to withhold and no separator to
+drop — an empty fragment would leave `CASE WHEN THEN`. A fragment inside `CASE` that
+can emit nothing is therefore a generation error:
+
+```text
+SELECT id FROM t WHERE CASE WHEN {if flagA}a{/if} THEN 1 ELSE 0 END = 1
+```
+
+> a conditional fragment inside CASE must emit on every branch, because CASE has no
+> clause or separator that can be withheld with it
+
+Giving the condition an `{else}` that also emits makes it legal, since it can no
+longer be empty.
+
 An `UPDATE` or `DELETE` is unaffected by any of this. Its `WHERE` must still be
 provably non-empty on every branch, so a predicate that can empty out stays a
 generation error rather than becoming a full-table mutation.
@@ -471,9 +486,16 @@ not supported anyway), an `INSERT ... SELECT`, an `INSERT` with no column list, 
 A `SET` list is still subject to the mutation proof: an `UPDATE` whose `SET` items
 are all conditional is a generation error, because a withheld comma fills nothing.
 
-`SELECT`, `RETURNING`, `FROM`, `WITH`, `WINDOW`, `USING`, and `PARTITION BY` keep
-their commas as written — a conditional result column is forbidden for its own
-reasons, and the rest have no dangling-comma case.
+`FROM`, `WITH`, `WINDOW`, `USING`, and `PARTITION BY` are managed too. Only `SELECT`
+and `RETURNING` keep their commas as written, because a conditional result column is
+forbidden outright — the refusal answers it before a comma is reached. (An `OVER (...)`
+in the select list is a result context for the same reason, so a conditional
+`PARTITION BY` item belongs in a `WINDOW` clause.)
+
+A parenthesis is a list only after `VALUES` or as an `INSERT` column list. A function
+argument list keeps its commas even inside a managed clause, since eliding an argument
+would change the call's arity — and `USING (...)` keeps its own, because that same
+parenthesis carries a derived table in `DELETE FROM t USING (SELECT ...) s`.
 
 ## Reserved parameter names
 

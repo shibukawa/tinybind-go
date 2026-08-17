@@ -65,17 +65,31 @@ var booleanClauseOpeners = map[string]bool{
 	"WHERE": true, "HAVING": true, "QUALIFY": true, "ON": true,
 }
 
-// commaClauseOpeners are the clauses whose items a comma separates. SELECT,
-// RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY are deliberately absent:
-// a conditional item in a result list is already refused by
-// validateStaticResultShape, and the rest carry no case for elision.
+// commaClauseOpeners are the clauses whose items a comma separates. SELECT and
+// RETURNING are deliberately absent: a conditional item in a result list is
+// already refused by validateStaticResultShape, so a group there would carry no
+// case.
 var commaClauseOpeners = map[string]bool{
 	"SET": true, "VALUES": true, "ORDER": true, "GROUP": true,
+	"FROM": true, "WITH": true, "WINDOW": true, "USING": true, "PARTITION": true,
 }
 
 // twoWordCommaOpeners need their second word to open, so the opener text spans
-// both tokens. PARTITION BY is not here: a window's partition list is not elided.
-var twoWordCommaOpeners = map[string]bool{"ORDER": true, "GROUP": true}
+// both tokens.
+var twoWordCommaOpeners = map[string]bool{
+	"ORDER": true, "GROUP": true, "PARTITION": true,
+}
+
+// commaParenPredecessors are the words after which a parenthesis is the comma list
+// itself rather than data inside one item. It is a closed set rather than "any
+// parenthesis at a comma group's depth", because a function call sits at that depth
+// too and eliding one of its arguments would change the call's arity.
+//
+// USING is absent on purpose: the same parenthesis carries a derived table in
+// "DELETE FROM t USING (SELECT ...) s", and telling that from a "JOIN t USING (a, b)"
+// column list needs the token after the parenthesis. Its clause-level commas are
+// managed; a conditional item inside its parenthesized form is not.
+var commaParenPredecessors = map[string]bool{"VALUES": true}
 
 // clauseBoundaryWords end a boolean clause group where they appear at its own
 // depth. They are the line-starting keywords of rule:sql-template-layout, which is
@@ -88,7 +102,7 @@ var clauseBoundaryWords = map[string]bool{
 	"ON": true, "JOIN": true, "INNER": true, "LEFT": true, "RIGHT": true,
 	"FULL": true, "CROSS": true, "NATURAL": true, "OUTER": true, "LATERAL": true,
 	"INSERT": true, "UPDATE": true, "DELETE": true, "MERGE": true, "WITH": true,
-	"INTO": true, "CONFLICT": true, "DO": true,
+	"INTO": true, "CONFLICT": true, "DO": true, "PARTITION": true,
 }
 
 // groupingParenPredecessors are the tokens after which a parenthesis groups a
@@ -204,6 +218,14 @@ func sameBetween(a, b []int) bool {
 	return true
 }
 
+// caseElisionMessage names CASE as the construct that cannot absorb an absence. A
+// CASE arm is neither a clause nor a comma list, so there is no opener to withhold
+// and no separator to drop: a fragment that emits nothing leaves CASE WHEN THEN, or
+// an operand missing beside an operator, on the branch where it is empty.
+const caseElisionMessage = "a conditional fragment inside CASE must emit on every branch, " +
+	"because CASE has no clause or separator that can be withheld with it; " +
+	"give the condition an else, or put the whole CASE inside it"
+
 // planner walks a statement body and fills a groupPlan.
 type planner struct {
 	c    *compiler
@@ -261,6 +283,9 @@ func (p *planner) walk(nodes []Node, state groupState) (groupState, error) {
 			state = p.text(n, state)
 		case *ExpressionNode:
 			if body, ok := p.c.predicateBody(n); ok && !p.c.alwaysEmits(body) {
+				if state.caseDepth > 0 {
+					return state, p.c.error(n.Pos, caseElisionMessage)
+				}
 				// The callee writes into this same Builder and calls Item where its
 				// own fragments emit, so the group fills only if the callee does.
 				p.plan.selfFilling[n] = true
@@ -270,6 +295,9 @@ func (p *planner) walk(nodes []Node, state groupState) (groupState, error) {
 		case *RelationNode:
 			state.prev, state.hasPrev = valuePrev, true
 		case *IfNode:
+			if state.caseDepth > 0 && !p.c.alwaysEmits([]Node{n}) {
+				return state, p.c.error(n.Pos, caseElisionMessage)
+			}
 			thenState, thenCloses, err := p.branch(n.Then, state)
 			if err != nil {
 				return state, err
@@ -330,6 +358,13 @@ func (p *planner) text(n *TextNode, state groupState) groupState {
 	// emit slices from the cursor through end, so the whitespace before a token
 	// travels with that token and an elided chunk takes its own spacing with it.
 	emit := func(end int, kind chunkKind) {
+		if kind == chunkJoiner {
+			// A joiner takes the whitespace on both sides of itself. The preceding run
+			// arrives with the cursor; absorbing the following one is what lets a
+			// dropped operator carry its own spacing away, so an operator leading a
+			// branch does not leave behind the space that separated it from its operand.
+			end = spanWhitespace(n.Text, end)
+		}
 		slice := n.Text[cursor:end]
 		cursor = end
 		chunks = append(chunks, sqlChunk{text: slice, kind: kind, fills: fillsText(slice)})
@@ -389,7 +424,7 @@ func (p *planner) text(n *TextNode, state groupState) groupState {
 			// and the column list after INSERT INTO its target.
 			boolean := atItemDepth && !top.comma && state.caseDepth == 0 &&
 				(!state.hasPrev || groupingParenPredecessors[state.prev])
-			comma := atItemDepth && top.comma && state.prev == "VALUES"
+			comma := atItemDepth && top.comma && state.hasPrev && commaParenPredecessors[state.prev]
 			if state.insertColumns {
 				comma, state.insertColumns = true, false
 			}
@@ -525,4 +560,17 @@ func fillsText(text string) bool {
 		}
 	}
 	return false
+}
+
+// spanWhitespace returns the offset past the whitespace run starting at from.
+func spanWhitespace(text string, from int) int {
+	for from < len(text) {
+		switch text[from] {
+		case ' ', '\t', '\r', '\n':
+			from++
+		default:
+			return from
+		}
+	}
+	return from
 }

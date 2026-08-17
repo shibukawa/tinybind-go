@@ -14,14 +14,19 @@ status: implemented 2026-08-17, boolean clauses first and comma clauses in the s
 comma_groups:
   rule: a comma at the item depth of an open comma group is a joiner, on the same frame protocol as AND and OR
   openers:
-    clause: SET, ORDER BY, GROUP BY, and VALUES
+    clause: SET, VALUES, ORDER BY, GROUP BY, FROM, WITH, WINDOW, USING, and PARTITION BY
     two_token: ORDER BY and GROUP BY need one token of lookahead, so the opener spans both words
     value_list_paren:
       which: the tuple after VALUES, and the column list after INSERT INTO its target
       why_it_inverts_the_boolean_test: a boolean group's paren must not follow a word, because rule:sql-template-layout calls a parenthesized list data; a comma group's paren is that list, so following a word is exactly what identifies it
       insert_column_list: one bit of state, set by INSERT INTO through its target name and consumed by the next paren at that depth
-  left_as_text: SELECT, RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY
-  why_select_and_returning_are_excluded: a conditional item there is already refused by validateStaticResultShape before elision could see it, so a group there would carry no case
+  left_as_text: SELECT and RETURNING only
+  why_select_and_returning_are_excluded: a conditional item there is already refused by validateStaticResultShape before elision could see it, so a group there would carry no case; the refusal is the answer rather than a gap
+  reachability_note: an OVER in a select list is a result context too, so a conditional PARTITION BY item is refused there for the same reason; the reachable PARTITION BY is one in a WINDOW clause
+  paren_predecessors_are_a_closed_set:
+    which: VALUES, plus the INSERT column list through its own flag
+    why_not_any_paren_at_a_comma_group_depth: a function call sits at that depth too, so eliding one of its arguments would change the call's arity
+    USING_excluded: the same parenthesis carries a derived table in 'DELETE FROM t USING (SELECT ...) s' and a column list in 'JOIN t USING (a, b)', and telling them apart needs the token after the parenthesis; its clause-level commas are managed and its parenthesized form is not
   group_by_included_unasked: the request named SET, ORDER BY, and VALUES; GROUP BY is the same two-token opener with the same empty-clause failure, so excluding it would read as an oversight rather than a decision
   empty_clause: an ORDER BY, GROUP BY, or SET whose every item is conditional drops its own keyword, which is what requirement:sql-template-v1 asks for with 'manage commas and empty clause'
   set_and_the_mutation_proof: a withheld comma fills nothing, so an UPDATE whose SET items are all conditional stays the generation error rule:sql-static-mutation-safety already makes it
@@ -84,10 +89,11 @@ exactness:
     mechanism: one token of lookahead, which is the same test fmtclause.go already applies to classify ON CONFLICT as absorbing
     general_hazard_it_names: a keyword treated as a group opener where it is not one is silently deleted rather than diagnosed, because withholding is invisible by design
   case_expression:
-    rule: inside a CASE region an AND or OR is text and a parenthesis opens no group, so CASE is excluded by construction rather than diagnosed
-    changed_from_the_draft: the drafted rule made a conditional boundary inside CASE an error
-    why_exclusion_instead: CASE WHEN opens a boolean region that is neither a clause keyword nor a paren, so nothing ever pushes a frame there and no opener or joiner can be withheld; the region is therefore emitted exactly as today, and an error would refuse templates that work
-    what_it_costs: a vanishing WHEN condition still leaves 'CASE WHEN THEN', unchanged and unimproved, which is the outcome the request said it would also accept
+    rule: a fragment inside a CASE region that can emit nothing is a generation diagnostic naming CASE
+    why_reported_rather_than_modelled: a CASE arm is neither a clause nor a comma list, so there is no opener to withhold and no separator to drop; an absent fragment leaves 'CASE WHEN THEN', or an operand missing beside its operator, on the branch where it is empty
+    why_not_elided_as_a_whole_arm: suppressing a whole WHEN arm means discarding its THEN result, which is content that exists rather than an opener written late; the frame protocol cannot express it, and inventing a second mechanism for one construct is not worth its weight
+    not_refused: a condition whose branches both emit is not elidable and stays legal, so only genuine emptiness is reported
+    settles: what decision:sql-boundary-joiner-inference recorded as the request's own preference, an error naming the construct over partial support
   clause_opened_inside_a_branch:
     rule: a group opened inside a branch closes at that branch's end, so both paths leave the same stack
     why_not_an_error: '{if a}WHERE x = {x}{/if}' is the pre-existing idiom for a wholly conditional clause and is legal for a SELECT today; closing the frame at the branch end keeps it working and renders it unchanged
@@ -122,10 +128,16 @@ acceptance:
   - 'DELETE FROM users WHERE id = {id} {if flag}AND flag{/if}' still generates
   - the multi-line in-branch form docs/sqlbind.md teaches renders unchanged with the condition true and loses the operator with it when false
   - a body with no condition emits no OpenGroup, Joiner, Item, or CloseGroup call at all
-not_done:
-  comma_clauses_left_as_text: SELECT, RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY, per comma_groups.left_as_text
-  case_regions: excluded rather than modelled, per exactness.case_expression
-  whitespace_around_a_dropped_leading_operator: an operator leading a branch takes its own preceding whitespace but not the space that followed it, so that one position can leave a double space; it occurs only in a branch combination that renders invalid SQL today
+  - all three accepted operator positions render with no double space in every branch, compared on exact text rather than collapsed
+  - a multi-line predicate keeps its authored newline and indent when the operator survives, and loses the whole run when it does not
+  - an elidable fragment in a CASE when-condition, a then-result, or beside an operator inside CASE is reported and names CASE
+  - a CASE whose conditional branches both emit still generates
+  - FROM, WITH, WINDOW, USING, and PARTITION BY in a WINDOW clause each manage their commas and drop an all-conditional list
+  - a function argument list inside a SET item keeps its comma, because a call paren opens no group
+whitespace:
+  rule: a joiner takes the whitespace on both sides of itself, so a dropped operator carries its own spacing away
+  why_both_sides: the preceding run arrives with the cursor; absorbing the following one is what keeps an operator leading a branch from leaving behind the space that separated it from its operand
+  authored_layout_survives: a surviving joiner keeps the newline and indent the author wrote, so a multi-line predicate renders byte-identically
 related:
   - requirement:sql-conditional-predicate-composition
   - decision:sql-boundary-joiner-inference
