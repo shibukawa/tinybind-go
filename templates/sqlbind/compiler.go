@@ -228,6 +228,9 @@ func (c *compiler) analyze() error {
 		if err := c.checkMutationSafety(d, body); err != nil {
 			return err
 		}
+		if err := c.checkInsertItemAgreement(d, body); err != nil {
+			return err
+		}
 		if err := c.validateStaticResultShape(d, body); err != nil {
 			return err
 		}

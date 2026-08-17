@@ -25,11 +25,7 @@ comma_groups:
   group_by_included_unasked: the request named SET, ORDER BY, and VALUES; GROUP BY is the same two-token opener with the same empty-clause failure, so excluding it would read as an oversight rather than a decision
   empty_clause: an ORDER BY, GROUP BY, or SET whose every item is conditional drops its own keyword, which is what requirement:sql-template-v1 asks for with 'manage commas and empty clause'
   set_and_the_mutation_proof: a withheld comma fills nothing, so an UPDATE whose SET items are all conditional stays the generation error rule:sql-static-mutation-safety already makes it
-  insert_pairing_hazard:
-    what: a conditional column and its conditional value sit in two independent groups, so guarding them with different conditions renders a column count that disagrees with its value count
-    status: not checked; the mismatch reaches the database as a runtime error
-    why_not_refused: the per-path counts are decidable and a check is tractable on the walkClause machinery, but it is a new refusal nobody asked for and it could reject templates in use
-    what_the_author_owes: guard a column and its value with the same condition
+  insert_pairing: closed by rule:sql-insert-item-agreement, which reports a column count that can disagree with its value count on some branch
 joiner_recognition:
   rule: every AND or OR at the item depth of the innermost open group is a joiner
   no_adjacency_test:
@@ -128,7 +124,6 @@ acceptance:
   - a body with no condition emits no OpenGroup, Joiner, Item, or CloseGroup call at all
 not_done:
   comma_clauses_left_as_text: SELECT, RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY, per comma_groups.left_as_text
-  insert_pairing: per comma_groups.insert_pairing_hazard
   case_regions: excluded rather than modelled, per exactness.case_expression
   whitespace_around_a_dropped_leading_operator: an operator leading a branch takes its own preceding whitespace but not the space that followed it, so that one position can leave a double space; it occurs only in a branch combination that renders invalid SQL today
 related:

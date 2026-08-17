@@ -449,10 +449,24 @@ VALUES ({id}, {name}{if withCity}, {city}{/if})
 An `ORDER BY` or `GROUP BY` whose every item is conditional drops its own keyword,
 the same way `WHERE` does.
 
-One thing stays yours: an `INSERT` column list and its `VALUES` tuple are two
-separate lists, so guard a column and its value with the **same** condition. Nothing
-checks that they agree, and a column count that disagrees with its value count is
-rejected by the database rather than by the generator.
+Guard a column and its value with the **same** condition. If they can disagree, the
+generator says so rather than letting the database reject the statement at runtime:
+
+```text
+INSERT INTO users (id, name{if withCity}, city{/if}) VALUES ({id}, {name}, {city})
+```
+
+> INSERT column count and value count disagree on some branch; guard a column and
+> its value with the same condition
+
+The check follows each branch path and requires the two counts to end equal, and it
+knows that one condition guarding both lists is a single question — so two
+independent conditions each guarding a matched pair are fine, and so is an
+`{if}/{else}` choosing a column and the same `{if}/{else}` choosing its value.
+
+A few forms are left undecided rather than guessed: a multi-row `VALUES` (which is
+not supported anyway), an `INSERT ... SELECT`, an `INSERT` with no column list, and a
+`sql.predicate` inside a list that might emit nothing.
 
 A `SET` list is still subject to the mutation proof: an `UPDATE` whose `SET` items
 are all conditional is a generation error, because a withheld comma fills nothing.
