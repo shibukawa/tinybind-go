@@ -426,12 +426,50 @@ error; put the whole `BETWEEN` inside the condition. A parenthesis that follows 
 word is data rather than a group, so an `IN ({names})` list and a function argument
 list keep their parentheses in every branch.
 
-Comma-separated clauses are not covered yet: a conditional item in `SET`,
-`ORDER BY`, or `VALUES` still needs its commas written by hand.
-
 An `UPDATE` or `DELETE` is unaffected by any of this. Its `WHERE` must still be
 provably non-empty on every branch, so a predicate that can empty out stays a
 generation error rather than becoming a full-table mutation.
+
+### Commas in a conditional list
+
+The same withholding manages commas, in `SET`, `ORDER BY`, `GROUP BY`, `VALUES`,
+and an `INSERT` column list:
+
+```text
+export statement Up(id: int, city: string, withCity: bool): sql.exec {
+UPDATE users SET seen = now(){if withCity}, city = {city}{/if} WHERE id = {id}
+}
+
+export statement Add(id: int, name: string, city: string, withCity: bool): sql.exec {
+INSERT INTO users (id, name{if withCity}, city{/if})
+VALUES ({id}, {name}{if withCity}, {city}{/if})
+}
+```
+
+An `ORDER BY` or `GROUP BY` whose every item is conditional drops its own keyword,
+the same way `WHERE` does.
+
+One thing stays yours: an `INSERT` column list and its `VALUES` tuple are two
+separate lists, so guard a column and its value with the **same** condition. Nothing
+checks that they agree, and a column count that disagrees with its value count is
+rejected by the database rather than by the generator.
+
+A `SET` list is still subject to the mutation proof: an `UPDATE` whose `SET` items
+are all conditional is a generation error, because a withheld comma fills nothing.
+
+`SELECT`, `RETURNING`, `FROM`, `WITH`, `WINDOW`, `USING`, and `PARTITION BY` keep
+their commas as written — a conditional result column is forbidden for its own
+reasons, and the rest have no dangling-comma case.
+
+## Reserved parameter names
+
+Generated code names the variables it introduces with a leading underscore (`_b`,
+`_err`, `_rows`, `_result`), so a parameter called `err` or `result` is fine and a
+parameter name may not begin with an underscore.
+
+Two names are reserved, because they read in the public signature of every generated
+executor API: `ctx` and `db`. Declaring a parameter with either is a generation error
+naming it.
 
 ## Expanding slices for IN
 

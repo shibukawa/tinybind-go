@@ -9,7 +9,7 @@ A conditional predicate's source reads as the fully-populated SQL with condition
 origin:
   source: downstream framework change request 2026-08-17, against v0.5.14, Popcorn Wave at github.com/shibukawa/popcornwave
   disposition: decision:sql-boundary-joiner-inference
-status: implemented 2026-08-17 for boolean clauses WHERE, HAVING, QUALIFY, and join ON; comma clauses not done
+status: implemented 2026-08-17; boolean clauses WHERE, HAVING, QUALIFY, and join ON, then comma clauses SET, ORDER BY, GROUP BY, and VALUES
 refines: requirement:sql-template-v1 structured_lists, which already promises 'AND children by default' and 'omit when empty for SELECT'
 gap:
   implemented: flat text; emitNodes at templates/sqlbind/generate.go:511 emits a TextNode verbatim inside a plain Go if, with no separator logic anywhere
@@ -33,8 +33,8 @@ constraints:
 mechanism: rule:sql-predicate-group-elision
 rationale: decision:sql-boundary-joiner-inference
 scope:
-  phase_one: boolean clauses WHERE, HAVING, QUALIFY, and join ON
-  phase_two: comma clauses, with SET last because it additionally carries the mutation proof
+  boolean_clauses: WHERE, HAVING, QUALIFY, and join ON
+  comma_clauses: SET, ORDER BY, GROUP BY, and VALUES, plus the INSERT column list; the remaining comma clauses stay text per rule:sql-predicate-group-elision comma_groups
   excluded: conditional result columns and a general for in a clause stay forbidden for their existing reasons
   dialect: a boolean joiner and a paren are not what a dialect differs about, so the frame protocol is identical everywhere
 related:

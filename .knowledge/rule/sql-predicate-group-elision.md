@@ -10,7 +10,26 @@ priority: must
 serves: requirement:sql-conditional-predicate-composition
 rationale: decision:sql-boundary-joiner-inference
 detection: rule:sql-top-level-keyword-scan
-status: implemented 2026-08-17 for boolean clauses; comma clauses not done
+status: implemented 2026-08-17, boolean clauses first and comma clauses in the same day's second change
+comma_groups:
+  rule: a comma at the item depth of an open comma group is a joiner, on the same frame protocol as AND and OR
+  openers:
+    clause: SET, ORDER BY, GROUP BY, and VALUES
+    two_token: ORDER BY and GROUP BY need one token of lookahead, so the opener spans both words
+    value_list_paren:
+      which: the tuple after VALUES, and the column list after INSERT INTO its target
+      why_it_inverts_the_boolean_test: a boolean group's paren must not follow a word, because rule:sql-template-layout calls a parenthesized list data; a comma group's paren is that list, so following a word is exactly what identifies it
+      insert_column_list: one bit of state, set by INSERT INTO through its target name and consumed by the next paren at that depth
+  left_as_text: SELECT, RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY
+  why_select_and_returning_are_excluded: a conditional item there is already refused by validateStaticResultShape before elision could see it, so a group there would carry no case
+  group_by_included_unasked: the request named SET, ORDER BY, and VALUES; GROUP BY is the same two-token opener with the same empty-clause failure, so excluding it would read as an oversight rather than a decision
+  empty_clause: an ORDER BY, GROUP BY, or SET whose every item is conditional drops its own keyword, which is what requirement:sql-template-v1 asks for with 'manage commas and empty clause'
+  set_and_the_mutation_proof: a withheld comma fills nothing, so an UPDATE whose SET items are all conditional stays the generation error rule:sql-static-mutation-safety already makes it
+  insert_pairing_hazard:
+    what: a conditional column and its conditional value sit in two independent groups, so guarding them with different conditions renders a column count that disagrees with its value count
+    status: not checked; the mismatch reaches the database as a runtime error
+    why_not_refused: the per-path counts are decidable and a check is tractable on the walkClause machinery, but it is a new refusal nobody asked for and it could reject templates in use
+    what_the_author_owes: guard a column and its value with the same condition
 joiner_recognition:
   rule: every AND or OR at the item depth of the innermost open group is a joiner
   no_adjacency_test:
@@ -108,7 +127,8 @@ acceptance:
   - the multi-line in-branch form docs/sqlbind.md teaches renders unchanged with the condition true and loses the operator with it when false
   - a body with no condition emits no OpenGroup, Joiner, Item, or CloseGroup call at all
 not_done:
-  comma_clauses: a comma is never a joiner yet, so a conditional item in SET, ORDER BY, or VALUES still needs its commas written by hand; SET additionally carries the mutation proof and lands after the rest
+  comma_clauses_left_as_text: SELECT, RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY, per comma_groups.left_as_text
+  insert_pairing: per comma_groups.insert_pairing_hazard
   case_regions: excluded rather than modelled, per exactness.case_expression
   whitespace_around_a_dropped_leading_operator: an operator leading a branch takes its own preceding whitespace but not the space that followed it, so that one position can leave a double space; it occurs only in a branch combination that renders invalid SQL today
 related:

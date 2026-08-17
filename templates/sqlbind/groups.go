@@ -65,6 +65,18 @@ var booleanClauseOpeners = map[string]bool{
 	"WHERE": true, "HAVING": true, "QUALIFY": true, "ON": true,
 }
 
+// commaClauseOpeners are the clauses whose items a comma separates. SELECT,
+// RETURNING, FROM, WITH, WINDOW, USING, and PARTITION BY are deliberately absent:
+// a conditional item in a result list is already refused by
+// validateStaticResultShape, and the rest carry no case for elision.
+var commaClauseOpeners = map[string]bool{
+	"SET": true, "VALUES": true, "ORDER": true, "GROUP": true,
+}
+
+// twoWordCommaOpeners need their second word to open, so the opener text spans
+// both tokens. PARTITION BY is not here: a window's partition list is not elided.
+var twoWordCommaOpeners = map[string]bool{"ORDER": true, "GROUP": true}
+
 // clauseBoundaryWords end a boolean clause group where they appear at its own
 // depth. They are the line-starting keywords of rule:sql-template-layout, which is
 // the same boundary the layout pass already draws.
@@ -97,9 +109,12 @@ const valuePrev = "\x00value"
 type groupFrame struct {
 	// itemDepth is the parenthesis depth this group's own items sit at. A clause
 	// group's items share the keyword's depth; a parenthesis group's items sit one
-	// level in. An AND or OR is this group's joiner only at this depth.
+	// level in. A separator is this group's joiner only at this depth.
 	itemDepth int
 	paren     bool
+	// comma marks a group whose items a comma separates rather than AND and OR, so
+	// one frame kind decides which token is a joiner and which stays text.
+	comma bool
 	// openedHere marks a frame pushed inside the branch body being walked, so it
 	// closes at that branch's end.
 	openedHere bool
@@ -121,6 +136,13 @@ type groupState struct {
 	// neither a clause nor a parenthesis, so it has no frame to attach to and its
 	// AND and OR stay ordinary text.
 	caseDepth int
+	// insertColumns marks that INSERT INTO has passed its target name, so the next
+	// parenthesis is the column list. It is the one comma group with no keyword of
+	// its own to open it.
+	insertColumns bool
+	// skipNext asks the caller to consume the following token, whose text a
+	// two-word opener chunk already carries.
+	skipNext bool
 }
 
 func (s groupState) clone() groupState {
@@ -323,14 +345,22 @@ func (p *planner) text(n *TextNode, state groupState) groupState {
 			closeGroup()
 		}
 	}
+	// skip consumes the second word of a two-word clause opener, whose text the
+	// opener chunk already carries.
+	skip := 0
 	for i, token := range tokens {
+		if skip > 0 {
+			skip--
+			state.prev, state.hasPrev = token.text, true
+			continue
+		}
 		// next is the following token's text, which is what separates a join's ON
-		// from ON CONFLICT. It is empty at the end of the node; a boolean clause
-		// keyword is the last token of a statement only in a body that emits no
-		// predicate at all, where opening a group changes nothing.
-		next := ""
+		// from ON CONFLICT and an ORDER BY from a bare ORDER. It is empty at the end
+		// of the node; a clause keyword is the last token of a statement only in a
+		// body that emits no items at all, where opening a group changes nothing.
+		next, nextEnd := "", 0
 		if i+1 < len(tokens) {
-			next = tokens[i+1].text
+			next, nextEnd = tokens[i+1].text, tokens[i+1].end
 		}
 		switch {
 		case token.text == ")":
@@ -352,22 +382,43 @@ func (p *planner) text(n *TextNode, state groupState) groupState {
 		case token.text == "(":
 			prune(token.depth)
 			top := state.top()
-			grouping := top != nil && top.itemDepth == token.depth && state.caseDepth == 0 &&
+			atItemDepth := top != nil && top.itemDepth == token.depth
+			// A boolean group's parenthesis must not follow a word, because a
+			// parenthesized list is data. A comma group's parenthesis is that list, so
+			// following a word is exactly what identifies it: the tuple after VALUES,
+			// and the column list after INSERT INTO its target.
+			boolean := atItemDepth && !top.comma && state.caseDepth == 0 &&
 				(!state.hasPrev || groupingParenPredecessors[state.prev])
-			if grouping {
-				state.stack = append(state.stack, groupFrame{itemDepth: token.depth + 1, paren: true, openedHere: true})
+			comma := atItemDepth && top.comma && state.prev == "VALUES"
+			if state.insertColumns {
+				comma, state.insertColumns = true, false
+			}
+			switch {
+			case boolean || comma:
+				state.stack = append(state.stack, groupFrame{
+					itemDepth: token.depth + 1, paren: true, comma: comma, openedHere: true,
+				})
 				withheld[token.start] = true
 				emit(token.end, chunkParenOpen)
-			} else {
+			default:
 				emit(token.end, chunkText)
 			}
 		case !token.word:
-			// A comma. Comma-separated clauses are not in scope, so it stays text.
+			// A comma joins the items of a comma group, and is text anywhere else.
 			prune(token.depth)
-			emit(token.end, chunkText)
+			top := state.top()
+			if token.text == "," && top != nil && top.comma && top.itemDepth == token.depth && state.caseDepth == 0 {
+				withheld[token.start] = true
+				emit(token.end, chunkJoiner)
+			} else {
+				emit(token.end, chunkText)
+			}
 		default:
 			prune(token.depth)
-			p.word(&state, token, next, withheld, emit, closeGroup)
+			p.word(&state, token, next, nextEnd, withheld, emit, closeGroup)
+			if state.skipNext {
+				state.skipNext, skip = false, 1
+			}
 		}
 		state.prev, state.hasPrev = token.text, true
 	}
@@ -391,7 +442,7 @@ func (p *planner) text(n *TextNode, state groupState) groupState {
 
 // word classifies one word token. next is the token following it, which is what
 // tells a join's ON from ON CONFLICT.
-func (p *planner) word(state *groupState, token sqlToken, next string, withheld map[int]bool, emit func(int, chunkKind), closeGroup func()) {
+func (p *planner) word(state *groupState, token sqlToken, next string, nextEnd int, withheld map[int]bool, emit func(int, chunkKind), closeGroup func()) {
 	switch token.text {
 	case "CASE":
 		state.caseDepth++
@@ -409,7 +460,9 @@ func (p *planner) word(state *groupState, token sqlToken, next string, withheld 
 		return
 	case "AND", "OR":
 		top := state.top()
-		joins := top != nil && top.itemDepth == token.depth && state.caseDepth == 0
+		// Only a boolean group's items are separated by an operator; inside a comma
+		// group the operator belongs to one item.
+		joins := top != nil && !top.comma && top.itemDepth == token.depth && state.caseDepth == 0
 		if token.text == "AND" && state.betweenAt(token.depth) {
 			// The AND closing BETWEEN belongs to that two-operand form. One bit of
 			// state settles it exactly, which is grammar rather than a heuristic.
@@ -427,18 +480,35 @@ func (p *planner) word(state *groupState, token sqlToken, next string, withheld 
 	// ON CONFLICT is a conflict action rather than a join predicate, so its ON
 	// opens no group. Without this the ON frame would be closed by CONFLICT with
 	// nothing having filled it, and the keyword would vanish with the group.
-	opens := booleanClauseOpeners[token.text] && !(token.text == "ON" && next == "CONFLICT")
-	// A clause group ends where the next clause begins, and a boolean clause
-	// keyword opens one of its own.
+	boolean := booleanClauseOpeners[token.text] && !(token.text == "ON" && next == "CONFLICT")
+	// ORDER and GROUP open only through BY, and their opener spans both words. A
+	// SET reached as ON CONFLICT DO UPDATE SET is still a comma list of assignments.
+	comma := commaClauseOpeners[token.text] && (!twoWordCommaOpeners[token.text] || next == "BY")
+	// A clause group ends where the next clause begins, and a clause keyword opens
+	// one of its own.
 	if clauseBoundaryWords[token.text] {
 		for top := state.top(); top != nil && !top.paren && top.itemDepth == token.depth; top = state.top() {
 			state.pop()
 			closeGroup()
 		}
 	}
-	if opens && state.caseDepth == 0 {
-		state.stack = append(state.stack, groupFrame{itemDepth: token.depth, openedHere: true})
-		emit(token.end, chunkClauseOpen)
+	// INSERT INTO reaches its column list through the target name, so the flag is
+	// set here and consumed by the next parenthesis.
+	if token.text == "INTO" {
+		state.insertColumns = true
+	}
+	if (boolean || comma) && state.caseDepth == 0 {
+		state.stack = append(state.stack, groupFrame{
+			itemDepth: token.depth, comma: comma, openedHere: true,
+		})
+		end := token.end
+		if comma && twoWordCommaOpeners[token.text] {
+			// The opener spans ORDER BY, so it ends at the BY token rather than at a
+			// guessed offset: the gap between them may be any whitespace run.
+			end = nextEnd
+			state.skipNext = true
+		}
+		emit(end, chunkClauseOpen)
 		return
 	}
 	emit(token.end, chunkText)
