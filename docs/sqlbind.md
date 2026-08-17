@@ -384,6 +384,55 @@ When the condition is false, the block is omitted. Only included values consume 
 
 The condition must be `bool`. Conditional SELECT or RETURNING columns are forbidden.
 
+### The operator between two conditions
+
+You do not manage the `AND`, the `OR`, or the parentheses. Write the predicate as
+the statement you want when every condition holds, and punch the conditions out of
+it:
+
+```text
+export statement SearchUsers(
+  name: string, city: string, minAge: int,
+  hasName: bool, hasCity: bool, hasAge: bool, staffOnly: bool
+): sql.many<User> {
+SELECT id, name, city, age
+FROM users
+WHERE
+  {if hasName}name LIKE {name}{/if}
+  AND {if hasCity}city = {city}{/if}
+  AND ({if hasAge}age >= {minAge}{/if} OR {if staffOnly}role = 'staff'{/if})
+ORDER BY id
+}
+```
+
+Read that with the `{if}` wrappers deleted and it is the SQL it renders. With only
+`hasCity` set it renders `WHERE city = $1`: the operator that would have dangled is
+withheld, the empty parenthesised group takes its own parentheses and the `AND`
+that attached it, and with no condition set the `WHERE` never appears. An operator
+that is not dangling is written exactly where you put it, so a predicate that works
+today renders the same bytes.
+
+Put the operator between the two conditions, in the enclosing text. That is where
+it sits in the finished statement, which is what lets the source read as the SQL.
+An operator inside a branch also works — `{if hasCity}AND city = {city}{/if}` — and
+older templates are written that way, but it reads as part of that one condition
+when it really joins two.
+
+This covers `WHERE`, `HAVING`, `QUALIFY`, and a join's `ON`, and the parenthesised
+groups inside them. Two constructs are deliberately left alone. The `AND` that
+closes a `BETWEEN` belongs to that form rather than to the clause, so splitting one
+across a condition — `n BETWEEN {lo} {if hasHi}AND {hi}{/if}` — is a generation
+error; put the whole `BETWEEN` inside the condition. A parenthesis that follows a
+word is data rather than a group, so an `IN ({names})` list and a function argument
+list keep their parentheses in every branch.
+
+Comma-separated clauses are not covered yet: a conditional item in `SET`,
+`ORDER BY`, or `VALUES` still needs its commas written by hand.
+
+An `UPDATE` or `DELETE` is unaffected by any of this. Its `WHERE` must still be
+provably non-empty on every branch, so a predicate that can empty out stays a
+generation error rather than becoming a full-table mutation.
+
 ## Expanding slices for IN
 
 ```text

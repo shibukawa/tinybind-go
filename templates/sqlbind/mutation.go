@@ -43,19 +43,20 @@ func (c *compiler) checkMutationSafety(d *TemplateDecl, body []Node) error {
 	if verb != "UPDATE" && verb != "DELETE" {
 		return nil
 	}
-	if verb == "UPDATE" && !c.proveClause(body, "SET", setTerminators) {
+	if verb == "UPDATE" && !c.proveClause(body, "SET", setTerminators, info.plan) {
 		return c.error(d.Pos, "UPDATE statements require a SET list that is non-empty on every branch")
 	}
-	if !c.proveClause(body, "WHERE", whereTerminators) {
+	if !c.proveClause(body, "WHERE", whereTerminators, info.plan) {
 		return c.error(d.Pos, "UPDATE and DELETE statements require a WHERE clause that is non-empty on every branch")
 	}
 	return nil
 }
 
 // proveClause reports whether every branch path opens the named top-level clause
-// and puts at least one token or bound value in it.
-func (c *compiler) proveClause(nodes []Node, keyword string, terminators map[string]bool) bool {
-	states, _, ok := c.walkClause(nodes, keyword, terminators, clauseStates(clauseAbsent), 0)
+// and puts at least one token or bound value in it. plan may be nil, which is a
+// body with nothing elidable in it and so nothing the builder can withhold.
+func (c *compiler) proveClause(nodes []Node, keyword string, terminators map[string]bool, plan *groupPlan) bool {
+	states, _, ok := c.walkClause(nodes, keyword, terminators, clauseStates(clauseAbsent), 0, plan)
 	if !ok {
 		return false
 	}
@@ -65,7 +66,7 @@ func (c *compiler) proveClause(nodes []Node, keyword string, terminators map[str
 // walkClause folds the node tree into the set of clause states its paths reach.
 // The two branches of an if both start from the incoming set and their results
 // are merged, so a predicate emitted on one branch only is never proof.
-func (c *compiler) walkClause(nodes []Node, keyword string, terminators map[string]bool, in clauseStates, depth int) (clauseStates, int, bool) {
+func (c *compiler) walkClause(nodes []Node, keyword string, terminators map[string]bool, in clauseStates, depth int, plan *groupPlan) (clauseStates, int, bool) {
 	states := in
 	for _, node := range nodes {
 		switch n := node.(type) {
@@ -75,7 +76,17 @@ func (c *compiler) walkClause(nodes []Node, keyword string, terminators map[stri
 			if !ok {
 				return states, depth, false
 			}
+			var withheld map[int]bool
+			if plan != nil {
+				withheld = plan.withheld[n]
+			}
 			for _, token := range tokens {
+				// A joiner, a grouping parenthesis, and a closer are text the
+				// builder may withhold, so none of them fills the clause. The
+				// clause keyword itself is not in the set: it still opens.
+				if withheld[token.start] {
+					continue
+				}
 				states = applyToken(states, token, keyword, terminators)
 			}
 			depth = lexer.depth
@@ -90,11 +101,11 @@ func (c *compiler) walkClause(nodes []Node, keyword string, terminators map[stri
 		case *RelationNode:
 			states = applyContent(states)
 		case *IfNode:
-			thenStates, thenDepth, ok := c.walkClause(n.Then, keyword, terminators, states, depth)
+			thenStates, thenDepth, ok := c.walkClause(n.Then, keyword, terminators, states, depth, plan)
 			if !ok {
 				return states, depth, false
 			}
-			elseStates, _, ok := c.walkClause(n.Else, keyword, terminators, states, depth)
+			elseStates, _, ok := c.walkClause(n.Else, keyword, terminators, states, depth, plan)
 			if !ok {
 				return states, depth, false
 			}

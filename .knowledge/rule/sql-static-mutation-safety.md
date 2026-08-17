@@ -38,9 +38,17 @@ acceptance:
   - 'delete from t using (select 1 from u where u.f) s generates a diagnostic'
   - 'update t set c = {c} where id = {id} returning id declared sql.one is checked the same way'
   - 'no generated file contains a mutation-safety helper or its error string'
+group_elision_interaction:
+  unrelaxed: rule:sql-predicate-group-elision may not weaken this proof; dropping an empty WHERE under a mutation turns one false branch into a full-table mutation
+  two_changes_only:
+    - proveClause runs against the group rather than against the keyword
+    - a token recognized as a joiner counts as filling nothing
+  cuts_both_ways: a conditional-only mutation predicate still fails, because the proof is about the group being provably non-empty rather than about whether the text renders
 related:
   - requirement:sql-template-v1
   - data:sql-statement
   - rule:sql-cardinality-body-agreement
   - decision:generated-runtime-in-module
+  - rule:sql-predicate-group-elision
+  - requirement:sql-conditional-predicate-composition
 ```

@@ -127,6 +127,9 @@ type goEmitter struct {
 	contextAPI  bool
 	contextOnly bool
 	resolver    *ExecutorResolver
+	// plan is the group plan of the statement being emitted, or nil when its body
+	// has nothing elidable in it and keeps the emission it always had.
+	plan *groupPlan
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
@@ -329,10 +332,16 @@ func (e *goEmitter) emitStatement(statement *TemplateDecl) error {
 	}
 	e.b.WriteString(") error {\n")
 	e.indent = 1
+	e.plan = info.plan
 	// A copy, because a value binding adds to the scope it is handed and the
 	// declared parameters outlive this emission.
 	if err := e.emitNodes(statement.Body.([]Node), copyScope(info.params)); err != nil {
 		return err
+	}
+	// A clause running to the end of the body still has a frame. Closing it here
+	// keeps a fragment from leaving groups on the stack of the caller it writes into.
+	if e.plan != nil {
+		e.emitCloses(e.plan.trailingCloses)
 	}
 	e.line("return nil")
 	e.b.WriteString("}\n\n")
@@ -512,13 +521,18 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 	for _, node := range nodes {
 		switch n := node.(type) {
 		case *TextNode:
-			e.line("b.WriteString(" + strconv.Quote(n.Text) + ")")
+			e.emitText(n)
 		case *ExpressionNode:
 			code, err := e.expr(n.Expression, scope)
 			if err != nil {
 				return err
 			}
 			t := e.c.exprTypes[n.Expression]
+			// A predicate that may emit nothing calls Item itself where its own
+			// fragments emit, so an Item here would open a group it must leave shut.
+			if e.plan == nil || !e.plan.selfFilling[n] {
+				e.item()
+			}
 			if t.kind == kindPredicate {
 				call := n.Expression.(*CallExpr)
 				id := call.Callee.(*IdentifierExpr)
@@ -544,6 +558,7 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				e.line("b.Arg(" + code + ")")
 			}
 		case *RelationNode:
+			e.item()
 			e.line("b.WriteByte('(')")
 			var args []string
 			for _, argument := range n.Arguments {
@@ -603,11 +618,15 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 			if err != nil {
 				return err
 			}
+			closes := e.branchCloses(n)
 			e.line("if " + condition + " {")
 			e.indent++
 			if err := e.emitNodes(n.Then, copyScope(scope)); err != nil {
 				return err
 			}
+			// A group opened inside a branch closes at that branch's end, so it
+			// cannot leak past the condition that opened it.
+			e.emitCloses(closes[0])
 			e.indent--
 			if len(n.Else) > 0 {
 				e.line("} else {")
@@ -615,6 +634,7 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				if err := e.emitNodes(n.Else, copyScope(scope)); err != nil {
 					return err
 				}
+				e.emitCloses(closes[1])
 				e.indent--
 				e.line("}")
 			} else {
@@ -623,6 +643,64 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 		}
 	}
 	return nil
+}
+
+// emitText writes one text node, sliced into the Builder calls the group plan
+// assigned it. Without a plan the node has nothing elidable around it and is
+// written whole, exactly as it always was.
+func (e *goEmitter) emitText(n *TextNode) {
+	if e.plan == nil {
+		e.line("b.WriteString(" + strconv.Quote(n.Text) + ")")
+		return
+	}
+	for _, chunk := range e.plan.chunks[n] {
+		switch chunk.kind {
+		case chunkClauseOpen, chunkParenOpen:
+			e.line("b.OpenGroup(" + strconv.Quote(chunk.text) + ")")
+		case chunkJoiner:
+			e.line("b.Joiner(" + strconv.Quote(chunk.text) + ")")
+		case chunkClose:
+			e.line("b.CloseGroup(" + strconv.Quote(chunk.text) + ")")
+		default:
+			if chunk.text == "" {
+				continue
+			}
+			// Whitespace is not an item: the scanner does not tokenize it, so a run
+			// of it must not open the group it merely separates, and it has to
+			// follow the separator rather than precede it.
+			if !chunk.fills {
+				e.line("b.Space(" + strconv.Quote(chunk.text) + ")")
+				continue
+			}
+			e.item()
+			e.line("b.WriteString(" + strconv.Quote(chunk.text) + ")")
+		}
+	}
+}
+
+// item writes the Item call that opens whatever groups are still withheld. It is
+// emitted before every fragment that writes a token or binds a value, including in
+// a body that opened no group of its own: a predicate fragment is embedded into a
+// caller's group, and Item on an empty stack costs nothing.
+func (e *goEmitter) item() {
+	if e.plan == nil {
+		return
+	}
+	e.line("b.Item()")
+}
+
+// branchCloses reports how many groups each branch of n must close at its own end.
+func (e *goEmitter) branchCloses(n *IfNode) [2]int {
+	if e.plan == nil {
+		return [2]int{}
+	}
+	return e.plan.branchCloses[n]
+}
+
+func (e *goEmitter) emitCloses(count int) {
+	for i := 0; i < count; i++ {
+		e.line("b.CloseGroup(\"\")")
+	}
 }
 
 // failingCall reports whether expr is a call to an external that returns an
