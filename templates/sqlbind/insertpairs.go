@@ -197,7 +197,10 @@ func (w *insertWalker) walk(nodes []Node, paths insertPaths, state insertWalkSta
 
 // text advances every path across one text node.
 func (w *insertWalker) text(n *TextNode, paths insertPaths, state insertWalkState) (insertPaths, insertWalkState, bool) {
-	lexer := sqlLexer{depth: state.depth}
+	// literals: an item whose whole content is a literal — VALUES (…, 'bid', …) —
+	// would otherwise scan as an item with nothing in it and go uncounted, which
+	// reports a matched INSERT as a disagreement.
+	lexer := sqlLexer{depth: state.depth, literals: true}
 	tokens, ok := lexer.scan(n.Text)
 	if !ok {
 		return paths, state, false

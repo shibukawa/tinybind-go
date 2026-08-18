@@ -6,10 +6,11 @@ import "strings"
 // at the analyzed statement's own nesting level, and a keyword spelled inside a
 // literal, a quoted identifier, or a comment is not syntax at all.
 
-// sqlToken is one significant token of emitted SQL. Literals, quoted
-// identifiers, and comments never become tokens.
+// sqlToken is one significant token of emitted SQL. Comments never become
+// tokens, and neither do literals or quoted identifiers unless the lexer was
+// asked for them.
 type sqlToken struct {
-	text  string // uppercased for words; "(", ")", or "," for the punctuation we track
+	text  string // uppercased for words; "(", ")", or "," for the punctuation we track; the raw text for a literal
 	word  bool
 	depth int // parenthesis nesting; a "(" and its matching ")" share one depth
 	start int // byte offsets into the scanned text, for callers that slice it back
@@ -22,6 +23,13 @@ type sqlToken struct {
 // inside one and the text around it cannot continue one.
 type sqlLexer struct {
 	depth int
+	// literals emits a token for a literal or a quoted identifier instead of
+	// skipping it silently. The keyword scan this lexer was built for must not
+	// see them, because a keyword spelled inside a literal is not syntax — but a
+	// caller that decides whether a list item has any content at all cannot tell
+	// "VALUES ('bid')" from "VALUES ()" without them. Comments stay invisible
+	// under either setting: a comment is not content.
+	literals bool
 }
 
 // scan tokenizes one run of SQL text. ok is false for an unterminated construct,
@@ -49,12 +57,14 @@ func (l *sqlLexer) scan(sql string) (tokens []sqlToken, ok bool) {
 			if !done {
 				return nil, false
 			}
+			tokens = l.appendLiteral(tokens, sql, i, next)
 			i = next
 		case ch == '$':
 			if next, done, dollar := skipDollarQuoted(sql, i); dollar {
 				if !done {
 					return nil, false
 				}
+				tokens = l.appendLiteral(tokens, sql, i, next)
 				i = next
 				continue
 			}
@@ -81,6 +91,17 @@ func (l *sqlLexer) scan(sql string) (tokens []sqlToken, ok bool) {
 		}
 	}
 	return tokens, true
+}
+
+// appendLiteral records the literal or quoted identifier spanning [start, end)
+// when the lexer was asked for them. The text is the raw source rather than an
+// uppercased word, so it can never be mistaken for the punctuation callers
+// switch on: a quoted run is at least two bytes long.
+func (l *sqlLexer) appendLiteral(tokens []sqlToken, sql string, start, end int) []sqlToken {
+	if !l.literals {
+		return tokens
+	}
+	return append(tokens, sqlToken{text: sql[start:end], depth: l.depth, start: start, end: end})
 }
 
 // scanSQLTokens tokenizes a complete run of SQL starting at nesting level zero.

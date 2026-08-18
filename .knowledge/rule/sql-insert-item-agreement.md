@@ -16,6 +16,8 @@ problem:
 mechanism:
   state: one integer per path, the columns counted so far minus the values counted so far, plus a flag for an item that has content and no separator yet
   item: a maximal run of content between commas at the list's own depth; a run with no content counts as no item, which is what makes an elided item vanish from the count
+  content: every token the lexer emits, literals and quoted identifiers included, per the content-consumer setting in rule:sql-top-level-keyword-scan; an item spelled only 'bid' or only "id" is an item like any other
+  content_is_not_optional: reading the keyword scan's token stream instead makes a literal-only item scan as empty, so a matched INSERT is reported as a disagreement; that was the second implementation's defect
   accept: every reachable path ends at zero
   scope: a statement whose top-level verb is INSERT, per rule:sql-top-level-keyword-scan
 condition_correlation:
@@ -40,6 +42,12 @@ acceptance:
   - 'a column guarded by one condition and a value guarded by another is reported'
   - 'an if/else on the column side against a bare if on the value side is reported'
   - 'a function call inside an item is one item, not two'
+  - "a literal item, first, middle, or last, counts as one item: VALUES ({id}, 'bid', {n}) against three columns generates"
+  - 'a dollar-quoted literal counts as one item'
+  - 'a quoted identifier in the column list counts as one column'
+  - 'one condition guarding a column and its literal value generates'
+  - "VALUES ({id}, 'bid') against three columns is still reported"
+  - 'a condition guarding a literal value but not its column is still reported'
 related:
   - rule:sql-predicate-group-elision
   - requirement:sql-conditional-predicate-composition
