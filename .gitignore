@@ -5,3 +5,6 @@
 # developer-local Go workspace, for building against an unreleased dependency
 go.work
 go.work.sum
+
+# Claude Code local state: settings, worktrees, and salvage bundles
+.claude/
