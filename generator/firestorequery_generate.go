@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // defaultFirestoreQueryOut is the generated query output file.
@@ -115,15 +117,17 @@ func (g *Generator) generateFirestoreQueries(load *packageLoad, outDir, outName 
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitFirestoreQueriesWithOptions(pkg, plans, g.firestoreQueryOptions())
-	if err != nil || len(src) == 0 {
-		return "", err
-	}
 	if outDir == "" {
 		outDir = load.dir
 	}
 	if outName == "" {
 		outName = defaultFirestoreQueryOut
+	}
+	options := g.firestoreQueryOptions()
+	options.OutputName = outName
+	src, err := EmitFirestoreQueriesWithOptions(pkg, plans, options)
+	if err != nil || len(src) == 0 {
+		return "", err
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err
@@ -146,7 +150,9 @@ func (g *Generator) EmitFirestoreQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitFirestoreQueriesWithOptions(pkg, plans, g.firestoreQueryOptions())
+	options := g.firestoreQueryOptions()
+	options.OutputName = defaultFirestoreQueryOut
+	return EmitFirestoreQueriesWithOptions(pkg, plans, options)
 }
 
 // firestoreQueryOptions reads the client-supply mode out of the run's options.
@@ -154,6 +160,7 @@ func (g *Generator) firestoreQueryOptions() FirestoreQueryOptions {
 	return FirestoreQueryOptions{
 		ParameterAPI:   g.Options.FirestoreParameterAPI,
 		HandleResolver: g.Options.FirestoreHandleResolver,
+		LineDirectives: g.Options.TemplateLineDirectives,
 	}
 }
 
@@ -184,6 +191,9 @@ func (g *Generator) firestoreQueryArtifacts(load *packageLoad) ([]Artifact, erro
 		if len(code) == 0 {
 			continue
 		}
+		// OutputName is left empty above: an artifact caller chooses the name it
+		// writes, and fills it in with [ResolveTemplatePositions].
+		code = linedirective.Finalize(code)
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  source,
 			Kind:        ArtifactFirestoreQuery,

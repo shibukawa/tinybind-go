@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // GenerateOptions controls the generated Go file and the static files
@@ -195,6 +197,28 @@ type GenerateOptions struct {
 	// because a project may legitimately mix authored references with
 	// user-supplied ones; [Result.DynamicReferences] reports them either way.
 	StrictReferenceHooks bool
+	// LineDirectives maps each emitted instruction back to the template line
+	// that produced it, so a type error in a template expression names the
+	// .tb.html file rather than the generated Go one.
+	//
+	// It reaches compile time only. Rendering walks the instruction list inside
+	// the shared coordinator, so a failing render's stack frame is in this
+	// package and no directive on generated code can move it; see
+	// requirement:render-error-positions.
+	//
+	// It is off by default. Turning it on changes the bytes of every generated
+	// file carrying a component, and a covered test run reports lines that do
+	// not exist in the file it names, per rule:line-directive-emission.
+	LineDirectives bool
+	// OutputName is the base name of the Go file this output becomes. A mapped
+	// span ends with a directive naming that file and the line the reader is on,
+	// and neither is known until the bytes are final.
+	//
+	// Leaving it empty returns the output with those directives unresolved, for
+	// a caller that concatenates several results and resolves the combined file
+	// itself with generator.ResolveTemplatePositions. A caller writing this
+	// result as a whole file must name it here.
+	OutputName string
 }
 
 // Result is one compiled template module: the generated Go source and the
@@ -333,6 +357,11 @@ func GenerateModule(filename string, source []byte, options GenerateOptions) (Re
 		result.GoSource = generated
 		return result, fmt.Errorf("format generated HTML code: %w\n%s", err, generated)
 	}
+	// After formatting, because a restore directive names the physical line that
+	// follows it and go/format is the last thing that can move that line.
+	if options.LineDirectives && options.OutputName != "" {
+		formatted = linedirective.Resolve(formatted, options.OutputName)
+	}
 	result.GoSource = formatted
 	return result, nil
 }
@@ -423,6 +452,11 @@ type goEmitter struct {
 	componentParams    map[string][]string
 	componentParamAttr string
 	scopeComponent     string
+	// lineDirectives and sourcePath drive template position mapping. The path is
+	// absolute, which is the only form go build and go vet both print correctly;
+	// see [linedirective.Path].
+	lineDirectives bool
+	sourcePath     string
 }
 
 // packageName is the template module's package, which together with the file
@@ -459,6 +493,10 @@ func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 		resolveAction:    options.ServerActionResolver,
 		actionAttr:       options.ServerActionAttr,
 		actionSelectors:  options.ServerActionSelectors,
+	}
+	if options.LineDirectives {
+		e.lineDirectives = true
+		e.sourcePath = linedirective.Path(c.filename)
 	}
 	if e.actionAttr == "" {
 		e.actionAttr = DefaultActionAttr

@@ -6,6 +6,8 @@ import (
 	"go/format"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // FirestoreQueryOptions selects which of the three client-supply modes the
@@ -20,6 +22,16 @@ type FirestoreQueryOptions struct {
 	// HandleResolver names a framework function answering a firestorebind.Handle
 	// for one Context. ParameterAPI takes precedence over it.
 	HandleResolver *SymbolPattern
+	// LineDirectives maps each generated query function back to the declaration
+	// that produced it, on the same terms as [DynamoQueryOptions.LineDirectives]:
+	// per declaration and line only, because that is all a parsed declaration
+	// carries.
+	LineDirectives bool
+	// OutputName is the base name of the Go file this output becomes, needed to
+	// end a mapped span. Empty leaves the restore directives unresolved for a
+	// caller that combines several results and calls
+	// [ResolveTemplatePositions] on the combined file.
+	OutputName string
 }
 
 // resolves reports whether generated bodies call a framework resolver. A
@@ -63,6 +75,11 @@ func EmitFirestoreQueriesWithOptions(pkg string, plans []FirestoreQueryPlan, opt
 	formatted, err := format.Source(out.Bytes())
 	if err != nil {
 		return out.Bytes(), fmt.Errorf("firestorebind: format generated query: %w\n%s", err, out.String())
+	}
+	// After formatting, because a restore directive names the physical line that
+	// follows it and go/format is the last thing that can move that line.
+	if opts.LineDirectives && opts.OutputName != "" {
+		formatted = linedirective.Resolve(formatted, opts.OutputName)
 	}
 	return formatted, nil
 }
@@ -177,6 +194,7 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 	if e.opts.ParameterAPI {
 		handle = ", h firestorebind.Handle"
 	}
+	e.mapDecl(b, decl)
 	fmt.Fprintf(b, "func %s(ctx context.Context%s%s, opts ...datastore.ReadOption) %s {\n",
 		name, handle, firestoreQueryParams(decl), result)
 
@@ -217,6 +235,7 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 		fmt.Fprintf(b, "\treturn firestorebind.QueryKeysPage%s(ctx, %sq, opts...)\n", suffix, arg)
 	}
 	b.WriteString("}\n\n")
+	e.endMapping(b, decl)
 	return e.transactionForm(b, plan)
 }
 
@@ -247,6 +266,7 @@ func (e *firestoreQueryEmitter) transactionForm(b *bytes.Buffer, plan FirestoreQ
 
 	fmt.Fprintf(b, "// %s is %s inside a transaction, so its read joins the snapshot the\n", name, decl.Name)
 	b.WriteString("// transaction is built on rather than seeing what has been committed since.\n")
+	e.mapDecl(b, decl)
 	fmt.Fprintf(b, "func %s(ctx context.Context, tx *firestorebind.Tx%s) %s {\n",
 		name, firestoreQueryParams(decl), result)
 	if err := e.queryValue(b, plan); err != nil {
@@ -261,6 +281,7 @@ func (e *firestoreQueryEmitter) transactionForm(b *bytes.Buffer, plan FirestoreQ
 		b.WriteString("\treturn firestorebind.QueryKeysPageTx(ctx, tx, q)\n")
 	}
 	b.WriteString("}\n\n")
+	e.endMapping(b, decl)
 	return nil
 }
 
@@ -569,4 +590,23 @@ func firestoreNeedsIndexHint(plan FirestoreQueryPlan) bool {
 	default:
 		return len(properties) > 1 && (inequality || len(plan.Orders) > 0)
 	}
+}
+
+// mapDecl opens a mapped span at the declaration's line, and endMapping closes
+// it so the constants and comments the emitter names for itself keep their own
+// position. The directive goes at the left margin, where the compiler requires
+// one; go/format moves it below an adjacent doc comment, which is where it
+// belongs anyway.
+func (e *firestoreQueryEmitter) mapDecl(b *bytes.Buffer, decl FirestoreQueryDecl) {
+	if !e.opts.LineDirectives || decl.Line <= 0 {
+		return
+	}
+	b.WriteString(linedirective.Directive(linedirective.Path(decl.SourcePath), decl.Line) + "\n")
+}
+
+func (e *firestoreQueryEmitter) endMapping(b *bytes.Buffer, decl FirestoreQueryDecl) {
+	if !e.opts.LineDirectives || decl.Line <= 0 {
+		return
+	}
+	b.WriteString(linedirective.Restore() + "\n\n")
 }

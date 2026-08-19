@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // defaultDynamoQueryOut is the generated query output file.
@@ -115,15 +117,17 @@ func (g *Generator) generateDynamoQueries(load *packageLoad, outDir, outName str
 	if err != nil || len(plans) == 0 {
 		return "", err
 	}
-	src, err := EmitDynamoQueriesWithOptions(pkg, plans, g.dynamoQueryOptions())
-	if err != nil || len(src) == 0 {
-		return "", err
-	}
 	if outDir == "" {
 		outDir = load.dir
 	}
 	if outName == "" {
 		outName = defaultDynamoQueryOut
+	}
+	options := g.dynamoQueryOptions()
+	options.OutputName = outName
+	src, err := EmitDynamoQueriesWithOptions(pkg, plans, options)
+	if err != nil || len(src) == 0 {
+		return "", err
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err
@@ -158,6 +162,8 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 	sort.Strings(order)
 	artifacts := make([]Artifact, 0, len(order))
 	for _, source := range order {
+		// OutputName is left empty: an artifact caller chooses the name it
+		// writes, and fills it in with [ResolveTemplatePositions].
 		code, err := EmitDynamoQueriesWithOptions(pkg, grouped[source], g.dynamoQueryOptions())
 		if err != nil {
 			return nil, err
@@ -165,6 +171,7 @@ func (g *Generator) dynamoQueryArtifacts(load *packageLoad) ([]Artifact, error) 
 		if len(code) == 0 {
 			continue
 		}
+		code = linedirective.Finalize(code)
 		artifacts = append(artifacts, Artifact{
 			SourcePath:  source,
 			Kind:        ArtifactDynamoQuery,
@@ -185,7 +192,9 @@ func (g *Generator) EmitDynamoQueriesFor(dir string) ([]byte, error) {
 	if err != nil || len(plans) == 0 {
 		return nil, err
 	}
-	return EmitDynamoQueriesWithOptions(pkg, plans, g.dynamoQueryOptions())
+	options := g.dynamoQueryOptions()
+	options.OutputName = defaultDynamoQueryOut
+	return EmitDynamoQueriesWithOptions(pkg, plans, options)
 }
 
 // dynamoQueryOptions reads the client-supply mode out of the run's options.
@@ -193,5 +202,6 @@ func (g *Generator) dynamoQueryOptions() DynamoQueryOptions {
 	return DynamoQueryOptions{
 		ParameterAPI:   g.Options.DynamoParameterAPI,
 		HandleResolver: g.Options.DynamoHandleResolver,
+		LineDirectives: g.Options.TemplateLineDirectives,
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/shibukawa/tinybind-go/internal/externalscan"
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 	templatesql "github.com/shibukawa/tinybind-go/templates/sqlbind"
 )
@@ -179,15 +180,20 @@ func (g *Generator) generateTemplateFiles(dir, outDir, outName string) (template
 		read[source] = true
 	}
 	outputs.readSet = sortedKeys(read)
-	combined, err := combineGeneratedTemplates(pkg, generated)
-	if err != nil {
-		return templateOutputs{}, err
-	}
 	if outDir == "" {
 		outDir = dir
 	}
 	if outName == "" {
 		outName = DefaultTemplatesName
+	}
+	combined, err := combineGeneratedTemplates(pkg, generated)
+	if err != nil {
+		return templateOutputs{}, err
+	}
+	// Last, because a restore directive names the physical line that follows it
+	// and combining is what decides where every line lands.
+	if g.Options.TemplateLineDirectives {
+		combined = linedirective.Resolve(combined, outName)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return templateOutputs{}, err
@@ -359,12 +365,16 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 			return nil, htmlbind.Result{}, err
 		}
 		result, err := htmlbind.GenerateModule(file.path, source, htmlbind.GenerateOptions{
-			Package:             pkg,
-			Unit:                artifactBase(file.path),
-			PublicURLBase:       g.Options.resolvedPublicURLBase(),
-			ContextExternals:    signatures.Context,
-			ErrorExternals:      signatures.Error,
-			PreserveWhitespace:  g.Options.PreserveTemplateWhitespace,
+			Package:            pkg,
+			Unit:               artifactBase(file.path),
+			PublicURLBase:      g.Options.resolvedPublicURLBase(),
+			ContextExternals:   signatures.Context,
+			ErrorExternals:     signatures.Error,
+			PreserveWhitespace: g.Options.PreserveTemplateWhitespace,
+			// LineDirectives without an OutputName: several templates are
+			// combined into one file, so the line a restore directive names is
+			// only known once that file exists, and resolving happens there.
+			LineDirectives:      g.Options.TemplateLineDirectives,
 			DataAttributePrefix: g.Options.DataAttributePrefix,
 			ReferenceHooks:      hooks,
 			ContentHooks:        g.Options.ContentHooks,
@@ -393,6 +403,7 @@ func (g *Generator) generateTemplate(file templateFile, source []byte, pkg strin
 		ErrorExternals: signatures.Error,
 		ContextAPI:     g.Options.SQLContextAPI || g.Options.SQLContextOnlyAPI,
 		ContextOnly:    g.Options.SQLContextOnlyAPI,
+		LineDirectives: g.Options.TemplateLineDirectives,
 	}
 	if resolver := g.Options.SQLExecutorResolver; resolver != nil {
 		options.ExecutorResolver = &templatesql.ExecutorResolver{PackagePath: resolver.PackagePath, Name: resolver.Name}
@@ -451,11 +462,21 @@ func packageName(dir string) (string, error) {
 	return "", nil
 }
 
+// combineGeneratedTemplates merges the per-template outputs of one directory
+// into the single Go file the package gets.
+//
+// It merges text rather than rebuilding an ast.File from the parsed
+// declarations. A synthetic file carries no comment list, so printing one drops
+// every comment that is not a declaration's doc — which includes every //line
+// directive requirement:template-source-positions emits, since those live
+// inside function bodies and composite literals. Parsing is still done, for the
+// import set and the duplicate check, but the bytes that reach the output are
+// the emitter's own.
 func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 	fset := token.NewFileSet()
 	imports := map[string]*ast.ImportSpec{}
 	seen := map[string]bool{}
-	var declarations []ast.Decl
+	var bodies []string
 	for index, source := range sources {
 		file, err := parser.ParseFile(fset, fmt.Sprintf("template_%d.go", index), source, parser.ParseComments)
 		if err != nil {
@@ -468,6 +489,7 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 			}
 			imports[alias+"\x00"+item.Path.Value] = item
 		}
+		body := -1
 		for _, declaration := range file.Decls {
 			if gen, ok := declaration.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
 				continue
@@ -481,10 +503,19 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 					return nil, fmt.Errorf("duplicate generated template declaration %s", name)
 				}
 			}
-			declarations = append(declarations, declaration)
 			for _, name := range names {
 				seen[name] = true
 			}
+			if body < 0 {
+				body = declarationOffset(fset, declaration)
+			}
+		}
+		// A source declaring nothing but imports contributes no text.
+		if body < 0 || body > len(source) {
+			continue
+		}
+		if text := strings.TrimSpace(string(source[body:])); text != "" {
+			bodies = append(bodies, text)
 		}
 	}
 	keys := make([]string, 0, len(imports))
@@ -492,23 +523,49 @@ func combineGeneratedTemplates(pkg string, sources [][]byte) ([]byte, error) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if len(keys) > 0 {
-		specs := make([]ast.Spec, 0, len(keys))
-		for _, key := range keys {
-			specs = append(specs, imports[key])
-		}
-		declarations = append([]ast.Decl{&ast.GenDecl{Tok: token.IMPORT, Specs: specs}}, declarations...)
-	}
-	file := &ast.File{Name: ast.NewIdent(pkg), Decls: declarations}
 	var out strings.Builder
 	out.WriteString(templateGeneratedHeader)
-	if err := format.Node(&out, fset, file); err != nil {
-		return nil, err
+	out.WriteString("package " + pkg + "\n")
+	if len(keys) > 0 {
+		out.WriteString("\nimport (\n")
+		for _, key := range keys {
+			item := imports[key]
+			out.WriteString("\t")
+			if item.Name != nil {
+				out.WriteString(item.Name.Name + " ")
+			}
+			out.WriteString(item.Path.Value + "\n")
+		}
+		out.WriteString(")\n")
 	}
-	out.WriteByte('\n')
+	for _, body := range bodies {
+		out.WriteString("\n" + body + "\n")
+	}
+	formatted, err := format.Source([]byte(out.String()))
+	if err != nil {
+		return nil, fmt.Errorf("format combined templates: %w\n%s", err, out.String())
+	}
 	// Merging several template files unions their import blocks, so an import
 	// one file needed can be unused by the combined declarations.
-	return dropUnusedImports([]byte(out.String()))
+	return dropUnusedImports(formatted)
+}
+
+// declarationOffset is the byte offset where a declaration's text begins, doc
+// comment included. Offsets survive a //line directive, which rewrites the
+// reported file and line and leaves the position in the real bytes alone.
+func declarationOffset(fset *token.FileSet, declaration ast.Decl) int {
+	pos := declaration.Pos()
+	switch d := declaration.(type) {
+	case *ast.GenDecl:
+		if d.Doc != nil {
+			pos = d.Doc.Pos()
+		}
+	case *ast.FuncDecl:
+		if d.Doc != nil {
+			pos = d.Doc.Pos()
+		}
+	}
+	return fset.Position(pos).Offset
 }
 
 func declarationNames(declaration ast.Decl) []string {

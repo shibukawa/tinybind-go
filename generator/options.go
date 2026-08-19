@@ -155,6 +155,16 @@ type Options struct {
 	// to one space. The default collapses, which renders identically and drops
 	// every indentation byte from the generated source and the binary.
 	PreserveTemplateWhitespace bool
+	// TemplateLineDirectives maps generated template code back to the template
+	// line that produced it, with Go //line directives. A compile error in a
+	// template expression then names the .tb.html or .tb.sql file, and a panic
+	// inside a generated SQL statement function names it in the stack frame.
+	//
+	// It is off by default, because turning it on rewrites every generated file
+	// carrying a template and makes a covered test run report lines that do not
+	// exist in the file it names. See requirement:template-source-positions and
+	// rule:line-directive-emission.
+	TemplateLineDirectives bool
 
 	// PublicDir is the filesystem directory receiving the static files
 	// extracted from component style and script blocks. Empty uses
