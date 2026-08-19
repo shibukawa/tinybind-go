@@ -29,10 +29,23 @@ const (
 	// entry already has.
 	OperationJSONEncoderDeclare CallOperation = "json_encoder_declare"
 	OperationJSONDecoderDeclare CallOperation = "json_decoder_declare"
-	OperationRowsScan           CallOperation = "rows_scan"
-	OperationItemEncode         CallOperation = "item_encode"
-	OperationItemDecode         CallOperation = "item_decode"
-	OperationItemKey            CallOperation = "item_key"
+	// The CBOR declarations. There are four rather than two because each names
+	// a profile as well as a direction: the two ends of a connection must not
+	// disagree about which profile is in use, so an annotation says which, and
+	// a codec generated for one refuses the other's bytes.
+	OperationCBORWireEncoderDeclare  CallOperation = "cbor_wire_encoder_declare"
+	OperationCBORWireDecoderDeclare  CallOperation = "cbor_wire_decoder_declare"
+	OperationCBORWorldEncoderDeclare CallOperation = "cbor_world_encoder_declare"
+	OperationCBORWorldDecoderDeclare CallOperation = "cbor_world_decoder_declare"
+	// The delta declarations. A delta is diffed from values that must also be
+	// encodable, so each of these registers beside the codec patterns for its
+	// profile rather than standing alone.
+	OperationCBORWireDeltaDeclare  CallOperation = "cbor_wire_delta_declare"
+	OperationCBORWorldDeltaDeclare CallOperation = "cbor_world_delta_declare"
+	OperationRowsScan              CallOperation = "rows_scan"
+	OperationItemEncode            CallOperation = "item_encode"
+	OperationItemDecode            CallOperation = "item_decode"
+	OperationItemKey               CallOperation = "item_key"
 	// OperationItemEncodeDecode is a write that reads back what it replaced, and
 	// OperationItemKeyDecode a delete that does. One call needs two generated
 	// methods, and a call target carries exactly one operation, so the pair gets
@@ -244,6 +257,40 @@ func JSONDecoderDeclareCall(target CallTarget, options ...CallPatternOption) Cal
 	return Call(OperationJSONDecoderDeclare, target, options...)
 }
 
+// CBORWireEncoderDeclareCall declares the annotation asking for a wire-profile
+// encoder.
+func CBORWireEncoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWireEncoderDeclare, target, options...)
+}
+
+// CBORWireDecoderDeclareCall declares the annotation asking for a wire-profile
+// decoder.
+func CBORWireDecoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWireDecoderDeclare, target, options...)
+}
+
+// CBORWorldEncoderDeclareCall declares the annotation asking for a world-profile
+// encoder.
+func CBORWorldEncoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWorldEncoderDeclare, target, options...)
+}
+
+// CBORWorldDecoderDeclareCall declares the annotation asking for a world-profile
+// decoder.
+func CBORWorldDecoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWorldDecoderDeclare, target, options...)
+}
+
+// CBORWireDeltaDeclareCall declares the annotation asking for a wire-profile delta.
+func CBORWireDeltaDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWireDeltaDeclare, target, options...)
+}
+
+// CBORWorldDeltaDeclareCall declares the annotation asking for a world-profile delta.
+func CBORWorldDeltaDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORWorldDeltaDeclare, target, options...)
+}
+
 // JSONEncodeCall declares a standalone JSON encoder wrapper.
 func JSONEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationJSONEncode, target, options...)
@@ -397,7 +444,15 @@ func socketDirection(operation CallOperation) bool {
 }
 
 func codecDeclareDirection(operation CallOperation) bool {
-	return operation == OperationJSONEncoderDeclare || operation == OperationJSONDecoderDeclare
+	switch operation {
+	case OperationJSONEncoderDeclare, OperationJSONDecoderDeclare,
+		OperationCBORWireEncoderDeclare, OperationCBORWireDecoderDeclare,
+		OperationCBORWorldEncoderDeclare, OperationCBORWorldDecoderDeclare,
+		OperationCBORWireDeltaDeclare, OperationCBORWorldDeltaDeclare:
+		return true
+	default:
+		return false
+	}
 }
 
 // Options returns an immutable options snapshot containing defaults and wrappers.
@@ -532,6 +587,9 @@ func supportedCallOperation(operation CallOperation) bool {
 		OperationStreamCreate, OperationSocketReceive, OperationSocketSend,
 		OperationJSONDecode, OperationJSONEncode,
 		OperationJSONEncoderDeclare, OperationJSONDecoderDeclare,
+		OperationCBORWireEncoderDeclare, OperationCBORWireDecoderDeclare,
+		OperationCBORWorldEncoderDeclare, OperationCBORWorldDecoderDeclare,
+		OperationCBORWireDeltaDeclare, OperationCBORWorldDeltaDeclare,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
@@ -566,6 +624,12 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"encode"}, nil
 	case OperationJSONDecoderDeclare:
 		return []string{"decode"}, nil
+	case OperationCBORWireEncoderDeclare, OperationCBORWorldEncoderDeclare:
+		return []string{"cbor-encode"}, nil
+	case OperationCBORWireDecoderDeclare, OperationCBORWorldDecoderDeclare:
+		return []string{"cbor-decode"}, nil
+	case OperationCBORWireDeltaDeclare, OperationCBORWorldDeltaDeclare:
+		return []string{"cbor-delta"}, nil
 	case OperationRowsScan:
 		return []string{"row"}, nil
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,

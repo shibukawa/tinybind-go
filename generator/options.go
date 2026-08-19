@@ -56,6 +56,15 @@ const (
 	FeatureItemTable Feature = "item-table"
 	// FeatureEntityCodec turns off Firestore entity codec generation entirely.
 	FeatureEntityCodec Feature = "entity-codec"
+	// FeatureCBORWireCodec and FeatureCBORWorldCodec turn off CBOR codec
+	// generation for one profile. The determinism check inside a generated
+	// codec is not a feature and cannot be turned off: it is a build gate, and
+	// leaving it off is how a float reaches production as a desync.
+	FeatureCBORWireCodec  Feature = "cbor-wire-codec"
+	FeatureCBORWorldCodec Feature = "cbor-world-codec"
+	// FeatureCBORDelta turns off delta generation while leaving the codecs
+	// standing, for a project that sends whole messages and never diffs them.
+	FeatureCBORDelta Feature = "cbor-delta"
 	// FeatureCacheKey turns off cache key generation entirely.
 	FeatureCacheKey Feature = "cache-key"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
@@ -298,7 +307,7 @@ func DefaultOptions() Options {
 			{PackagePath: "net/http", Name: "Handle"},
 			{PackagePath: "net/http", Name: "HandleFunc"},
 		}},
-		RuntimePackages:          PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath, cachekeybindImportPath}},
+		RuntimePackages:          PatternSet[string]{Set: []string{httpbindImportPath, jsonbindImportPath, sqlbindImportPath, dynamobindImportPath, firestorebindImportPath, cachekeybindImportPath, cborbindImportPath}},
 		FileTypes:                PatternSet[TypePattern]{Set: []TypePattern{{PackagePath: httpbindImportPath, Name: "File"}}},
 		HTMLTemplatePattern:      DefaultHTMLTemplatePattern,
 		SQLTemplatePattern:       DefaultSQLTemplatePattern,
@@ -422,6 +431,14 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 	patterns := o.Calls.Set
 	if patterns == nil && !o.RuntimePackages.Disabled {
 		for _, path := range o.RuntimePackages.Set {
+			if path == cborbindImportPath {
+				// cborbind shares no entry with the others. It declares six
+				// annotations and no operation at all, so the canonical set
+				// would register forty names against a package that has none
+				// of them.
+				patterns = append(patterns, canonicalCBORCalls(path)...)
+				continue
+			}
 			if path == firestorebindImportPath {
 				// firestorebind shares no signature with the others: its entries
 				// name neither a table nor a client, so the value argument sits
@@ -629,6 +646,28 @@ func canonicalFirestoreCalls(path string) []CallPattern {
 	}
 }
 
+// canonicalCBORCalls declares the cborbind annotations discovery reads.
+//
+// Each codec form is two patterns against one target rather than an operation
+// of its own, so disabling one direction leaves the other half of the
+// annotation standing instead of taking the whole thing -- which is the shape
+// the JSON declaration arrived at after a single both-directions operation
+// turned out not to be half-removable.
+func canonicalCBORCalls(path string) []CallPattern {
+	return []CallPattern{
+		CBORWireEncoderDeclareCall(Function(path, "GenerateWireCodec"), GenericType("cbor-encode", 0)),
+		CBORWireDecoderDeclareCall(Function(path, "GenerateWireCodec"), GenericType("cbor-decode", 0)),
+		CBORWireEncoderDeclareCall(Function(path, "GenerateWireEncoder"), GenericType("cbor-encode", 0)),
+		CBORWireDecoderDeclareCall(Function(path, "GenerateWireDecoder"), GenericType("cbor-decode", 0)),
+		CBORWorldEncoderDeclareCall(Function(path, "GenerateWorldCodec"), GenericType("cbor-encode", 0)),
+		CBORWorldDecoderDeclareCall(Function(path, "GenerateWorldCodec"), GenericType("cbor-decode", 0)),
+		CBORWorldEncoderDeclareCall(Function(path, "GenerateWorldEncoder"), GenericType("cbor-encode", 0)),
+		CBORWorldDecoderDeclareCall(Function(path, "GenerateWorldDecoder"), GenericType("cbor-decode", 0)),
+		CBORWireDeltaDeclareCall(Function(path, "GenerateWireDelta"), GenericType("cbor-delta", 0)),
+		CBORWorldDeltaDeclareCall(Function(path, "GenerateWorldDelta"), GenericType("cbor-delta", 0)),
+	}
+}
+
 func usageForCallOperation(operation CallOperation) Usage {
 	switch operation {
 	case OperationRequestBind:
@@ -659,6 +698,21 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageEncodeJSON | UsageAppendMethod
 	case OperationJSONDecoderDeclare:
 		return UsageDecodeJSON | UsageDecodeMethod
+	case OperationCBORWireEncoderDeclare:
+		return UsageCBORWireEncode
+	case OperationCBORWireDecoderDeclare:
+		return UsageCBORWireDecode
+	case OperationCBORWorldEncoderDeclare:
+		return UsageCBORWorldEncode
+	case OperationCBORWorldDecoderDeclare:
+		return UsageCBORWorldDecode
+	case OperationCBORWireDeltaDeclare:
+		// A delta implies the codec it is diffed from, in both directions: the
+		// sender encodes whole entities into the set group and the receiver
+		// decodes them.
+		return UsageCBORWireDelta | UsageCBORWireEncode | UsageCBORWireDecode
+	case OperationCBORWorldDeltaDeclare:
+		return UsageCBORWorldDelta | UsageCBORWorldEncode | UsageCBORWorldDecode
 	case OperationRowsScan:
 		return UsageScanRows
 	case OperationItemEncode:
@@ -715,6 +769,14 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureItemCodec]
 	case OperationEntityEncode, OperationEntityDecode, OperationEntityKey:
 		return disabled[FeatureEntityCodec]
+	case OperationCBORWireEncoderDeclare, OperationCBORWireDecoderDeclare:
+		return disabled[FeatureCBORWireCodec]
+	case OperationCBORWorldEncoderDeclare, OperationCBORWorldDecoderDeclare:
+		return disabled[FeatureCBORWorldCodec]
+	case OperationCBORWireDeltaDeclare:
+		return disabled[FeatureCBORDelta] || disabled[FeatureCBORWireCodec]
+	case OperationCBORWorldDeltaDeclare:
+		return disabled[FeatureCBORDelta] || disabled[FeatureCBORWorldCodec]
 	case OperationCacheKey:
 		return disabled[FeatureCacheKey]
 	default:
@@ -723,7 +785,7 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 }
 
 func primaryTypeSource(pattern CallPattern) TypeSource {
-	roles := []string{"request", "response", "stream", "socket-in", "socket-out", "decode", "encode", "row", "item", "entity", "key", "config"}
+	roles := []string{"request", "response", "stream", "socket-in", "socket-out", "decode", "encode", "cbor-decode", "cbor-encode", "cbor-delta", "row", "item", "entity", "key", "config"}
 	for _, role := range roles {
 		if source, ok := pattern.TypeRoles[role]; ok {
 			return source

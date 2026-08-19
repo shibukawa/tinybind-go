@@ -4,7 +4,7 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cborbind](docs/cborbind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md)
 
 Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md) and, if your users will build against fasthttp, [the fasthttp backend for framework owners](docs/httpbind_fasthttp_frameworkowner.md). Owning a browser runtime as well? [Client behaviour](docs/httpbind_client_behavior.md) covers server actions, client handlers, and component parameters in one place.
 
@@ -115,6 +115,7 @@ httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
 | `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
 | `firestorebind/` | Firestore Datastore-mode entity runtime over `tinygodriver/nosql/datastore`; does not import `net/http` or `database/sql` |
+| `cborbind/` | CBOR codec declarations over `tinygodriver/encoding/cbor`; declares no interface of its own and imports no transport |
 | `cachekeybind/` | Cache key framing runtime; stdlib only |
 | `generator/` | Field-plan binders/writers + OpenAPI 3.1 + template generation |
 | `parser/` | Route/handler discovery (`Bind`, `Write`, `WriteStream`, errors) |

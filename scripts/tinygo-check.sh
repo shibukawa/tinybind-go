@@ -66,4 +66,20 @@ if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go)$' <<<"$JS
 fi
 tinygo build -target wasm -o /tmp/tinybind-json-smoke.wasm ./testdata/cmd/tinygo-json-smoke
 
+echo "==> tinygo run smoke (generated CBOR codec, native and wasm)"
+# The wire profile is sized integers and a fixed array, and its bytes are the
+# protocol. The smoke asserts the pinned bytes rather than merely round-tripping,
+# so a target that encoded them differently fails here rather than at a desync;
+# wasip1 is the 32-bit target where a platform-width integer would have shown up.
+tinygo run ./testdata/cmd/tinygo-cbor-smoke
+tinygo run -target=wasip1 ./testdata/cmd/tinygo-cbor-smoke
+
+echo "==> tinygo build -target wasm (generated CBOR codec)"
+CBOR_DEPS="$(go list -deps ./testdata/cmd/tinygo-cbor-smoke)"
+if grep -Eq '^(net/http|database/sql)$' <<<"$CBOR_DEPS"; then
+  echo "CBOR-only dependency graph contains an HTTP or SQL runtime" >&2
+  exit 1
+fi
+tinygo build -target wasm -o /tmp/tinybind-cbor-smoke.wasm ./testdata/cmd/tinygo-cbor-smoke
+
 echo "OK: TinyGo checks passed"

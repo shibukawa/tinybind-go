@@ -49,6 +49,7 @@ consuming_side:
   tests: jsonbind and root package tests over each entry point in both directions, generator/foreign_field_test.go over the emitted calls, a compiled cross-package round trip, the refused option, a foreign type carrying no method staying dropped, each one-directional type accepted by a parent needing only that direction, and each reported by a parent needing both
 not_built_yet:
   collections: a slice or map whose element is a foreign type is still dropped, since fieldTypeKind admits only scalars and planned structs as elements
+  collections_were_not_fixed_by_the_cbor_mode: requirement:cbor-composite-field-kinds admits them, but through its own go/types collector rather than through fieldTypeKind, so nothing here changed and this gap is still open
 source:
   - maintainer proposal 2026-08-13
   - requirement:typed-server-action the_result_type_must_be_declared_in_the_route_package
