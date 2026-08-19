@@ -41,6 +41,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
+	templateLineDirectives := flags.Bool("template-line-directives", options.TemplateLineDirectives, "map generated template code to its .tb.html/.tb.sql line with //line directives (breaks coverage attribution; leave off for a covered run)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -60,6 +61,7 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	}
 
 	options.DataAttributePrefix = *dataAttributePrefix
+	options.TemplateLineDirectives = *templateLineDirectives
 
 	switch *backend {
 	case "":

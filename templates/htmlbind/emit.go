@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 	"github.com/shibukawa/tinybind-go/templates/internal/syntax"
 )
 
@@ -184,15 +185,35 @@ func ctxOp(name string, withContext bool) string {
 	return name
 }
 
+// plannedOp is one instruction plus the template line it came from. The line is
+// zero for an instruction the emitter wrote for itself, which keeps its own
+// position rather than borrowing a template's.
+type plannedOp struct {
+	call string
+	line int
+}
+
 // planEmitter accumulates the instruction list of one plan.
 type planEmitter struct {
 	e       *goEmitter
 	scope   *emitScope
-	ops     []string
+	ops     []plannedOp
 	pending strings.Builder
+	// line is the template line of the node being walked, which every
+	// instruction that node produces is attributed to.
+	line int
+	// staticLine is where the pending run started. A static run coalesces across
+	// template constructs, so it owns a span rather than a point and its start is
+	// the only position that is true of all of it.
+	staticLine int
 }
 
-func (p *planEmitter) static(text string) { p.pending.WriteString(text) }
+func (p *planEmitter) static(text string) {
+	if p.pending.Len() == 0 {
+		p.staticLine = p.line
+	}
+	p.pending.WriteString(text)
+}
 
 func (p *planEmitter) flush() {
 	if p.pending.Len() == 0 {
@@ -200,16 +221,20 @@ func (p *planEmitter) flush() {
 	}
 	text := p.pending.String()
 	p.pending.Reset()
-	p.op("Static(" + strconv.Quote(text) + ")")
+	p.append(p.scope.builder+".Static("+strconv.Quote(text)+")", p.staticLine)
 }
 
 // op appends a builder call. Static output is flushed first so instruction
 // order matches document order.
 func (p *planEmitter) op(call string) {
-	p.ops = append(p.ops, p.scope.builder+"."+call)
+	p.append(p.scope.builder+"."+call, p.line)
 }
 
-func (p *planEmitter) raw(call string) { p.ops = append(p.ops, call) }
+func (p *planEmitter) raw(call string) { p.append(call, p.line) }
+
+func (p *planEmitter) append(call string, line int) {
+	p.ops = append(p.ops, plannedOp{call: call, line: line})
+}
 
 // literal renders the instruction list as a Go composite literal.
 func (p *planEmitter) literal() string {
@@ -217,10 +242,25 @@ func (p *planEmitter) literal() string {
 	if len(p.ops) == 0 {
 		return "nil"
 	}
+	directives := p.e.lineDirectives
 	var out strings.Builder
 	fmt.Fprintf(&out, "[]htmlbind.Op[%s]{\n", p.scope.goType)
+	mapped := 0
 	for _, op := range p.ops {
-		out.WriteString("\t" + strings.ReplaceAll(op, "\n", "\n\t") + ",\n")
+		nested := strings.Contains(op.call, "\n")
+		if directives && op.line > 0 && op.line != mapped {
+			out.WriteString(linedirective.Directive(p.e.sourcePath, op.line) + "\n")
+			mapped = op.line
+		}
+		out.WriteString("\t" + indentBlock(op.call, "\t") + ",\n")
+		// A nested list closed its own span before its literal ended, so the
+		// element after it is unmapped whatever line it claims.
+		if nested {
+			mapped = 0
+		}
+	}
+	if directives && mapped != 0 {
+		out.WriteString(linedirective.Restore() + "\n")
 	}
 	out.WriteString("}")
 	return out.String()
@@ -606,8 +646,54 @@ func (e *goEmitter) planPrefix(name string) string {
 	return "plan" + goPublicName(name)
 }
 
+// nodeLine reads the template line of one body node. The Node interface carries
+// only NodeType, so the field every node struct already has is not reachable
+// from the walk without this switch.
+func nodeLine(node Node) (int, bool) {
+	switch n := node.(type) {
+	case *TextNode:
+		return n.Pos.Line, true
+	case *CommentNode:
+		return n.Pos.Line, true
+	case *DoctypeNode:
+		return n.Pos.Line, true
+	case *HeadNode:
+		return n.Pos.Line, true
+	case *ElementNode:
+		return n.Pos.Line, true
+	case *ComponentNode:
+		return n.Pos.Line, true
+	case *SlotNode:
+		return n.Pos.Line, true
+	case *messageInnerNode:
+		return n.Pos.Line, true
+	case *syntax.ExpressionNode:
+		return n.Pos.Line, true
+	case *syntax.IfNode:
+		return n.Pos.Line, true
+	case *syntax.ForNode:
+		return n.Pos.Line, true
+	case *syntax.ValNode:
+		return n.Pos.Line, true
+	case *syntax.CheckNode:
+		return n.Pos.Line, true
+	case *syntax.MessageBlockNode:
+		return n.Pos.Line, true
+	case *syntax.AwaitNode:
+		return n.Pos.Line, true
+	}
+	return 0, false
+}
+
 func (e *goEmitter) emitOps(p *planEmitter, nodes []Node) error {
+	// The attribution in force outside this list is restored per node rather
+	// than once at the end, because a nested walk returns here between nodes.
+	outer := p.line
+	defer func() { p.line = outer }()
 	for _, node := range nodes {
+		if line, ok := nodeLine(node); ok {
+			p.line = line
+		}
 		switch node := node.(type) {
 		case *TextNode:
 			p.static(node.Text)
@@ -1606,8 +1692,21 @@ func staticAttributeValue(attribute Attribute) string {
 	return out.String()
 }
 
+// indentBlock indents every line of value except a line directive, which the
+// compiler recognizes only at the left margin and silently reads as an ordinary
+// comment anywhere else.
 func indentBlock(value, indent string) string {
-	return strings.ReplaceAll(value, "\n", "\n"+indent)
+	if !strings.Contains(value, "//line ") {
+		return strings.ReplaceAll(value, "\n", "\n"+indent)
+	}
+	lines := strings.Split(value, "\n")
+	for i := 1; i < len(lines); i++ {
+		if linedirective.IsDirective(lines[i]) {
+			continue
+		}
+		lines[i] = indent + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // exprCode renders a template expression as Go code reading from the scope

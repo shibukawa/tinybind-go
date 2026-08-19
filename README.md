@@ -367,6 +367,61 @@ results, err := templatefmt.Dir("./store", templatefmt.Options{Width: 120})
 `templatefmt.Dir` reads but never writes; each `Result` reports whether the file
 would change and carries `Write()` for when you want it applied.
 
+## Template positions in generated Go
+
+Generated Go is output, not source, so an error inside it names a file you never
+wrote. `-template-line-directives` maps the generated code back to the template
+line that produced it, using Go `//line` directives:
+
+```bash
+go run ./cmd/tinybind-gen generate -dir ./store -template-line-directives
+```
+
+A type error in a template expression then reports `store/users.tb.sql:5` instead
+of a line of `tinybind_templates_gen.go`, and every reader that honours the
+directive follows: the compiler, `go vet`, delve, gopls, and your editor.
+Generated lines that came from no template keep reporting against the generated
+file.
+
+The path written into the directive is absolute. The toolchain shortens it
+against wherever you ran the command, so the same string reads as
+`store/users.tb.sql` from the module root and `./users.tb.sql` from inside the
+package — and `go build` and `go vet` agree on it, which no relative form
+manages. `-trimpath` normalises it in the binary exactly as it does any other
+source path, so a release build carries `yourmodule/store/users.tb.sql`.
+
+How far it reaches depends on the dialect:
+
+- **SQL** — a statement is emitted as a real Go function, so a panic inside one
+  names the `.tb.sql` file in its stack frame as well.
+- **HTML** — compile time only. Rendering walks an instruction list inside the
+  shared `htmlbind` coordinator, so a failing render's frames are in that
+  package and no directive on generated code can move them.
+- **DynamoDB** — one mapping per declaration. The parser records a line and no
+  column, so there is nothing finer to map.
+
+It is off by default, and two things are worth knowing before turning it on.
+Enabling it rewrites every generated file that carries a template — with
+absolute paths in it, so its bytes now depend on where the checkout lives. That
+costs nothing if you keep generated Go out of version control, and misleads
+every other machine if you commit it. It also grows the
+mapped parts of it by roughly a third: a directive is repeated per line, because
+one that is not only maps the line directly below it. Comments reach no binary,
+so this is source size and nothing else. Second, a covered test run under
+directives writes a profile that keeps the generated file's path while using the
+mapped line numbers, so `go tool cover` renders against lines that do not exist
+in the file it names — leave the flag off for coverage.
+
+Taking `Artifact` values instead of written files? The directive that ends a
+mapped span has to name the file you write it as, and only you know that name:
+
+```go
+content := generator.ResolveTemplatePositions(artifact.Content, artifact.OutputBase+"_pw_gen.go")
+```
+
+Skipping that call misreports generated scaffolding and leaves every template
+position intact.
+
 ## Demo
 
 ```bash

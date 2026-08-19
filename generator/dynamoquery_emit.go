@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // DynamoQueryOptions selects which of the three client-supply modes the
@@ -18,6 +20,18 @@ type DynamoQueryOptions struct {
 	// HandleResolver names a framework function answering a dynamobind.Handle
 	// for one Context. ParameterAPI takes precedence over it.
 	HandleResolver *SymbolPattern
+	// LineDirectives maps each generated query function back to the declaration
+	// that produced it, so a compile error and a runtime stack frame both name
+	// the .tb.dynamo file.
+	//
+	// The mapping is per declaration and line only: a parsed declaration carries
+	// a source path and a line and no column, so there is nothing finer to map.
+	LineDirectives bool
+	// OutputName is the base name of the Go file this output becomes, needed to
+	// end a mapped span. Empty leaves the restore directives unresolved for a
+	// caller that combines several results and calls
+	// [ResolveTemplatePositions] on the combined file.
+	OutputName string
 }
 
 // resolves reports whether generated bodies call a framework resolver. A
@@ -59,6 +73,11 @@ func EmitDynamoQueriesWithOptions(pkg string, plans []DynamoQueryPlan, opts Dyna
 	formatted, err := format.Source(out.Bytes())
 	if err != nil {
 		return out.Bytes(), fmt.Errorf("dynamobind: format generated query: %w\n%s", err, out.String())
+	}
+	// After formatting, because a restore directive names the physical line that
+	// follows it and go/format is the last thing that can move that line.
+	if opts.LineDirectives && opts.OutputName != "" {
+		formatted = linedirective.Resolve(formatted, opts.OutputName)
 	}
 	return formatted, nil
 }
@@ -144,6 +163,12 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan, opts DynamoQueryOpti
 		handle = ", h dynamobind.Handle"
 	}
 	fmt.Fprintf(b, "// %s queries %s in %s.\n", name, plan.Item.Name, decl.Table)
+	// The declaration is one line with no column, so the whole function body is
+	// what a directive can map. The constants above it are emitter scaffolding
+	// under names the declaration never wrote, and keep their own position.
+	if opts.LineDirectives && decl.Line > 0 {
+		b.WriteString(linedirective.Directive(linedirective.Path(decl.SourcePath), decl.Line) + "\n")
+	}
 	fmt.Fprintf(b, "func %s(ctx context.Context%s%s, opts ...dynamodb.QueryOption) %s {\n", name, handle, params, result)
 
 	b.WriteString("\tvalues := map[string]dynamodb.AttributeValue{\n")
@@ -188,6 +213,9 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan, opts DynamoQueryOpti
 	}
 	fmt.Fprintf(b, "\treturn dynamobind.%s[%s](ctx, %s%sTable, %sKeyCondition, opts...)\n}\n\n",
 		entry, plan.Item.Name, handleArg, base, base)
+	if opts.LineDirectives && decl.Line > 0 {
+		b.WriteString(linedirective.Restore() + "\n\n")
+	}
 	return nil
 }
 

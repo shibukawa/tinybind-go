@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/shibukawa/tinybind-go/internal/linedirective"
 )
 
 // Dialect names a supported target database. It is the single generation-time
@@ -73,6 +75,23 @@ type GenerateOptions struct {
 	// ExecutorResolver selects a framework-specific Context resolver. A nil
 	// resolver uses sqlbind.SQLExecutorFromContext. Setting it implies ContextAPI.
 	ExecutorResolver *ExecutorResolver
+	// LineDirectives maps each emitted statement line back to the template line
+	// that produced it, so a compile error and a runtime stack frame both name
+	// the .tb.sql file rather than the generated Go one.
+	//
+	// It is off by default. Turning it on changes the bytes of every generated
+	// file carrying a statement, and a covered test run reports lines that do
+	// not exist in the file it names, per rule:line-directive-emission.
+	LineDirectives bool
+	// OutputName is the base name of the Go file this output becomes. A mapped
+	// span ends with a directive naming that file and the line the reader is on,
+	// and neither is known until the bytes are final.
+	//
+	// Leaving it empty returns the output with those directives unresolved, for
+	// a caller that concatenates several results and resolves the combined file
+	// itself with generator.ResolveTemplatePositions. A caller writing this
+	// result as a whole file must name it here.
+	OutputName string
 }
 
 // ExecutorResolver identifies a package function with the signature
@@ -116,6 +135,11 @@ func Generate(filename string, source []byte, options GenerateOptions) ([]byte, 
 	if err != nil {
 		return generated, fmt.Errorf("format generated SQL code: %w\n%s", err, generated)
 	}
+	// After formatting, because a restore directive names the physical line that
+	// follows it and go/format is the last thing that can move that line.
+	if options.LineDirectives && options.OutputName != "" {
+		formatted = linedirective.Resolve(formatted, options.OutputName)
+	}
 	return formatted, nil
 }
 
@@ -130,10 +154,22 @@ type goEmitter struct {
 	// plan is the group plan of the statement being emitted, or nil when its body
 	// has nothing elidable in it and keeps the emission it always had.
 	plan *groupPlan
+	// lineDirectives and sourcePath drive template position mapping. The path is
+	// absolute, which is the only form go build and go vet both print correctly;
+	// see [linedirective.Path].
+	lineDirectives bool
+	sourcePath     string
+	// mappedLine is the template line the emitter has already opened, or zero
+	// when the current output is unmapped scaffolding.
+	mappedLine int
 }
 
 func (c *compiler) emit(options GenerateOptions) ([]byte, error) {
 	e := &goEmitter{c: c, dialect: options.Dialect, contextAPI: options.ContextAPI, contextOnly: options.ContextOnly, resolver: options.ExecutorResolver}
+	if options.LineDirectives {
+		e.lineDirectives = true
+		e.sourcePath = linedirective.Path(c.filename)
+	}
 	if e.contextAPI && !e.contextOnly {
 		for _, statement := range c.statements {
 			if statement.cardinality != "predicate" && statement.cardinality != "relation" && c.nameExists(statement.decl.Name+"Context") {
@@ -518,7 +554,13 @@ func (e *goEmitter) scanArgs(t valueType, target string) string {
 }
 
 func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
+	// A nested body closes its own span before returning, so the caller resumes
+	// unmapped and reopens for its next node.
+	defer e.endMapping()
 	for _, node := range nodes {
+		if pos, ok := nodePos(node); ok {
+			e.mapLine(pos)
+		}
 		switch n := node.(type) {
 		case *TextNode:
 			e.emitText(n)
@@ -719,6 +761,54 @@ func (e *goEmitter) line(value string) {
 	e.b.WriteString(strings.Repeat("\t", e.indent))
 	e.b.WriteString(value)
 	e.b.WriteByte('\n')
+}
+
+// mapLine opens a mapped span at a template line. The directive is written at
+// the left margin rather than at the current indent, because an indented //line
+// is an ordinary comment the compiler ignores without saying so.
+//
+// A line already open is not reopened: consecutive nodes on one template line
+// share the span the first of them started.
+func (e *goEmitter) mapLine(pos Position) {
+	if !e.lineDirectives || pos.Line <= 0 || pos.Line == e.mappedLine {
+		return
+	}
+	e.b.WriteString(linedirective.Directive(e.sourcePath, pos.Line))
+	e.b.WriteByte('\n')
+	e.mappedLine = pos.Line
+}
+
+// endMapping closes the open span so the scaffolding that follows is reported
+// against the generated file. Without it a generator bug would be reported at a
+// template line, which is where it is least findable.
+func (e *goEmitter) endMapping() {
+	if !e.lineDirectives || e.mappedLine == 0 {
+		return
+	}
+	e.b.WriteString(linedirective.Restore())
+	e.b.WriteByte('\n')
+	e.mappedLine = 0
+}
+
+// nodePos reads the template position of one body node. The Node interface
+// carries only NodeType, so the field every node struct already has is not
+// reachable from the walk without this switch.
+func nodePos(node Node) (Position, bool) {
+	switch n := node.(type) {
+	case *TextNode:
+		return n.Pos, true
+	case *ExpressionNode:
+		return n.Pos, true
+	case *RelationNode:
+		return n.Pos, true
+	case *ValNode:
+		return n.Pos, true
+	case *CheckNode:
+		return n.Pos, true
+	case *IfNode:
+		return n.Pos, true
+	}
+	return Position{}, false
 }
 func (e *goEmitter) expr(expr Expr, scope map[string]valueType) (string, error) {
 	switch x := expr.(type) {

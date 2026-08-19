@@ -44,6 +44,7 @@ options:
   SQLContextOnlyAPI: bool; decision:sql-context-executor-api context-only public surface
   SQLExecutorResolver: optional SymbolPattern; framework resolver that implies SQLContextAPI
   PreserveTemplateWhitespace: bool; turns off requirement:static-whitespace-normalization so HTML static output keeps authoring indentation byte for byte
+  TemplateLineDirectives: implemented requirement:template-source-positions switch; off by default, because turning it on rewrites every generated file carrying a template and makes a covered run report lines that do not exist in the file it names, per rule:line-directive-emission
   PublicDir: filesystem directory for requirement:static-asset-extraction output; empty uses 'public/generated'
   PublicURLBase: URL path or full URL prefixed to generated asset file names; empty uses '/public/generated'; independent of PublicDir and required together with an explicit PublicDir
   DataAttributePrefix: decision:update-manifest-transport generated data-attribute namespace; empty uses 'tb'
