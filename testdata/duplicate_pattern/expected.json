@@ -1,0 +1,32 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/ping",
+      "site": {
+        "file": "main.go",
+        "line": 10,
+        "column": 2
+      },
+      "handler": {
+        "form": "named",
+        "name": "pingHandler"
+      },
+      "wrappers": {}
+    },
+    {
+      "method": "GET",
+      "path": "/ping",
+      "site": {
+        "file": "main.go",
+        "line": 16,
+        "column": 2
+      },
+      "handler": {
+        "form": "named",
+        "name": "pingHandler"
+      },
+      "wrappers": {}
+    }
+  ]
+}

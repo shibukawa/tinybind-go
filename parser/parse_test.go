@@ -197,6 +197,35 @@ func TestParsePackage_representativeSamples(t *testing.T) {
 	}
 }
 
+// TestRouteSitePositions pins the export contract: a resolved route names its
+// registration site at the same precision a diagnostic names an unresolved
+// one, so a duplicate-pattern report can point at both sides.
+func TestRouteSitePositions(t *testing.T) {
+	got, err := parser.ParsePackage(filepath.Join("..", "testdata", "duplicate_pattern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Routes) != 2 {
+		t.Fatalf("routes: %d, want the same pattern registered twice", len(got.Routes))
+	}
+	for i, route := range got.Routes {
+		site := route.Site
+		if site.File == "" || site.Line <= 0 || site.Column <= 0 {
+			t.Fatalf("route %d has an incomplete site: %+v", i, site)
+		}
+	}
+	a, b := got.Routes[0], got.Routes[1]
+	if a.Method != b.Method || a.Path != b.Path {
+		t.Fatalf("expected one pattern at two sites, got %s %s and %s %s", a.Method, a.Path, b.Method, b.Path)
+	}
+	if a.Site == b.Site {
+		t.Fatalf("both registrations report the same site: %+v", a.Site)
+	}
+	if a.Site.Line >= b.Site.Line {
+		t.Fatalf("routes are not ordered by site: %d then %d", a.Site.Line, b.Site.Line)
+	}
+}
+
 func jsonEqual(t *testing.T, a, b []byte) bool {
 	t.Helper()
 	var aj, bj any

@@ -12,6 +12,15 @@ type Result struct {
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
 }
 
+// Position is a source location. Resolved routes report their registration
+// site at the same precision Diagnostic reports an unresolved one, so a
+// consumer can name both sides of a pattern collision.
+type Position struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+}
+
 // Diagnostic is a host-side analysis finding for an incomplete route-like site.
 type Diagnostic struct {
 	File         string `json:"file"`
@@ -33,8 +42,10 @@ const (
 
 // Route is one statically discovered net/http route registration.
 type Route struct {
-	Method          string      `json:"method"`
-	Path            string      `json:"path"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	// Site is where the registration call was written.
+	Site            Position    `json:"site"`
 	Handler         Handler     `json:"handler"`
 	Request         string      `json:"request,omitempty"`
 	Response        string      `json:"response,omitempty"`

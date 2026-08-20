@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
-	"go/parser"
+	goparser "go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -18,6 +18,7 @@ import (
 	cbcg "github.com/shibukawa/tinybind-go/configbind/codegen"
 	"github.com/shibukawa/tinybind-go/internal/externalscan"
 	"github.com/shibukawa/tinybind-go/internal/linedirective"
+	"github.com/shibukawa/tinybind-go/parser"
 	"github.com/shibukawa/tinybind-go/templates/htmlbind"
 )
 
@@ -102,110 +103,132 @@ const openAPIArtifactBase = "tinybind_openapi"
 // as per-source artifacts. It writes no file, so the same call serves both
 // generation and --check.
 func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateRequest) ([]Artifact, error) {
+	artifacts, _, err := g.generateArtifacts(ctx, request, false)
+	return artifacts, err
+}
+
+// GenerateArtifactsWithRoutes is GenerateArtifacts plus the route analysis the
+// run performed: resolved registrations with their sites, and unresolved
+// route-like sites as diagnostics. The run parses once and every phase reads
+// that result, so asking for it adds no second analysis; when no phase needed
+// routes the parse happens for the return value alone. Like GenerateArtifacts
+// it writes no file.
+func (g *Generator) GenerateArtifactsWithRoutes(ctx context.Context, request GenerateRequest) ([]Artifact, *parser.Result, error) {
+	return g.generateArtifacts(ctx, request, true)
+}
+
+func (g *Generator) generateArtifacts(ctx context.Context, request GenerateRequest, withRoutes bool) ([]Artifact, *parser.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if request.Dir == "" {
 		request.Dir = "."
 	}
 	if err := request.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	runner := New(request.applyTo(g.Options))
 	normalized, err := runner.Options.normalized()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	artifacts, err := runner.templateArtifacts(request.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("generate templates: %w", err)
+		return nil, nil, fmt.Errorf("generate templates: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Every remaining phase reads the same type-checked package.
 	load := newPackageLoad(request.Dir)
 	binding, err := runner.bindingArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate mapping: %w", err)
+		return nil, nil, fmt.Errorf("generate mapping: %w", err)
 	}
 	artifacts = append(artifacts, binding...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	transport, _, err := runner.transportArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate transport: %w", err)
+		return nil, nil, fmt.Errorf("generate transport: %w", err)
 	}
 	artifacts = append(artifacts, transport...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	transportBinding, err := runner.transportBindingArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate transport binders: %w", err)
+		return nil, nil, fmt.Errorf("generate transport binders: %w", err)
 	}
 	artifacts = append(artifacts, transportBinding...)
 	transportRoutes, err := runner.transportRoutesArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate transport routes: %w", err)
+		return nil, nil, fmt.Errorf("generate transport routes: %w", err)
 	}
 	artifacts = append(artifacts, transportRoutes...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	config, err := runner.configBindArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate configbind: %w", err)
+		return nil, nil, fmt.Errorf("generate configbind: %w", err)
 	}
 	artifacts = append(artifacts, config...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	items, err := runner.dynamoItemArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate dynamobind: %w", err)
+		return nil, nil, fmt.Errorf("generate dynamobind: %w", err)
 	}
 	artifacts = append(artifacts, items...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	queries, err := runner.dynamoQueryArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate dynamobind queries: %w", err)
+		return nil, nil, fmt.Errorf("generate dynamobind queries: %w", err)
 	}
 	artifacts = append(artifacts, queries...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	entities, err := runner.firestoreEntityArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate firestorebind: %w", err)
+		return nil, nil, fmt.Errorf("generate firestorebind: %w", err)
 	}
 	artifacts = append(artifacts, entities...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	firestoreQueries, err := runner.firestoreQueryArtifacts(load)
 	if err != nil {
-		return nil, fmt.Errorf("generate firestorebind queries: %w", err)
+		return nil, nil, fmt.Errorf("generate firestorebind queries: %w", err)
 	}
 	artifacts = append(artifacts, firestoreQueries...)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if request.OpenAPI && normalized.openAPI {
 		openAPI, err := runner.openAPIArtifact(load)
 		if err != nil {
-			return nil, fmt.Errorf("generate OpenAPI: %w", err)
+			return nil, nil, fmt.Errorf("generate OpenAPI: %w", err)
 		}
 		artifacts = append(artifacts, openAPI...)
 	}
-	return artifacts, nil
+	var routes *parser.Result
+	if withRoutes {
+		routes, err = load.routes(normalized.parserConfig)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse routes: %w", err)
+		}
+	}
+	return artifacts, routes, nil
 }
 
 // applyTo layers the per-run request switches over base options.
@@ -356,7 +379,7 @@ func splitTemplateArtifacts(pkg string, files []templateFile, generated [][]byte
 	owned := map[string]string{}
 
 	for index, source := range generated {
-		file, err := parser.ParseFile(fset, files[index].path, source, parser.ParseComments)
+		file, err := goparser.ParseFile(fset, files[index].path, source, goparser.ParseComments)
 		if err != nil {
 			return nil, err
 		}
@@ -460,7 +483,7 @@ func renderArtifactFile(fset *token.FileSet, pkg string, imports []*ast.ImportSp
 // the rendered source so identifier resolution is available.
 func dropUnusedImports(source []byte) ([]byte, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "artifact.go", source, parser.ParseComments)
+	file, err := goparser.ParseFile(fset, "artifact.go", source, goparser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse generated artifact: %w\n%s", err, source)
 	}

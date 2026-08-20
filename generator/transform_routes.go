@@ -165,7 +165,7 @@ func (g *Generator) transportRoutesArtifacts(load *packageLoad) ([]Artifact, err
 	if err != nil {
 		return nil, err
 	}
-	result, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	result, err := load.routes(normalized.parserConfig)
 	if err != nil {
 		return nil, err
 	}

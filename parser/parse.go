@@ -213,6 +213,10 @@ func (p *packageParser) tryRouteCall(call *ast.CallExpr) (Route, bool) {
 		Handler:  handler,
 		Wrappers: meta,
 	}
+	if p.fset != nil {
+		pos := p.fset.Position(call.Pos())
+		route.Site = Position{File: pos.Filename, Line: pos.Line, Column: pos.Column}
+	}
 	if body != nil {
 		info := p.analyzeBody(body)
 		route.Request = info.Request

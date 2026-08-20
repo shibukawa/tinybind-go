@@ -18,6 +18,16 @@ func sortRoutes(routes []Route) {
 		if a.Handler.Name != b.Handler.Name {
 			return a.Handler.Name < b.Handler.Name
 		}
-		return a.Handler.Form < b.Handler.Form
+		if a.Handler.Form != b.Handler.Form {
+			return a.Handler.Form < b.Handler.Form
+		}
+		// Two registrations of one pattern by one handler differ only by site.
+		if a.Site.File != b.Site.File {
+			return a.Site.File < b.Site.File
+		}
+		if a.Site.Line != b.Site.Line {
+			return a.Site.Line < b.Site.Line
+		}
+		return a.Site.Column < b.Site.Column
 	})
 }

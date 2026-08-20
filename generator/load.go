@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/shibukawa/tinybind-go/parser"
 )
 
 // Type checking is what generation actually spends its time on, and the binder,
@@ -22,6 +24,10 @@ type packageLoad struct {
 	once sync.Once
 	pkg  *packages.Package
 	err  error
+
+	parseOnce sync.Once
+	parsed    *parser.Result
+	parseErr  error
 }
 
 func newPackageLoad(dir string) *packageLoad {
@@ -37,9 +43,31 @@ func (load *packageLoad) get() (*packages.Package, error) {
 	return load.pkg, load.err
 }
 
+// routes parses the loaded package on first use and replays the result, errors
+// included, to every later phase. The OpenAPI and transform phases and the
+// route export all read routes from one run's options, whose normalization
+// yields one parser config, which is what makes a single cached result correct
+// for all of them.
+func (load *packageLoad) routes(config parser.Config) (*parser.Result, error) {
+	load.parseOnce.Do(func() {
+		pkg, err := load.get()
+		if err != nil {
+			load.parseErr = err
+			return
+		}
+		routeParseCount.Add(1)
+		load.parsed, load.parseErr = parser.ParseLoadedPackage(pkg, config)
+	})
+	return load.parsed, load.parseErr
+}
+
 // packageLoadCount counts type checks so tests can prove that one run performs
 // exactly one, which is the property the whole packageLoad seam exists for.
 var packageLoadCount atomic.Int64
+
+// routeParseCount counts route parses for the same proof: a run that reads
+// routes from several phases still parses once.
+var routeParseCount atomic.Int64
 
 // loadPackage type-checks the one Go package in dir. The mode is the union of
 // what the analysis phases need, since they share the result.
