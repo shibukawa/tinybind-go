@@ -37,7 +37,7 @@ size_is_the_shaping_constraint:
   linker: rule:transport-dead-code-elimination; no registry and no init, so nothing becomes reachable that the option did not emit, and the threat named there, a registering init, is exactly what this must not add
   consequence: the ON/OFF the request asks for is a generation-time option, not a runtime flag; a runtime flag would link both paths and toggle one
 runtime_stays_driver_free:
-  rule: system:tinygodriver-cbor forbids importing the driver from anywhere but cborbind, and cborbind excludes net/http, so neither package may own the negotiation
+  rule: no runtime package imports the driver, per decision:runtime-package-boundaries; the codec calls live in generated code, which is the one place the driver is named
   therefore: httpbind gains only helpers that never name a driver type; the codec call sites live in generated code, which already imports the driver through its own emitted methods
   surface:
     IsCBORRequest: media-type compare on Content-Type, string only
@@ -61,17 +61,15 @@ acceptance:
   - a malformed or truncated CBOR body is 400, an oversize one 413, and an unknown member is skipped
   - turning the option off removes the negotiation arms and the helper references from generated output
 not_yet_verified:
-  - the TinyGo wasm link of an option-on project; the codecs call the same driver layer the cborbind smoke already links, so the risk is low, and the smoke fixture is where it would be added
+  - the TinyGo wasm link of an option-on project; the codecs call the driver layer that was linking under TinyGo before decision:cbor-codecs-are-application-side removed that smoke fixture, so the risk is low, and a fresh fixture is where it would be verified
 related:
-  - requirement:declared-cbor-codec
-  - decision:cborbind-runtime-package
+  - decision:cbor-codecs-are-application-side
   - system:tinygodriver-cbor
   - rule:generator-feature-disable
   - rule:transport-dead-code-elimination
   - decision:runtime-package-boundaries
   - term:payload
   - api:write
-  - requirement:cbor-world-codec
 profile_question_resolved_by_driver_v1_2_7:
   was: whether HTTP uses World with floats reopened or the driver grows a third profile, since the shipped World refused floats
   now: a Profile is a format-restriction struct literal any consumer names for itself, limits live in DecoderOptions, and floats are ordinary unless refused, per system:tinygodriver-cbor profiles_reshaped_v1_2_7

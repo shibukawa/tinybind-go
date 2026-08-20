@@ -6,6 +6,10 @@ import (
 	"sort"
 )
 
+// cborImportPath is the driver's CBOR layer, the one package the emitted
+// codecs call into.
+const cborImportPath = "github.com/shibukawa/tinygodriver/encoding/cbor"
+
 // CBOR HTTP emission: the application/cbor twins of the JSON mapping emitters,
 // produced only when Options.EnableCBORHTTP is set. The codecs are generated
 // from the same TypePlan the JSON codecs use, so both formats agree about wire
@@ -15,9 +19,8 @@ import (
 // The generated container is a map with text keys in struct field order (or
 // RFC 8949 bytewise order under CBORHTTPProfile.RequireSortedKeys), unknown
 // keys are skipped on decode, and every limit at the read site defers to the
-// one body cap httpbind.MaxCBORBodyBytes enforces. This subset is this mode's
-// own and is deliberately not the wire or world profile of the cborbind pass:
-// those are the session framework's contracts, and HTTP names neither.
+// one body cap httpbind.MaxCBORBodyBytes enforces. The subset is this mode's
+// own, tuned through Options.CBORHTTPProfile; no application profile is named.
 
 // checkCBORHTTPTypes refuses a type whose fields the CBOR HTTP codecs cannot
 // carry, naming the field and the reason rather than emitting a document that

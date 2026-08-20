@@ -20,7 +20,6 @@ features:
   - multipart File
   - DynamoDB item codec, proposed by requirement:dynamobind-generated-item-codec
   - DynamoDB table definition emission, per decision:dynamobind-table-definition
-  - CBOR wire codec and CBOR world codec, each direction on its own, proposed by requirement:declared-cbor-codec
 behavior:
   - disabled operation ignores RuntimePackages and operation-specific Set
   - disabled operation contributes no nested helper closure
@@ -28,8 +27,7 @@ behavior:
   - disabled OpenAPI makes the openapi flag unavailable or permanently false
   - generate-all never overrides disablement
 not_a_feature:
-  - the determinism check of rule:cbor-deterministic-types, for a type reached by a CBOR codec; it is a build gate rather than a lint, and leaving it off is how a float reaches production as a desync
-  - open: whether the CBOR mode as a whole may be disabled, which is a different question from disabling the check inside it
+  - CBOR HTTP negotiation, which is an off-by-default generator option rather than a disablable feature, per requirement:cbor-http-body; the wire and world codec features left with their pass, per decision:cbor-codecs-are-application-side
 validation:
   - reject contradictory options that require a disabled dependency
   - report disabled call sites only in explicit check mode

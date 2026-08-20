@@ -225,19 +225,6 @@ const (
 	// asked for, since that is code size in every binary carrying the type.
 	UsageAppendMethod
 	UsageDecodeMethod
-	// The four CBOR bits below name a profile as well as a direction, because
-	// the profile is part of the contract rather than a generator setting: a
-	// wire codec must not read a world message, so the two cannot share a bit
-	// and be told apart later.
-	UsageCBORWireEncode
-	UsageCBORWireDecode
-	UsageCBORWorldEncode
-	UsageCBORWorldDecode
-	// The delta bits. A delta is its own generated surface -- a type, a diff, an
-	// apply and a codec for the delta itself -- so it is asked for separately
-	// from the codec it is diffed from, and implies it.
-	UsageCBORWireDelta
-	UsageCBORWorldDelta
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
 	// UsageJSONMethods is either published method, for a caller asking whether
 	// a type publishes any.
@@ -249,16 +236,11 @@ const (
 	// UsageEntity is every Firestore entity entry point, and stays out of
 	// UsageAll for the same reason, requiring a firestore tag instead.
 	UsageEntity = UsageEncodeEntity | UsageDecodeEntity | UsageEntityKey
-	// UsageCBOR is every CBOR codec entry point. It stays out of UsageAll and
-	// has no generate-all rule at all: a CBOR codec is a protocol, and giving
-	// every struct in a package one would publish a wire format nobody declared.
-	UsageCBOR = UsageCBORWireEncode | UsageCBORWireDecode | UsageCBORWorldEncode | UsageCBORWorldDecode |
-		UsageCBORWireDelta | UsageCBORWorldDelta
 	// usageEmittedByMapping is every bit the mapping emitter reads. It is what
 	// decides whether a struct the walk could not map is a defect or merely a
-	// struct: the item, entity, cache-key and CBOR codecs are written by their
-	// own passes over their own analyses, and none of them needs a field plan
-	// from this one.
+	// struct: the item, entity and cache-key codecs are written by their own
+	// passes over their own analyses, and none of them needs a field plan from
+	// this one.
 	usageEmittedByMapping = UsageAll | UsageScanRows | UsageJSONMethods
 )
 
@@ -849,12 +831,9 @@ func unaliasPtr(t types.Type) types.Type {
 // clear that something needs it mapped.
 //
 // A package may hold a struct no mapping path touches: a message type carrying
-// its own CBOR codec, a value passed to a driver, a plain record. Refusing the
-// whole run for a field kind that would never have been emitted made those
-// packages ungeneratable for a reason that never applied to them -- and it made
-// the CBOR mode unreachable from the combined CLI, since a sized integer per
-// field is exactly what its wire profile is for and exactly what fieldTypeKind
-// does not map.
+// its own hand-written codec, a value passed to a driver, a plain record.
+// Refusing the whole run for a field kind that would never have been emitted
+// made those packages ungeneratable for a reason that never applied to them.
 //
 // A struct is needed when a configured call named it, when a struct that is
 // itself used holds it as a field, or when the run was asked to generate

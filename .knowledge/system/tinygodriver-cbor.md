@@ -34,39 +34,23 @@ profiles_reshaped_v1_2_7:
   floats_are_ordinary: RejectFloats is opt-in on both Profile and DecoderOptions; a determinism-carrying schema switches it on, everyone else keeps floats
   nesting_is_a_safety_net: the default nesting bound is a stack guard far past any schema, not a per-profile budget
   key_order: BytewiseKeyOrder is RFC 8949 section 4.2.1 core deterministic encoding; LengthFirstKeyOrder is the CTAP2 order and is the zero value
-migration_debt_at_the_v1_2_7_bump:
-  paid: 2026-08-20; go.mod requires v1.2.7 and the full CBOR generator suite is green
-  was: generator/cborbind_emit.go emitted var cborWireProfile = cbor.Wire() and the World twin, and emitted read sites called one-arg ReaderOver; none of those spellings exist in v1.2.7
-  as_migrated:
-    profiles: writeProfiles emits the wire and world struct literals, matching the driver's own helper_test.go worked example byte for byte
-    limits: each profile literal is paired with a cborWireReadOptions or cborWorldReadOptions var carrying the ceilings the old bundled profiles enforced, so the bump changed no observable behavior; the nesting bound is left to the driver's stack safety net, which is the half the old bundling got wrong
-    read_sites: ReaderOver(data, optionsVar) in cborbind_decode.go and cborbind_delta_apply.go
-    fixtures: testdata/cmd/tinygo-cbor-smoke regenerated; CBORProtocolVersion unchanged, which is the proof the schema did not move
-  touches: requirement:declared-cbor-codec profile_pinned, whose pinned vars changed spelling but kept their role
+the_v1_2_7_bump_and_what_followed:
+  bumped: 2026-08-20; go.mod requires v1.2.7
+  first_migration: the codec emitter briefly wrote the wire and world literals and their old ceilings into generated files, which put one application's profiles into a shared generator -- the exact overreach the driver's reshape had just named
+  then: the maintainer removed the codec pass the same day rather than keeping the profiles under any spelling, per decision:cbor-codecs-are-application-side
 measured_cost:
   source: package README, darwin/arm64, go test -bench . -benchtime 3s, over a fixed-shape wire message with a reused buffer and a reused Reader
   encode_append: 9.2 ns/op, 0 allocs
   decode_reader: 42.4 ns/op, 0 allocs
-  wire_validate: 23.9 ns/op, 0 allocs
-  world_validate: 90.0 ns/op, 0 allocs
   skip_unknown_field: 24.2 ns/op, 0 allocs
   contrast: the Encoder and Decoder paths cost 100.4 ns with 5 allocs and 168.0 ns with 7 allocs for the same message, which is why generated code names the Append and Reader layer and never the streaming one
-  the_column_that_matters: allocations; a tick loop's steady state has to be free of them, and that is the budget generated code has to stay inside
-the_reference_output_already_exists:
-  where: encoding/cbor/codec_test.go
-  what: a hand-written playerInput codec its own comment calls "the shape a generator would emit for the wire profile", plus a fixed64 standing in for a foreign fixed-point type
-  pinned: TestWireMessageEncodesToPinnedBytes fixes the exact bytes and then re-validates them under the wire profile
-  also_pinned: TestWireMessageRoundTrips, TestFixedShapeMessageIsZeroAllocationInSteadyState, TestAWideValueInANarrowFieldIsRefused
-  therefore: an acceptance oracle rather than an illustration, per requirement:cbor-wire-codec
-consumed_since: 2026-08-19, by decision:cborbind-runtime-package; go.mod requires tinygodriver v1.2.5
+consumed_by: the generated HTTP codecs of requirement:cbor-http-body, from emitted user-package code only; go.mod requires tinygodriver v1.2.7
 what_this_module_must_not_do:
-  - reimplement the wire format, the profiles, or their enforcement
-  - declare a second spelling of the codec interfaces, per rule:cbor-codec-interface-upstream
-  - import the driver from anywhere but the runtime package of decision:cborbind-runtime-package
+  - reimplement the wire format, the profile mechanism, or their enforcement
+  - declare its own spelling of the driver's codec interfaces
+  - import the driver from any runtime package; only generated code names it
 related:
-  - decision:cborbind-runtime-package
-  - rule:cbor-codec-interface-upstream
-  - requirement:cbor-wire-codec
-  - requirement:cbor-world-codec
+  - decision:cbor-codecs-are-application-side
+  - requirement:cbor-http-body
   - system:tinybind
 ```

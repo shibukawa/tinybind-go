@@ -65,18 +65,6 @@ packages:
       - github.com/shibukawa/tinygodriver/nosql/dynamodb
     excludes:
       - database/sql
-  cborbind:
-    status: proposed by decision:cborbind-runtime-package
-    path: github.com/shibukawa/tinybind-go/cborbind
-    owns:
-      - the generation declarations of requirement:declared-cbor-codec
-    declares_no_codec_interface: the driver already declares AppendCBORTo and DecodeCBORFrom, per rule:cbor-codec-interface-upstream; this is the only runtime that owns none of its own
-    imports:
-      - github.com/shibukawa/tinygodriver/encoding/cbor
-    excludes:
-      - net/http
-      - database/sql
-      - any fixed-point math package, per decision:cbor-scale-lives-in-the-type
   firestorebind:
     status: proposed by decision:firestorebind-runtime-package
     path: github.com/shibukawa/tinybind-go/firestorebind
@@ -94,7 +82,7 @@ dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf
   - dynamobind -> system:tinygodriver-dynamodb, and firestorebind -> system:tinygodriver-firestore; the two runtimes that depend on an external driver, and the two that share no code with each other
-  - cborbind -> system:tinygodriver-cbor, the third such runtime and the only transport-neutral one among them
+  - generated CBOR HTTP codecs -> system:tinygodriver-cbor, with no runtime package of their own; the cborbind runtime existed for one day, per decision:cbor-codecs-are-application-side
 forbidden:
   - jsonbind -> httpbind
   - tinygodriver -> tinybind-go, in any package, example, or test
@@ -106,7 +94,6 @@ generation:
   SQL-only: import and register with sqlbind
   DynamoDB-only: import the driver for the emitted methods; no registration, per decision:dynamobind-static-dispatch
   Firestore-only: import the driver for the emitted methods; no registration, for the same reason
-  CBOR-only: import the driver for the emitted methods; no registration, because a per-message registry lookup is what decision:cborbind-runtime-package no_registry refuses
 generator:
   command: cmd/tinybind-gen
   mapping_file: tinybind_gen.go

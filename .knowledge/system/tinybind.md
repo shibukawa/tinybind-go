@@ -12,7 +12,6 @@ runtime_packages:
   - github.com/shibukawa/tinybind-go/fasthttpbind: proposed decision:fasthttpbind-runtime-package fasthttp runtime over system:tinygodriver-fasthttp
   - github.com/shibukawa/tinybind-go/sqlbind: database/sql runtime
   - github.com/shibukawa/tinybind-go/dynamobind: proposed decision:dynamobind-runtime-package DynamoDB item runtime over system:tinygodriver-dynamodb
-  - github.com/shibukawa/tinybind-go/cborbind: proposed decision:cborbind-runtime-package CBOR codec runtime over system:tinygodriver-cbor
 generator_command: cmd/tinybind-gen
 package_boundary: decision:runtime-package-boundaries
 runtime_style: generated code only; no reflection
@@ -63,6 +62,5 @@ related:
   - decision:runtime-package-boundaries
   - requirement:dynamobind-product-goals
   - api:dynamobind-operations
-  - requirement:declared-cbor-codec
-  - decision:cborbind-runtime-package
+  - decision:cbor-codecs-are-application-side
 ```

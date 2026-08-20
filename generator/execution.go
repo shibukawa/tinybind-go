@@ -46,8 +46,6 @@ type GenerateRequest struct {
 	FirestoreQueryName string
 	// CacheKeyName is the generated cache key output file.
 	CacheKeyName string
-	// CborName is the generated CBOR codec output file.
-	CborName string
 	// PublicDir and PublicURLBase override where extracted static assets are
 	// written and how they are referenced. Empty values retain the generator
 	// options; setting one requires setting the other.
@@ -79,7 +77,6 @@ type GenerateResult struct {
 	FirestorePath      string
 	FirestoreQueryPath string
 	CacheKeyPath       string
-	CborPath           string
 	OpenAPIPath        string
 	TemplatesPath      string
 	// AssetPaths holds the static files extracted from component style and
@@ -134,7 +131,7 @@ func (result GenerateResult) Paths() []string {
 	if result.DepsPath != "" {
 		paths = append(paths, result.DepsPath)
 	}
-	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.CacheKeyPath, result.CborPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.CacheKeyPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -195,9 +192,6 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.CacheKeyName == "" {
 		request.CacheKeyName = defaultCacheKeyOut
-	}
-	if request.CborName == "" {
-		request.CborName = defaultCborOut
 	}
 
 	options := request.applyTo(g.Options)
@@ -302,10 +296,6 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.CacheKeyPath, err = runner.generateCacheKeys(load, request.Out, request.CacheKeyName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate cachekeybind: %w", err)
-	}
-	result.CborPath, err = runner.generateCborCodecs(load, request.Out, request.CborName)
-	if err != nil {
-		return GenerateResult{}, fmt.Errorf("generate cborbind: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
