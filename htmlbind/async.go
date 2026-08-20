@@ -206,9 +206,9 @@ type Content struct {
 // to choose, because it has to match the client that reads it.
 func (c Content) AppendJSON(dst []byte) []byte {
 	dst = append(dst, `{"id":`...)
-	dst = appendJSONString(dst, c.BoundaryID)
+	dst = AppendJSONString(dst, c.BoundaryID)
 	dst = append(dst, `,"html":`...)
-	dst = appendJSONString(dst, string(c.HTML))
+	dst = AppendJSONString(dst, c.HTML)
 	return append(dst, '}')
 }
 

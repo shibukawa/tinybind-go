@@ -34,14 +34,23 @@ func FormatFloat(value float64) string { return strconv.FormatFloat(value, 'g', 
 // strings, generated enums, and the trusted string types above. It escapes the
 // characters that could close a script element or break a JavaScript line, so
 // the result is safe to embed in inline script content.
+// The conversion to a plain string is free, and it keeps every ~string caller
+// on one instantiation of the escaper below rather than one apiece.
 func JSONString[T ~string](value T) string {
-	return string(appendJSONString(make([]byte, 0, len(value)+2), string(value)))
+	return string(AppendJSONString(make([]byte, 0, len(value)+2), string(value)))
 }
 
-// appendJSONString appends value to dst under JSONString's rules and returns
+// AppendJSONString appends value to dst under JSONString's rules and returns
 // the extended slice. It scans bytes and copies clean runs in bulk, so a value
 // needing no escapes costs one copy rather than a write per rune.
-func appendJSONString(dst []byte, value string) []byte {
+//
+// It is exported because the framing around a record is the caller's, as
+// Content.AppendJSON says: a caller that assembles its own record shape still
+// has to reach the escaping the module uses, and JSONString offers it only
+// through a freshly allocated string. Accepting []byte is the other half of
+// that. A rendered fragment is bytes, so a caller holding one would convert it
+// before the escaper even ran.
+func AppendJSONString[T ~string | ~[]byte](dst []byte, value T) []byte {
 	const hex = "0123456789abcdef"
 	if free := cap(dst) - len(dst); free < len(value)+2 {
 		grown := make([]byte, len(dst), len(dst)+len(value)+18)
@@ -88,7 +97,11 @@ func appendJSONString(dst []byte, value string) []byte {
 			start = i
 			continue
 		}
-		r, width := utf8.DecodeRuneInString(value[i:])
+		// Decoding through a window of one rune at most keeps this call free
+		// for a []byte value: a conversion this short stays on the stack,
+		// where converting the whole remaining tail would copy it.
+		end := min(i+utf8.UTFMax, len(value))
+		r, width := utf8.DecodeRuneInString(string(value[i:end]))
 		switch {
 		case r == ' ', r == ' ':
 			if start < i {

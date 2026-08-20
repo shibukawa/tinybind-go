@@ -113,7 +113,7 @@ func (s Signal) fault() error {
 // the caller's, as it is for a completion.
 func (s Signal) AppendJSON(dst []byte) []byte {
 	dst = append(dst, `{"name":`...)
-	dst = appendJSONString(dst, s.name)
+	dst = AppendJSONString(dst, s.name)
 	if len(s.data) > 0 {
 		dst = append(dst, `,"data":`...)
 		dst = append(dst, s.data...)

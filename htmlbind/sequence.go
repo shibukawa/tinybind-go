@@ -199,7 +199,7 @@ func (p *Plan[P]) Sequence() *Sequence {
 // AppendJSON writes a sequence as the tree a client walks.
 func (s *Sequence) AppendJSON(dst []byte) []byte {
 	dst = append(dst, `{"addr":`...)
-	dst = appendJSONString(dst, s.Address)
+	dst = AppendJSONString(dst, s.Address)
 	dst = append(dst, `,"nodes":`...)
 	dst = appendNodesJSON(dst, s.Nodes)
 	return append(dst, '}')
@@ -213,7 +213,7 @@ func appendNodesJSON(dst []byte, nodes []SeqNode) []byte {
 		}
 		switch node.Kind {
 		case SeqStatic:
-			dst = appendJSONString(dst, node.Text)
+			dst = AppendJSONString(dst, node.Text)
 		case SeqSlot:
 			dst = append(dst, '0')
 		default:
