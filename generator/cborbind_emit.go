@@ -62,22 +62,59 @@ type cborEmitter struct {
 	world bool
 }
 
-// writeProfiles declares the profile a codec reads under.
+// writeProfiles declares the profile a codec reads under, and beside it the
+// read limits that used to be bundled into the driver's named profiles.
 //
-// It is a package-level var rather than a call at each entry, because a codec
-// runs once per message per player per tick and the profile never changes; and
-// it is named in the generated decoder rather than taken from the caller,
-// because pinning it is what stops a wire codec reading a world message.
+// Since tinygodriver v1.2.7 a Profile is a format restriction the consumer
+// spells out as a struct literal, and every resource limit is a
+// DecoderOptions passed alongside. The literal is a package-level var rather
+// than a call at each entry, because a codec runs once per message per player
+// per tick and the profile never changes; and it is named in the generated
+// decoder rather than taken from the caller, because pinning it is what stops
+// a wire codec reading a world message. The limits keep the ceilings the old
+// bundled profiles enforced, so the bump changes no observable behavior; the
+// nesting bound is left to the driver's stack safety net, which is the half
+// the old bundling got wrong.
 func (e *cborEmitter) writeProfiles(out *bytes.Buffer) {
 	if e.wire {
-		out.WriteString("// cborWireProfile is the profile the wire codecs below were generated\n" +
-			"// for. It is pinned here rather than taken from the caller: the two ends of\n" +
-			"// a connection must not disagree about which profile is in use.\n" +
-			"var cborWireProfile = cbor.Wire()\n\n")
+		out.WriteString("// cborWireProfile is the format restriction the wire codecs below were\n" +
+			"// generated for. It is pinned here rather than taken from the caller: the two\n" +
+			"// ends of a connection must not disagree about which profile is in use.\n" +
+			"var cborWireProfile = cbor.Profile{\n" +
+			"\tName:             \"wire\",\n" +
+			"\tRejectMaps:       true,\n" +
+			"\tRejectTags:       true,\n" +
+			"\tRejectFloats:     true,\n" +
+			"\tRejectIndefinite: true,\n" +
+			"\tRejectTextKeys:   true,\n" +
+			"}\n\n" +
+			"// cborWireReadOptions carries the read limits for wire messages: a fixed-shape\n" +
+			"// realtime message is small, and a larger one is an attack rather than data.\n" +
+			"var cborWireReadOptions = cbor.DecoderOptions{\n" +
+			"\tMaxInputBytes:      64 << 10,\n" +
+			"\tMaxContainerItems:  1024,\n" +
+			"\tMaxStringBytes:     4096,\n" +
+			"\tMaxRawMessageBytes: 8 << 10,\n" +
+			"}\n\n")
 	}
 	if e.world {
-		out.WriteString("// cborWorldProfile is the profile the world codecs below were generated for.\n" +
-			"var cborWorldProfile = cbor.World()\n\n")
+		out.WriteString("// cborWorldProfile is the format restriction the world codecs below were\n" +
+			"// generated for.\n" +
+			"var cborWorldProfile = cbor.Profile{\n" +
+			"\tName:              \"world\",\n" +
+			"\tRequireSortedKeys: true,\n" +
+			"\tKeyOrder:          cbor.BytewiseKeyOrder,\n" +
+			"\tRejectFloats:      true,\n" +
+			"\tRejectIndefinite:  true,\n" +
+			"}\n\n" +
+			"// cborWorldReadOptions carries the read limits for world snapshots, which are\n" +
+			"// rare and large where a wire message is constant and small.\n" +
+			"var cborWorldReadOptions = cbor.DecoderOptions{\n" +
+			"\tMaxInputBytes:      64 << 20,\n" +
+			"\tMaxContainerItems:  65536,\n" +
+			"\tMaxStringBytes:     4 << 20,\n" +
+			"\tMaxRawMessageBytes: 64 << 20,\n" +
+			"}\n\n")
 	}
 }
 

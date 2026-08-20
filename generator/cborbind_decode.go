@@ -159,16 +159,16 @@ func cborConvert(goType, primitive, expr string) string {
 // Reader however deep its schema goes.
 func (e *cborEmitter) decodeMethod(item CborTypePlan) {
 	b := &e.body
-	profileVar := "cborWireProfile"
+	profileVar, optionsVar := "cborWireProfile", "cborWireReadOptions"
 	if item.Profile == CborWorld {
-		profileVar, e.world = "cborWorldProfile", true
+		profileVar, optionsVar, e.world = "cborWorldProfile", "cborWorldReadOptions", true
 	} else {
 		e.wire = true
 	}
 	fmt.Fprintf(b, "// DecodeCBORFrom decodes one %s-profile CBOR item into v, satisfying\n"+
 		"// cbor.Decodable. data holds exactly one item and nothing after it.\n", item.Profile)
 	fmt.Fprintf(b, "func (v *%s) DecodeCBORFrom(data []byte) error {\n", item.Name)
-	fmt.Fprintf(b, "\tr := %s.ReaderOver(data)\n", profileVar)
+	fmt.Fprintf(b, "\tr := %s.ReaderOver(data, %s)\n", profileVar, optionsVar)
 	fmt.Fprintf(b, "\tif err := %s(&r, v); err != nil {\n\t\treturn err\n\t}\n", cborDecodeFuncName(item))
 	b.WriteString("\tif !r.Done() {\n\t\treturn cbor.ErrExtraneousData\n\t}\n\treturn nil\n}\n\n")
 }

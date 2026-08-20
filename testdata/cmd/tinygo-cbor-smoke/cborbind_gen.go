@@ -4,13 +4,45 @@ package main
 
 import "github.com/shibukawa/tinygodriver/encoding/cbor"
 
-// cborWireProfile is the profile the wire codecs below were generated
-// for. It is pinned here rather than taken from the caller: the two ends of
-// a connection must not disagree about which profile is in use.
-var cborWireProfile = cbor.Wire()
+// cborWireProfile is the format restriction the wire codecs below were
+// generated for. It is pinned here rather than taken from the caller: the two
+// ends of a connection must not disagree about which profile is in use.
+var cborWireProfile = cbor.Profile{
+	Name:             "wire",
+	RejectMaps:       true,
+	RejectTags:       true,
+	RejectFloats:     true,
+	RejectIndefinite: true,
+	RejectTextKeys:   true,
+}
 
-// cborWorldProfile is the profile the world codecs below were generated for.
-var cborWorldProfile = cbor.World()
+// cborWireReadOptions carries the read limits for wire messages: a fixed-shape
+// realtime message is small, and a larger one is an attack rather than data.
+var cborWireReadOptions = cbor.DecoderOptions{
+	MaxInputBytes:      64 << 10,
+	MaxContainerItems:  1024,
+	MaxStringBytes:     4096,
+	MaxRawMessageBytes: 8 << 10,
+}
+
+// cborWorldProfile is the format restriction the world codecs below were
+// generated for.
+var cborWorldProfile = cbor.Profile{
+	Name:              "world",
+	RequireSortedKeys: true,
+	KeyOrder:          cbor.BytewiseKeyOrder,
+	RejectFloats:      true,
+	RejectIndefinite:  true,
+}
+
+// cborWorldReadOptions carries the read limits for world snapshots, which are
+// rare and large where a wire message is constant and small.
+var cborWorldReadOptions = cbor.DecoderOptions{
+	MaxInputBytes:      64 << 20,
+	MaxContainerItems:  65536,
+	MaxStringBytes:     4 << 20,
+	MaxRawMessageBytes: 64 << 20,
+}
 
 // CBORProtocolVersion identifies the wire shape of every codec in this file.
 // It is derived from CBORSchema and covers wire-observable shape alone, so
@@ -241,7 +273,7 @@ func (v PlayerInput) AppendCBORTo(dst []byte) []byte {
 // DecodeCBORFrom decodes one wire-profile CBOR item into v, satisfying
 // cbor.Decodable. data holds exactly one item and nothing after it.
 func (v *PlayerInput) DecodeCBORFrom(data []byte) error {
-	r := cborWireProfile.ReaderOver(data)
+	r := cborWireProfile.ReaderOver(data, cborWireReadOptions)
 	if err := decodePlayerInputCBORWire(&r, v); err != nil {
 		return err
 	}
@@ -336,7 +368,7 @@ func (v World) AppendCBORTo(dst []byte) []byte {
 // DecodeCBORFrom decodes one world-profile CBOR item into v, satisfying
 // cbor.Decodable. data holds exactly one item and nothing after it.
 func (v *World) DecodeCBORFrom(data []byte) error {
-	r := cborWorldProfile.ReaderOver(data)
+	r := cborWorldProfile.ReaderOver(data, cborWorldReadOptions)
 	if err := decodeWorldCBORWorld(&r, v); err != nil {
 		return err
 	}
@@ -636,7 +668,7 @@ func (v WorldDelta) AppendCBORTo(dst []byte) []byte {
 
 // DecodeCBORFrom reads one delta into v, satisfying cbor.Decodable.
 func (v *WorldDelta) DecodeCBORFrom(data []byte) error {
-	r := cborWorldProfile.ReaderOver(data)
+	r := cborWorldProfile.ReaderOver(data, cborWorldReadOptions)
 	if err := decodeWorldDeltaCBOR(&r, v); err != nil {
 		return err
 	}

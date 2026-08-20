@@ -102,9 +102,9 @@ func (e *cborEmitter) deltaDecodeFunc(item CborTypePlan, fields []CborFieldPlan)
 func (e *cborEmitter) deltaEntryPoints(item CborTypePlan) {
 	b := &e.body
 	name := cborDeltaTypeName(item.Name)
-	profileVar := "cborWireProfile"
+	profileVar, optionsVar := "cborWireProfile", "cborWireReadOptions"
 	if item.Profile == CborWorld {
-		profileVar, e.world = "cborWorldProfile", true
+		profileVar, optionsVar, e.world = "cborWorldProfile", "cborWorldReadOptions", true
 	} else {
 		e.wire = true
 	}
@@ -133,7 +133,7 @@ func (e *cborEmitter) deltaEntryPoints(item CborTypePlan) {
 
 	fmt.Fprintf(b, "// DecodeCBORFrom reads one delta into v, satisfying cbor.Decodable.\n")
 	fmt.Fprintf(b, "func (v *%s) DecodeCBORFrom(data []byte) error {\n", name)
-	fmt.Fprintf(b, "\tr := %s.ReaderOver(data)\n", profileVar)
+	fmt.Fprintf(b, "\tr := %s.ReaderOver(data, %s)\n", profileVar, optionsVar)
 	fmt.Fprintf(b, "\tif err := decode%sDeltaCBOR(&r, v); err != nil {\n\t\treturn err\n\t}\n", item.Name)
 	b.WriteString("\tif !r.Done() {\n\t\treturn cbor.ErrExtraneousData\n\t}\n\treturn nil\n}\n\n")
 }

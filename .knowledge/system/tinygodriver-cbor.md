@@ -3,11 +3,11 @@ id: system:tinygodriver-cbor
 type: system
 title: tinygodriver CBOR Codec
 ---
-Zero-allocation CBOR primitives and two named profiles, already shipped; the encoding layer a CBOR binding mode generates against rather than reimplements.
+Zero-allocation CBOR primitives plus a format-restriction Profile any consumer builds as a struct literal; the encoding layer a CBOR binding mode generates against rather than reimplements.
 
 ```yaml
 package: github.com/shibukawa/tinygodriver/encoding/cbor
-released_in: tinygodriver v1.2.5
+released_in: tinygodriver v1.2.5; profile shape reshaped in v1.2.7
 provenance: moved into the driver from the downstream game framework, then given what a wire format needs; the driver catalog carries its own concepts for the move and its cost
 reason_for_existing: a realtime message per player per tick cannot afford an allocating encoder, and no reflection-based CBOR library on the TinyGo path is allocation-free
 what_it_already_solves:
@@ -24,18 +24,25 @@ self_encoding_interfaces:
   Decodable: 'DecodeCBORFrom(data []byte) error; pointer receiver; data holds exactly one item and nothing after it'
   no_error_on_append: AppendCBORTo returns only the extended slice, so nothing below can report a refusal; the package doc names Profile.ValidateAppended as the check an encoder that cares should run over a foreign implementation's bytes
   named_Decodable_not_Decoder: cbor.Decoder is the streaming reader, so the decode-side interface could not take that name
-profiles:
-  Wire:
-    for: fixed-shape realtime messages
-    limits: 8 nested levels, 1024 container items, 4096-byte strings, 64 KiB input, 8 KiB raw message
-    refuses: maps, tags, floats, indefinite lengths, text keys
-  World:
-    for: snapshots and episode logs
-    limits: 32 nested levels, 65536 container items, 4 MiB strings, 64 MiB input and raw message
-    admits: maps, tags, text keys, bytewise map key order
-    refuses: floats, indefinite lengths
-  both_refuse_floats: AllowingFloats reopens it, and a determinism-carrying schema never calls it
+profiles_reshaped_v1_2_7:
+  what: a Profile is now a format restriction only; Name, RequireSortedKeys, KeyOrder, and Reject fields for maps, tags, floats, indefinite lengths and text keys
+  zero_value: restricts nothing; a consumer names its subset as a struct literal, needing nothing from the package
+  limits_moved_out: every resource limit lives in DecoderOptions, chosen per deployment and passed alongside; Validate(data, opts), NewReader(data, opts), ReaderOver(data, opts)
+  why_split: a profile belongs to the protocol and a limit to the deployment; bundling them made a deployment decision look like a protocol change, per the driver catalog's .knowledge/requirement/cbor-encoding-profiles.md
+  wire_and_world_removed: the presets were one application's subsets; they are struct literals in the game server's own project now, and the driver's tests carry them as the worked example
+  presets_remaining: Canonical, CTAP2 and COSE, length-first keys; Deterministic, RFC 8949 4.2.1, bytewise keys; both permit floats
+  floats_are_ordinary: RejectFloats is opt-in on both Profile and DecoderOptions; a determinism-carrying schema switches it on, everyone else keeps floats
+  nesting_is_a_safety_net: the default nesting bound is a stack guard far past any schema, not a per-profile budget
   key_order: BytewiseKeyOrder is RFC 8949 section 4.2.1 core deterministic encoding; LengthFirstKeyOrder is the CTAP2 order and is the zero value
+migration_debt_at_the_v1_2_7_bump:
+  paid: 2026-08-20; go.mod requires v1.2.7 and the full CBOR generator suite is green
+  was: generator/cborbind_emit.go emitted var cborWireProfile = cbor.Wire() and the World twin, and emitted read sites called one-arg ReaderOver; none of those spellings exist in v1.2.7
+  as_migrated:
+    profiles: writeProfiles emits the wire and world struct literals, matching the driver's own helper_test.go worked example byte for byte
+    limits: each profile literal is paired with a cborWireReadOptions or cborWorldReadOptions var carrying the ceilings the old bundled profiles enforced, so the bump changed no observable behavior; the nesting bound is left to the driver's stack safety net, which is the half the old bundling got wrong
+    read_sites: ReaderOver(data, optionsVar) in cborbind_decode.go and cborbind_delta_apply.go
+    fixtures: testdata/cmd/tinygo-cbor-smoke regenerated; CBORProtocolVersion unchanged, which is the proof the schema did not move
+  touches: requirement:declared-cbor-codec profile_pinned, whose pinned vars changed spelling but kept their role
 measured_cost:
   source: package README, darwin/arm64, go test -bench . -benchtime 3s, over a fixed-shape wire message with a reused buffer and a reused Reader
   encode_append: 9.2 ns/op, 0 allocs

@@ -59,7 +59,17 @@ func main() {
 	if !bytes.Equal(got, want) {
 		panic(fmt.Sprintf("encoded %x, want %x", got, want))
 	}
-	if err := cbor.Wire().Validate(got); err != nil {
+	// The wire profile, spelled out the way every consumer names its own subset
+	// since driver v1.2.7.
+	wireProfile := cbor.Profile{
+		Name:             "wire",
+		RejectMaps:       true,
+		RejectTags:       true,
+		RejectFloats:     true,
+		RejectIndefinite: true,
+		RejectTextKeys:   true,
+	}
+	if err := wireProfile.Validate(got, cbor.DecoderOptions{}); err != nil {
 		panic(err)
 	}
 
