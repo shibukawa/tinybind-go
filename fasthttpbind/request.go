@@ -97,11 +97,19 @@ func IsJSONRequest(ctx *fasthttp.RequestCtx) bool {
 }
 
 // IsFormRequest reports application/x-www-form-urlencoded.
+//
+// Deprecated: current binders dispatch the form kinds through ReadFormBody.
+// This exists for generated code that predates it and is removed once that
+// code is regenerated.
 func IsFormRequest(ctx *fasthttp.RequestCtx) bool {
 	return contentType(ctx) == "application/x-www-form-urlencoded"
 }
 
 // IsMultipartRequest reports multipart/form-data.
+//
+// Deprecated: current binders dispatch the form kinds through ReadFormBody.
+// This exists for generated code that predates it and is removed once that
+// code is regenerated.
 func IsMultipartRequest(ctx *fasthttp.RequestCtx) bool {
 	return contentType(ctx) == "multipart/form-data"
 }
@@ -111,6 +119,10 @@ func IsMultipartRequest(ctx *fasthttp.RequestCtx) bool {
 // The returned Object holds subslices of the document, so the pooled body is
 // copied first: a generated binder may hand those raw bytes straight into a
 // json.RawMessage rest map, which would otherwise outlive the request.
+//
+// Deprecated: current binders walk the raw bytes of ReadJSONBody inline
+// instead of splitting them into an Object. This exists for generated code
+// that predates the inline walk and is removed once that code is regenerated.
 func ReadJSONObject(ctx *fasthttp.RequestCtx) (*jsonbind.Object, error) {
 	body, err := ReadJSONBodyOwned(ctx)
 	if err != nil {
@@ -263,6 +275,10 @@ func ParseMultipartMap(ctx *fasthttp.RequestCtx) (form map[string]string, files 
 // once on behalf of a generated binder. wantForm/wantFiles mirror which body
 // kinds the binder's fields can consume; a request whose content type matches
 // none of them yields all-nil results without error.
+//
+// Deprecated: current binders read the JSON body through ReadJSONBody and the
+// form kinds through ReadFormBody. This exists for generated code that
+// predates the inline body walk and is removed once that code is regenerated.
 func ReadBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (*jsonbind.Object, map[string]string, map[string]File, error) {
 	// The media type is derived once — one header conversion — and compared
 	// three times, rather than re-converting the pooled header bytes per

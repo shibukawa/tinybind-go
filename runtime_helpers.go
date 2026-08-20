@@ -72,11 +72,19 @@ func IsJSONRequest(r *http.Request) bool {
 }
 
 // IsFormRequest reports application/x-www-form-urlencoded.
+//
+// Deprecated: current binders dispatch the form kinds through ReadFormBody.
+// This exists for generated code that predates it and is removed once that
+// code is regenerated.
 func IsFormRequest(r *http.Request) bool {
 	return mediaType(r.Header.Get("Content-Type")) == "application/x-www-form-urlencoded"
 }
 
 // IsMultipartRequest reports multipart/form-data.
+//
+// Deprecated: current binders dispatch the form kinds through ReadFormBody.
+// This exists for generated code that predates it and is removed once that
+// code is regenerated.
 func IsMultipartRequest(r *http.Request) bool {
 	return mediaType(r.Header.Get("Content-Type")) == "multipart/form-data"
 }
@@ -177,6 +185,10 @@ func isRequestTooLarge(err error) bool {
 //
 // Non-object JSON (arrays, scalars, null) fails with 400 — required when
 // payload:"*" rest maps are used.
+//
+// Deprecated: current binders walk the raw bytes of ReadJSONBody inline
+// instead of splitting them into an Object. This exists for generated code
+// that predates the inline walk and is removed once that code is regenerated.
 func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
 	data, err := ReadJSONBody(r)
 	if err != nil {

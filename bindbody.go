@@ -11,6 +11,10 @@ import (
 // kinds the binder's fields can consume; a request whose content type matches
 // none of them yields all-nil results without error, and the binder then
 // falls back to its per-field defaults.
+//
+// Deprecated: current binders read the JSON body through ReadJSONBody and the
+// form kinds through ReadFormBody. This exists for generated code that
+// predates the inline body walk and is removed once that code is regenerated.
 func ReadBody(r *http.Request, wantForm, wantFiles bool) (*jsonbind.Object, map[string]string, map[string]File, error) {
 	// The media type is derived once and compared three times, rather than
 	// re-reading and re-normalizing the header per content kind.
