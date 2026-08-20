@@ -65,9 +65,6 @@ func QueryLookup(q QueryValues, key string) (string, bool) {
 	return "", false
 }
 
-// Len returns how many valid pairs the query carries.
-func (q QueryValues) Len() int { return len(q.pairs) }
-
 // matchQueryPair decides one raw pair against a wanted key. matched reports
 // the pair answered the lookup; a pair whose escapes do not decode is treated
 // the way url.ParseQuery treats it — as if it were not there.

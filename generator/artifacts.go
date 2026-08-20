@@ -459,26 +459,6 @@ func ResolveTemplatePositions(content []byte, fileName string) []byte {
 	return linedirective.Resolve(content, fileName)
 }
 
-// renderArtifactFile prints one artifact carrying only the imports its own
-// declarations reference, so each artifact compiles on its own.
-func renderArtifactFile(fset *token.FileSet, pkg string, imports []*ast.ImportSpec, declarations []ast.Decl, header string) ([]byte, error) {
-	decls := declarations
-	if len(imports) > 0 {
-		specs := make([]ast.Spec, len(imports))
-		for i, spec := range imports {
-			specs[i] = spec
-		}
-		decls = append([]ast.Decl{&ast.GenDecl{Tok: token.IMPORT, Specs: specs}}, declarations...)
-	}
-	var out strings.Builder
-	out.WriteString(header)
-	if err := format.Node(&out, fset, &ast.File{Name: ast.NewIdent(pkg), Decls: decls}); err != nil {
-		return nil, err
-	}
-	out.WriteByte('\n')
-	return dropUnusedImports([]byte(out.String()))
-}
-
 // dropUnusedImports removes imports the source does not reference. It reparses
 // the rendered source so identifier resolution is available.
 func dropUnusedImports(source []byte) ([]byte, error) {

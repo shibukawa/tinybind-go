@@ -621,23 +621,6 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 	}
 }
 
-// exportedKind is the scalar kind spelled the way jsonbind names its helpers.
-func exportedKind(kind string) string {
-	switch kind {
-	case "int":
-		return "Int"
-	case "int64":
-		return "Int64"
-	case "bool":
-		return "Bool"
-	case "float64":
-		return "Float64"
-	case "string":
-		return "String"
-	}
-	return ""
-}
-
 func parserMethod(kind string) string {
 	switch kind {
 	case "string":

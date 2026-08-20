@@ -360,11 +360,3 @@ func paramNames(segments []Segment) string {
 	}
 	return strings.Join(parts, ", ")
 }
-
-func valueTypes(values []Value) string {
-	parts := make([]string, len(values))
-	for i, value := range values {
-		parts[i] = value.Type
-	}
-	return strings.Join(parts, ", ")
-}

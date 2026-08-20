@@ -85,12 +85,3 @@ func TestInspectLogicReportsParseErrors(t *testing.T) {
 		t.Fatal("unparsable file accepted, want error")
 	}
 }
-
-// route builds a route with the given dynamic parameter names.
-func routeWithParams(path string, names ...string) Route {
-	route := Route{Path: path}
-	for _, name := range names {
-		route.Params = append(route.Params, Segment{Dir: name + "_", Name: name, Kind: DynamicSegment})
-	}
-	return route
-}

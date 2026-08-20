@@ -225,7 +225,7 @@ func TestParser_SkipValueValidatesStructure(t *testing.T) {
 	}
 }
 
-func TestObject_KeepsRawValuesAndRestNames(t *testing.T) {
+func TestObject_KeepsRawValuesAndNames(t *testing.T) {
 	obj, err := ParseObject([]byte(`{"a":1,"b":{"n":[1,2]},"cD":"x"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -238,10 +238,10 @@ func TestObject_KeepsRawValuesAndRestNames(t *testing.T) {
 		t.Fatalf("raw b: %q ok=%v", raw, ok)
 	}
 	if _, ok := obj.Get("cD"); !ok {
-		t.Fatalf("escaped key not unescaped: %#v", obj.RestNames(nil))
+		t.Fatalf("escaped key not unescaped: %#v", obj.Names(nil))
 	}
-	if names := obj.RestNames([]string{"a", "cD"}); !reflect.DeepEqual(names, []string{"b"}) {
-		t.Fatalf("rest names: %#v", names)
+	if names := obj.Names(nil); !reflect.DeepEqual(names, []string{"a", "b", "cD"}) {
+		t.Fatalf("names: %#v", names)
 	}
 }
 

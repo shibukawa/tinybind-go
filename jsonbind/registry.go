@@ -53,12 +53,6 @@ func AppendFuncFor[T any]() (func([]byte, T) []byte, bool) {
 	return fn, ok
 }
 
-// EncodeFuncFor returns T's registered writer-form encoder, for the same
-// resolve-once callers when only that form was registered.
-func EncodeFuncFor[T any]() (func(io.Writer, T) error, bool) {
-	return lookupEncoder[T]()
-}
-
 func lookupDecoder[T any]() (func([]byte) (T, error), bool) {
 	v, ok := decoders.Load(typeKey[T]())
 	if !ok {

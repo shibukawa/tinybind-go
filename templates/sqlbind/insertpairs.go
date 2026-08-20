@@ -294,11 +294,3 @@ func closeItem(paths insertPaths, state insertWalkState) insertPaths {
 	}
 	return out
 }
-
-func clonePaths(paths insertPaths) insertPaths {
-	out := insertPaths{}
-	for s := range paths {
-		out[s] = true
-	}
-	return out
-}

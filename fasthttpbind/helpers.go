@@ -33,16 +33,6 @@ func SetMaxMultipartBodyBytes(n int64) { bindcore.SetMaxMultipartBodyBytes(n) }
 // MaxMultipartBodyBytes returns the effective global multipart body limit.
 func MaxMultipartBodyBytes() int64 { return bindcore.MaxMultipartBodyBytes() }
 
-// RestJSONAny builds map[string]any from leftover JSON object keys not in exclude.
-func RestJSONAny(jsonBody *jsonbind.Object, exclude []string) (map[string]any, error) {
-	return jsonbind.RestJSONAny(jsonBody, exclude)
-}
-
-// RestJSONNames lists leftover JSON object keys not in exclude.
-func RestJSONNames(jsonBody *jsonbind.Object, exclude []string) []string {
-	return jsonbind.RestJSONNames(jsonBody, exclude)
-}
-
 // RestFormAny builds map[string]any from leftover form keys not in exclude.
 func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
 	return bindcore.RestFormAny(formBody, exclude)

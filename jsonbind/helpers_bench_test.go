@@ -100,6 +100,8 @@ func BenchmarkParseMapInt(b *testing.B) {
 	}
 }
 
+// BenchmarkRestAny walks a pre-parsed object into a map[string]any the way a
+// binder's rest default arm does, with one member skipped.
 func BenchmarkRestAny(b *testing.B) {
 	raw := []byte(`{"id":"ord-1","note":"n","total":3,"paid":true,"extra":{"a":1}}`)
 	obj, err := ParseObject(raw)
@@ -107,10 +109,20 @@ func BenchmarkRestAny(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
+	var p Parser
 	for i := 0; i < b.N; i++ {
-		m, err := RestJSONAny(obj, []string{"id"})
-		if err != nil {
-			b.Fatal(err)
+		m := make(map[string]any)
+		for j := 0; j < obj.Len(); j++ {
+			name, value := obj.Member(j)
+			if name == "id" {
+				continue
+			}
+			p.Reset(value)
+			v, err := p.Any()
+			if err != nil {
+				b.Fatal(err)
+			}
+			m[name] = v
 		}
 		benchAny = m
 	}

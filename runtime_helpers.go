@@ -261,20 +261,6 @@ func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (map[string]string,
 	return nil, nil, nil
 }
 
-// RestJSONAny builds map[string]any from leftover JSON object keys not in exclude.
-// Nested JSON values are decoded into any (objects/arrays/numbers/bools/strings/null).
-// Prefer non-nil empty map when nothing remains.
-func RestJSONAny(jsonBody *jsonbind.Object, exclude []string) (map[string]any, error) {
-	return jsonbind.RestJSONAny(jsonBody, exclude)
-}
-
-// RestJSONNames lists leftover JSON object keys not in exclude, so generated
-// code can fill a map[string]json.RawMessage without this package converting
-// between map types.
-func RestJSONNames(jsonBody *jsonbind.Object, exclude []string) []string {
-	return jsonbind.RestJSONNames(jsonBody, exclude)
-}
-
 // RestFormAny builds map[string]any from leftover form keys not in exclude (string values).
 func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
 	return bindcore.RestFormAny(formBody, exclude)

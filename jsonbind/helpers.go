@@ -427,36 +427,3 @@ func RawJSONArray(raw []byte) ([][]byte, error) {
 		out = append(out, el)
 	}
 }
-
-// RawJSONMap splits a JSON object into raw fields. Values alias raw.
-func RawJSONMap(raw []byte) (*Object, error) { return ParseObject(raw) }
-
-// RestJSONAny returns JSON fields not named in exclude.
-func RestJSONAny(body *Object, exclude []string) (map[string]any, error) {
-	return body.RestAny(exclude)
-}
-
-// RestJSONMember returns body's i'th member unless its name is in exclude.
-// Paired with Object.Len it lets generated code sweep rest fields in one pass
-// over the document instead of a name lookup per member.
-func RestJSONMember(body *Object, i int, exclude []string) (name string, raw []byte, ok bool) {
-	if body == nil || i < 0 || i >= len(body.members) {
-		return "", nil, false
-	}
-	m := &body.members[i]
-	if excluded(exclude, m.name) {
-		return "", nil, false
-	}
-	return string(m.name), m.value, true
-}
-
-// RestJSONNames returns the names of JSON fields not named in exclude.
-//
-// A raw rest field is typed map[string]json.RawMessage in the caller's struct,
-// and Go will not convert a map[string][]byte to it however identical the
-// element layout is. Handing back names keeps encoding/json — and the
-// reflection it drags into a TinyGo binary — out of this package: generated
-// code fills its own map with the value copies.
-func RestJSONNames(body *Object, exclude []string) []string {
-	return body.RestNames(exclude)
-}
