@@ -3,6 +3,11 @@
     {
       "method": "POST",
       "path": "/users",
+      "site": {
+        "file": "main.go",
+        "line": 17,
+        "column": 2
+      },
       "handler": {
         "form": "inline"
       },

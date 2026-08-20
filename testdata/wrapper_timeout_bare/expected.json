@@ -3,6 +3,11 @@
     {
       "method": "GET",
       "path": "/ping",
+      "site": {
+        "file": "main.go",
+        "line": 23,
+        "column": 2
+      },
       "handler": {
         "form": "named",
         "name": "pingHandler"

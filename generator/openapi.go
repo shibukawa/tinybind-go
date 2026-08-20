@@ -37,11 +37,7 @@ func (g *Generator) buildOpenAPI(load *packageLoad) (Document, error) {
 	if !normalized.openAPI {
 		return nil, fmt.Errorf("%w: %s", ErrFeatureDisabled, FeatureOpenAPI)
 	}
-	pkg, err := load.get()
-	if err != nil {
-		return nil, fmt.Errorf("parse routes: %w", err)
-	}
-	routes, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	routes, err := load.routes(normalized.parserConfig)
 	if err != nil {
 		return nil, fmt.Errorf("parse routes: %w", err)
 	}

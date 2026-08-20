@@ -118,6 +118,10 @@ type GenerateResult struct {
 	// because they hold transport handlers beside declarations both builds need.
 	LayoutWarnings []string
 	Diagnostics    []parser.Diagnostic
+	// Routes is the run's route analysis: resolved registrations with their
+	// sites, plus unresolved route-like sites as diagnostics. It is nil on
+	// Check, report-only, and Cached results, which run no fresh analysis.
+	Routes *parser.Result
 	// Cached reports that the paths were left untouched because the generated
 	// files already record the current input hash.
 	Cached bool
@@ -309,6 +313,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err
+	}
+	result.Routes, err = load.routes(normalized.parserConfig)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("parse routes: %w", err)
 	}
 	if request.OpenAPI && normalized.openAPI {
 		result.OpenAPIPath, err = runner.generateOpenAPI(load, request.Out, request.OpenAPIName)

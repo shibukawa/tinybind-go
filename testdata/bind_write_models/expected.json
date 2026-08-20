@@ -3,6 +3,11 @@
     {
       "method": "GET",
       "path": "/search",
+      "site": {
+        "file": "main.go",
+        "line": 27,
+        "column": 2
+      },
       "handler": {
         "form": "named",
         "name": "searchHandler"

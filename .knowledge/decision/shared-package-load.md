@@ -14,6 +14,7 @@ decision:
   - one lazily created type-checked package per run, shared by every phase
   - load mode is the union of what the phases need
   - package selection excludes test packages
+  - 2026-08-20 extended to the route parse: OpenAPI, transform routes, and requirement:route-table-export read one cached parser.Result via the same seam; correct because one run normalizes one parser config
 ordering: taken after template generation writes its file, because generated templates join the analyzed package
 laziness:
   - a phase disabled by data:generator-options triggers no load
@@ -22,7 +23,7 @@ consequences:
   - phases observe one consistent view of the package
   - route discovery accepts an already loaded package from the parser boundary
   - measured examples/demo full run 2.45s to 0.79s
-invariant: one generation run type-checks the analyzed package at most once
+invariant: one generation run type-checks the analyzed package at most once, and parses routes from it at most once
 related:
   - requirement:incremental-generation
   - api:generator-execution

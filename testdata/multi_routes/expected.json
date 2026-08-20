@@ -3,6 +3,11 @@
     {
       "method": "GET",
       "path": "/items",
+      "site": {
+        "file": "main.go",
+        "line": 33,
+        "column": 2
+      },
       "handler": {
         "form": "named",
         "name": "listHandler"
@@ -17,6 +22,11 @@
     {
       "method": "POST",
       "path": "/items",
+      "site": {
+        "file": "main.go",
+        "line": 34,
+        "column": 2
+      },
       "handler": {
         "form": "named",
         "name": "createHandler"

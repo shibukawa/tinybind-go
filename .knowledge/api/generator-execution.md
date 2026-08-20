@@ -24,6 +24,7 @@ GenerateResult:
     - analysis diagnostics
     - no-work state
     - skipped state, set when the recorded input hash still matches
+    - Routes, the run's parser.Result per requirement:route-table-export; nil on check, report-only, and cached results, which run no fresh analysis
 behavior:
   - normalize data:generator-options once
   - return the recorded paths without writing when rule:generation-input-hash matches

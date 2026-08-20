@@ -3,6 +3,11 @@
     {
       "method": "POST",
       "path": "/users/{id}",
+      "site": {
+        "file": "main.go",
+        "line": 26,
+        "column": 2
+      },
       "handler": {
         "form": "named",
         "name": "createUserHandler"

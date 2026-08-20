@@ -172,7 +172,7 @@ func (g *Generator) generateRoutes(load *packageLoad, outDir, outName string) (s
 	if err != nil {
 		return "", err
 	}
-	result, err := parser.ParseLoadedPackage(pkg, normalized.parserConfig)
+	result, err := load.routes(normalized.parserConfig)
 	if err != nil {
 		return "", err
 	}

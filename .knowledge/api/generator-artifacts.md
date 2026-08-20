@@ -9,6 +9,8 @@ One context-aware API returns data:generation-artifact values for a package with
 status: required
 public_shape:
   - "func (g *Generator) GenerateArtifacts(ctx context.Context, request GenerateRequest) ([]Artifact, error)"
+  - "func (g *Generator) GenerateArtifactsWithRoutes(ctx context.Context, request GenerateRequest) ([]Artifact, *parser.Result, error)"
+routes_variant: GenerateArtifactsWithRoutes adds the run's route analysis per requirement:route-table-export; same phases, same one cached parse, still no file written
 request: same GenerateRequest as api:generator-execution
 behavior:
   - normalize data:generator-options once, as api:generator-execution does
@@ -28,6 +30,7 @@ consumers:
   - check mode comparing artifacts against on-disk files
   - editor integrations and tests needing generated source without file effects
 related:
+  - requirement:route-table-export
   - data:generation-artifact
   - decision:shared-package-load
   - requirement:per-source-generation-artifacts
