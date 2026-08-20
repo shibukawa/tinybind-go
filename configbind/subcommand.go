@@ -139,6 +139,12 @@ func SubCommand[T any](name, help string) *T {
 }
 
 func processSubcommand() (string, []string) {
+	if len(os.Args) == 0 {
+		// No argv at all, which is what a wasm component is started with. An
+		// empty command line selects no subcommand, and that is the answer
+		// rather than a panic.
+		return "", nil
+	}
 	args := os.Args[1:]
 	defs := []cliparser.Def{configpath.ConfigPathDef()}
 	var fields []cliparser.FieldMeta

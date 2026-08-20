@@ -53,7 +53,11 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		fileName = "config.toml"
 	}
 	args := opts.Args
-	if args == nil {
+	// A wasm component is started through an exported function rather than a
+	// command line, and wasi:cli/environment.get-arguments answers with an
+	// empty list. os.Args is then empty rather than holding a program name, so
+	// the usual slice is a panic inside package init.
+	if args == nil && len(os.Args) > 0 {
 		args = os.Args[1:]
 	}
 	if len(subcommands) > 0 && len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {

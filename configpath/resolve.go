@@ -121,7 +121,14 @@ func ResolveWithExtrasAndSearch(vendor, tool, fileName, explicitPath string, ext
 		search = ConfigDirSearch{}
 	}
 	p, ok := search.Find(vendor, tool, fileName)
-	if !ok {
+	// A search answers where a file would be, and the caller reads whatever
+	// comes back. ConfigDirSearch inherits configdir's !os.IsNotExist test, so
+	// any error that is not ENOENT reads there as a file that is present: on
+	// WASI, where a path outside a preopened directory fails with EACCES, that
+	// turned every candidate into a hit and the load then failed on a file the
+	// search had invented. Confirming it here rather than inside one
+	// implementation is what makes "found" mean readable for all of them.
+	if !ok || !fileReadable(p) {
 		return "", false, nil
 	}
 	return p, true, nil

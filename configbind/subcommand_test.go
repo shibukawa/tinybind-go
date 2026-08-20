@@ -232,3 +232,44 @@ func TestSubCommandSelectionDoesNotDependOnBindCallOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEmptyArgvSelectsNoSubcommandAndLoads covers the wasm component case,
+// where the program is entered through an exported function and
+// wasi:cli/environment.get-arguments answers with an empty list. os.Args is
+// then empty rather than holding a program name, and every layer that reaches
+// for os.Args[0] or os.Args[1:] panicked on it — inside package init, where
+// there is nothing left to report the panic.
+func TestEmptyArgvSelectsNoSubcommandAndLoads(t *testing.T) {
+	registerSubcommands(t)
+	// A Bind target beside the subcommands is what an application has, and it
+	// is what makes a bare invocation legal rather than a usage error.
+	configbind.Register[emptyArgvConfig](configbind.Definition{
+		TypeName:  "configbind_test.emptyArgvConfig",
+		Prefix:    "webserver",
+		KnownKeys: []string{"webserver.port"},
+		Defaults:  map[string]string{"webserver.port": "8080"},
+		FlagMetas: []cliparser.FieldMeta{{Prefix: "webserver", Key: "port"}},
+		Apply: func(dst any, overlay *configbind.Overlay) error {
+			value := dst.(*emptyArgvConfig)
+			value.Port, _ = overlay.GetString("webserver.port")
+			return nil
+		},
+	})
+	bound := configbind.Bind[emptyArgvConfig]("webserver")
+
+	previous := os.Args
+	os.Args = nil
+	t.Cleanup(func() { os.Args = previous })
+
+	if selected := configbind.SubCommand[migrateOptions]("migrate", "run migrations"); selected != nil {
+		t.Fatalf("empty argv selected a subcommand: %+v", selected)
+	}
+	if _, err := configbind.Load(configbind.LoadOptions{Vendor: "tinybind", Tool: "empty-argv", Environ: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if bound.Port != "8080" {
+		t.Fatalf("Port=%q, want the default", bound.Port)
+	}
+}
+
+type emptyArgvConfig struct{ Port string }

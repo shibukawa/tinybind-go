@@ -293,3 +293,33 @@ func TestResolveDefaultUsesConfigDirSearch(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// unreadableSearch is a search that reports a path the process cannot open,
+// which is what ConfigDirSearch does whenever a stat fails with anything other
+// than ENOENT: configdir's test is !os.IsNotExist, so an EACCES — every path
+// outside a preopened directory on WASI — reads there as a file that is
+// present.
+type unreadableSearch struct{ path string }
+
+func (s unreadableSearch) Find(vendor, tool, fileName string) (string, bool) {
+	return s.path, true
+}
+
+func TestResolveRejectsAFoundPathItCannotRead(t *testing.T) {
+	// A directory standing where the file should be is the portable form of
+	// "stat succeeds and the read cannot": no chmod, and the same answer as
+	// root.
+	unreadable := filepath.Join(t.TempDir(), "app.toml")
+	if err := os.MkdirAll(unreadable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	path, found, err := configpath.ResolveWithSearch("acme", "mytool", "app.toml", "",
+		unreadableSearch{path: unreadable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || path != "" {
+		t.Fatalf("path=%q found=%v, want the search result rejected", path, found)
+	}
+}
