@@ -178,8 +178,26 @@ func isRequestTooLarge(err error) bool {
 // Non-object JSON (arrays, scalars, null) fails with 400 — required when
 // payload:"*" rest maps are used.
 func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
-	if r.Body == nil {
+	data, err := ReadJSONBody(r)
+	if err != nil {
+		return nil, err
+	}
+	if jsonbind.IsBlank(data) {
 		return jsonbind.EmptyObject(), nil
+	}
+	obj, err := jsonbind.ParseObject(data)
+	if err != nil {
+		return nil, JSONBodyError(err)
+	}
+	return obj, nil
+}
+
+// ReadJSONBody reads the raw JSON body under MaxJSONBodyBytes. Generated
+// binders parse the returned bytes in a single inline pass rather than going
+// through the member split ReadJSONObject performs.
+func ReadJSONBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
 	}
 	defer r.Body.Close()
 	limit := MaxJSONBodyBytes()
@@ -193,17 +211,54 @@ func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
 		}
 		return nil, BadRequest(Problem{Code: "body_read", Message: "failed to read body"}, err)
 	}
-	if jsonbind.IsBlank(data) {
-		return jsonbind.EmptyObject(), nil
+	return data, nil
+}
+
+// ReadJSONBodyOwned is ReadJSONBody under the name the transport pair needs:
+// here the read buffer is always freshly owned, while the fasthttp runtime's
+// version copies out of the pooled request. A binder that lets raw body bytes
+// outlive the bind — a json.RawMessage field or rest map — is emitted against
+// this name on both transports.
+func ReadJSONBodyOwned(r *http.Request) ([]byte, error) {
+	return ReadJSONBody(r)
+}
+
+// JSONBodyError wraps a structural JSON failure from a binder's inline body
+// walk in the same 400 problems ReadJSONObject produces.
+func JSONBodyError(err error) error {
+	return bindcore.JSONBodyError(err)
+}
+
+// JSONBodyNotObject is the 400 for a body that decodes to a non-object.
+func JSONBodyNotObject() error {
+	return bindcore.JSONBodyNotObject()
+}
+
+// ReadFormBody is the non-JSON half of ReadBody: it dispatches on the form
+// content types alone, for binders that read their JSON body inline.
+func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
+	if !wantForm && !wantFiles {
+		return nil, nil, nil
 	}
-	obj, err := jsonbind.ParseObject(data)
-	if err != nil {
-		if je, ok := jsonbind.AsError(err); ok && je.Message == "JSON value must be an object" {
-			return nil, BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, err)
+	media := mediaType(r.Header.Get("Content-Type"))
+	if media == "application/x-www-form-urlencoded" {
+		m, err := ParseFormMap(r)
+		if err != nil {
+			return nil, nil, err
 		}
-		return nil, BadRequest(Problem{Code: "json_parse", Message: "invalid JSON body"}, err)
+		return m, nil, nil
 	}
-	return obj, nil
+	if media == "multipart/form-data" {
+		m, files, err := ParseMultipartMap(r)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !wantFiles {
+			files = nil
+		}
+		return m, files, nil
+	}
+	return nil, nil, nil
 }
 
 // RestJSONAny builds map[string]any from leftover JSON object keys not in exclude.
@@ -244,16 +299,14 @@ func ParseFormMap(r *http.Request) (map[string]string, error) {
 	return out, nil
 }
 
-// QueryValue returns the first query parameter value for key.
+// QueryValue returns the first query parameter value for key. It scans the
+// raw query for that one key rather than materializing every pair the way
+// r.URL.Query() would.
 func QueryValue(r *http.Request, key string) (string, bool) {
 	if r.URL == nil {
 		return "", false
 	}
-	vs := r.URL.Query()[key]
-	if len(vs) == 0 {
-		return "", false
-	}
-	return vs[0], true
+	return queryScan(r.URL.RawQuery, key)
 }
 
 // PathValue returns the path value for key (Go 1.22+ ServeMux).

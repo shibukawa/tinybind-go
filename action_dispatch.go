@@ -21,7 +21,7 @@ func ActionSelector(r *http.Request, field string) string {
 	if field == "" {
 		field = DefaultActionSelectorField
 	}
-	if value := r.URL.Query().Get(field); value != "" {
+	if value, _ := QueryValue(r, field); value != "" {
 		return value
 	}
 	return r.PostFormValue(field)

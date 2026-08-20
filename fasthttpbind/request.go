@@ -25,11 +25,21 @@ func Queries(ctx *fasthttp.RequestCtx) *fasthttp.Args {
 
 // QueryLookup returns the first value for key from pre-parsed query values.
 // A key present with an empty value reports ("", true), matching net/http.
+//
+// Peek runs first because both it and Has are linear scans of the same list:
+// a hit answers in one pass, and the second scan is paid only to tell a
+// present-but-empty key apart from an absent one.
 func QueryLookup(q *fasthttp.Args, key string) (string, bool) {
-	if q == nil || !q.Has(key) {
+	if q == nil {
 		return "", false
 	}
-	return string(q.Peek(key)), true
+	if v := q.Peek(key); len(v) > 0 {
+		return string(v), true
+	}
+	if q.Has(key) {
+		return "", true
+	}
+	return "", false
 }
 
 // QueryValue returns the first query parameter value for key.
@@ -102,27 +112,89 @@ func IsMultipartRequest(ctx *fasthttp.RequestCtx) bool {
 // copied first: a generated binder may hand those raw bytes straight into a
 // json.RawMessage rest map, which would otherwise outlive the request.
 func ReadJSONObject(ctx *fasthttp.RequestCtx) (*jsonbind.Object, error) {
-	if ctx == nil {
+	body, err := ReadJSONBodyOwned(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if jsonbind.IsBlank(body) {
 		return jsonbind.EmptyObject(), nil
+	}
+	obj, err := jsonbind.ParseObject(body)
+	if err != nil {
+		return nil, JSONBodyError(err)
+	}
+	return obj, nil
+}
+
+// ReadJSONBody returns the raw JSON body under MaxJSONBodyBytes.
+//
+// The bytes alias the pooled request. That is safe for the binders emitted
+// against this name because their inline walk copies every value it keeps —
+// each scalar leaf becomes a fresh string — so nothing aliases the pool once
+// the bind returns. A binder that does hand raw spans onward is emitted
+// against ReadJSONBodyOwned instead.
+func ReadJSONBody(ctx *fasthttp.RequestCtx) ([]byte, error) {
+	if ctx == nil {
+		return nil, nil
 	}
 	body := ctx.PostBody()
 	limit := MaxJSONBodyBytes()
 	if int64(len(body)) > limit {
 		return nil, PayloadTooLarge(Problem{Code: "payload_too_large", Message: "JSON body too large"}, jsonbind.ErrBodyTooLarge)
 	}
-	if jsonbind.IsBlank(body) {
-		return jsonbind.EmptyObject(), nil
+	return body, nil
+}
+
+// ReadJSONBodyOwned is ReadJSONBody with the bytes copied out of the pooled
+// request, for a binder whose raw body spans outlive the bind — a
+// json.RawMessage field or rest map, or a foreign decoder whose retention is
+// its own business.
+func ReadJSONBodyOwned(ctx *fasthttp.RequestCtx) ([]byte, error) {
+	body, err := ReadJSONBody(ctx)
+	if err != nil || len(body) == 0 {
+		return body, err
 	}
 	owned := make([]byte, len(body))
 	copy(owned, body)
-	obj, err := jsonbind.ParseObject(owned)
-	if err != nil {
-		if je, ok := jsonbind.AsError(err); ok && je.Message == "JSON value must be an object" {
-			return nil, BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, err)
-		}
-		return nil, BadRequest(Problem{Code: "json_parse", Message: "invalid JSON body"}, err)
+	return owned, nil
+}
+
+// JSONBodyError wraps a structural JSON failure from a binder's inline body
+// walk in the same 400 problems ReadJSONObject produces.
+func JSONBodyError(err error) error {
+	return bindcore.JSONBodyError(err)
+}
+
+// JSONBodyNotObject is the 400 for a body that decodes to a non-object.
+func JSONBodyNotObject() error {
+	return bindcore.JSONBodyNotObject()
+}
+
+// ReadFormBody is the non-JSON half of ReadBody: it dispatches on the form
+// content types alone, for binders that read their JSON body inline.
+func ReadFormBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
+	if !wantForm && !wantFiles {
+		return nil, nil, nil
 	}
-	return obj, nil
+	media := contentType(ctx)
+	if media == "application/x-www-form-urlencoded" {
+		m, err := ParseFormMap(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return m, nil, nil
+	}
+	if media == "multipart/form-data" {
+		m, files, err := ParseMultipartMap(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !wantFiles {
+			files = nil
+		}
+		return m, files, nil
+	}
+	return nil, nil, nil
 }
 
 // ParseFormMap parses an urlencoded form body into a flat map (first value wins).
@@ -192,7 +264,11 @@ func ParseMultipartMap(ctx *fasthttp.RequestCtx) (form map[string]string, files 
 // kinds the binder's fields can consume; a request whose content type matches
 // none of them yields all-nil results without error.
 func ReadBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (*jsonbind.Object, map[string]string, map[string]File, error) {
-	if IsJSONRequest(ctx) {
+	// The media type is derived once — one header conversion — and compared
+	// three times, rather than re-converting the pooled header bytes per
+	// content kind.
+	media := contentType(ctx)
+	if bindcore.IsJSONMediaType(media) {
 		obj, err := ReadJSONObject(ctx)
 		if err != nil {
 			return nil, nil, nil, err
@@ -200,14 +276,14 @@ func ReadBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (*jsonbind.Obj
 		return obj, nil, nil, nil
 	}
 	if wantForm || wantFiles {
-		if IsFormRequest(ctx) {
+		if media == "application/x-www-form-urlencoded" {
 			m, err := ParseFormMap(ctx)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			return nil, m, nil, nil
 		}
-		if IsMultipartRequest(ctx) {
+		if media == "multipart/form-data" {
 			m, files, err := ParseMultipartMap(ctx)
 			if err != nil {
 				return nil, nil, nil, err

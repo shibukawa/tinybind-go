@@ -173,8 +173,10 @@ func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.R
 		if isExcluded(exclude, k) {
 			continue
 		}
-		b, _ := json.Marshal(v)
-		out[k] = json.RawMessage(b)
+		// The value is a plain string, so it is quoted by the same append
+		// helper generated encoders use — reflection-free and byte-identical
+		// to what json.Marshal produced here before.
+		out[k] = json.RawMessage(jsonbind.AppendString(nil, v))
 	}
 	return out
 }
@@ -186,6 +188,23 @@ func isExcluded(exclude []string, key string) bool {
 		}
 	}
 	return false
+}
+
+// JSONBodyError wraps a structural failure from a binder's inline JSON body
+// walk in the same 400 problems ReadJSONObject produced, so moving the parse
+// into generated code changed no response body.
+func JSONBodyError(err error) error {
+	if je, ok := jsonbind.AsError(err); ok && je.Message == "JSON value must be an object" {
+		return BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, err)
+	}
+	return BadRequest(Problem{Code: "json_parse", Message: "invalid JSON body"}, err)
+}
+
+// JSONBodyNotObject is the 400 a binder answers when the body decodes to
+// something other than an object — required whenever payload:"*" rest maps
+// are in play, and long the rule for every bound body.
+func JSONBodyNotObject() error {
+	return BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"})
 }
 
 // AppendFileJSON appends an uploaded file the way encoding/json rendered it

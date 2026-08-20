@@ -2,6 +2,7 @@ package httpbind
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
@@ -18,12 +19,17 @@ import (
 // at all, which no registration could reach.
 func Write[T any](w http.ResponseWriter, r *http.Request, value T) error {
 	_ = r
-	if source, ok := any(value).(jsonbind.Appender); ok {
-		buf := jsonbind.GetBuffer()
-		*buf = source.AppendJSONTo((*buf)[:0])
-		err := WriteJSONBytes(w, http.StatusOK, *buf)
-		jsonbind.PutBuffer(buf)
-		return err
+	// Probe the method set through *T before boxing: converting a typed nil
+	// pointer costs nothing, while any(value) would heap-copy the whole
+	// response struct on every request just to learn the type has no method.
+	if _, carries := any((*T)(nil)).(jsonbind.Appender); carries {
+		if source, ok := any(value).(jsonbind.Appender); ok {
+			buf := jsonbind.GetBuffer()
+			*buf = source.AppendJSONTo((*buf)[:0])
+			err := WriteJSONBytes(w, http.StatusOK, *buf)
+			jsonbind.PutBuffer(buf)
+			return err
+		}
 	}
 	fn, ok := lookupWriter[T]()
 	if !ok {
@@ -78,15 +84,21 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 // the body into a pooled buffer and hand it over here, so the response path
 // never reflects over the value and never allocates an intermediate map.
 func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
 	if len(data) == 0 || data[len(data)-1] != '\n' {
+		// The full body is in hand, so declare its length; without it a body
+		// beyond net/http's output buffer is sent chunked for no reason.
+		h.Set("Content-Length", strconv.Itoa(len(data)+1))
+		w.WriteHeader(status)
 		if _, err := w.Write(data); err != nil {
 			return err
 		}
 		_, err := w.Write(newline)
 		return err
 	}
+	h.Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(status)
 	_, err := w.Write(data)
 	return err
 }

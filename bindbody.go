@@ -12,7 +12,10 @@ import (
 // none of them yields all-nil results without error, and the binder then
 // falls back to its per-field defaults.
 func ReadBody(r *http.Request, wantForm, wantFiles bool) (*jsonbind.Object, map[string]string, map[string]File, error) {
-	if IsJSONRequest(r) {
+	// The media type is derived once and compared three times, rather than
+	// re-reading and re-normalizing the header per content kind.
+	media := mediaType(r.Header.Get("Content-Type"))
+	if isJSONMediaType(media) {
 		obj, err := ReadJSONObject(r)
 		if err != nil {
 			return nil, nil, nil, err
@@ -20,14 +23,14 @@ func ReadBody(r *http.Request, wantForm, wantFiles bool) (*jsonbind.Object, map[
 		return obj, nil, nil, nil
 	}
 	if wantForm || wantFiles {
-		if IsFormRequest(r) {
+		if media == "application/x-www-form-urlencoded" {
 			m, err := ParseFormMap(r)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			return nil, m, nil, nil
 		}
-		if IsMultipartRequest(r) {
+		if media == "multipart/form-data" {
 			m, files, err := ParseMultipartMap(r)
 			if err != nil {
 				return nil, nil, nil, err

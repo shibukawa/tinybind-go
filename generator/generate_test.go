@@ -79,7 +79,7 @@ type Resp struct {
 		`PathValue(r, "org_id")`,
 		`HeaderValue(r, "Authorization")`,
 		`"note"`,
-		"httpbind.ReadBody(r,",
+		"httpbind.ReadFormBody(r,",
 		"fileBody",
 		`"image"`,
 		"missing file",

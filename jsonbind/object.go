@@ -28,7 +28,12 @@ func ParseObject(data []byte) (*Object, error) {
 	if len(data) == 0 {
 		return obj, nil
 	}
-	p := NewParser(data)
+	// members starts at a capacity covering a typical request body so the split
+	// costs one allocation instead of one per doubling; the parser itself stays
+	// on the stack.
+	obj.members = make([]member, 0, 8)
+	var p Parser
+	p.Reset(data)
 	null, err := p.ObjectStart()
 	if err != nil {
 		return nil, err

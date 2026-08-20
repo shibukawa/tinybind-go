@@ -282,8 +282,11 @@ func cborElemGoType(f FieldPlan) string {
 // — a query value still overrides a body member for an input field, because
 // the query arms run after this walk and overwrite what it stored.
 func emitCBORPayloadWalk(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
+	b.WriteString("\tvar cborBody []byte\n")
 	b.WriteString("\tif httpbind.IsCBORRequest(r) {\n")
-	b.WriteString("\t\tif err := readBody(); err != nil {\n\t\t\treturn out, err\n\t\t}\n")
+	b.WriteString("\t\tvar err error\n")
+	b.WriteString("\t\tcborBody, err = httpbind.ReadCBORBody(r)\n")
+	b.WriteString("\t\tif err != nil {\n\t\t\treturn out, err\n\t\t}\n")
 	b.WriteString("\t}\n")
 	b.WriteString("\tif len(cborBody) > 0 {\n")
 	b.WriteString("\t\tcrv := cbor.ReaderOver(cborBody, cborHTTPReadOptions(len(cborBody)))\n")

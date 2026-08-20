@@ -46,9 +46,21 @@ func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 // The check is on the pointer because a decoder fills its receiver. It runs
 // before the body is read so a type that can be decoded by neither route still
 // fails without consuming the reader.
+//
+// The probe uses a typed nil rather than the address of a local: boxing a
+// pointer stores it in the interface word directly, so asking costs nothing,
+// while &zero would force zero onto the heap on every call.
 func carriesDecoder[T any]() bool {
-	var zero T
-	_, ok := any(&zero).(Decoder)
+	_, ok := any((*T)(nil)).(Decoder)
+	return ok
+}
+
+// carriesAppender reports whether T's value method set includes [Appender],
+// probed through *T for the same zero-cost reason as carriesDecoder. *T's
+// method set is a superset of T's, so a false here proves the value assertion
+// below would fail too, and the value is never boxed just to find that out.
+func carriesAppender[T any]() bool {
+	_, ok := any((*T)(nil)).(Appender)
 	return ok
 }
 
@@ -56,11 +68,12 @@ func carriesDecoder[T any]() bool {
 // reports whether it did. A false means the type carries none and the registry
 // is the remaining route.
 func decodeThroughInterface[T any](data []byte) (T, bool, error) {
-	var out T
-	target, ok := any(&out).(Decoder)
-	if !ok {
+	if !carriesDecoder[T]() {
+		var out T
 		return out, false, nil
 	}
+	var out T
+	target := any(&out).(Decoder)
 	if err := target.DecodeJSONFrom(data); err != nil {
 		return out, true, err
 	}
@@ -70,10 +83,16 @@ func decodeThroughInterface[T any](data []byte) (T, bool, error) {
 // encodeThroughInterface writes v through the codec it carries itself.
 //
 // The buffer comes from the same pool a generated writer uses, so a type
-// reaching this path allocates no more than a planned one does.
+// reaching this path allocates no more than a planned one does. The method-set
+// probe runs on *T first so the common case — a type with no method — skips
+// the value boxing that any(v) would cost on every call.
 func encodeThroughInterface[T any](w io.Writer, v T) (bool, error) {
+	if !carriesAppender[T]() {
+		return false, nil
+	}
 	source, ok := any(v).(Appender)
 	if !ok {
+		// Appender lives on *T alone; the value cannot reach it.
 		return false, nil
 	}
 	buf := GetBuffer()

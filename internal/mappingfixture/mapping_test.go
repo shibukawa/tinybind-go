@@ -764,8 +764,11 @@ func TestGenerator_EmitsTypeSpecificNoReflect(t *testing.T) {
 	if !strings.Contains(code, "func bindUploadAvatarRequest") {
 		t.Fatalf("missing bindUploadAvatarRequest in:\n%s", code)
 	}
-	if !strings.Contains(code, "httpbind.ReadBody(r,") {
-		t.Fatalf("missing httpbind.ReadBody in:\n%s", code)
+	if !strings.Contains(code, "httpbind.ReadJSONBody(r)") && !strings.Contains(code, "httpbind.ReadJSONBodyOwned(r)") {
+		t.Fatalf("missing httpbind.ReadJSONBody in:\n%s", code)
+	}
+	if !strings.Contains(code, "httpbind.ReadFormBody(r,") {
+		t.Fatalf("missing httpbind.ReadFormBody in:\n%s", code)
 	}
 	if strings.Contains(code, "\"reflect\"") || strings.Contains(code, "reflect.") {
 		t.Fatalf("generated code must not use reflect:\n%s", code)

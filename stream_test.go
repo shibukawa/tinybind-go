@@ -217,3 +217,66 @@ func TestNegotiateStreamFormat_Exported(t *testing.T) {
 		t.Fatal("application/jsonl should select NDJSON")
 	}
 }
+
+// appendEvt mirrors what the generator emits since the append registry: the
+// same document body registered in both the writer form and the append form.
+// Streams resolve the append form once and frame in a single write, and this
+// pins that fast path to the exact bytes the writer-form path produces.
+type appendEvt struct {
+	Type string `json:"type"`
+	N    int    `json:"n"`
+}
+
+func appendAppendEvtJSON(dst []byte, v appendEvt) []byte {
+	dst = append(dst, `{"type":`...)
+	dst = jsonbind.AppendString(dst, v.Type)
+	dst = append(dst, `,"n":`...)
+	dst = jsonbind.AppendInt(dst, int64(v.N))
+	return append(dst, '}')
+}
+
+func init() {
+	jsonbind.RegisterEncode[appendEvt](func(w io.Writer, v appendEvt) error {
+		buf := jsonbind.GetBuffer()
+		b := appendAppendEvtJSON((*buf)[:0], v)
+		b = append(b, '\n')
+		*buf = b
+		_, err := w.Write(b)
+		jsonbind.PutBuffer(buf)
+		return err
+	})
+	jsonbind.RegisterAppend[appendEvt](appendAppendEvtJSON)
+}
+
+func TestWriteStream_AppendFastPathFramesMatchEncoderPath(t *testing.T) {
+	cases := []struct{ name, url, accept string }{
+		{"ndjson", "/chat", ""},
+		{"sse", "/chat", "text/event-stream"},
+		{"array", "/chat?stream=json", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			legacy := httptest.NewRecorder()
+			fast := httptest.NewRecorder()
+			reqA := httptest.NewRequest(http.MethodPost, tc.url, nil)
+			reqB := httptest.NewRequest(http.MethodPost, tc.url, nil)
+			if tc.accept != "" {
+				reqA.Header.Set("Accept", tc.accept)
+				reqB.Header.Set("Accept", tc.accept)
+			}
+			// evt has only the writer form registered: the per-event path.
+			httpbind.WriteStream(legacy, reqA, func(s *httpbind.Stream[evt]) error {
+				_ = s.Write(evt{Type: "a", N: 1})
+				return s.Write(evt{Type: "b", N: 2})
+			})
+			// appendEvt has both: the resolved single-write path.
+			httpbind.WriteStream(fast, reqB, func(s *httpbind.Stream[appendEvt]) error {
+				_ = s.Write(appendEvt{Type: "a", N: 1})
+				return s.Write(appendEvt{Type: "b", N: 2})
+			})
+			if fast.Body.String() != legacy.Body.String() {
+				t.Fatalf("frames differ\n fast %q\nslow %q", fast.Body.String(), legacy.Body.String())
+			}
+		})
+	}
+}

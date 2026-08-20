@@ -105,12 +105,26 @@ type Stream[T any] struct {
 	format  StreamFormat
 	closed  bool
 	started bool // JSON array: '[' already written
+	// appendFn is T's append-form encoder, resolved once at NewStream so a
+	// high-rate stream does not pay a registry lookup — or an interface-probe
+	// boxing — per event. nil means T carries its own encoder or predates the
+	// append registry, and Write goes through jsonbind.EncodeJSON per event.
+	appendFn func([]byte, T) []byte
 }
 
 // NewStream builds a stream over w. The caller has already sent the headers
 // StreamHeaders lists and the 200 status.
 func NewStream[T any](w io.Writer, format StreamFormat) *Stream[T] {
-	return &Stream[T]{w: w, format: format}
+	s := &Stream[T]{w: w, format: format}
+	// A type carrying its own encoder wins over the registry, on the terms
+	// jsonbind.EncodeJSON states, so the resolved fast path only applies when
+	// no method is in play.
+	if _, carries := any((*T)(nil)).(jsonbind.Appender); !carries {
+		if fn, ok := jsonbind.AppendFuncFor[T](); ok {
+			s.appendFn = fn
+		}
+	}
+	return s
 }
 
 // Format returns the negotiated stream format (sse | ndjson | json-array).
@@ -132,6 +146,39 @@ func (s *Stream[T]) Write(v T) error {
 	}
 	if s.closed {
 		return Internal(ErrStreamClosed)
+	}
+	if s.appendFn != nil {
+		// One frame, one write: the prefix, the document, and the line endings
+		// are assembled in a pooled buffer, byte-identical to the multi-write
+		// path below, without a per-event encoder lookup or a write per part.
+		buf := jsonbind.GetBuffer()
+		b := (*buf)[:0]
+		switch s.format {
+		case StreamSSE:
+			b = append(b, ssePrefix...)
+			b = s.appendFn(b, v)
+			b = append(b, '\n', '\n')
+		case StreamJSONArray:
+			if s.started {
+				b = append(b, ',')
+			} else {
+				b = append(b, '[')
+				s.started = true
+			}
+			b = s.appendFn(b, v)
+			b = append(b, '\n')
+		default: // NDJSON
+			b = s.appendFn(b, v)
+			b = append(b, '\n')
+		}
+		*buf = b
+		_, err := s.w.Write(b)
+		jsonbind.PutBuffer(buf)
+		if err != nil {
+			return err
+		}
+		flush(s.w)
+		return nil
 	}
 	switch s.format {
 	case StreamSSE:

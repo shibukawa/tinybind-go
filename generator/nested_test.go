@@ -79,8 +79,8 @@ type NestedOrderRequest struct {
 		"decodeNestedLineItemJSON",
 		"RegisterDecode[NestedOrderRequest]",
 		"RegisterEncode[NestedOrderRequest]",
-		"RawJSONArray",
-		"DecodeJSONMapStringString",
+		"jsonbind.ParseSlice(p, ",
+		"jsonbind.ParseMap(p, ",
 	} {
 		if !strings.Contains(s, n) {
 			t.Fatalf("missing %q in emit", n)
