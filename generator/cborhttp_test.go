@@ -1,6 +1,7 @@
 package generator_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,7 +77,7 @@ func emitCBORHTTP(t *testing.T, src string, opts generator.Options) (string, str
 // all, which is the size guarantee the option exists to give.
 func TestCBORHTTPOffEmitsNoCBOR(t *testing.T) {
 	_, source := emitCBORHTTP(t, cborHTTPFixtureSource, generator.DefaultOptions())
-	mustContainNone(t, source, "CBORHTTP", "cbor.", "AcceptsCBOR", "IsCBORRequest")
+	mustContainNone(t, source, "CBORHTTP", "cbor.", "AcceptsCBOR", "IsCBORRequest", "VaryAccept")
 }
 
 func TestCBORHTTPEmitsNegotiationArms(t *testing.T) {
@@ -88,6 +89,7 @@ func TestCBORHTTPEmitsNegotiationArms(t *testing.T) {
 		"httpbind.IsCBORRequest(r)",
 		"cborBody, err = httpbind.ReadCBORBody(r)",
 		"httpbind.AcceptsCBOR(r)",
+		"httpbind.VaryAccept(w)",
 		"func appendUserCBORHTTP(dst []byte, v User) []byte",
 		"func appendTagCBORHTTP(dst []byte, v Tag) []byte",
 		"httpbind.WriteCBORBytes(w, http.StatusOK, *buf)",
@@ -143,6 +145,10 @@ func TestCBORInCBOROut(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/cbor" {
 		t.Fatalf("content type %q", ct)
 	}
+	// The body varied by Accept, so a shared cache must key on it.
+	if vary := w.Header().Get("Vary"); vary != "Accept" {
+		t.Fatalf("Vary %q, want Accept", vary)
+	}
 	// The response is a map in struct field order: id, name, age, tags.
 	want := cbor.AppendMapHeader(nil, 4)
 	want = cbor.AppendText(want, "id")
@@ -172,6 +178,10 @@ func TestJSONClientStaysJSON(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content type %q", ct)
+	}
+	// The JSON answer from a negotiating writer varies by Accept just the same.
+	if vary := w.Header().Get("Vary"); vary != "Accept" {
+		t.Fatalf("Vary %q, want Accept", vary)
 	}
 	const want = ` + "`" + `{"id":"1","name":"ada","age":30,"tags":[{"label":"admin"}]}` + "`" + `
 	if got := strings.TrimSpace(w.Body.String()); got != want {
@@ -344,4 +354,52 @@ func TestCBORHTTPSortedKeysReorderMembers(t *testing.T) {
 		}
 		last = at
 	}
+}
+
+// The OpenAPI document advertises what the negotiation actually serves: the
+// same schema under application/cbor for the request body and the success
+// response, and nothing CBOR when the option is off.
+func TestCBORHTTPReachesTheOpenAPIDocument(t *testing.T) {
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(cborHTTPFixtureSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tidyTempModule(t, dir)
+
+	opts := generator.DefaultOptions()
+	opts.EnableCBORHTTP = true
+	doc, err := generator.New(opts).BuildOpenAPI(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := doc["paths"].(map[string]any)["/users"].(map[string]any)["post"].(map[string]any)
+	body := op["requestBody"].(map[string]any)["content"].(map[string]any)
+	if _, ok := body["application/cbor"]; !ok {
+		t.Fatalf("request body advertises no application/cbor: %v", body)
+	}
+	ok200 := op["responses"].(map[string]any)["200"].(map[string]any)["content"].(map[string]any)
+	if _, ok := ok200["application/cbor"]; !ok {
+		t.Fatalf("200 response advertises no application/cbor: %v", ok200)
+	}
+	if !equalSchemas(body["application/json"], body["application/cbor"]) {
+		t.Fatal("the two request media types disagree about the schema")
+	}
+
+	off, err := generator.New(generator.DefaultOptions()).BuildOpenAPI(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opOff := off["paths"].(map[string]any)["/users"].(map[string]any)["post"].(map[string]any)
+	bodyOff := opOff["requestBody"].(map[string]any)["content"].(map[string]any)
+	if _, ok := bodyOff["application/cbor"]; ok {
+		t.Fatal("application/cbor advertised with the option off")
+	}
+}
+
+// equalSchemas compares two media type entries by their JSON rendering.
+func equalSchemas(a, b any) bool {
+	aj, _ := json.Marshal(a)
+	bj, _ := json.Marshal(b)
+	return string(aj) == string(bj)
 }

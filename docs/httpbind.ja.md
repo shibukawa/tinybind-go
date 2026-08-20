@@ -184,7 +184,7 @@ curl http://localhost:8080/users \
 tinybind-gen generate -cbor-http
 ```
 
-有効にすると、すべてのルートが CBOR body を受け付け(payload フィールドを1つの CBOR map からバインドし、未知のキーはスキップ)、リクエストの `Accept` ヘッダが明示的に `application/cbor` を名指ししたときだけ CBOR で応答します。ワイルドカード `*/*` は JSON のままです。JSON・form・multipart のクライアントには影響がなく、同じ構造体がすべての形式を受けます。
+有効にすると、すべてのルートが CBOR body を受け付け(payload フィールドを1つの CBOR map からバインドし、未知のキーはスキップ)、リクエストの `Accept` ヘッダが明示的に `application/cbor` を名指ししたときだけ CBOR で応答します。ワイルドカード `*/*` は JSON のままです。JSON・form・multipart のクライアントには影響がなく、同じ構造体がすべての形式を受けます。ネゴシエーションする writer は `Vary: Accept` を出すので、共有キャッシュが JSON クライアントに CBOR を返すことはありません。生成される OpenAPI ドキュメントにも、リクエスト body と成功レスポンスの content として `application/cbor` が `application/json` と並んで載ります。
 
 生成されるサブセットは同じくオプションで調整できます。
 

@@ -69,7 +69,7 @@ func (g *Generator) buildOpenAPI(load *packageLoad) (Document, error) {
 			pathItem = map[string]any{}
 			paths[route.Path] = pathItem
 		}
-		op := buildOperation(route, types, schemas)
+		op := buildOperation(route, types, schemas, g.Options.EnableCBORHTTP)
 		pathItem[strings.ToLower(route.Method)] = op
 	}
 	return doc, nil
@@ -93,7 +93,7 @@ func indexTypes(plan *PackagePlan) map[string]TypePlan {
 	return out
 }
 
-func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[string]any) map[string]any {
+func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[string]any, cborHTTP bool) map[string]any {
 	op := map[string]any{
 		"responses": map[string]any{},
 	}
@@ -204,6 +204,13 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 				"schema": mediaSchema,
 			},
 		}
+		// A rest map is refused by the CBOR emitter, so a body that carries one
+		// must not be advertised as acceptable CBOR either.
+		if cborHTTP && !bodyAdditionalProps {
+			content["application/cbor"] = map[string]any{
+				"schema": mediaSchema,
+			}
+		}
 		op["requestBody"] = map[string]any{
 			"required": false,
 			"content":  content,
@@ -245,11 +252,17 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 					"description": http.StatusText(st),
 				}
 				if st != http.StatusNoContent {
-					resp["content"] = map[string]any{
+					respContent := map[string]any{
 						"application/json": map[string]any{
 							"schema": schemaRef(respName),
 						},
 					}
+					if cborHTTP {
+						respContent["application/cbor"] = map[string]any{
+							"schema": schemaRef(respName),
+						}
+					}
+					resp["content"] = respContent
 				}
 				responses[strconv.Itoa(st)] = resp
 			}

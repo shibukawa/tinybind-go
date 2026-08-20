@@ -42,6 +42,13 @@ func AcceptsCBOR(ctx *fasthttp.RequestCtx) bool {
 	return bindcore.AcceptsCBOR(string(ctx.Request.Header.Peek("Accept")))
 }
 
+// VaryAccept records that the response body depends on the Accept header, so
+// a shared cache keys the entry on it. Generated writers call it before
+// negotiating; without it a cache could hand a CBOR body to a JSON client.
+func VaryAccept(ctx *fasthttp.RequestCtx) {
+	ctx.Response.Header.Add("Vary", "Accept")
+}
+
 // ReadCBORBody hands back the request body, bounded by MaxCBORBodyBytes.
 //
 // The bytes are copied out of the transport's pooled buffer: a generated

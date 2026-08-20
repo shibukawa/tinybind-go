@@ -59,6 +59,14 @@ func TestReadCBORBodyHonoursTheLimitAndCopies(t *testing.T) {
 	}
 }
 
+func TestVaryAccept(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	VaryAccept(ctx)
+	if got := string(ctx.Response.Header.Peek("Vary")); got != "Accept" {
+		t.Fatalf("Vary %q, want Accept", got)
+	}
+}
+
 func TestWriteCBORBytes(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	if err := WriteCBORBytes(ctx, 201, []byte{0xa0}); err != nil {

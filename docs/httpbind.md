@@ -189,7 +189,10 @@ With the option on, every route accepts a CBOR body (payload fields bind from
 one CBOR map, unknown keys are skipped) and answers CBOR when the request's
 `Accept` header explicitly names `application/cbor` — a wildcard `*/*` keeps
 the JSON default. JSON, form, and multipart clients are untouched, and the
-same struct serves every format.
+same struct serves every format. Negotiating writers set `Vary: Accept` so a
+shared cache never hands a CBOR body to a JSON client, and the generated
+OpenAPI document advertises `application/cbor` beside `application/json` for
+request bodies and success responses.
 
 The generated subset is tunable through the same options:
 

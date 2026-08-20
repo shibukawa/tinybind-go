@@ -55,6 +55,14 @@ func TestReadCBORBodyHonoursTheLimit(t *testing.T) {
 	}
 }
 
+func TestVaryAccept(t *testing.T) {
+	w := httptest.NewRecorder()
+	VaryAccept(w)
+	if got := w.Header().Get("Vary"); got != "Accept" {
+		t.Fatalf("Vary %q, want Accept", got)
+	}
+}
+
 func TestWriteCBORBytes(t *testing.T) {
 	w := httptest.NewRecorder()
 	if err := WriteCBORBytes(w, http.StatusCreated, []byte{0xa0}); err != nil {

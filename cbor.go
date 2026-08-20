@@ -41,6 +41,13 @@ func AcceptsCBOR(r *http.Request) bool {
 	return bindcore.AcceptsCBOR(r.Header.Get("Accept"))
 }
 
+// VaryAccept records that the response body depends on the Accept header, so
+// a shared cache keys the entry on it. Generated writers call it before
+// negotiating; without it a cache could hand a CBOR body to a JSON client.
+func VaryAccept(w http.ResponseWriter) {
+	w.Header().Add("Vary", "Accept")
+}
+
 // ReadCBORBody reads the whole request body, bounded by MaxCBORBodyBytes.
 // Decoding is the generated caller's: the bytes handed back are unparsed, and
 // the decoder bounds its own walk by the same limit this read enforced.

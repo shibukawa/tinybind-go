@@ -23,12 +23,14 @@ as_built:
   codecs: generator/cborhttp_emit.go emits append<T>CBORHTTP and decode<T>CBORHTTP from the same TypePlan the JSON codecs use, so both formats agree about wire names, payload membership and nesting; a nested struct joins its parent's Reader walk with no second scan
   binder: an inline walk over the body map fills payload fields and their presence flags before the JSON and form arms run and find no body of their kind; query still overrides a body member for an input field because the query arms run later and overwrite
   writer: an AcceptsCBOR arm ahead of the JSON path; only an explicit application/cbor Accept entry counts, so a browser's */* never flips the format
+  vary: every negotiating writer sets Vary Accept before choosing, on both arms, because the entry a shared cache stores depends on the header either way; found 2026-08-20 by the maintainer, after the first ship omitted it and a cache could hand a CBOR body to a JSON client
+  openapi: the document advertises application/cbor beside application/json for the request body and each non-204 success response, under the same schema; a rest-map body advertises no CBOR, matching the emitter's refusal; also found 2026-08-20, the first ship left the document JSON-only
   runtime: bindcore owns the shared media-type check, Accept parsing and the one process-wide limit; httpbind and fasthttpbind each publish IsCBORRequest, AcceptsCBOR, ReadCBORBody, WriteCBORBytes and SetMaxCBORBodyBytes, pair-wise as required, and none of them names a driver type
   read_limits: every generated DecoderOptions defers to the body length ReadCBORBody already capped, so the deployment tunes one number
   refusals: a payload rest map, a foreign-codec field, an uploaded file in a response type, a float64 under RejectFloats, and a runtime map under RequireSortedKeys are generation errors naming the field
   emitted_all_members: omitempty and omitzero are JSON member semantics and do not drop CBOR members, which keeps the map header count a generation-time constant
   tests: generator/cborhttp_test.go, including a full HTTP round trip of the generated code in both formats; runtime twins in cbor_test.go, fasthttpbind/cbor_test.go, internal/bindcore/cbor_test.go
-  v1_stays_json: WriteStatus, streaming, server actions and the OpenAPI document; each is a later decision, not an accident
+  v1_stays_json: WriteStatus, streaming and server actions; each is a later decision, not an accident
 trigger:
   what: term:payload decodes by Content-Type and knows json, form and multipart; api:write answers application/json only
   want: a request carrying application/cbor binds, and a response is CBOR when the client asked for it

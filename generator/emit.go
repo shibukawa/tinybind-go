@@ -1613,6 +1613,9 @@ func emitWriter(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, target t
 		b.WriteString("\t_ = r\n")
 	}
 	if cborHTTP {
+		// The body below varies by Accept, and a shared cache must key on it
+		// whichever representation this response picks.
+		fmt.Fprintf(b, "\thttpbind.VaryAccept(%s)\n", target.writerVar)
 		b.WriteString("\tif httpbind.AcceptsCBOR(r) {\n")
 		b.WriteString("\t\tbuf := jsonbind.GetBuffer()\n")
 		fmt.Fprintf(b, "\t\t*buf = append%sCBORHTTP((*buf)[:0], v)\n", t.Name)

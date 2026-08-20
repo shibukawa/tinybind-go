@@ -532,7 +532,7 @@ func withHTTPTransportSlots(path string, patterns []CallPattern) []CallPattern {
 // Every name here exists under the same spelling on both runtimes.
 func httpTransportOnlyCalls(path string) []CallPattern {
 	writerThenRequest := []string{"WriteError"}
-	writerOnly := []string{"WriteJSONBytes", "WriteCBORBytes"}
+	writerOnly := []string{"WriteJSONBytes", "WriteCBORBytes", "VaryAccept"}
 	requestOnly := []string{
 		"Queries", "QueryValue", "PathValue", "HeaderValue", "CookieValue",
 		"ReadBody", "ReadJSONObject", "ParseFormMap", "ParseMultipartMap",
