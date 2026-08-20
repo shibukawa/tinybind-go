@@ -282,6 +282,11 @@ type PackagePlan struct {
 	// ServerActions are the typed server actions this package emits an entry
 	// point for, carried from Options so emission needs no second input.
 	ServerActions []ServerAction
+	// CBORHTTP and CBORHTTPProfile carry Options.EnableCBORHTTP and its profile
+	// into emission, the way ServerActions travels: emission takes a plan and a
+	// transport target and no Options.
+	CBORHTTP        bool
+	CBORHTTPProfile CBORHTTPProfile
 	// Discovered lists type names referenced by configured generic call sites.
 	Discovered []string
 }
@@ -434,6 +439,8 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 	if err := planServerActions(plan, opts.ServerActions, packageBinderNames, packageForeignCodecs, packageNamedKinds); err != nil {
 		return nil, err
 	}
+	plan.CBORHTTP = opts.EnableCBORHTTP
+	plan.CBORHTTPProfile = opts.CBORHTTPProfile
 	return plan, nil
 }
 

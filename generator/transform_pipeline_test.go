@@ -81,6 +81,41 @@ func TestSelectingTheBackendWritesTheTransportFile(t *testing.T) {
 	}
 }
 
+// The CBOR negotiation rides the derived transport unchanged: the same body
+// text is emitted against the fasthttp runtime, whose helpers carry the same
+// names under the aliased httpbind qualifier.
+func TestCBORHTTPReachesTheDerivedTransport(t *testing.T) {
+	out := t.TempDir()
+	options := DefaultOptions()
+	transform := DefaultTransformOptions()
+	options.Transform = &transform
+	options.EnableCBORHTTP = true
+	result, err := New(options).GeneratePackage(context.Background(), GenerateRequest{
+		Dir: filepath.Join("..", "testdata", "transform_rewrite"),
+		Out: out,
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	found := false
+	for _, path := range result.Paths() {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(source), "//go:build fasthttp") {
+			continue
+		}
+		if strings.Contains(string(source), "httpbind.AcceptsCBOR(r)") &&
+			strings.Contains(string(source), "httpbind.ReadCBORBody(r)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no fasthttp-tagged output carries the CBOR arms; wrote %v", result.Paths())
+	}
+}
+
 // With no adapter there is nowhere for a refused handler to go, so emitting
 // the rest would leave a package that silently serves fewer routes.
 func TestARefusalStopsGeneration(t *testing.T) {

@@ -38,6 +38,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 	backend := flags.String("backend", "", "derive a second transport from the net/http source: \"fasthttp\", or empty for none")
 	transportName := flags.String("transport-name", defaultTransportOut, "derived transport output file name")
 	transportReport := flags.Bool("transport-report", false, "list what the selected backend would refuse, write nothing, and exit 0")
+	cborHTTP := flags.Bool("cbor-http", options.EnableCBORHTTP, "negotiate application/cbor request and response bodies in generated binders and writers")
+	cborHTTPRejectFloats := flags.Bool("cbor-http-reject-floats", options.CBORHTTPProfile.RejectFloats, "with -cbor-http, refuse float64 fields at generation (for scaled-integer schemas)")
+	cborHTTPSortedKeys := flags.Bool("cbor-http-sorted-keys", options.CBORHTTPProfile.RequireSortedKeys, "with -cbor-http, emit map members in RFC 8949 bytewise key order")
 	check := flags.Bool("check", false, "report analysis diagnostics and exit 1 if any undiscoverable route candidates exist")
 	generateAll := flags.Bool("generate-all", false, "generate every enabled mapping path for every struct")
 	force := flags.Bool("force", false, "regenerate even when the generated files record the current input hash")
@@ -62,6 +65,9 @@ func runGenerate(ctx context.Context, args []string, streams CommandIO, options 
 
 	options.DataAttributePrefix = *dataAttributePrefix
 	options.TemplateLineDirectives = *templateLineDirectives
+	options.EnableCBORHTTP = *cborHTTP
+	options.CBORHTTPProfile.RejectFloats = *cborHTTPRejectFloats
+	options.CBORHTTPProfile.RequireSortedKeys = *cborHTTPSortedKeys
 
 	switch *backend {
 	case "":

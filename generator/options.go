@@ -72,6 +72,24 @@ const (
 	FeatureHelpBackfill Feature = "help-backfill"
 )
 
+// CBORHTTPProfile is the CBOR subset the HTTP codecs of EnableCBORHTTP are
+// generated for. It is this generator's own type rather than the driver's
+// Profile, because the generator never imports the driver; the restrictions
+// named here become code in the emitted file. Both ends of the protocol must
+// agree on it, which hashing it into the generation fingerprint enforces for
+// every regeneration.
+type CBORHTTPProfile struct {
+	// RejectFloats refuses floats in both directions: a float64 field becomes
+	// a generation error naming the field, and a float arriving in a request
+	// body is a decode error. For a service carrying scaled integers.
+	RejectFloats bool
+	// RequireSortedKeys emits map members in RFC 8949 section 4.2.1 bytewise
+	// order, computed at generation time, for a client that checks
+	// deterministic encoding. A runtime map field cannot promise that order
+	// and becomes a generation error while this is set.
+	RequireSortedKeys bool
+}
+
 // Options configures discovery identities and generated template APIs. A zero
 // Options value intentionally discovers nothing and disables optional wrappers;
 // use DefaultOptions for standard behavior.
@@ -250,6 +268,20 @@ type Options struct {
 	// would disagree on bytes that are identical in every way that matters, and
 	// `--check` would fail on the difference between two correct builds.
 	ConversionWorkers int `json:"-"`
+
+	// EnableCBORHTTP emits application/cbor negotiation into every generated
+	// binder and writer: a request carrying application/cbor binds its payload
+	// fields from one CBOR map, and a response answers CBOR when the Accept
+	// header asks for it. Off by default, and project-wide on purpose — which
+	// media types a service accepts is a property of the service, not of one
+	// route, so there is no per-route or per-type spelling. A run leaving it
+	// off regenerates today's bytes exactly and links no CBOR code.
+	EnableCBORHTTP bool
+	// CBORHTTPProfile tunes the CBOR subset the HTTP codecs are generated for.
+	// The zero value is the default profile: floats are ordinary values and
+	// members come out in struct field order. It is read only when
+	// EnableCBORHTTP is set.
+	CBORHTTPProfile CBORHTTPProfile
 
 	DisableFeatures []Feature
 	GenerateAll     bool
@@ -517,11 +549,12 @@ func withHTTPTransportSlots(path string, patterns []CallPattern) []CallPattern {
 // Every name here exists under the same spelling on both runtimes.
 func httpTransportOnlyCalls(path string) []CallPattern {
 	writerThenRequest := []string{"WriteError"}
-	writerOnly := []string{"WriteJSONBytes"}
+	writerOnly := []string{"WriteJSONBytes", "WriteCBORBytes"}
 	requestOnly := []string{
 		"Queries", "QueryValue", "PathValue", "HeaderValue", "CookieValue",
 		"ReadBody", "ReadJSONObject", "ParseFormMap", "ParseMultipartMap",
 		"IsJSONRequest", "IsFormRequest", "IsMultipartRequest",
+		"IsCBORRequest", "AcceptsCBOR", "ReadCBORBody",
 		"NegotiateStreamFormat",
 	}
 	patterns := make([]CallPattern, 0, len(writerThenRequest)+len(writerOnly)+len(requestOnly))

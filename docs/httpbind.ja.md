@@ -176,6 +176,23 @@ curl http://localhost:8080/users \
   --data-urlencode 'email=ada@example.com'
 ```
 
+### CBOR body のオプトイン(`-cbor-http`)
+
+`application/cbor` の読み書きはオプトインで、生成時に決まります。使わないプロジェクトのバイナリには CBOR のコードが一切入りません。
+
+```bash
+tinybind-gen generate -cbor-http
+```
+
+有効にすると、すべてのルートが CBOR body を受け付け(payload フィールドを1つの CBOR map からバインドし、未知のキーはスキップ)、リクエストの `Accept` ヘッダが明示的に `application/cbor` を名指ししたときだけ CBOR で応答します。ワイルドカード `*/*` は JSON のままです。JSON・form・multipart のクライアントには影響がなく、同じ構造体がすべての形式を受けます。
+
+生成されるサブセットは同じくオプションで調整できます。
+
+- `-cbor-http-reject-floats` — `float64` フィールドを生成時に拒否します(スケール整数を運ぶスキーマ向け)。
+- `-cbor-http-sorted-keys` — map のメンバを構造体フィールド順ではなく RFC 8949 の bytewise キー順で出力します。
+
+body サイズの上限は `httpbind.SetMaxCBORBodyBytes`(デフォルト 1 MiB)で、両方のトランスポートランタイムが同じ値を共有します。`payload:"*"` の rest map は CBOR に対応する形がないため、黙って落とすのではなく生成時にエラーとして報告されます。
+
 ### path、header、cookie
 
 ```go

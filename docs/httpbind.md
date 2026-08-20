@@ -176,6 +176,32 @@ curl http://localhost:8080/users \
   --data-urlencode 'email=ada@example.com'
 ```
 
+### Optional CBOR bodies (`-cbor-http`)
+
+`application/cbor` request and response bodies are an opt-in, settled at
+generation time so a build that never asked carries no CBOR code at all:
+
+```bash
+tinybind-gen generate -cbor-http
+```
+
+With the option on, every route accepts a CBOR body (payload fields bind from
+one CBOR map, unknown keys are skipped) and answers CBOR when the request's
+`Accept` header explicitly names `application/cbor` — a wildcard `*/*` keeps
+the JSON default. JSON, form, and multipart clients are untouched, and the
+same struct serves every format.
+
+The generated subset is tunable through the same options:
+
+- `-cbor-http-reject-floats` refuses `float64` fields at generation, for
+  schemas that carry scaled integers.
+- `-cbor-http-sorted-keys` emits map members in RFC 8949 bytewise key order
+  instead of struct field order.
+
+The body size cap is `httpbind.SetMaxCBORBodyBytes` (default 1 MiB), shared by
+both transport runtimes. A `payload:"*"` rest map has no CBOR mapping and is
+reported at generation rather than silently dropped.
+
 ### Path, header, and cookie values
 
 ```go
