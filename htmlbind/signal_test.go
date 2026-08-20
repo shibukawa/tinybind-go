@@ -17,7 +17,7 @@ type toastPayload struct{ Text string }
 
 func (p toastPayload) AppendJSON(dst []byte) []byte {
 	dst = append(dst, `{"text":`...)
-	dst = appendJSONString(dst, p.Text)
+	dst = AppendJSONString(dst, p.Text)
 	return append(dst, '}')
 }
 

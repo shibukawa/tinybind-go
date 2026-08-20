@@ -250,6 +250,21 @@ _, err := w.Write(content.AppendJSON(nil))
 `content.AppendJSON([]byte("data: "))`）。レコードの外側の framing は、読む側の
 クライアントと揃える必要があるので実装者のものです。
 
+モジュール側のレコードにないフィールド — 種別タグ、validator、ビルド識別子など
+— を載せるなら、組み立てているのは framing だけではなくレコードそのものです。
+そのとき使えるのが、`AppendJSON` が自分のフィールドを埋めているエスケーパ
+`AppendJSONString` です。
+
+```go
+record = append(record, `,"v":`...)
+record = htmlbind.AppendJSONString(record, digest)
+```
+
+引数は文字列でもバイト列でも取れるので、描画済みの断片は変換なしでそのまま渡せ
+ます。返すのではなく append するので、1 つの scratch バッファを配信ごとに使い回
+すレスポンスは、そのまま使い回し続けられます。文字列で受け取りたい場合は
+`JSONString` が同じエスケープを行います。
+
 次に識別子が変わります。境界 ID が表すのは確保された順ではなく**描画ツリー上の
 位置**です。境界の中の境界は `tb-1-1` になり、live な境界のサブツリーは配信ごとに
 新しい ID を作るのではなく、毎回同じ ID を配ります。したがってクライアントは同じ

@@ -253,6 +253,20 @@ without a second buffer — `content.AppendJSON([]byte("data: "))` for an event
 stream, for instance. The framing around the record is still yours, because it
 has to match the client that reads it.
 
+If your record carries fields the module's does not — a kind tag, a validator,
+a build identity — then you are assembling the record and not only its framing,
+and `AppendJSONString` is the escaper `AppendJSON` fills its own fields with:
+
+```go
+record = append(record, `,"v":`...)
+record = htmlbind.AppendJSONString(record, digest)
+```
+
+It takes a string or a byte slice, so a rendered fragment goes in as bytes with
+no conversion, and it appends rather than returning, so a response reusing one
+scratch buffer across every delivery keeps reusing it. `JSONString` is the same
+escaping for a caller that wants a string back.
+
 The identifiers change second. Boundary ids name a position in the render tree,
 not an allocation order: a boundary nested inside another one is `tb-1-1`, and a
 live boundary's subtree hands out the same ids on every delivery rather than
