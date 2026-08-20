@@ -535,9 +535,9 @@ func httpTransportOnlyCalls(path string) []CallPattern {
 	writerOnly := []string{"WriteJSONBytes", "WriteCBORBytes", "VaryAccept"}
 	requestOnly := []string{
 		"Queries", "QueryValue", "PathValue", "HeaderValue", "CookieValue",
-		"ReadBody", "ReadJSONObject", "ReadJSONBody", "ReadJSONBodyOwned",
+		"ReadJSONBody", "ReadJSONBodyOwned",
 		"ReadFormBody", "ParseFormMap", "ParseMultipartMap",
-		"IsJSONRequest", "IsFormRequest", "IsMultipartRequest",
+		"IsJSONRequest",
 		"IsCBORRequest", "AcceptsCBOR", "ReadCBORBody",
 		"NegotiateStreamFormat",
 	}

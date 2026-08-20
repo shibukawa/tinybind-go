@@ -191,8 +191,8 @@ func isExcluded(exclude []string, key string) bool {
 }
 
 // JSONBodyError wraps a structural failure from a binder's inline JSON body
-// walk in the same 400 problems ReadJSONObject produced, so moving the parse
-// into generated code changed no response body.
+// walk in the same 400 problems the pre-inline Object split produced, so
+// moving the parse into generated code changed no response body.
 func JSONBodyError(err error) error {
 	if je, ok := jsonbind.AsError(err); ok && je.Message == "JSON value must be an object" {
 		return BadRequest(Problem{Code: "json_parse", Message: "JSON body must be an object"}, err)

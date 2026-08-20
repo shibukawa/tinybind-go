@@ -13,7 +13,7 @@ import (
 // map — one allocation per key plus an unescaped copy of every member — buys
 // random access nobody uses. Splitting into spans costs one slice, and a span
 // is unescaped only when it is actually looked up and actually escaped: the
-// same trade jsonbind.Object makes for JSON bodies.
+// same trade the binders' inline JSON walk makes for body members.
 type QueryValues struct {
 	pairs []queryPair
 }

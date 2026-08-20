@@ -46,18 +46,6 @@ func multipartRequest(t *testing.T, fields map[string]string, files map[string]s
 	return req
 }
 
-func TestIsMultipartRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=abc")
-	if !httpbind.IsMultipartRequest(req) {
-		t.Fatal("expected multipart")
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if httpbind.IsMultipartRequest(req) {
-		t.Fatal("json is not multipart")
-	}
-}
-
 func TestParseMultipartMap_ScalarsAndFile(t *testing.T) {
 	req := multipartRequest(t,
 		map[string]string{"title": "avatar"},

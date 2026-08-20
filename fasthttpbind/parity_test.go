@@ -120,42 +120,37 @@ func TestBindParity(t *testing.T) {
 	}
 }
 
-func TestReadJSONObjectParity(t *testing.T) {
-	wantObj, err := httpbind.ReadJSONObject(newNetHTTP(t))
+func TestReadJSONBodyParity(t *testing.T) {
+	want, err := httpbind.ReadJSONBody(newNetHTTP(t))
 	if err != nil {
-		t.Fatalf("net/http ReadJSONObject: %v", err)
+		t.Fatalf("net/http ReadJSONBody: %v", err)
 	}
-	gotObj, err := fasthttpbind.ReadJSONObject(newFast(t))
+	got, err := fasthttpbind.ReadJSONBody(newFast(t))
 	if err != nil {
-		t.Fatalf("fasthttp ReadJSONObject: %v", err)
+		t.Fatalf("fasthttp ReadJSONBody: %v", err)
 	}
-	wantRaw, wantOK := wantObj.Get("name")
-	gotRaw, gotOK := gotObj.Get("name")
-	if wantOK != gotOK || !bytes.Equal(wantRaw, gotRaw) {
-		t.Errorf("json field differs: net/http %q(%v) fasthttp %q(%v)", wantRaw, wantOK, gotRaw, gotOK)
+	if !bytes.Equal(want, got) {
+		t.Errorf("body differs: net/http %q fasthttp %q", want, got)
 	}
 }
 
-// The JSON document a binder parses points into pooled memory on fasthttp, so
-// this is the test that the copy in ReadJSONObject is actually happening.
-func TestReadJSONObjectDoesNotAliasPooledBody(t *testing.T) {
+// The raw body points into pooled memory on fasthttp, so this is the test that
+// the copy in ReadJSONBodyOwned is actually happening — the variant a binder
+// whose raw spans outlive the bind is emitted against.
+func TestReadJSONBodyOwnedDoesNotAliasPooledBody(t *testing.T) {
 	ctx := newFast(t)
-	obj, err := fasthttpbind.ReadJSONObject(ctx)
+	owned, err := fasthttpbind.ReadJSONBodyOwned(ctx)
 	if err != nil {
-		t.Fatalf("ReadJSONObject: %v", err)
+		t.Fatalf("ReadJSONBodyOwned: %v", err)
 	}
-	raw, ok := obj.Get("name")
-	if !ok {
-		t.Fatal(`missing "name"`)
-	}
-	before := string(raw)
+	before := string(owned)
 
 	// Scribble over the request body the way reuse of a pooled ctx would.
 	ctx.Request.SetBody(bytes.Repeat([]byte("X"), len(body)))
 	ctx.Request.Reset()
 
-	if after := string(raw); after != before {
-		t.Errorf("bound JSON aliased the pooled body: %q became %q", before, after)
+	if after := string(owned); after != before {
+		t.Errorf("owned body aliased the pool: %q became %q", before, after)
 	}
 }
 
@@ -246,9 +241,6 @@ func TestFormAndContentTypeParity(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Init(&fr, nil, nil)
 
-	if httpbind.IsFormRequest(r) != fasthttpbind.IsFormRequest(ctx) {
-		t.Error("IsFormRequest disagrees")
-	}
 	if httpbind.IsJSONRequest(r) != fasthttpbind.IsJSONRequest(ctx) {
 		t.Error("IsJSONRequest disagrees")
 	}

@@ -71,24 +71,6 @@ func IsJSONRequest(r *http.Request) bool {
 	return isJSONMediaType(mediaType(r.Header.Get("Content-Type")))
 }
 
-// IsFormRequest reports application/x-www-form-urlencoded.
-//
-// Deprecated: current binders dispatch the form kinds through ReadFormBody.
-// This exists for generated code that predates it and is removed once that
-// code is regenerated.
-func IsFormRequest(r *http.Request) bool {
-	return mediaType(r.Header.Get("Content-Type")) == "application/x-www-form-urlencoded"
-}
-
-// IsMultipartRequest reports multipart/form-data.
-//
-// Deprecated: current binders dispatch the form kinds through ReadFormBody.
-// This exists for generated code that predates it and is removed once that
-// code is regenerated.
-func IsMultipartRequest(r *http.Request) bool {
-	return mediaType(r.Header.Get("Content-Type")) == "multipart/form-data"
-}
-
 // ParseMultipartMap parses a multipart/form-data body into scalar form fields
 // (first value wins) and named file parts (first file wins per field name).
 //
@@ -176,37 +158,8 @@ func isRequestTooLarge(err error) bool {
 	return bindcore.IsMessageTooLarge(err)
 }
 
-// ReadJSONObject splits a JSON object body into its raw fields.
-//
-// Generated binders need random access by name, because a field may also come
-// from the query string or a form and the tag decides which source wins. The
-// returned Object holds subslices of the body, so this costs one pass and one
-// slice rather than a map plus a copy of every member.
-//
-// Non-object JSON (arrays, scalars, null) fails with 400 — required when
-// payload:"*" rest maps are used.
-//
-// Deprecated: current binders walk the raw bytes of ReadJSONBody inline
-// instead of splitting them into an Object. This exists for generated code
-// that predates the inline walk and is removed once that code is regenerated.
-func ReadJSONObject(r *http.Request) (*jsonbind.Object, error) {
-	data, err := ReadJSONBody(r)
-	if err != nil {
-		return nil, err
-	}
-	if jsonbind.IsBlank(data) {
-		return jsonbind.EmptyObject(), nil
-	}
-	obj, err := jsonbind.ParseObject(data)
-	if err != nil {
-		return nil, JSONBodyError(err)
-	}
-	return obj, nil
-}
-
 // ReadJSONBody reads the raw JSON body under MaxJSONBodyBytes. Generated
-// binders parse the returned bytes in a single inline pass rather than going
-// through the member split ReadJSONObject performs.
+// binders parse the returned bytes in a single inline pass.
 func ReadJSONBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -236,7 +189,7 @@ func ReadJSONBodyOwned(r *http.Request) ([]byte, error) {
 }
 
 // JSONBodyError wraps a structural JSON failure from a binder's inline body
-// walk in the same 400 problems ReadJSONObject produces.
+// walk as a 400 problem.
 func JSONBodyError(err error) error {
 	return bindcore.JSONBodyError(err)
 }
@@ -246,8 +199,8 @@ func JSONBodyNotObject() error {
 	return bindcore.JSONBodyNotObject()
 }
 
-// ReadFormBody is the non-JSON half of ReadBody: it dispatches on the form
-// content types alone, for binders that read their JSON body inline.
+// ReadFormBody dispatches on the form content types alone, for binders that
+// read their JSON body inline through ReadJSONBody.
 func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
 	if !wantForm && !wantFiles {
 		return nil, nil, nil

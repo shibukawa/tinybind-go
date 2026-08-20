@@ -225,33 +225,6 @@ func TestParser_SkipValueValidatesStructure(t *testing.T) {
 	}
 }
 
-func TestObject_KeepsRawValuesAndNames(t *testing.T) {
-	obj, err := ParseObject([]byte(`{"a":1,"b":{"n":[1,2]},"cD":"x"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if obj.Len() != 3 {
-		t.Fatalf("len: %d", obj.Len())
-	}
-	raw, ok := obj.Get("b")
-	if !ok || string(raw) != `{"n":[1,2]}` {
-		t.Fatalf("raw b: %q ok=%v", raw, ok)
-	}
-	if _, ok := obj.Get("cD"); !ok {
-		t.Fatalf("escaped key not unescaped: %#v", obj.Names(nil))
-	}
-	if names := obj.Names(nil); !reflect.DeepEqual(names, []string{"a", "b", "cD"}) {
-		t.Fatalf("names: %#v", names)
-	}
-}
-
-func TestObject_RejectsNonObjectDocuments(t *testing.T) {
-	for _, in := range []string{`null`, `[1]`, `"s"`, `1`, `{"a":1} trailing`} {
-		if _, err := ParseObject([]byte(in)); err == nil {
-			t.Fatalf("expected rejection of %s", in)
-		}
-	}
-}
 
 func TestReadLimitHint_ReadsExactlyToTheLimit(t *testing.T) {
 	body := `{"value":"12345"}`

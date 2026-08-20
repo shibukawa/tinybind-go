@@ -96,48 +96,6 @@ func IsJSONRequest(ctx *fasthttp.RequestCtx) bool {
 	return bindcore.IsJSONMediaType(contentType(ctx))
 }
 
-// IsFormRequest reports application/x-www-form-urlencoded.
-//
-// Deprecated: current binders dispatch the form kinds through ReadFormBody.
-// This exists for generated code that predates it and is removed once that
-// code is regenerated.
-func IsFormRequest(ctx *fasthttp.RequestCtx) bool {
-	return contentType(ctx) == "application/x-www-form-urlencoded"
-}
-
-// IsMultipartRequest reports multipart/form-data.
-//
-// Deprecated: current binders dispatch the form kinds through ReadFormBody.
-// This exists for generated code that predates it and is removed once that
-// code is regenerated.
-func IsMultipartRequest(ctx *fasthttp.RequestCtx) bool {
-	return contentType(ctx) == "multipart/form-data"
-}
-
-// ReadJSONObject splits a JSON object body into its raw fields.
-//
-// The returned Object holds subslices of the document, so the pooled body is
-// copied first: a generated binder may hand those raw bytes straight into a
-// json.RawMessage rest map, which would otherwise outlive the request.
-//
-// Deprecated: current binders walk the raw bytes of ReadJSONBody inline
-// instead of splitting them into an Object. This exists for generated code
-// that predates the inline walk and is removed once that code is regenerated.
-func ReadJSONObject(ctx *fasthttp.RequestCtx) (*jsonbind.Object, error) {
-	body, err := ReadJSONBodyOwned(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if jsonbind.IsBlank(body) {
-		return jsonbind.EmptyObject(), nil
-	}
-	obj, err := jsonbind.ParseObject(body)
-	if err != nil {
-		return nil, JSONBodyError(err)
-	}
-	return obj, nil
-}
-
 // ReadJSONBody returns the raw JSON body under MaxJSONBodyBytes.
 //
 // The bytes alias the pooled request. That is safe for the binders emitted
@@ -172,7 +130,7 @@ func ReadJSONBodyOwned(ctx *fasthttp.RequestCtx) ([]byte, error) {
 }
 
 // JSONBodyError wraps a structural JSON failure from a binder's inline body
-// walk in the same 400 problems ReadJSONObject produces.
+// walk as a 400 problem.
 func JSONBodyError(err error) error {
 	return bindcore.JSONBodyError(err)
 }
@@ -182,8 +140,8 @@ func JSONBodyNotObject() error {
 	return bindcore.JSONBodyNotObject()
 }
 
-// ReadFormBody is the non-JSON half of ReadBody: it dispatches on the form
-// content types alone, for binders that read their JSON body inline.
+// ReadFormBody dispatches on the form content types alone, for binders that
+// read their JSON body inline through ReadJSONBody.
 func ReadFormBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
 	if !wantForm && !wantFiles {
 		return nil, nil, nil
@@ -269,46 +227,4 @@ func ParseMultipartMap(ctx *fasthttp.RequestCtx) (form map[string]string, files 
 		files[k] = f
 	}
 	return form, files, nil
-}
-
-// ReadBody dispatches on the request content type and reads the body at most
-// once on behalf of a generated binder. wantForm/wantFiles mirror which body
-// kinds the binder's fields can consume; a request whose content type matches
-// none of them yields all-nil results without error.
-//
-// Deprecated: current binders read the JSON body through ReadJSONBody and the
-// form kinds through ReadFormBody. This exists for generated code that
-// predates the inline body walk and is removed once that code is regenerated.
-func ReadBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (*jsonbind.Object, map[string]string, map[string]File, error) {
-	// The media type is derived once — one header conversion — and compared
-	// three times, rather than re-converting the pooled header bytes per
-	// content kind.
-	media := contentType(ctx)
-	if bindcore.IsJSONMediaType(media) {
-		obj, err := ReadJSONObject(ctx)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return obj, nil, nil, nil
-	}
-	if wantForm || wantFiles {
-		if media == "application/x-www-form-urlencoded" {
-			m, err := ParseFormMap(ctx)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			return nil, m, nil, nil
-		}
-		if media == "multipart/form-data" {
-			m, files, err := ParseMultipartMap(ctx)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			if !wantFiles {
-				files = nil
-			}
-			return nil, m, files, nil
-		}
-	}
-	return nil, nil, nil, nil
 }
