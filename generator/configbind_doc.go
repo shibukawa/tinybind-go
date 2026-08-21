@@ -258,10 +258,52 @@ func backfillFile(fset *token.FileSet, path string, edits []helpBackfill) (bool,
 	if info, statErr := os.Stat(path); statErr == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(path, formatted, mode); err != nil {
+	if err := replaceSource(path, formatted, mode); err != nil {
 		return false, fmt.Errorf("configbind: help backfill %s: %w", path, err)
 	}
 	return true, nil
+}
+
+// replaceSource writes content over path with no state in between in which path
+// is neither the old file nor the new one.
+//
+// The backfill is the one write generation performs into a hand-written source,
+// and a caller generating directories at once may be type-checking this very
+// file in another goroutine while it happens, as an import of the package it is
+// generating. A truncating write leaves a window in which that reader sees an
+// empty or half-written file and reports a parse error against a source nobody
+// edited. Written beside the file and renamed over it there is no such window:
+// a reader gets the old bytes or the new ones. It is the shape the conversion
+// cache already uses, for the same reason.
+//
+// The temporary name begins with a dot so the Go tool ignores it, which matters
+// because it is created in a directory something may be listing.
+func replaceSource(path string, content []byte, mode os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := temp.Name()
+	if _, err := temp.Write(content); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		os.Remove(name)
+		return err
+	}
+	// The mode is set on the temporary file rather than after the rename, so
+	// the file that appears at path already has it.
+	if err := os.Chmod(name, mode); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 // helpTagInsertion returns the position and literal text that adds help to a
