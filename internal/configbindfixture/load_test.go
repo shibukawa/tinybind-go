@@ -235,3 +235,133 @@ func TestGeneratedLoadRejectsScalarForTableArray(t *testing.T) {
 		t.Fatalf("error %q must name the key", err)
 	}
 }
+
+// rule:enum-value-validation is enforced where the value is applied, so every
+// source is covered by the one check rather than each being filtered on its way
+// in. A downstream that restated its allowlists in Go beside the struct can drop
+// them once this holds.
+func TestGeneratedLoadRejectsValuesOutsideTheEnum(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		toml    string
+		environ []string
+		args    []string
+		want    string
+	}{
+		{
+			name: "toml",
+			toml: "[webserver]\ntracing = \"jaegar\"\n",
+			want: `configbind: webserver.tracing: "jaegar" must be one of: off, otlp, jaeger`,
+		},
+		{
+			name:    "env",
+			environ: []string{"WEBSERVER_TRACING=zipkin"},
+			want:    `configbind: webserver.tracing: "zipkin" must be one of: off, otlp, jaeger`,
+		},
+		{
+			name: "cli",
+			args: []string{"--webserver-tracing", "zipkin"},
+			want: `configbind: webserver.tracing: "zipkin" must be one of: off, otlp, jaeger`,
+		},
+		{
+			// An allowlist on a list is the vocabulary its elements are drawn
+			// from, so the element that failed is the one named.
+			name: "one element of a list",
+			toml: "[webserver]\nprotocols = [\"http1\", \"http4\"]\n",
+			want: `configbind: webserver.protocols: "http4" must be one of: http1, http2, http3`,
+		},
+		{
+			// An element's only identifier is its position in the file.
+			name: "field of an array-of-tables element",
+			toml: "[[webserver.routes]]\npath = \"/a\"\n[[webserver.routes]]\npath = \"/b\"\nkind = \"redirect\"\n",
+			want: `configbind: webserver.routes[1].kind: "redirect" must be one of: static, proxy`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configbind.ResetTargets()
+			configbindfixture.Register()
+			// Never nil: Load reads os.Args when Args is, and the test binary's
+			// own flags are not this fixture's.
+			args := append([]string{}, tc.args...)
+			if tc.toml != "" {
+				tomlPath := filepath.Join(t.TempDir(), "config.toml")
+				if err := os.WriteFile(tomlPath, []byte(tc.toml), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--config-path", tomlPath)
+			}
+			environ := tc.environ
+			if environ == nil {
+				environ = []string{}
+			}
+			_, err := configbind.Load(configbind.LoadOptions{
+				Vendor: "acme", Tool: "demo", Environ: environ, Args: args,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGeneratedLoadAcceptsListedValues(t *testing.T) {
+	configbind.ResetTargets()
+	cfg := configbindfixture.Register()
+	tomlPath := filepath.Join(t.TempDir(), "config.toml")
+	body := "[webserver]\ntracing = \"otlp\"\nprotocols = [\"http1\", \"http3\"]\n" +
+		"[[webserver.routes]]\npath = \"/a\"\nkind = \"proxy\"\n"
+	if err := os.WriteFile(tomlPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Environ: []string{}, Args: []string{"--config-path", tomlPath},
+	}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracing != "otlp" {
+		t.Fatalf("Tracing=%q want otlp", cfg.Tracing)
+	}
+	if strings.Join(cfg.Protocols, ",") != "http1,http3" {
+		t.Fatalf("Protocols=%v want [http1 http3]", cfg.Protocols)
+	}
+	if len(cfg.Routes) != 1 || cfg.Routes[0].Kind != "proxy" {
+		t.Fatalf("Routes=%+v want one proxy route", cfg.Routes)
+	}
+}
+
+// A key nothing sets has no value to reject, so an untouched enum field stays at
+// its zero value rather than failing the load. The falsy choice of tracing does
+// fill it in, and it is listed.
+func TestGeneratedLoadLeavesUnsetEnumFieldsAlone(t *testing.T) {
+	configbind.ResetTargets()
+	cfg := configbindfixture.Register()
+	if _, err := configbind.Load(configbind.LoadOptions{
+		Vendor: "acme", Tool: "demo", Environ: []string{}, Args: []string{},
+	}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracing != "off" {
+		t.Fatalf("Tracing=%q want the falsy choice", cfg.Tracing)
+	}
+	if len(cfg.Protocols) != 0 {
+		t.Fatalf("Protocols=%v want empty", cfg.Protocols)
+	}
+}
+
+// The scaffold names the choices, which is where the typo would otherwise be
+// made: a developer picks the value there, not in the loader's error.
+func TestGeneratedScaffoldListsEnumChoices(t *testing.T) {
+	tomlText, err := configbind.ScaffoldTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"# tracing exporter\n# one of: off, otlp, jaeger\ntracing = \"\"\n",
+		"# protocols the listener offers\n# one of: http1, http2, http3\nprotocols = []\n",
+		"# how the route is served\n# one of: static, proxy\nkind = \"\"\n",
+	} {
+		if !strings.Contains(tomlText, want) {
+			t.Fatalf("TOML scaffold missing %q:\n%s", want, tomlText)
+		}
+	}
+}

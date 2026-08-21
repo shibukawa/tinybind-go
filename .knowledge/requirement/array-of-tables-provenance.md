@@ -58,6 +58,9 @@ tag_placement_on_the_array_field:
     verdict: keep rejected
     why: falsy names one value and an array has none
 element_field_tags:
+  enum:
+    was: rejected alongside dependon and falsy for a reason only those two share
+    now: honored per rule:enum-value-validation, and its rejection names the index
   secret:
     was: accepted and dropped, unlike Opt, Env, DependsOn, and Falsy which are rejected
     now: honored per requirement:struct-tag-placement-totality

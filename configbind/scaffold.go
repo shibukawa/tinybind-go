@@ -33,6 +33,11 @@ type ScaffoldField struct {
 	Opt     string
 	Env     string
 	Help    string
+	// Enum is the allowlist the field accepts, already split and trimmed at
+	// generation time. It is rendered as a comment beside the example value so a
+	// reader sees the choices where the typo would otherwise be made; the value
+	// check itself lives in the generated apply code.
+	Enum []string
 	// Nested holds the element fields when Kind is ScaffoldTableArray. Their
 	// keys are relative to Key.
 	Nested []ScaffoldField
@@ -75,6 +80,7 @@ func ScaffoldTOML() (string, error) {
 			continue
 		}
 		writeScaffoldHelp(&b, entry.field.Help)
+		writeScaffoldChoices(&b, entry.field.Enum)
 		value, err := scaffoldValue(entry.field, true)
 		if err != nil {
 			return "", fmt.Errorf("configbind: scaffold %s: %w", entry.fullKey, err)
@@ -103,6 +109,7 @@ func writeScaffoldTableArray(b *strings.Builder, fullKey string, field ScaffoldF
 			continue
 		}
 		writeScaffoldHelp(b, nested.Help)
+		writeScaffoldChoices(b, nested.Enum)
 		value, err := scaffoldValue(nested, true)
 		if err != nil {
 			return fmt.Errorf("%s: %w", nested.Key, err)
@@ -164,6 +171,7 @@ func ScaffoldEnv() (string, error) {
 	var b strings.Builder
 	for _, item := range envs {
 		writeScaffoldHelp(&b, item.entry.field.Help)
+		writeScaffoldChoices(&b, item.entry.field.Enum)
 		value, err := scaffoldValue(item.entry.field, false)
 		if err != nil {
 			return "", fmt.Errorf("configbind: scaffold %s: %w", item.entry.fullKey, err)
@@ -303,6 +311,22 @@ func writeScaffoldHelp(b *strings.Builder, help string) {
 			fmt.Fprintf(b, "# %s\n", strings.TrimSpace(line))
 		}
 	}
+}
+
+// writeScaffoldChoices renders a field's allowlist as its own comment line under
+// any help text. It is a line of its own rather than a suffix on the help so a
+// multi-line help comment keeps the choices at a fixed position.
+func writeScaffoldChoices(b *strings.Builder, enum []string) {
+	if len(enum) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "# %s\n", enumNote(enum))
+}
+
+// enumNote is the one spelling of an allowlist shared by the scaffolds and the
+// subcommand usage text.
+func enumNote(enum []string) string {
+	return "one of: " + strings.Join(enum, ", ")
 }
 
 func quoteTOMLString(value string) string {

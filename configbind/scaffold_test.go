@@ -139,3 +139,62 @@ type (
 )
 
 func noopApply(any, *configbind.Overlay) error { return nil }
+
+// The scaffold is where a developer picks a value, so it is where the choices
+// have to be legible. They render as a line of their own rather than as a suffix
+// on the help so a multi-line help comment keeps them at a fixed position.
+func TestScaffoldsListEnumChoices(t *testing.T) {
+	configbind.ResetDefinitions()
+	t.Cleanup(configbind.ResetDefinitions)
+
+	configbind.Register[serverScaffold](configbind.Definition{
+		TypeName: "example/app.RunConfig",
+		Prefix:   "run",
+		Apply:    noopApply,
+		Scaffold: []configbind.ScaffoldField{
+			{Key: "topology", Kind: configbind.ScaffoldString, Default: "standalone",
+				Help: "execution topology of this process", Enum: []string{"standalone", "listen", "p2p"}},
+			{Key: "enable", Kind: configbind.ScaffoldStringSlice, Enum: []string{"websocket", "webrtc"}},
+			{Key: "slot", Kind: configbind.ScaffoldTableArray, Help: "controller slots", Nested: []configbind.ScaffoldField{
+				{Key: "kind", Kind: configbind.ScaffoldString, Enum: []string{"cpu", "gpu"}},
+			}},
+		},
+	})
+
+	tomlText, err := configbind.ScaffoldTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTOML := `[run]
+# execution topology of this process
+# one of: standalone, listen, p2p
+topology = "standalone"
+# one of: websocket, webrtc
+enable = []
+
+# controller slots
+[[run.slot]]
+# one of: cpu, gpu
+kind = ""
+`
+	if tomlText != wantTOML {
+		t.Fatalf("TOML scaffold:\n--- got ---\n%s--- want ---\n%s", tomlText, wantTOML)
+	}
+	if _, err := minitoml.ParseString(tomlText); err != nil {
+		t.Fatalf("generated TOML does not parse: %v\n%s", err, tomlText)
+	}
+
+	envText, err := configbind.ScaffoldEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEnv := `# one of: websocket, webrtc
+RUN_ENABLE=""
+# execution topology of this process
+# one of: standalone, listen, p2p
+RUN_TOPOLOGY="standalone"
+`
+	if envText != wantEnv {
+		t.Fatalf("env scaffold:\n--- got ---\n%s--- want ---\n%s", envText, wantEnv)
+	}
+}

@@ -66,13 +66,23 @@ tag_outcomes_on_an_array_of_tables_element_field:
   env: reject, current
   dependon: reject, current
   falsy: reject, current
-  enum: reject, implemented with decision:dependon-value-condition
+  enum:
+    outcome: honored, checked against the value the element overlay holds
+    was: >
+      rejected with dependon and falsy under one reason, that an element has no
+      stable key. The reason held for those two and not for this one: an allowlist
+      names no key, only the value in hand, which an element field has like any
+      other scalar. The grouping came from the tag first becoming readable for
+      decision:dependon-value-condition's sake
+    state: >
+      implemented with the load-time check of rule:enum-value-validation; the
+      rejection message now names dependon and falsy only
   summary:
     outcome: honored, resolved by the element's stable path under the array key
     why: >
       it rates the key being printed rather than naming one to look up, so unlike
-      dependon, falsy, and enum it needs no stable key of its own; this is the same
-      reason secret is honored here
+      dependon and falsy it needs no stable key of its own; this is the same reason
+      secret and enum are honored here
     state: >
       implemented, and inert: an element has no default layer, so the Place half of
       rule:summary-key-omission never holds. The resolution is kept rather than
@@ -102,7 +112,8 @@ acceptance:
   - falsy on a nested struct field still fails, unchanged
   - an array-of-tables field keeps its existing rejection for all of these
   - no tag reaches generated output through a path that neither propagates nor rejects it
-  - the generation run that first reads a config enum tag also rejects it on a struct and an element field
+  - 'enum:"a,b" on a nested struct field and on an array field each fail go generate'
+  - 'enum:"a,b" on an array-of-tables element field is honored, and a bad value names the element index'
   - 'summary:"omit" on a nested struct, an array field, and an element field each reach every key they cover'
   - a summary value other than omit fails go generate
 related:

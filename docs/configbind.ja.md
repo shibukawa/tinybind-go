@@ -64,7 +64,7 @@ func WriteScaffoldTOML(w io.Writer) error
 func WriteScaffoldEnv(w io.Writer) error
 ```
 
-TOML 出力は対応 subset 内の文法を使います。どちらの形式も `default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
+TOML 出力は対応 subset 内の文法を使います。どちらの形式も `default` があればその値を、なければ型に応じた zero value を使い、`help` tag は comment になります。`enum` tag のある field には、選択肢を並べた comment 行がもう1行付きます。環境変数の雛形には `opt`、`env:"NAME"`、`env:"-"` も反映されます。
 
 `[prefix]` table 内の key は構造体の定義順に並びます。table 自体は prefix と型名の順なので、雛形の出力順が package の初期化順に左右されることはありません。環境変数の雛形は table による grouping がないため、従来どおり変数名順のままです。
 
@@ -188,7 +188,7 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"-"` | その field の環境変数入力を無効化 | `env:"-"` |
 | `help:"text"` | option の説明 metadata | `help:"HTTP listen port"` |
 | `falsy:"value"` | string、int、duration の option において「off」を意味する値 | `falsy:"off"`、`falsy:"0s"` |
-| `enum:"a,b,c"` | 受け付ける値の allowlist | `enum:"oidc_only,jwt_only"` |
+| `enum:"a,b,c"` | 受け付ける値の allowlist。載っていない値は load が失敗する | `enum:"oidc_only,jwt_only"` |
 | `dependon:"key"` | 指定 key が空の間、この field を provenance から隠す | `dependon:"webserver.tls.enabled"` |
 | `dependon:".key"` | 同上。tag を書いた構造体の中の key を指す | `dependon:".enabled"` |
 | `dependon:"key=a,b"` | 指定 key がその値のいずれかである間だけ出力する | `dependon:".mode=oidc_only,oidc_passkey"` |
@@ -198,9 +198,51 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `secret:"mask"` | 値の代わりに `*****` を出力する | `secret:"mask"` |
 | `secret:"show"` | key 名が機密に見えても値をそのまま出力する | `secret:"show"` |
 
-`falsy`、`enum`、`dependon` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。
+`falsy` と `dependon` は安定した設定 key を必要とするため、array of tables の要素 field には指定できません。要素の key は設定全体ではなく個々の要素に属するからです。`enum` は書けます。allowlist が指名するのは key ではなく手元の値であり、要素も他の field と同じように値を持っているからです。
 
 `dependon`、`secret`、`summary` は入れ子の構造体 field にも書けます。その場合は subtree 全体に効きます。`falsy` と `enum` は書けません。どちらも値を指名する tag であり、構造体には値がないためです。
+
+### 受け付ける値を限定する
+
+`enum` は、その設定が受け付ける値を列挙します。検査は値を struct に書き込む場所で走るので、tag 1つで入力元すべてを覆います。default も TOML の key も環境変数も CLI option も、同じように弾かれます。
+
+```go
+type RunConfig struct {
+	Topology string   `default:"standalone" enum:"standalone,listen,dedicated,p2p" help:"execution topology"`
+	Enable   []string `enum:"websocket,webtransport,webrtc" help:"listeners this process may open"`
+}
+```
+
+```toml
+[run]
+topology = "peer2peer"
+```
+
+```
+configbind: run.topology: "peer2peer" must be one of: standalone, listen, dedicated, p2p
+```
+
+`[]string` に付けた allowlist は、その要素を選ぶための語彙です。要素それぞれが列挙のどれかでなければならず、error は list 全体ではなく失敗した要素を名指しします。array of tables の中では要素の index が key の一部になるため、`configbind: build.target[1].kind: ...` のようにどの table が誤っていたかが分かります。
+
+どの入力元も設定していない key には検査すべき値がないので、その field は load に失敗せず zero value のままです。列挙の前後の空白は除去され、値そのものに comma は含められません。`int` と `time.Duration` は parse した値で比較するため、`1m` と `60s` は同じ1つの選択肢であり、両方を並べると重複として弾かれます。
+
+`enum` を書けるのは `string`、`int`、`time.Duration`、`[]string` です。値が2つしかない `bool` には書けません。入れ子の構造体と array of tables にも書けません。どちらも自分の値を持たないからです。
+
+次の3つは起動時ではなく generator の実行時に落ちます。
+
+- 空の選択肢、重複した選択肢、その field の型として parse できない選択肢。
+- 自分の `enum` に載っていない `default`。設定の default は、その field が受け付ける値でなければなりません。
+- 自分の `enum` に載っていない `falsy`。この typo は、`dependon` が乗っている空判定を何の症状もなく無効にしてしまいます。
+
+選択肢は、loader に弾かれるより先に読む面にも出ます。生成された scaffold と CLI の usage です。
+
+```toml
+# execution topology
+# one of: standalone, listen, dedicated, p2p
+topology = "standalone"
+```
+
+同じ `enum` tag は request binding も読み、query、path、body の field では `must be one of` の field error になります。違いは1箇所だけです。request model の `default` は列挙に載っていなくて構いません（検査を飛ばす番兵だからです）が、設定の default は載っている必要があります。
 
 ### godoc を説明の source にする
 
@@ -523,7 +565,8 @@ runServer(*server)
 選択された `SubCommand` だけが non-nil を返します。必須 position の不足、未知の
 command や option、`--help` では、生成された usage を含む
 `*configbind.UsageError` が返ります。option は position 引数の前後どちらにも
-置けます。
+置けます。`enum` tag の付いた option と position 引数は usage に選択肢を並べ、
+列挙にない値は load を失敗させます。
 
 選択と parse は同じ引数列を読みます。これは test で覚えておく価値があります。
 本番では `LoadOptions.Args` を nil のままにして両方に `os.Args[1:]` を使わせ、

@@ -179,6 +179,9 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, run runScope) error 
 	if err := checkStructFieldTags("", s.Fields); err != nil {
 		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
 	}
+	if err := checkEnumTags("", s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: %s: %w", s.TypeName, err)
+	}
 	keys := collectKeys(s.Prefix, s.Fields)
 	defaults := collectDefaults(s.Prefix, s.Fields)
 	falsy, err := collectFalsy(s.Prefix, s.Fields)
@@ -278,6 +281,9 @@ func emitType(b *bytes.Buffer, s Spec, registerName string, run runScope) error 
 		if m.Help != "" {
 			fmt.Fprintf(b, ", Help: %s", strconv.Quote(m.Help))
 		}
+		if len(m.Enum) > 0 {
+			fmt.Fprintf(b, ", Enum: %s", renderStringSlice(m.Enum))
+		}
 		switch m.Kind {
 		case cliparser.KindBool:
 			b.WriteString(", Kind: cliparser.KindBool")
@@ -341,6 +347,9 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 			}
 		}
 	}
+	if err := checkEnumTags("", s.Fields); err != nil {
+		return fmt.Errorf("configbind/codegen: subcommand %s: %w", s.Name, err)
+	}
 	flagMetas := collectFlagMetas("", s.Fields)
 	if _, err := cliparser.BuildDefs(flagMetas); err != nil {
 		return fmt.Errorf("configbind/codegen: subcommand %s: %w", s.Name, err)
@@ -377,6 +386,9 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 		if meta.Help != "" {
 			fmt.Fprintf(b, ", Help: %s", strconv.Quote(meta.Help))
 		}
+		if len(meta.Enum) > 0 {
+			fmt.Fprintf(b, ", Enum: %s", renderStringSlice(meta.Enum))
+		}
 		switch meta.Kind {
 		case cliparser.KindBool:
 			b.WriteString(", Kind: cliparser.KindBool")
@@ -393,6 +405,9 @@ func emitSubCommandType(b *bytes.Buffer, s Spec, registerName string) error {
 				strconv.Quote(positional.Key), strconv.Quote(positional.Key), positionalRoleName(positional.Field.Arg))
 			if positional.Field.Help != "" {
 				fmt.Fprintf(b, ", Help: %s", strconv.Quote(positional.Field.Help))
+			}
+			if choices := enumChoices(positional.Field.Enum); len(choices) > 0 {
+				fmt.Fprintf(b, ", Enum: %s", renderStringSlice(choices))
 			}
 			b.WriteString("},\n")
 		}
@@ -597,6 +612,9 @@ func writeScaffoldFields(b *bytes.Buffer, fields []scaffoldCodegenField) {
 		if f.Help != "" {
 			fmt.Fprintf(b, ", Help: %s", strconv.Quote(f.Help))
 		}
+		if choices := enumChoices(f.Enum); len(choices) > 0 {
+			fmt.Fprintf(b, ", Enum: %s", renderStringSlice(choices))
+		}
 		if len(scaffoldField.Nested) > 0 {
 			b.WriteString(", Nested: []configbind.ScaffoldField{\n")
 			writeScaffoldFields(b, scaffoldField.Nested)
@@ -725,18 +743,18 @@ func checkScalarOnlyTags(field Field, subject string) error {
 // checkElementFields rejects the tags an array-of-tables element field cannot
 // carry. secret is not among them: an element value needs redaction as much as
 // any other, and it is resolved by the element's path under the array key, which
-// is stable even though the element's own key carries a runtime index.
+// is stable even though the element's own key carries a runtime index. enum is
+// not among them either, for a different reason: it names no key at all, only
+// the value the element holds. checkEnumTags is where it is rated instead.
 func checkElementFields(owner string, fields []Field) error {
 	for _, field := range fields {
 		if field.Opt != "" || field.Env != "" || field.Arg != "" {
 			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no flag, env, or positional form", owner, field.GoName)
 		}
 		// An element field has no stable config key, so nothing can name it as a
-		// dependon parent and nothing can look it up to hide or fill it in. An enum
-		// is rejected for the same reason a dependon parent cannot be one: the
-		// allowlist would have no key to be checked against.
-		if field.DependsOn != "" || field.Falsy != "" || field.Enum != "" {
-			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no provenance key for dependon, falsy, or enum", owner, field.GoName)
+		// dependon parent and nothing can look it up to hide or fill it in.
+		if field.DependsOn != "" || field.Falsy != "" {
+			return fmt.Errorf("field %s.%s: fields of an array-of-tables element have no provenance key for dependon or falsy", owner, field.GoName)
 		}
 		if err := checkElementFields(owner+"."+field.GoName, field.Nested); err != nil {
 			return err
@@ -876,6 +894,9 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 		switch f.Kind {
 		case FieldString:
 			fmt.Fprintf(b, "\tif v, ok := %s.GetString(%q); ok {\n", src, full)
+			if err := emitEnumCheck(b, scope, "\t\t", full, f, "v", "v"); err != nil {
+				return err
+			}
 			fmt.Fprintf(b, "\t\t%s = v\n", access)
 			if f.Default != "" {
 				b.WriteString("\t} else {\n")
@@ -919,6 +940,9 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			b.WriteString("\t\tif err != nil {\n")
 			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
+			if err := emitEnumCheck(b, scope, "\t\t", full, f, "n", "v"); err != nil {
+				return err
+			}
 			fmt.Fprintf(b, "\t\t%s = %s(n)\n", access, spec.Name)
 			if f.Default != "" {
 				literal, err := spec.ParseLiteral(f.Default)
@@ -937,6 +961,9 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			b.WriteString("\t\tif err != nil {\n")
 			fmt.Fprintf(b, "\t\t\treturn fmt.Errorf(\"configbind: %s: %%w\"%s, err)\n", scope.diagKey(full), scope.diagArgs())
 			b.WriteString("\t\t}\n")
+			if err := emitEnumCheck(b, scope, "\t\t", full, f, "d", "v"); err != nil {
+				return err
+			}
 			fmt.Fprintf(b, "\t\t%s = d\n", access)
 			if f.Default != "" {
 				value, err := time.ParseDuration(f.Default)
@@ -951,6 +978,16 @@ func emitApplyFields(b *bytes.Buffer, scope applyScope, recv, prefix string, fie
 			}
 		case FieldStringSlice:
 			fmt.Fprintf(b, "\tif v, ok := %s.GetMulti(%q); ok {\n", src, full)
+			if len(enumChoices(f.Enum)) > 0 {
+				// An allowlist on a list is a vocabulary its elements are drawn
+				// from, so every element is matched and a rejection names the one
+				// that failed rather than the whole list.
+				b.WriteString("\t\tfor _, item := range v {\n")
+				if err := emitEnumCheck(b, scope, "\t\t\t", full, f, "item", "item"); err != nil {
+					return err
+				}
+				b.WriteString("\t\t}\n")
+			}
 			fmt.Fprintf(b, "\t\t%s = v\n", access)
 			b.WriteString("\t}\n")
 		case FieldStruct:
@@ -1187,8 +1224,8 @@ func checkDependencyValueEnum(owner, parent, value, enum string) error {
 	if enum == "" {
 		return nil
 	}
-	for _, choice := range strings.Split(enum, ",") {
-		if strings.TrimSpace(choice) == value {
+	for _, choice := range enumChoices(enum) {
+		if choice == value {
 			return nil
 		}
 	}
@@ -1232,6 +1269,16 @@ func renderDependency(condition dependency) string {
 	}
 	return fmt.Sprintf("{Key: %s, Op: %s, Values: []string{%s}}",
 		strconv.Quote(condition.Key), strconv.Quote(condition.Op), strings.Join(quoted, ", "))
+}
+
+// renderStringSlice writes a []string composite literal for a generated struct
+// field.
+func renderStringSlice(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, strconv.Quote(value))
+	}
+	return "[]string{" + strings.Join(quoted, ", ") + "}"
 }
 
 // appendParent keeps one condition per parent and operator. A leaf that repeats
@@ -1441,6 +1488,7 @@ func collectFlagMetas(prefix string, fields []Field) []cliparser.FieldMeta {
 				Opt:    f.Opt,
 				Env:    f.Env,
 				Help:   f.Help,
+				Enum:   enumChoices(f.Enum),
 			}
 			switch f.Kind {
 			case FieldBool:
