@@ -64,7 +64,7 @@ func WriteScaffoldTOML(w io.Writer) error
 func WriteScaffoldEnv(w io.Writer) error
 ```
 
-The TOML output uses the supported restricted subset. Both formats use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
+The TOML output uses the supported restricted subset. Both formats use `default` values when present, type-appropriate zero values otherwise, and comments from `help` tags. A field with an `enum` tag gains a second comment line listing its choices. The environment scaffold also respects `opt`, `env:"NAME"`, and `env:"-"`.
 
 Within a `[prefix]` table the keys follow the declaration order of the struct. The tables themselves are ordered by prefix and type name, so scaffold output never depends on package initialization order. The environment scaffold stays sorted by variable name, since it has no table grouping to hang declaration order on.
 
@@ -188,7 +188,7 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `env:"-"` | Disable environment input for this field | `env:"-"` |
 | `help:"text"` | Option-description metadata | `help:"HTTP listen port"` |
 | `falsy:"value"` | The value that means "off" for a string, int, or duration option | `falsy:"off"`, `falsy:"0s"` |
-| `enum:"a,b,c"` | Allowlist of accepted values | `enum:"oidc_only,jwt_only"` |
+| `enum:"a,b,c"` | Allowlist of accepted values; anything else fails the load | `enum:"oidc_only,jwt_only"` |
 | `dependon:"key"` | Hide this field from provenance while that key is empty | `dependon:"webserver.tls.enabled"` |
 | `dependon:".key"` | The same, naming a key inside the struct the tag is written in | `dependon:".enabled"` |
 | `dependon:"key=a,b"` | Show this field only while that key holds one of those values | `dependon:".mode=oidc_only,oidc_passkey"` |
@@ -198,9 +198,51 @@ SERVER_PORT=9000 ./myserver --server-port 10000
 | `secret:"mask"` | Print `*****` instead of the value | `secret:"mask"` |
 | `secret:"show"` | Print the value even though the key name looks sensitive | `secret:"show"` |
 
-`falsy`, `enum`, and `dependon` need a stable config key, so none is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration.
+`falsy` and `dependon` need a stable config key, so neither is allowed on a field of an array-of-tables element, whose key belongs to one element rather than the configuration. `enum` is allowed there: an allowlist names no key, only the value in hand, and an element holds one exactly as any other field does.
 
 `dependon`, `secret`, and `summary` may also sit on a nested struct field, where they cover every field of that subtree. `falsy` and `enum` may not: each names a value, and a struct has none.
+
+### Allowed values
+
+`enum` lists the values a setting accepts. The check runs where the value is applied, so one tag covers every source at once — a default, a TOML key, an environment variable, and a CLI flag are all rejected the same way:
+
+```go
+type RunConfig struct {
+	Topology string   `default:"standalone" enum:"standalone,listen,dedicated,p2p" help:"execution topology"`
+	Enable   []string `enum:"websocket,webtransport,webrtc" help:"listeners this process may open"`
+}
+```
+
+```toml
+[run]
+topology = "peer2peer"
+```
+
+```
+configbind: run.topology: "peer2peer" must be one of: standalone, listen, dedicated, p2p
+```
+
+On a `[]string` the allowlist is the vocabulary its elements are drawn from: every element has to be listed, and a rejection names the element that failed rather than the whole list. Inside an array of tables the element's index is part of the key, so `configbind: build.target[1].kind: ...` says which table was wrong.
+
+A key that no source sets has no value to check, so such a field keeps its zero value rather than failing the load. Spaces around the choices are trimmed, and a choice may not contain a comma. An `int` or `time.Duration` choice is matched on the parsed value, so `1m` and `60s` name the same choice — and listing both is rejected as a repeat.
+
+`enum` applies to `string`, `int`, `time.Duration`, and `[]string`. It is rejected on a `bool`, which already holds only two values, and on a nested struct or an array of tables, neither of which holds a value of its own.
+
+Three more mistakes are caught when you run the generator rather than at startup:
+
+- an empty choice, a repeated choice, or a choice that will not parse at the field's type;
+- a `default` outside its own `enum`, because a config default has to be a value the field accepts;
+- a `falsy` outside its own `enum`, where the typo would otherwise disable the emptiness test that `dependon` rides on without any symptom.
+
+The choices are also printed on the surfaces you read before the loader ever rejects you — the generated scaffold and the generated CLI usage:
+
+```toml
+# execution topology
+# one of: standalone, listen, dedicated, p2p
+topology = "standalone"
+```
+
+The same `enum` tag is read by request binding, where it produces a `must be one of` field error on a query, path, or body field. The two differ in one place: a request model's `default` need not be listed, because it is the sentinel a check skips, while a configuration default must be.
 
 ### Godoc as the help source
 
@@ -528,7 +570,8 @@ After running `go generate`, these forms select and fill `MigrateOptions`:
 Only the selected `SubCommand` call returns non-nil. A missing required
 argument, an unknown command or option, or `--help` returns
 `*configbind.UsageError` carrying generated usage text, and options may appear
-before or after positional arguments.
+before or after positional arguments. An option or argument with an `enum` tag
+lists its choices in that usage text, and a value outside them fails the load.
 
 Selection and parsing read the same argument list, which is worth remembering in
 tests. Leave `LoadOptions.Args` nil in production so both use `os.Args[1:]`; a

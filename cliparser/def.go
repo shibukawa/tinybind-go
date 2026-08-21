@@ -35,6 +35,10 @@ type Def struct {
 	Env string
 	// Kind selects value parsing behavior.
 	Kind Kind
+	// Enum is the allowlist this flag accepts, already split and trimmed at
+	// generation time. A usage renderer lists the choices; the value check
+	// itself lives in the generated apply code, not here.
+	Enum []string
 	// UsesOptOverride is true when names came from an opt-style override.
 	UsesOptOverride bool
 }
@@ -55,6 +59,8 @@ type FieldMeta struct {
 	Env string
 	// Kind defaults to KindString when zero value is left as KindString.
 	Kind Kind
+	// Enum is the field's allowlist, already split and trimmed, for usage text.
+	Enum []string
 }
 
 // ConfigKeyPath builds the stable config key "prefix.key".
@@ -100,6 +106,7 @@ func DefFromField(m FieldMeta) (Def, error) {
 		Help:      m.Help,
 		Env:       strings.TrimSpace(m.Env),
 		Kind:      m.Kind,
+		Enum:      m.Enum,
 	}
 	if d.Env != "" && d.Env != "-" && !validEnvName(d.Env) {
 		return Def{}, fmt.Errorf("cliparser: invalid environment variable name %q", d.Env)

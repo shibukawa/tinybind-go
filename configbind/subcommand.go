@@ -26,6 +26,9 @@ type Positional struct {
 	Name      string
 	Help      string
 	Role      PositionalRole
+	// Enum is the allowlist the argument accepts, already split and trimmed at
+	// generation time, and listed in the usage text beside Help.
+	Enum []string
 }
 
 // SubCommandDefinition describes one generated CLI-only subcommand.
@@ -300,16 +303,28 @@ func subcommandUsage(definition SubCommandDefinition) string {
 			if def.Kind != cliparser.KindBool {
 				label += " <value>"
 			}
-			fmt.Fprintf(&b, "  %-24s %s\n", label, def.Help)
+			fmt.Fprintf(&b, "  %-24s %s\n", label, withEnumNote(def.Help, def.Enum))
 		}
 	}
 	if len(definition.Positionals) > 0 {
 		b.WriteString("\nArguments:\n")
 		for _, positional := range definition.Positionals {
-			fmt.Fprintf(&b, "  %-24s %s\n", positional.Name, positional.Help)
+			fmt.Fprintf(&b, "  %-24s %s\n", positional.Name, withEnumNote(positional.Help, positional.Enum))
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// withEnumNote appends a field's allowlist to its usage text. A field with no
+// help of its own still lists its choices: they are the more useful half.
+func withEnumNote(help string, enum []string) string {
+	if len(enum) == 0 {
+		return help
+	}
+	if help == "" {
+		return enumNote(enum)
+	}
+	return help + " (" + enumNote(enum) + ")"
 }
 
 func wantsHelp(args []string) bool {

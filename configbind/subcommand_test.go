@@ -273,3 +273,42 @@ func TestEmptyArgvSelectsNoSubcommandAndLoads(t *testing.T) {
 }
 
 type emptyArgvConfig struct{ Port string }
+
+// A developer reads --help before the loader rejects them, so the choices belong
+// there too. An option with no help of its own still lists them: they are the
+// more useful half.
+func TestSubCommandUsageListsEnumChoices(t *testing.T) {
+	configbind.ResetDefinitions()
+	configbind.ResetTargets()
+	t.Cleanup(configbind.ResetDefinitions)
+	configbind.RegisterSubCommand[migrateOptions](configbind.SubCommandDefinition{
+		TypeName: "configbind_test.migrateOptions",
+		Name:     "migrate",
+		Help:     "run migrations",
+		FlagMetas: []cliparser.FieldMeta{
+			{Key: "mode", Env: "-", Help: "how far to go", Enum: []string{"dry", "apply"}},
+			{Key: "engine", Env: "-", Enum: []string{"sqlite", "postgres"}},
+		},
+		Positionals: []configbind.Positional{
+			{ConfigKey: "direction", Name: "direction", Help: "which way to migrate",
+				Role: configbind.PositionalRequired, Enum: []string{"up", "down"}},
+		},
+		Apply: func(dst any, overlay *configbind.Overlay) error { return nil },
+	})
+	useProcessArgs(t, "migrate", "--help")
+
+	_, err := configbind.Load(configbind.LoadOptions{})
+	var usageErr *configbind.UsageError
+	if !errors.As(err, &usageErr) {
+		t.Fatalf("err=%v want a UsageError", err)
+	}
+	for _, want := range []string{
+		"how far to go (one of: dry, apply)",
+		"--engine <value>         one of: sqlite, postgres",
+		"direction                which way to migrate (one of: up, down)",
+	} {
+		if !strings.Contains(usageErr.Usage, want) {
+			t.Fatalf("usage %q missing:\n%s", want, usageErr.Usage)
+		}
+	}
+}

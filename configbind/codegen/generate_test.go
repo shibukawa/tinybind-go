@@ -393,9 +393,7 @@ func TestGenerateRejectsSummaryInSubCommand(t *testing.T) {
 	}
 }
 
-// An enum tag names a value, which neither a struct nor an array element has.
-// The generator only started reading the tag for the sake of a dependon
-// condition, so its placement has to be decided rather than silently dropped.
+// An enum tag names a value, which neither a struct nor an array has of its own.
 func TestGenerateRejectsEnumOnNonLeafFields(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -415,13 +413,6 @@ func TestGenerateRejectsEnumOnNonLeafFields(t *testing.T) {
 				{GoName: "Dir", Key: "dir", Kind: FieldString},
 			}}},
 			want: "enum applies to a leaf field, not to the array of tables routes",
-		},
-		{
-			name: "array-of-tables element field",
-			fields: []Field{{GoName: "Routes", Key: "routes", Kind: FieldStructSlice, ElemType: "RouteConfig", Nested: []Field{
-				{GoName: "Dir", Key: "dir", Kind: FieldString, Enum: "a,b"},
-			}}},
-			want: "no provenance key for dependon, falsy, or enum",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -725,7 +716,7 @@ func TestGenerateRejectsDependsOnInsideTableArrayElement(t *testing.T) {
 			},
 		}},
 	}})
-	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon, falsy, or enum") {
+	if err == nil || !strings.Contains(err.Error(), "no provenance key for dependon or falsy") {
 		t.Fatalf("err=%v want an element-field rejection", err)
 	}
 }

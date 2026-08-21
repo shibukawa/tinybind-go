@@ -29,7 +29,9 @@ outputs:
   - comments derived from help tags next to keys
   - struct doc comment lines above each [prefix] table header in TOML only
   - example values derived from default tags when present
-  - optional allowed-value notes from enum tags
+  - >
+    allowed-value notes from enum tags, one comment line under the help lines, per
+    rule:enum-value-validation cli_and_scaffold
 constraints:
   - codegen performs no runtime file write
   - codegen adds no application CLI command or subcommand

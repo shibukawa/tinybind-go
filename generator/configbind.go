@@ -381,9 +381,9 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 		falsy := structTagGet(tag, "falsy")
 		secret := structTagGet(tag, "secret")
 		summary := structTagGet(tag, "summary")
-		// enum is carried for the sake of a dependon condition that names values of
-		// this field, which is the one thing configbind does with an allowlist; the
-		// load-time check of rule:enum-value-validation is still unimplemented.
+		// enum reaches codegen raw: it is split and checked there, where the choices
+		// become the generated allowlist test of rule:enum-value-validation, the
+		// scaffold comment, and the values a dependon condition is rated against.
 		enum := structTagGet(tag, "enum")
 
 		// An alias is transparent here: it must bind as the type it names, not
