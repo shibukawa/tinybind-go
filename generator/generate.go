@@ -15,6 +15,27 @@ func Generate(dir, outDir, outName string) (string, error) {
 }
 
 // Generator is a reusable, configurable code generator.
+//
+// A *Generator is safe for concurrent use over distinct directories. It holds
+// the run's options and no run state: each call derives everything it needs
+// from the directory it was handed, so generation stays a pure function of a
+// directory and scheduling cannot change what comes out. A caller generating a
+// tree of packages may therefore run its directories at once.
+//
+// Loading is what that concurrency overlaps, and LoadPackages is what removes
+// it: a caller with a set of directories to generate can type-check them
+// together and hand each generation its package through GenerateRequest.
+//
+// Two obligations stay with the caller, because only the caller can meet them.
+// A ReferenceHook or ContentHook registered in Options is called from several
+// goroutines at once, so it must be safe for concurrent use in the sense
+// ConversionWorkers describes. And the help backfill rewrites the hand-written
+// sources of the package it generates. That write is atomic, so no reader can
+// catch the file half-written, but what a reader sees still depends on whether
+// it has happened: a package binding a config type another package declares
+// reads that type's tags, and the backfill is what puts them there. Generate a
+// directory declaring config before, rather than beside, the directories that
+// import it - or turn FeatureHelpBackfill off, which removes the write.
 type Generator struct{ Options Options }
 
 // New constructs a usage-directed generator. Set GenerateAll for legacy output.
