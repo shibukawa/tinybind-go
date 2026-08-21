@@ -35,9 +35,13 @@ func newPackageLoad(dir string) *packageLoad {
 }
 
 // get type-checks the directory on first use and replays that outcome, errors
-// included, to every later phase.
+// included, to every later phase. A load seeded from a PackageSet has its
+// package already and type-checks nothing.
 func (load *packageLoad) get() (*packages.Package, error) {
 	load.once.Do(func() {
+		if load.pkg != nil {
+			return
+		}
 		load.pkg, load.err = loadPackage(load.dir)
 	})
 	return load.pkg, load.err
@@ -69,27 +73,28 @@ var packageLoadCount atomic.Int64
 // routes from several phases still parses once.
 var routeParseCount atomic.Int64
 
-// loadPackage type-checks the one Go package in dir. The mode is the union of
-// what the analysis phases need, since they share the result.
+// loadMode is the union of what the analysis phases need, since they share one
+// loaded package. NeedDeps is what makes a load expensive and what makes
+// loading several directories together worth doing: the closure it checks is
+// mostly the same closure for every directory of one project.
+const loadMode = packages.NeedName |
+	packages.NeedFiles |
+	packages.NeedCompiledGoFiles |
+	packages.NeedSyntax |
+	packages.NeedTypes |
+	packages.NeedTypesInfo |
+	packages.NeedImports |
+	packages.NeedModule |
+	packages.NeedDeps
+
+// loadPackage type-checks the one Go package in dir.
 func loadPackage(dir string) (*packages.Package, error) {
 	packageLoadCount.Add(1)
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName |
-			packages.NeedFiles |
-			packages.NeedCompiledGoFiles |
-			packages.NeedSyntax |
-			packages.NeedTypes |
-			packages.NeedTypesInfo |
-			packages.NeedImports |
-			packages.NeedModule |
-			packages.NeedDeps,
-		Dir: abs,
-	}
-	pkgs, err := packages.Load(cfg, ".")
+	pkgs, err := packages.Load(&packages.Config{Mode: loadMode, Dir: abs}, ".")
 	if err != nil {
 		return nil, fmt.Errorf("packages.Load %s: %w", abs, err)
 	}
@@ -98,19 +103,34 @@ func loadPackage(dir string) (*packages.Package, error) {
 	}
 	pkg := pkgs[0]
 	for _, candidate := range pkgs {
-		if candidate.Name != "" && !strings.HasSuffix(candidate.ID, ".test") && !strings.HasSuffix(candidate.Name, "_test") {
+		if analyzable(candidate) {
 			pkg = candidate
 			break
 		}
 	}
-	if pkg.Types == nil || pkg.TypesInfo == nil {
-		return nil, fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
-	}
-	if missing := unresolvedImports(pkg); len(missing) > 0 {
-		return nil, fmt.Errorf("cannot analyze %s: no package was found for %s, so no call site can be discovered; run go mod tidy",
-			abs, strings.Join(missing, ", "))
+	if err := checkLoadedPackage(pkg, abs); err != nil {
+		return nil, err
 	}
 	return pkg, nil
+}
+
+// analyzable reports whether a loaded root is the package to generate for
+// rather than one of the test variants go list reports beside it.
+func analyzable(pkg *packages.Package) bool {
+	return pkg.Name != "" && !strings.HasSuffix(pkg.ID, ".test") && !strings.HasSuffix(pkg.Name, "_test")
+}
+
+// checkLoadedPackage reports why a loaded package cannot be analyzed, naming
+// the directory it was asked for.
+func checkLoadedPackage(pkg *packages.Package, abs string) error {
+	if pkg.Types == nil || pkg.TypesInfo == nil {
+		return fmt.Errorf("type-check failed for %s: %v", abs, pkg.Errors)
+	}
+	if missing := unresolvedImports(pkg); len(missing) > 0 {
+		return fmt.Errorf("cannot analyze %s: no package was found for %s, so no call site can be discovered; run go mod tidy",
+			abs, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // unresolvedImports names the imports that a hand-written file asks for and

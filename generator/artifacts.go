@@ -143,8 +143,9 @@ func (g *Generator) generateArtifacts(ctx context.Context, request GenerateReque
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	// Every remaining phase reads the same type-checked package.
-	load := newPackageLoad(request.Dir)
+	// Every remaining phase reads the same type-checked package, taken from the
+	// caller's set when it covers this directory and loaded here when it does not.
+	load := request.Packages.loadFor(request.Dir)
 	binding, err := runner.bindingArtifacts(load)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate mapping: %w", err)

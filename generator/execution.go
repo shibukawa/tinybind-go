@@ -66,6 +66,18 @@ type GenerateRequest struct {
 	// can turn the option on, never off.
 	DynamoParameterAPI    bool
 	FirestoreParameterAPI bool
+
+	// Packages supplies the type-checked package for Dir out of a load the
+	// caller already performed with LoadPackages, so a caller generating many
+	// directories checks the dependencies they share once instead of once per
+	// directory. A nil set, or a set not covering Dir, loads the directory
+	// here, which is what every run did before there was a set.
+	//
+	// GenerateArtifacts and GenerateArtifactsWithRoutes read it. GeneratePackage
+	// does not, and cannot: it writes the generated templates into the directory
+	// and then type-checks the package they have joined, so the tree it analyzes
+	// is by construction not the tree any set was built from.
+	Packages *PackageSet
 }
 
 // GenerateResult records generated artifacts or check diagnostics.
