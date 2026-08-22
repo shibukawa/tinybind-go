@@ -298,3 +298,20 @@ func ParseBool(s string) (bool, error) {
 func ParseFloat64(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
+
+// ParseIntBits converts a string to a signed integer of the given width,
+// reporting a value the width cannot hold rather than truncating it. bits is
+// 0 for platform-width int.
+//
+// The generated binder calls this for every signed width beside int and
+// int64, which keep the two helpers they already had so their output does not
+// move.
+func ParseIntBits(s string, bits int) (int64, error) {
+	return strconv.ParseInt(s, 10, bits)
+}
+
+// ParseUintBits is the unsigned twin of ParseIntBits. A leading minus is an
+// error, so a negative query value cannot arrive as a large positive one.
+func ParseUintBits(s string, bits int) (uint64, error) {
+	return strconv.ParseUint(s, 10, bits)
+}

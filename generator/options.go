@@ -56,6 +56,12 @@ const (
 	FeatureItemTable Feature = "item-table"
 	// FeatureEntityCodec turns off Firestore entity codec generation entirely.
 	FeatureEntityCodec Feature = "entity-codec"
+	// FeatureCBORArrayCodec and FeatureCBORMapCodec turn off one CBOR container
+	// shape. They are two features rather than one because a project may want
+	// the evolvable shape and not the compact one, and each direction is its
+	// own pattern under them.
+	FeatureCBORArrayCodec Feature = "cbor-array-codec"
+	FeatureCBORMapCodec   Feature = "cbor-map-codec"
 	// FeatureCacheKey turns off cache key generation entirely.
 	FeatureCacheKey Feature = "cache-key"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
@@ -474,6 +480,7 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 			patterns = append(patterns, withHTTPTransportSlots(path, canonicalRuntimeCalls(path))...)
 		}
 		if len(o.RuntimePackages.Set) > 0 {
+			patterns = append(patterns, canonicalCBORBindCalls()...)
 			patterns = append(patterns, htmlupdateTransportOnlyCalls()...)
 			patterns = append(patterns, ConfigBindCall(
 				Function(configbindImportPath, "Bind"),
@@ -627,6 +634,28 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 	return patterns
 }
 
+// cborbindImportPath is the package whose entry points ask for a CBOR codec.
+const cborbindImportPath = "github.com/shibukawa/tinybind-go/cborbind"
+
+// canonicalCBORBindCalls declares the four cborbind entry points.
+//
+// There is no declaration form beside them: calling one is the ask, which is
+// what rule:usage-directed-generation already does for every other mode and
+// what requirement:cbor-codec-generation chose over a Generate verb.
+//
+// The encode entries take the type from the value argument, since T appears
+// there and the constraint resolves it; the decode entries name it as the
+// first type argument, since T appears only in the result.
+func canonicalCBORBindCalls() []CallPattern {
+	path := cborbindImportPath
+	return []CallPattern{
+		CBORArrayEncodeCall(Function(path, "AppendCBORInArrayTo"), ArgumentType("encode", 1)),
+		CBORMapEncodeCall(Function(path, "AppendCBORInMapTo"), ArgumentType("encode", 1)),
+		CBORArrayDecodeCall(Function(path, "DecodeCBORInArrayFrom"), GenericType("decode", 0)),
+		CBORMapDecodeCall(Function(path, "DecodeCBORInMapFrom"), GenericType("decode", 0)),
+	}
+}
+
 // canonicalFirestoreCalls declares the firestorebind entries discovery reads.
 //
 // The read side names its type explicitly, since T appears only in the result,
@@ -703,6 +732,14 @@ func usageForCallOperation(operation CallOperation) Usage {
 		return UsageEncodeJSON | UsageAppendMethod
 	case OperationJSONDecoderDeclare:
 		return UsageDecodeJSON | UsageDecodeMethod
+	case OperationCBORArrayEncode:
+		return UsageCBORArrayEncode
+	case OperationCBORArrayDecode:
+		return UsageCBORArrayDecode
+	case OperationCBORMapEncode:
+		return UsageCBORMapEncode
+	case OperationCBORMapDecode:
+		return UsageCBORMapDecode
 	case OperationRowsScan:
 		return UsageScanRows
 	case OperationItemEncode:
@@ -752,6 +789,10 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureDecodeJSON]
 	case OperationJSONEncode, OperationJSONEncoderDeclare:
 		return disabled[FeatureEncodeJSON]
+	case OperationCBORArrayEncode, OperationCBORArrayDecode:
+		return disabled[FeatureCBORArrayCodec]
+	case OperationCBORMapEncode, OperationCBORMapDecode:
+		return disabled[FeatureCBORMapCodec]
 	case OperationRowsScan:
 		return disabled[FeatureScanRows]
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,

@@ -5,7 +5,7 @@
 ## 自動化されること
 
 - query、JSON、form、multipart、path、header、cookie から構造体への変換
-- 文字列から `int`、`int64`、`bool`、`float64` への変換
+- 文字列から `bool`、`float64`、および全ての固定幅整数(`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`)への変換。宣言した幅に収まらない値は切り捨てではなく、フィールド名を含む 400 になります
 - `check` タグによる入力検証とデフォルト値の適用
 - 構造体から JSON レスポンスへの変換
 - バインド・検証エラーから RFC 9457 Problem Details レスポンスへの変換

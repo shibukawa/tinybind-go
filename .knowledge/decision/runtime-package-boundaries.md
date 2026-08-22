@@ -55,6 +55,20 @@ packages:
     excludes:
       - net/http
     note: requirement:html-component-api is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
+  cborbind:
+    status: implemented 2026-08-22 by requirement:cbor-codec-generation; a first version existed 2026-08-19 to 2026-08-20
+    path: github.com/shibukawa/tinybind-go/cborbind
+    owns:
+      - the four entry points of requirement:cbor-codec-generation, their shape-named interfaces, and ErrShape
+      - no spelling of the driver's codec interfaces, per rule:cbor-codec-interface-upstream
+    imports: nothing at all
+    imports_nothing_was_not_the_plan:
+      expected: the driver, as the dynamobind and firestorebind shape
+      as_built: the entry points and interfaces are spelled in byte slices, so the driver is named only by the generated code that calls it
+      consequence: a package importing cborbind alone links no CBOR implementation, which makes this the lightest runtime here rather than the third driver-dependent one
+    excludes:
+      - net/http
+      - database/sql
   dynamobind:
     status: proposed by decision:dynamobind-runtime-package
     path: github.com/shibukawa/tinybind-go/dynamobind
@@ -82,7 +96,8 @@ dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf
   - dynamobind -> system:tinygodriver-dynamodb, and firestorebind -> system:tinygodriver-firestore; the two runtimes that depend on an external driver, and the two that share no code with each other
-  - generated CBOR HTTP codecs -> system:tinygodriver-cbor, with no runtime package of their own; the cborbind runtime existed for one day, per decision:cbor-codecs-are-application-side
+  - generated CBOR HTTP codecs -> system:tinygodriver-cbor, with no runtime package of their own; requirement:cbor-http-body is a generator option rather than an imported runtime
+  - user package -> cborbind, which depends on nothing, and user package -> system:tinygodriver-cbor directly, because the generated codecs name driver types; the edge to the driver is the generated file's, not the runtime's
 forbidden:
   - jsonbind -> httpbind
   - tinygodriver -> tinybind-go, in any package, example, or test

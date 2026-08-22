@@ -258,6 +258,31 @@ func (p *Parser) Int64() (int64, error) {
 	return parseInt64(span)
 }
 
+// ErrIntegerRange is returned by generated code when a JSON integer is
+// outside the range of the field's declared width. The generated codec makes
+// the comparison, because the bound is a constant it knows at generation; this
+// is the error it has to name, and exporting one value keeps the check from
+// needing a fmt or errors import inside a generated file.
+var ErrIntegerRange = newError("json_parse", "JSON number out of range", nil)
+
+// Uint64 decodes a JSON number as uint64. null decodes as 0, and a negative
+// number is an error rather than a wrapped value.
+//
+// This is the one unsigned reader. The narrower unsigned widths are read
+// through it and range-checked by the generated codec against bounds it knows
+// at generation, which keeps eight more methods out of the runtime a TinyGo
+// target links.
+func (p *Parser) Uint64() (uint64, error) {
+	if p.IsNull() {
+		return 0, nil
+	}
+	span, err := p.numberSpan()
+	if err != nil {
+		return 0, err
+	}
+	return parseUint64(span)
+}
+
 // Float64 decodes a JSON number. null decodes as 0.
 func (p *Parser) Float64() (float64, error) {
 	if p.IsNull() {
@@ -532,6 +557,30 @@ func coerceUTF8(b []byte) []byte {
 // parseInt64 accepts exactly what encoding/json accepts for an integer field:
 // a plain decimal literal. Fractional and exponent forms such as 1.0 or 1e3
 // are rejected there too, so they are rejected here.
+// parseUint64 is parseInt64 without the sign, refusing a negative number
+// rather than wrapping it, and allocating nothing.
+func parseUint64(span []byte) (uint64, error) {
+	if len(span) == 0 {
+		return 0, newError("json_parse", "invalid JSON integer", nil)
+	}
+	if span[0] == '-' {
+		return 0, newError("json_parse", "JSON number out of range", nil)
+	}
+	var acc uint64
+	const cutoff = ^uint64(0)
+	for i := 0; i < len(span); i++ {
+		c := span[i]
+		if c < '0' || c > '9' {
+			return 0, newError("json_parse", "invalid JSON integer", nil)
+		}
+		if acc > (cutoff-uint64(c-'0'))/10 {
+			return 0, newError("json_parse", "JSON number out of range", nil)
+		}
+		acc = acc*10 + uint64(c-'0')
+	}
+	return acc, nil
+}
+
 func parseInt64(span []byte) (int64, error) {
 	i, neg := 0, false
 	if len(span) > 0 && span[0] == '-' {

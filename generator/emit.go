@@ -44,6 +44,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			return nil, err
 		}
 	}
+	if err := checkCBORBindTypes(emitted); err != nil {
+		return nil, err
+	}
 	var b bytes.Buffer
 	needRegexp := false
 	for _, t := range emitted {
@@ -131,6 +134,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			emitCodecMethods(&b, t)
 		}
 	}
+	// The CBOR codecs come after the mapping ones and register nothing, so an
+	// artifact carrying them still has no init of its own.
+	emitCBORBindCodecs(&b, emitted, types)
 	emitServerActions(&b, plan, plan.ServerActions, target)
 
 	// The read-options helper is emitted only when some binder above referenced
@@ -222,6 +228,7 @@ var mappingImports = []struct {
 	{qualifier: "jsonbind", path: jsonbindImportPath},
 	{qualifier: "sqlbind", path: sqlbindImportPath},
 	{qualifier: "cbor", path: cborImportPath},
+	{qualifier: "cborbind", path: cborbindRuntimeImportPath},
 }
 
 // writeMappingImports emits exactly the imports body references. Deriving them
@@ -347,11 +354,21 @@ func emitSQLIndexDecls(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, p
 
 func emitSQLFill(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, target, prefix string) {
 	for _, f := range t.Fields {
-		switch f.Kind {
-		case "string", "int", "int64", "bool", "float64":
+		switch {
+		case f.Kind == "string" || f.Kind == "int" || f.Kind == "int64" || f.Kind == "bool" || f.Kind == "float64":
 			fn := strings.ToUpper(f.Kind[:1]) + f.Kind[1:]
 			fmt.Fprintf(b, "%sif v, err := sqlbind.%s(row, %q); err != nil { return err } else { %s.%s = v }\n", prefix, fn, f.DB, target, f.Name)
-		case KindStruct:
+		case isSizedIntKind(f.Kind):
+			bits, unsigned, _ := intKindBits(f.Kind)
+			fn := "SignedN"
+			if unsigned {
+				fn = "UnsignedN"
+			}
+			if bits == 0 {
+				bits = 64
+			}
+			fmt.Fprintf(b, "%sif v, err := sqlbind.%s(row, %q, %d); err != nil { return err } else { %s.%s = %s }\n", prefix, fn, f.DB, bits, target, f.Name, f.Write(f.Kind+"(v)"))
+		case f.Kind == KindStruct:
 			if child, ok := types[f.TypeName]; ok {
 				emitSQLFill(b, child, types, target+"."+f.Name, prefix)
 			}
@@ -595,6 +612,8 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%sv, err := p.%s()\n", prefix, parserMethod(f.Kind))
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), f.Kind, prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+	case sizedIntCase(f.Kind):
+		sizedIntRead(b, f, prefix, dest, jsonMemberName(f))
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
@@ -660,6 +679,9 @@ func streamElemReader(f FieldPlan) (read, message string) {
 	if f.ElemKind == KindStruct {
 		return "decode" + f.TypeName + "JSON", ""
 	}
+	if isSizedIntKind(f.ElemKind) {
+		return sizedIntElemReader(f.ElemKind), "invalid " + f.ElemKind
+	}
 	return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), "invalid " + f.ElemKind
 }
 
@@ -668,10 +690,10 @@ func streamElemReader(f FieldPlan) (read, message string) {
 // did, rather than code that would not compile.
 func supportedElemKind(kind string) bool {
 	switch kind {
-	case "string", "int", "int64", "bool", "float64", KindStruct:
+	case "string", "bool", "float64", KindStruct:
 		return true
 	}
-	return false
+	return isScalarKind(kind)
 }
 
 func isDocumentField(f FieldPlan) bool {
@@ -869,6 +891,8 @@ func notZeroExpr(f FieldPlan, src string) string {
 		return src + ` != ""`
 	case "int", "int64", "float64":
 		return src + " != 0"
+	case sizedIntCase(f.Kind):
+		return src + " != 0"
 	case "bool":
 		return src
 	case KindSlice, KindMap, KindRestAny, KindRestRaw:
@@ -891,6 +915,8 @@ func zeroExpr(f FieldPlan, src string) string {
 	case "string":
 		return src + ` == ""`
 	case "int", "int64", "float64":
+		return src + " == 0"
+	case sizedIntCase(f.Kind):
 		return src + " == 0"
 	case "bool":
 		return "!" + src
@@ -971,6 +997,12 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		fmt.Fprintf(b, "%sdst = jsonbind.AppendBool(dst, %s)\n", prefix, f.Read(src))
 	case "float64":
 		fmt.Fprintf(b, "%sdst = jsonbind.AppendFloat(dst, %s)\n", prefix, f.Read(src))
+	case sizedIntCase(f.Kind):
+		if _, unsigned, _ := intKindBits(f.Kind); unsigned {
+			fmt.Fprintf(b, "%sdst = jsonbind.AppendUint(dst, uint64(%s))\n", prefix, src)
+		} else {
+			fmt.Fprintf(b, "%sdst = jsonbind.AppendInt(dst, int64(%s))\n", prefix, src)
+		}
 	case "file":
 		fmt.Fprintf(b, "%sdst = httpbind.AppendFileJSON(dst, %s)\n", prefix, src)
 	case KindStruct:
@@ -1255,6 +1287,8 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 		fmt.Fprintf(b, "%sv, err := p.%s()\n", prefix, parserMethod(f.Kind))
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid %s\", err)\n%s}\n", prefix, prefix, f.Wire, f.Kind, prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+	case sizedIntCase(f.Kind):
+		sizedIntRead(b, f, prefix, dest, f.Wire)
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
@@ -1293,6 +1327,9 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 func binderElemReader(f FieldPlan) (read, message string) {
 	if f.ElemKind == KindStruct {
 		return "decode" + f.TypeName + "JSON", ""
+	}
+	if isSizedIntKind(f.ElemKind) {
+		return sizedIntElemReader(f.ElemKind), "invalid " + f.ElemKind
 	}
 	return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), "invalid " + f.ElemKind
 }
@@ -1507,6 +1544,17 @@ func emitConvertFromStringIndented(b *bytes.Buffer, f FieldPlan, varName, locati
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseFloat64(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid float64\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
 		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
+	case sizedIntCase(f.Kind):
+		// strconv does the range check at the declared width, so an
+		// out-of-range query value is a 400 rather than a wrapped number.
+		bits, unsigned, _ := intKindBits(f.Kind)
+		fn := "ParseIntBits"
+		if unsigned {
+			fn = "ParseUintBits"
+		}
+		fmt.Fprintf(b, "%sv, err := httpbind.%s(%s, %d)\n", prefix, fn, varName, bits)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid %s\")\n%s}\n", prefix, prefix, f.Wire, location, f.Kind, prefix)
+		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write(f.Kind+"(v)"))
 	case "string":
 		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write(varName))
 	}
@@ -1546,6 +1594,8 @@ func emitValidate(b *bytes.Buffer, t TypePlan) {
 					fmt.Fprintf(b, "\t\tif out.%s < %s {\n", f.Name, int64Lit(*c.Min))
 				case "float64":
 					fmt.Fprintf(b, "\t\tif out.%s < %s {\n", f.Name, floatLit(*c.Min))
+				case sizedIntCase(f.Kind):
+					fmt.Fprintf(b, "\t\tif out.%s < %s {\n", f.Name, sizedIntLit(f.Kind, *c.Min))
 				}
 				fmt.Fprintf(b, "\t\t\tcheckFields = append(checkFields, httpbind.Field(%q, %q, %q))\n", f.Wire, loc, fmt.Sprintf("must be >= %v", numMsg(*c.Min)))
 				b.WriteString("\t\t}\n")
@@ -1558,6 +1608,8 @@ func emitValidate(b *bytes.Buffer, t TypePlan) {
 					fmt.Fprintf(b, "\t\tif out.%s > %s {\n", f.Name, int64Lit(*c.Max))
 				case "float64":
 					fmt.Fprintf(b, "\t\tif out.%s > %s {\n", f.Name, floatLit(*c.Max))
+				case sizedIntCase(f.Kind):
+					fmt.Fprintf(b, "\t\tif out.%s > %s {\n", f.Name, sizedIntLit(f.Kind, *c.Max))
 				}
 				fmt.Fprintf(b, "\t\t\tcheckFields = append(checkFields, httpbind.Field(%q, %q, %q))\n", f.Wire, loc, fmt.Sprintf("must be <= %v", numMsg(*c.Max)))
 				b.WriteString("\t\t}\n")
@@ -1662,6 +1714,76 @@ func joinComma(vals []string) string {
 		out += ", " + vals[i]
 	}
 	return out
+}
+
+// sizedIntRead writes the three statements a sized integer field decodes
+// through: the one unsigned or signed read the runtime offers, the bounds
+// check the emitter knows at generation, and the conversion to the declared
+// width. Keeping the bound here rather than in jsonbind is what stops eight
+// more parser methods from being linked into a TinyGo binary.
+func sizedIntRead(b *bytes.Buffer, f FieldPlan, prefix, dest, name string) {
+	_, unsigned, _ := intKindBits(f.Kind)
+	method := "Int64"
+	if unsigned {
+		method = "Uint64"
+	}
+	fail := func(cause string) string {
+		return fmt.Sprintf("return out, jsonbind.FieldError(%q, \"invalid %s\", %s)", name, f.Kind, cause)
+	}
+	fmt.Fprintf(b, "%sv, err := p.%s()\n", prefix, method)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, fail("err"), prefix)
+	if lo, hi, needed := intKindBounds(f.Kind); needed {
+		fmt.Fprintf(b, "%sif v < %s || v > %s {\n%s\t%s\n%s}\n", prefix, lo, hi, prefix, fail("jsonbind.ErrIntegerRange"), prefix)
+	}
+	fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write(f.Kind+"(v)"))
+}
+
+// sizedIntCase is the switch arm standing for every sized integer kind.
+//
+// A switch on the kind string cannot spell "any of eight" in one case, and
+// writing all eight into each switch below would bury the arms that actually
+// differ. This returns the kind itself when it is a sized integer, and a value
+// no kind can equal otherwise, so `case sizedIntCase(f.Kind):` reads as "and
+// the sized integers" and matches exactly then.
+func sizedIntCase(kind string) string {
+	if isSizedIntKind(kind) {
+		return kind
+	}
+	return "\x00not-a-kind"
+}
+
+// sizedIntElemReader writes the closure ParseSlice and ParseMap are handed for
+// an element whose width has no parser method of its own. The closure is the
+// per-element conversion loop rule:named-type-field-kind priced when it
+// refused a named-scalar collection; written once as a shape, it costs one
+// literal comparison per element.
+func sizedIntElemReader(kind string) string {
+	_, unsigned, _ := intKindBits(kind)
+	method := "Int64"
+	if unsigned {
+		method = "Uint64"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return 0, err }; ", kind, method)
+	if lo, hi, needed := intKindBounds(kind); needed {
+		fmt.Fprintf(&b, "if v < %s || v > %s { return 0, jsonbind.ErrIntegerRange }; ", lo, hi)
+	}
+	fmt.Fprintf(&b, "return %s(v), nil }", kind)
+	return b.String()
+}
+
+// sizedIntLit renders a min or max bound as an untyped constant, which is what
+// intLit already does and the reason a named integer field compares against it
+// without a conversion. A negative bound on an unsigned field clamps to zero
+// rather than emitting a literal the type cannot hold.
+func sizedIntLit(kind string, v float64) string {
+	if _, unsigned, _ := intKindBits(kind); unsigned {
+		if v < 0 {
+			return "0"
+		}
+		return strconv.FormatUint(uint64(v), 10)
+	}
+	return strconv.FormatInt(int64(v), 10)
 }
 
 func intLit(f float64) string {

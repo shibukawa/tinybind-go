@@ -219,6 +219,25 @@ func defaultGoLiteral(kind, val string) (string, error) {
 		}
 		return strconv.FormatFloat(n, 'g', -1, 64), nil
 	default:
+		if bits, unsigned, ok := intKindBits(kind); ok {
+			// An untyped constant, so a named integer field takes it without a
+			// conversion, which is what the int arm above already relies on.
+			if bits == 0 {
+				bits = 64
+			}
+			if unsigned {
+				n, err := strconv.ParseUint(val, 10, bits)
+				if err != nil {
+					return "", err
+				}
+				return strconv.FormatUint(n, 10), nil
+			}
+			n, err := strconv.ParseInt(val, 10, bits)
+			if err != nil {
+				return "", err
+			}
+			return strconv.FormatInt(n, 10), nil
+		}
 		return "", fmt.Errorf("unsupported kind %s", kind)
 	}
 }

@@ -29,10 +29,23 @@ const (
 	// entry already has.
 	OperationJSONEncoderDeclare CallOperation = "json_encoder_declare"
 	OperationJSONDecoderDeclare CallOperation = "json_decoder_declare"
-	OperationRowsScan           CallOperation = "rows_scan"
-	OperationItemEncode         CallOperation = "item_encode"
-	OperationItemDecode         CallOperation = "item_decode"
-	OperationItemKey            CallOperation = "item_key"
+	// The four CBOR codec operations, one per container shape and direction.
+	// The shape is in the entry point's name rather than in an argument,
+	// because discovery reads a call's symbol and its type arguments and never
+	// an argument's value; two names are two symbols and cost nothing.
+	//
+	// One operation per direction, not one per shape, so rule:generator-feature
+	// -disable can remove a direction and leave the other standing -- the same
+	// lesson the JSON declaration learned when a both-directions operation
+	// turned out not to be half-removable.
+	OperationCBORArrayEncode CallOperation = "cbor_array_encode"
+	OperationCBORArrayDecode CallOperation = "cbor_array_decode"
+	OperationCBORMapEncode   CallOperation = "cbor_map_encode"
+	OperationCBORMapDecode   CallOperation = "cbor_map_decode"
+	OperationRowsScan        CallOperation = "rows_scan"
+	OperationItemEncode      CallOperation = "item_encode"
+	OperationItemDecode      CallOperation = "item_decode"
+	OperationItemKey         CallOperation = "item_key"
 	// OperationItemEncodeDecode is a write that reads back what it replaced, and
 	// OperationItemKeyDecode a delete that does. One call needs two generated
 	// methods, and a call target carries exactly one operation, so the pair gets
@@ -242,6 +255,26 @@ func JSONEncoderDeclareCall(target CallTarget, options ...CallPatternOption) Cal
 // JSONDecoderDeclareCall declares the annotation asking for the decoder alone.
 func JSONDecoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationJSONDecoderDeclare, target, options...)
+}
+
+// CBORArrayEncodeCall declares the array-shaped CBOR encoder entry point.
+func CBORArrayEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORArrayEncode, target, options...)
+}
+
+// CBORArrayDecodeCall declares the array-shaped CBOR decoder entry point.
+func CBORArrayDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORArrayDecode, target, options...)
+}
+
+// CBORMapEncodeCall declares the map-shaped CBOR encoder entry point.
+func CBORMapEncodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORMapEncode, target, options...)
+}
+
+// CBORMapDecodeCall declares the map-shaped CBOR decoder entry point.
+func CBORMapDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationCBORMapDecode, target, options...)
 }
 
 // JSONEncodeCall declares a standalone JSON encoder wrapper.
@@ -537,6 +570,8 @@ func supportedCallOperation(operation CallOperation) bool {
 		OperationStreamCreate, OperationSocketReceive, OperationSocketSend,
 		OperationJSONDecode, OperationJSONEncode,
 		OperationJSONEncoderDeclare, OperationJSONDecoderDeclare,
+		OperationCBORArrayEncode, OperationCBORArrayDecode,
+		OperationCBORMapEncode, OperationCBORMapDecode,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
@@ -570,6 +605,10 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 	case OperationJSONEncoderDeclare:
 		return []string{"encode"}, nil
 	case OperationJSONDecoderDeclare:
+		return []string{"decode"}, nil
+	case OperationCBORArrayEncode, OperationCBORMapEncode:
+		return []string{"encode"}, nil
+	case OperationCBORArrayDecode, OperationCBORMapDecode:
 		return []string{"decode"}, nil
 	case OperationRowsScan:
 		return []string{"row"}, nil

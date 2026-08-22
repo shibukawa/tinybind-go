@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // cborImportPath is the driver's CBOR layer, the one package the emitted
@@ -104,7 +105,7 @@ func emitCBORHTTPEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 	fmt.Fprintf(b, "\tdst = cbor.AppendMapHeader(dst, %d)\n", len(members))
 	for _, f := range members {
 		fmt.Fprintf(b, "\tdst = cbor.AppendText(dst, %q)\n", jsonMemberName(f))
-		emitCBORAppendValue(b, f, "\t", "v."+f.Name)
+		emitCBORAppendValue(b, f, "\t", "v."+f.Name, "CBORHTTP")
 	}
 	b.WriteString("\treturn dst\n}\n\n")
 	_ = types
@@ -112,7 +113,7 @@ func emitCBORHTTPEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 
 // emitCBORAppendValue appends one field value to dst, mirroring
 // emitAppendValue arm for arm.
-func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
+func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src, suffix string) {
 	switch f.Kind {
 	case "string":
 		fmt.Fprintf(b, "%sdst = cbor.AppendText(dst, %s)\n", prefix, f.Read(src))
@@ -124,18 +125,24 @@ func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		fmt.Fprintf(b, "%sdst = cbor.AppendBool(dst, %s)\n", prefix, f.Read(src))
 	case "float64":
 		fmt.Fprintf(b, "%sdst = cbor.AppendFloat(dst, %s)\n", prefix, f.Read(src))
+	case sizedIntCase(f.Kind):
+		if _, unsigned, _ := intKindBits(f.Kind); unsigned {
+			fmt.Fprintf(b, "%sdst = cbor.AppendUint(dst, uint64(%s))\n", prefix, src)
+		} else {
+			fmt.Fprintf(b, "%sdst = cbor.AppendInt(dst, int64(%s))\n", prefix, src)
+		}
 	case KindStruct:
-		fmt.Fprintf(b, "%sdst = append%sCBORHTTP(dst, %s)\n", prefix, f.TypeName, src)
+		fmt.Fprintf(b, "%sdst = append%s%s(dst, %s)\n", prefix, f.TypeName, suffix, src)
 	case KindSlice:
 		fmt.Fprintf(b, "%sdst = cbor.AppendArrayHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor i := range %s {\n", prefix, src)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[i]")
+		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[i]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	case KindMap:
 		fmt.Fprintf(b, "%sdst = cbor.AppendMapHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor _, k := range jsonbind.SortedKeys(%s) {\n", prefix, src)
 		fmt.Fprintf(b, "%s\tdst = cbor.AppendText(dst, k)\n", prefix)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]")
+		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	default:
 		fmt.Fprintf(b, "%sdst = cbor.AppendNull(dst)\n", prefix)
@@ -161,7 +168,7 @@ func emitCBORHTTPDecode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 			continue
 		}
 		fmt.Fprintf(b, "\t\tcase %q:\n", jsonMemberName(f))
-		emitCBORReadValue(b, f, "\t\t\t", "out."+f.Name, cborPlainErrRet)
+		emitCBORReadValue(b, f, "\t\t\t", "out."+f.Name, "CBORHTTP", cborPlainErrRet)
 	}
 	// No named skip cases: a rest map is refused under this mode, so the
 	// default arm's Skip already consumes every member no case stores.
@@ -186,7 +193,7 @@ func cborBindErrRet(f FieldPlan, what string) string {
 }
 
 // emitCBORReadValue reads one CBOR item into dest.
-func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet cborErrRet) {
+func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest, suffix string, errRet cborErrRet) {
 	switch f.Kind {
 	case "string":
 		fmt.Fprintf(b, "%sv, err := cr.ReadText()\n", prefix)
@@ -208,8 +215,15 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sv, err := cr.ReadFloat()\n", prefix)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "float64"), prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+	case sizedIntCase(f.Kind):
+		// The driver enforces the width itself and answers ErrIntegerOverflow,
+		// so this is a direct call rather than a read plus a bounds check.
+		reader, guard, conv := cborIntReader(f.Kind)
+		fmt.Fprintf(b, "%sv, err := cr.%s()\n", prefix, reader)
+		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, guard, prefix, errRet(f, f.Kind), prefix)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write(conv))
 	case KindStruct:
-		fmt.Fprintf(b, "%sv, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sv, err := decode%s%s(cr)\n", prefix, f.TypeName, suffix)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "object"), prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindSlice:
@@ -221,7 +235,7 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sif err != nil || indef {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "array"), prefix)
 		fmt.Fprintf(b, "%sslice := make([]%s, 0, n)\n", prefix, cborElemGoType(f))
 		fmt.Fprintf(b, "%sfor j := 0; j < n; j++ {\n", prefix)
-		emitCBORReadElem(b, f, prefix+"\t", "slice = append(slice, %s)", errRet)
+		emitCBORReadElem(b, f, prefix+"\t", "slice = append(slice, %s)", suffix, errRet)
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("slice"))
 	case KindMap:
@@ -235,7 +249,7 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sfor j := 0; j < n; j++ {\n", prefix)
 		fmt.Fprintf(b, "%s\tmk, err := cr.ReadText()\n", prefix)
 		fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\t%s\n%s\t}\n", prefix, prefix, errRet(f, "map"), prefix)
-		emitCBORReadElem(b, f, prefix+"\t", "m[mk] = %s", errRet)
+		emitCBORReadElem(b, f, prefix+"\t", "m[mk] = %s", suffix, errRet)
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("m"))
 	default:
@@ -243,9 +257,27 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 	}
 }
 
+// cborIntReader names the driver reader for an integer kind, the extra guard
+// the call needs, and the expression converting what it answers to the field's
+// width.
+//
+// Every fixed width has its own reader that reports ErrIntegerOverflow, so the
+// generated code makes no comparison. Only the two platform-width kinds do,
+// because the driver has no reader for a width that is 64 here and 32 under
+// wasm; the round-trip test is what the int arm has always written.
+func cborIntReader(kind string) (reader, guard, conv string) {
+	switch kind {
+	case "int":
+		return "ReadInt", " || int64(int(v)) != v", "int(v)"
+	case "uint":
+		return "ReadUint", " || uint64(uint(v)) != v", "uint(v)"
+	}
+	return "Read" + strings.ToUpper(kind[:1]) + kind[1:], "", "v"
+}
+
 // emitCBORReadElem reads one slice or map element and stores it through the
 // assign format, which receives the element expression.
-func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string, errRet cborErrRet) {
+func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign, suffix string, errRet cborErrRet) {
 	switch f.ElemKind {
 	case "string":
 		fmt.Fprintf(b, "%sev, err := cr.ReadText()\n", prefix)
@@ -261,8 +293,15 @@ func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string
 		fmt.Fprintf(b, "%sev, err := cr.ReadBool()\n", prefix)
 	case "float64":
 		fmt.Fprintf(b, "%sev, err := cr.ReadFloat()\n", prefix)
+	case sizedIntCase(f.ElemKind):
+		reader, guard, conv := cborIntReader(f.ElemKind)
+		fmt.Fprintf(b, "%sev0, err := cr.%s()\n", prefix, reader)
+		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, strings.ReplaceAll(guard, "v", "ev0"), prefix, errRet(f, f.ElemKind), prefix)
+		fmt.Fprintf(b, "%sev := %s\n", prefix, strings.ReplaceAll(conv, "v", "ev0"))
+		fmt.Fprintf(b, prefix+assign+"\n", "ev")
+		return
 	case KindStruct:
-		fmt.Fprintf(b, "%sev, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sev, err := decode%s%s(cr)\n", prefix, f.TypeName, suffix)
 	}
 	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, f.ElemKind), prefix)
 	fmt.Fprintf(b, prefix+assign+"\n", "ev")
@@ -305,7 +344,7 @@ func emitCBORPayloadWalk(b *bytes.Buffer, t TypePlan, types map[string]TypePlan)
 		if f.NeedsPresence() {
 			fmt.Fprintf(b, "\t\t\t\tpresent%s = true\n", f.Name)
 		}
-		emitCBORReadValue(b, f, "\t\t\t\t", "out."+f.Name, cborBindErrRet)
+		emitCBORReadValue(b, f, "\t\t\t\t", "out."+f.Name, "CBORHTTP", cborBindErrRet)
 	}
 	b.WriteString("\t\t\tdefault:\n")
 	b.WriteString("\t\t\t\tif err := cr.Skip(); err != nil {\n\t\t\t\t\treturn out, httpbind.BindError(\"body\", \"payload\", \"invalid cbor body\")\n\t\t\t\t}\n")

@@ -225,6 +225,16 @@ const (
 	// asked for, since that is code size in every binary carrying the type.
 	UsageAppendMethod
 	UsageDecodeMethod
+	// The four CBOR codec bits, one per container shape and direction, set by
+	// the cborbind entry point a call site named. They stay out of UsageAll and
+	// have no generate-all rule at all: a CBOR codec is a protocol, so giving
+	// every struct in a package one would publish a wire format nobody asked
+	// for. The item and entity codecs each have a tag-driven generate-all; this
+	// has none, because there is no tag that means "this is a message".
+	UsageCBORArrayEncode
+	UsageCBORArrayDecode
+	UsageCBORMapEncode
+	UsageCBORMapDecode
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
 	// UsageJSONMethods is either published method, for a caller asking whether
 	// a type publishes any.
@@ -236,6 +246,12 @@ const (
 	// UsageEntity is every Firestore entity entry point, and stays out of
 	// UsageAll for the same reason, requiring a firestore tag instead.
 	UsageEntity = UsageEncodeEntity | UsageDecodeEntity | UsageEntityKey
+	// UsageCBORArray and UsageCBORMap are one shape's two directions, and
+	// UsageCBOR is every CBOR bit, for a caller asking whether a type has a
+	// codec of that shape at all.
+	UsageCBORArray = UsageCBORArrayEncode | UsageCBORArrayDecode
+	UsageCBORMap   = UsageCBORMapEncode | UsageCBORMapDecode
+	UsageCBOR      = UsageCBORArray | UsageCBORMap
 	// usageEmittedByMapping is every bit the mapping emitter reads. It is what
 	// decides whether a struct the walk could not map is a defect or merely a
 	// struct: the item, entity and cache-key codecs are written by their own
@@ -575,6 +591,25 @@ func resolveNamedKind(t types.Type) NamedKind {
 			kind.Kind = "bool"
 		case types.Float64:
 			kind.Kind = "float64"
+		case types.Int8:
+			kind.Kind = "int8"
+		case types.Int16:
+			kind.Kind = "int16"
+		case types.Int32:
+			// types.Int32 is also rune, whose named types are ordinary int32
+			// fields once requirement:alias-transparent-type-analysis has
+			// resolved the alias.
+			kind.Kind = "int32"
+		case types.Uint:
+			kind.Kind = "uint"
+		case types.Uint8:
+			kind.Kind = "uint8"
+		case types.Uint16:
+			kind.Kind = "uint16"
+		case types.Uint32:
+			kind.Kind = "uint32"
+		case types.Uint64:
+			kind.Kind = "uint64"
 		}
 	case *types.Struct:
 		kind.Kind = KindStruct
@@ -903,6 +938,11 @@ func propagateNestedUsage(plans []TypePlan) {
 			if u&UsageScanRows != 0 {
 				nested |= UsageScanRows
 			}
+			// A CBOR codec reaches its nested structs in the same shape and the
+			// same direction. The direction matters: an encode-only root on a
+			// wasm client would otherwise carry a decoder for every struct
+			// below it, which is the code size the narrowing exists to avoid.
+			nested |= u & UsageCBOR
 			for _, f := range plans[i].Fields {
 				if f.TypeName == "" {
 					continue
@@ -1159,10 +1199,71 @@ func namedScalarType(kind, typeName string) string {
 
 func isScalarKind(kind string) bool {
 	switch kind {
-	case "string", "int", "int64", "bool", "float64":
+	case "string", "bool", "float64":
 		return true
 	}
-	return false
+	_, _, ok := intKindBits(kind)
+	return ok
+}
+
+// intKindBits reports the width and signedness of an integer field kind.
+//
+// The kind string is the Go type name, as it already is for int, int64 and
+// float64, so a diagnostic quotes the width the author declared rather than a
+// family name they never wrote. bits is 0 for the two platform-width kinds,
+// which are 64 on a host and 32 under wasm; both are admitted, since int has
+// always been, and refusing uint alone would be an inconsistency rather than a
+// protection.
+func intKindBits(kind string) (bits int, unsigned, ok bool) {
+	switch kind {
+	case "int":
+		return 0, false, true
+	case "int8":
+		return 8, false, true
+	case "int16":
+		return 16, false, true
+	case "int32":
+		return 32, false, true
+	case "int64":
+		return 64, false, true
+	case "uint":
+		return 0, true, true
+	case "uint8":
+		return 8, true, true
+	case "uint16":
+		return 16, true, true
+	case "uint32":
+		return 32, true, true
+	case "uint64":
+		return 64, true, true
+	}
+	return 0, false, false
+}
+
+// isSizedIntKind reports an integer kind that int and int64 do not already
+// cover, which is the set every emitter reaches through a new arm rather than
+// through the one it has.
+func isSizedIntKind(kind string) bool {
+	if kind == "int" || kind == "int64" {
+		return false
+	}
+	_, _, ok := intKindBits(kind)
+	return ok
+}
+
+// intKindBounds returns the decimal bounds of a narrow integer kind, as
+// literals the emitter writes into a range check. A 64-bit or platform-width
+// kind needs none: the parse itself is what refuses an out-of-range value.
+func intKindBounds(kind string) (lo, hi string, needed bool) {
+	bits, unsigned, ok := intKindBits(kind)
+	if !ok || bits == 0 || bits == 64 {
+		return "", "", false
+	}
+	if unsigned {
+		return "0", strconv.FormatUint(uint64(1)<<bits-1, 10), true
+	}
+	half := int64(1) << (bits - 1)
+	return strconv.FormatInt(-half, 10), strconv.FormatInt(half-1, 10), true
 }
 
 func exported(name string) bool {
@@ -1187,9 +1288,13 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 
 	switch t := expr.(type) {
 	case *ast.Ident:
-		switch t.Name {
-		case "string", "int", "int64", "bool", "float64":
+		// string, bool, float64 and every fixed-width integer; the widths were
+		// added by requirement:sized-integer-field-kinds and a field kind is
+		// still spelled as the Go type name.
+		if isScalarKind(t.Name) {
 			return t.Name, "", "", true, nil
+		}
+		switch t.Name {
 		case "any", "error":
 			return "", "", "", false, nil
 		default:
@@ -1245,8 +1350,8 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 		if !eok {
 			return "", "", "", false, nil
 		}
-		switch ek {
-		case "string", "int", "int64", "bool", "float64":
+		switch {
+		case isScalarKind(ek):
 			// A named element cannot ride the bulk decoders, which answer a
 			// concrete []string or []int that Go will not assign to a slice of
 			// the named type. Converting means a loop per element kind in every
@@ -1258,7 +1363,7 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 					fieldName, et, ek, ek)
 			}
 			return KindSlice, "", ek, true, nil
-		case KindStruct:
+		case ek == KindStruct:
 			return KindSlice, et, KindStruct, true, nil
 		default:
 			return "", "", "", false, nil
@@ -1275,15 +1380,15 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 		if !eok {
 			return "", "", "", false, nil
 		}
-		switch ek {
-		case "string", "int", "int64", "bool", "float64":
+		switch {
+		case isScalarKind(ek):
 			if et != "" {
 				return "", "", "", false, fmt.Errorf(
 					"field %s: a map of %s is not supported, because the named value type would need converting from %s entry by entry; declare it as map[string]%s",
 					fieldName, et, ek, ek)
 			}
 			return KindMap, "", ek, true, nil
-		case KindStruct:
+		case ek == KindStruct:
 			return KindMap, et, KindStruct, true, nil
 		default:
 			return "", "", "", false, nil

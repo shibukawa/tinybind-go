@@ -359,6 +359,26 @@ func schemaForKind(kind string) map[string]any {
 	switch kind {
 	case "int", "int64":
 		return map[string]any{"type": "integer"}
+	case "int8", "int16", "int32", "uint", "uint8", "uint16", "uint32", "uint64":
+		// The binder enforces the declared width, so the document states it;
+		// without this the default arm below would call a uint32 a string.
+		bits, unsigned, _ := intKindBits(kind)
+		schema := map[string]any{"type": "integer"}
+		if bits > 0 && bits <= 32 {
+			schema["format"] = "int32"
+		} else {
+			schema["format"] = "int64"
+		}
+		if unsigned {
+			schema["minimum"] = 0
+			if bits > 0 && bits < 64 {
+				schema["maximum"] = uint64(1)<<bits - 1
+			}
+		} else if bits > 0 && bits < 64 {
+			schema["minimum"] = -(int64(1) << (bits - 1))
+			schema["maximum"] = int64(1)<<(bits-1) - 1
+		}
+		return schema
 	case "bool":
 		return map[string]any{"type": "boolean"}
 	case "float64":

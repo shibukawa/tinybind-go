@@ -5,7 +5,7 @@
 ## What is automated
 
 - Binding query, JSON, form, multipart, path, header, and cookie values to structs
-- Converting strings to `int`, `int64`, `bool`, and `float64`
+- Converting strings to `bool`, `float64`, and every fixed-width integer (`int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`); a value the declared width cannot hold is a 400 naming the field, never a truncated number
 - Input validation and defaults from `check` tags
 - Encoding structs as JSON responses
 - Converting binding and validation failures to RFC 9457 Problem Details
