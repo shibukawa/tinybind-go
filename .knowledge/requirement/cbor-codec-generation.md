@@ -7,11 +7,26 @@ Generate a CBOR codec for a type from an ordinary call whose name carries the co
 
 ```yaml
 priority: should
-status: proposed 2026-08-22; reopens the mechanism decision:cbor-codecs-are-application-side removed, without the application names and without a codec-declaration surface
+status: implemented 2026-08-22; reopens the mechanism decision:cbor-codecs-are-application-side removed, without the application names and without a codec-declaration surface
 review_gate: proposed
 source:
   - maintainer 2026-08-22, asking for cborbind back with JSON's ergonomics, shape-named append entry points, and no Codec noun
   - decision:dynamobind-static-dispatch, whose pointer constraint is the dispatch this copies
+as_built:
+  runtime: cborbind/cborbind.go; four constrained generics, four shape-named interfaces, and ErrShape
+  it_imports_nothing: the interfaces are spelled in byte slices, so the driver is named only by generated code; a package importing cborbind alone links no CBOR implementation, which is lighter than decision:runtime-package-boundaries had recorded for it
+  generator: generator/cborbind_emit.go, driven by a cborShape table rather than a branch per shape, so array and map differ in data
+  operations: four, one per shape and direction, with their usage bits, feature keys FeatureCBORArrayCodec and FeatureCBORMapCodec, and canonicalCBORBindCalls
+  encode_takes_the_type_from_the_argument: the value argument carries T and the constraint resolves it; the decode entries name it as the first type argument, since T appears only in the result
+  value_emitters_are_shared: emitCBORAppendValue, emitCBORReadValue and emitCBORReadElem took a codec-suffix parameter, so the HTTP mode and both shapes write field values through one implementation and cannot drift
+  nested_usage: propagateNestedUsage carries the CBOR bits down unchanged, which is what keeps a nested struct in its parent's shape and an encode-only root free of decoders at depth
+  errors: cborbind.ErrShape for a container that is not the expected shape, and the driver's own error, which carries an offset and a container path, for everything below it; a sentinel rather than a formatted message because a decoder runs per message
+  member_names_come_from_the_json_tag: the open question is closed this way, so a struct spells its wire names once and the three codecs cannot disagree
+  refusals: a rest map, a foreign-codec field and an uploaded file, each a generation error naming the field
+  tests: generator/cborbind_test.go, seven cases including a compiled round trip of both shapes, the map skipping an unknown member, the array refusing a different length, and the driver interfaces being satisfied
+  harness_was_verified: the compiled round trip was checked to fail on a deliberately broken emission, rather than trusted to be running
+  tinygo: a smoke fixture links for wasm and wasip1 under TinyGo 0.41.1 and runs under wasmtime, printing the same result as the host; a three-field message with a nested struct is six bytes
+  docs: docs/cborbind.md and its Japanese twin, linked from both READMEs
 entry_points:
   count: four generic functions in cborbind and two shape-named method pairs, no declaration verbs at all
   encode: 'AppendCBORInArrayTo[T ArrayAppender](dst []byte, v T) []byte and AppendCBORInMapTo[T MapAppender](dst []byte, v T) []byte'

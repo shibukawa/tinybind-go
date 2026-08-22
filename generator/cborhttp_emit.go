@@ -105,7 +105,7 @@ func emitCBORHTTPEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 	fmt.Fprintf(b, "\tdst = cbor.AppendMapHeader(dst, %d)\n", len(members))
 	for _, f := range members {
 		fmt.Fprintf(b, "\tdst = cbor.AppendText(dst, %q)\n", jsonMemberName(f))
-		emitCBORAppendValue(b, f, "\t", "v."+f.Name)
+		emitCBORAppendValue(b, f, "\t", "v."+f.Name, "CBORHTTP")
 	}
 	b.WriteString("\treturn dst\n}\n\n")
 	_ = types
@@ -113,7 +113,7 @@ func emitCBORHTTPEncode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 
 // emitCBORAppendValue appends one field value to dst, mirroring
 // emitAppendValue arm for arm.
-func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
+func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src, suffix string) {
 	switch f.Kind {
 	case "string":
 		fmt.Fprintf(b, "%sdst = cbor.AppendText(dst, %s)\n", prefix, f.Read(src))
@@ -132,17 +132,17 @@ func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 			fmt.Fprintf(b, "%sdst = cbor.AppendInt(dst, int64(%s))\n", prefix, src)
 		}
 	case KindStruct:
-		fmt.Fprintf(b, "%sdst = append%sCBORHTTP(dst, %s)\n", prefix, f.TypeName, src)
+		fmt.Fprintf(b, "%sdst = append%s%s(dst, %s)\n", prefix, f.TypeName, suffix, src)
 	case KindSlice:
 		fmt.Fprintf(b, "%sdst = cbor.AppendArrayHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor i := range %s {\n", prefix, src)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[i]")
+		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[i]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	case KindMap:
 		fmt.Fprintf(b, "%sdst = cbor.AppendMapHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor _, k := range jsonbind.SortedKeys(%s) {\n", prefix, src)
 		fmt.Fprintf(b, "%s\tdst = cbor.AppendText(dst, k)\n", prefix)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]")
+		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	default:
 		fmt.Fprintf(b, "%sdst = cbor.AppendNull(dst)\n", prefix)
@@ -168,7 +168,7 @@ func emitCBORHTTPDecode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 			continue
 		}
 		fmt.Fprintf(b, "\t\tcase %q:\n", jsonMemberName(f))
-		emitCBORReadValue(b, f, "\t\t\t", "out."+f.Name, cborPlainErrRet)
+		emitCBORReadValue(b, f, "\t\t\t", "out."+f.Name, "CBORHTTP", cborPlainErrRet)
 	}
 	// No named skip cases: a rest map is refused under this mode, so the
 	// default arm's Skip already consumes every member no case stores.
@@ -193,7 +193,7 @@ func cborBindErrRet(f FieldPlan, what string) string {
 }
 
 // emitCBORReadValue reads one CBOR item into dest.
-func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet cborErrRet) {
+func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest, suffix string, errRet cborErrRet) {
 	switch f.Kind {
 	case "string":
 		fmt.Fprintf(b, "%sv, err := cr.ReadText()\n", prefix)
@@ -223,7 +223,7 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, guard, prefix, errRet(f, f.Kind), prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write(conv))
 	case KindStruct:
-		fmt.Fprintf(b, "%sv, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sv, err := decode%s%s(cr)\n", prefix, f.TypeName, suffix)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "object"), prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindSlice:
@@ -235,7 +235,7 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sif err != nil || indef {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "array"), prefix)
 		fmt.Fprintf(b, "%sslice := make([]%s, 0, n)\n", prefix, cborElemGoType(f))
 		fmt.Fprintf(b, "%sfor j := 0; j < n; j++ {\n", prefix)
-		emitCBORReadElem(b, f, prefix+"\t", "slice = append(slice, %s)", errRet)
+		emitCBORReadElem(b, f, prefix+"\t", "slice = append(slice, %s)", suffix, errRet)
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("slice"))
 	case KindMap:
@@ -249,7 +249,7 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sfor j := 0; j < n; j++ {\n", prefix)
 		fmt.Fprintf(b, "%s\tmk, err := cr.ReadText()\n", prefix)
 		fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\t%s\n%s\t}\n", prefix, prefix, errRet(f, "map"), prefix)
-		emitCBORReadElem(b, f, prefix+"\t", "m[mk] = %s", errRet)
+		emitCBORReadElem(b, f, prefix+"\t", "m[mk] = %s", suffix, errRet)
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("m"))
 	default:
@@ -277,7 +277,7 @@ func cborIntReader(kind string) (reader, guard, conv string) {
 
 // emitCBORReadElem reads one slice or map element and stores it through the
 // assign format, which receives the element expression.
-func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string, errRet cborErrRet) {
+func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign, suffix string, errRet cborErrRet) {
 	switch f.ElemKind {
 	case "string":
 		fmt.Fprintf(b, "%sev, err := cr.ReadText()\n", prefix)
@@ -301,7 +301,7 @@ func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string
 		fmt.Fprintf(b, prefix+assign+"\n", "ev")
 		return
 	case KindStruct:
-		fmt.Fprintf(b, "%sev, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sev, err := decode%s%s(cr)\n", prefix, f.TypeName, suffix)
 	}
 	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, f.ElemKind), prefix)
 	fmt.Fprintf(b, prefix+assign+"\n", "ev")
@@ -344,7 +344,7 @@ func emitCBORPayloadWalk(b *bytes.Buffer, t TypePlan, types map[string]TypePlan)
 		if f.NeedsPresence() {
 			fmt.Fprintf(b, "\t\t\t\tpresent%s = true\n", f.Name)
 		}
-		emitCBORReadValue(b, f, "\t\t\t\t", "out."+f.Name, cborBindErrRet)
+		emitCBORReadValue(b, f, "\t\t\t\t", "out."+f.Name, "CBORHTTP", cborBindErrRet)
 	}
 	b.WriteString("\t\t\tdefault:\n")
 	b.WriteString("\t\t\t\tif err := cr.Skip(); err != nil {\n\t\t\t\t\treturn out, httpbind.BindError(\"body\", \"payload\", \"invalid cbor body\")\n\t\t\t\t}\n")

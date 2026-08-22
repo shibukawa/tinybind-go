@@ -225,6 +225,16 @@ const (
 	// asked for, since that is code size in every binary carrying the type.
 	UsageAppendMethod
 	UsageDecodeMethod
+	// The four CBOR codec bits, one per container shape and direction, set by
+	// the cborbind entry point a call site named. They stay out of UsageAll and
+	// have no generate-all rule at all: a CBOR codec is a protocol, so giving
+	// every struct in a package one would publish a wire format nobody asked
+	// for. The item and entity codecs each have a tag-driven generate-all; this
+	// has none, because there is no tag that means "this is a message".
+	UsageCBORArrayEncode
+	UsageCBORArrayDecode
+	UsageCBORMapEncode
+	UsageCBORMapDecode
 	UsageAll = UsageBind | UsageWrite | UsageDecodeJSON | UsageEncodeJSON
 	// UsageJSONMethods is either published method, for a caller asking whether
 	// a type publishes any.
@@ -236,6 +246,12 @@ const (
 	// UsageEntity is every Firestore entity entry point, and stays out of
 	// UsageAll for the same reason, requiring a firestore tag instead.
 	UsageEntity = UsageEncodeEntity | UsageDecodeEntity | UsageEntityKey
+	// UsageCBORArray and UsageCBORMap are one shape's two directions, and
+	// UsageCBOR is every CBOR bit, for a caller asking whether a type has a
+	// codec of that shape at all.
+	UsageCBORArray = UsageCBORArrayEncode | UsageCBORArrayDecode
+	UsageCBORMap   = UsageCBORMapEncode | UsageCBORMapDecode
+	UsageCBOR      = UsageCBORArray | UsageCBORMap
 	// usageEmittedByMapping is every bit the mapping emitter reads. It is what
 	// decides whether a struct the walk could not map is a defect or merely a
 	// struct: the item, entity and cache-key codecs are written by their own
@@ -922,6 +938,11 @@ func propagateNestedUsage(plans []TypePlan) {
 			if u&UsageScanRows != 0 {
 				nested |= UsageScanRows
 			}
+			// A CBOR codec reaches its nested structs in the same shape and the
+			// same direction. The direction matters: an encode-only root on a
+			// wasm client would otherwise carry a decoder for every struct
+			// below it, which is the code size the narrowing exists to avoid.
+			nested |= u & UsageCBOR
 			for _, f := range plans[i].Fields {
 				if f.TypeName == "" {
 					continue

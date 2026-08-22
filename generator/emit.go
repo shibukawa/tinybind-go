@@ -44,6 +44,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			return nil, err
 		}
 	}
+	if err := checkCBORBindTypes(emitted); err != nil {
+		return nil, err
+	}
 	var b bytes.Buffer
 	needRegexp := false
 	for _, t := range emitted {
@@ -131,6 +134,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 			emitCodecMethods(&b, t)
 		}
 	}
+	// The CBOR codecs come after the mapping ones and register nothing, so an
+	// artifact carrying them still has no init of its own.
+	emitCBORBindCodecs(&b, emitted, types)
 	emitServerActions(&b, plan, plan.ServerActions, target)
 
 	// The read-options helper is emitted only when some binder above referenced
@@ -222,6 +228,7 @@ var mappingImports = []struct {
 	{qualifier: "jsonbind", path: jsonbindImportPath},
 	{qualifier: "sqlbind", path: sqlbindImportPath},
 	{qualifier: "cbor", path: cborImportPath},
+	{qualifier: "cborbind", path: cborbindRuntimeImportPath},
 }
 
 // writeMappingImports emits exactly the imports body references. Deriving them
