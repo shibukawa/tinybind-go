@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // cborImportPath is the driver's CBOR layer, the one package the emitted
@@ -124,6 +125,12 @@ func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		fmt.Fprintf(b, "%sdst = cbor.AppendBool(dst, %s)\n", prefix, f.Read(src))
 	case "float64":
 		fmt.Fprintf(b, "%sdst = cbor.AppendFloat(dst, %s)\n", prefix, f.Read(src))
+	case sizedIntCase(f.Kind):
+		if _, unsigned, _ := intKindBits(f.Kind); unsigned {
+			fmt.Fprintf(b, "%sdst = cbor.AppendUint(dst, uint64(%s))\n", prefix, src)
+		} else {
+			fmt.Fprintf(b, "%sdst = cbor.AppendInt(dst, int64(%s))\n", prefix, src)
+		}
 	case KindStruct:
 		fmt.Fprintf(b, "%sdst = append%sCBORHTTP(dst, %s)\n", prefix, f.TypeName, src)
 	case KindSlice:
@@ -208,6 +215,13 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 		fmt.Fprintf(b, "%sv, err := cr.ReadFloat()\n", prefix)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "float64"), prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+	case sizedIntCase(f.Kind):
+		// The driver enforces the width itself and answers ErrIntegerOverflow,
+		// so this is a direct call rather than a read plus a bounds check.
+		reader, guard, conv := cborIntReader(f.Kind)
+		fmt.Fprintf(b, "%sv, err := cr.%s()\n", prefix, reader)
+		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, guard, prefix, errRet(f, f.Kind), prefix)
+		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write(conv))
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "object"), prefix)
@@ -243,6 +257,24 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest string, errRet
 	}
 }
 
+// cborIntReader names the driver reader for an integer kind, the extra guard
+// the call needs, and the expression converting what it answers to the field's
+// width.
+//
+// Every fixed width has its own reader that reports ErrIntegerOverflow, so the
+// generated code makes no comparison. Only the two platform-width kinds do,
+// because the driver has no reader for a width that is 64 here and 32 under
+// wasm; the round-trip test is what the int arm has always written.
+func cborIntReader(kind string) (reader, guard, conv string) {
+	switch kind {
+	case "int":
+		return "ReadInt", " || int64(int(v)) != v", "int(v)"
+	case "uint":
+		return "ReadUint", " || uint64(uint(v)) != v", "uint(v)"
+	}
+	return "Read" + strings.ToUpper(kind[:1]) + kind[1:], "", "v"
+}
+
 // emitCBORReadElem reads one slice or map element and stores it through the
 // assign format, which receives the element expression.
 func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string, errRet cborErrRet) {
@@ -261,6 +293,13 @@ func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign string
 		fmt.Fprintf(b, "%sev, err := cr.ReadBool()\n", prefix)
 	case "float64":
 		fmt.Fprintf(b, "%sev, err := cr.ReadFloat()\n", prefix)
+	case sizedIntCase(f.ElemKind):
+		reader, guard, conv := cborIntReader(f.ElemKind)
+		fmt.Fprintf(b, "%sev0, err := cr.%s()\n", prefix, reader)
+		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, strings.ReplaceAll(guard, "v", "ev0"), prefix, errRet(f, f.ElemKind), prefix)
+		fmt.Fprintf(b, "%sev := %s\n", prefix, strings.ReplaceAll(conv, "v", "ev0"))
+		fmt.Fprintf(b, prefix+assign+"\n", "ev")
+		return
 	case KindStruct:
 		fmt.Fprintf(b, "%sev, err := decode%sCBORHTTP(cr)\n", prefix, f.TypeName)
 	}

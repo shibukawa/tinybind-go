@@ -52,7 +52,10 @@ related:
   - rule:usage-directed-generation
   - rule:same-package-convention
   - requirement:typed-server-action
+answered_2026_08_22:
+  question: whether a slice or map of a named scalar is worth the conversion loops, which is the one shape this refuses rather than maps
+  answer: requirement:sized-integer-field-kinds pays for the same loop as an emitted element-reader closure, written once as a shape rather than once per element kind, so the cost that justified this refusal is already being paid there
+  status: proposed to lift with that change; the refusal stands until it lands
 open_questions:
-  - whether a slice or map of a named scalar is worth the conversion loops, which is the one shape this refuses rather than maps
   - whether a named type whose underlying is a named type of another package should follow requirement:json-codec-interface instead
 ```

@@ -119,6 +119,71 @@ func Int64(row Row, column string) (int64, error) {
 	}
 	return strconv.ParseInt(text(v), 10, 64)
 }
+
+// Uint64 scans a column as uint64, refusing a negative value rather than
+// wrapping it into a large positive one.
+//
+// This is the one unsigned scanner. The narrower widths are read through it
+// and range-checked by the generated code against bounds it knows at
+// generation, which is what [jsonbind.Parser.Uint64] does on the document
+// side and keeps four more scanners out of the runtime.
+func Uint64(row Row, column string) (uint64, error) {
+	v, err := value(row, column)
+	if err != nil || v == nil {
+		return 0, err
+	}
+	switch n := v.(type) {
+	case uint64:
+		return n, nil
+	case int64:
+		if n < 0 {
+			return 0, fmt.Errorf("sqlbind: column %q: %d is negative", column, n)
+		}
+		return uint64(n), nil
+	case int:
+		if n < 0 {
+			return 0, fmt.Errorf("sqlbind: column %q: %d is negative", column, n)
+		}
+		return uint64(n), nil
+	case float64:
+		if n < 0 {
+			return 0, fmt.Errorf("sqlbind: column %q: %v is negative", column, n)
+		}
+		return uint64(n), nil
+	}
+	return strconv.ParseUint(text(v), 10, 64)
+}
+
+// SignedN scans a column as a signed integer of the given width, reporting a
+// value the width cannot hold rather than truncating it. It is what generated
+// code calls for int8, int16 and int32; int and int64 keep [Int] and [Int64].
+func SignedN(row Row, column string, bits int) (int64, error) {
+	n, err := Int64(row, column)
+	if err != nil {
+		return 0, err
+	}
+	if bits < 64 {
+		lo, hi := int64(-1)<<(bits-1), int64(1)<<(bits-1)-1
+		if n < lo || n > hi {
+			return 0, fmt.Errorf("sqlbind: column %q: %d does not fit in int%d", column, n, bits)
+		}
+	}
+	return n, nil
+}
+
+// UnsignedN is the [SignedN] twin. Passing 64 checks nothing beyond what
+// [Uint64] already refuses, which is a negative value.
+func UnsignedN(row Row, column string, bits int) (uint64, error) {
+	n, err := Uint64(row, column)
+	if err != nil {
+		return 0, err
+	}
+	if bits < 64 && n > uint64(1)<<bits-1 {
+		return 0, fmt.Errorf("sqlbind: column %q: %d does not fit in uint%d", column, n, bits)
+	}
+	return n, nil
+}
+
 func Bool(row Row, column string) (bool, error) {
 	v, e := value(row, column)
 	if e != nil || v == nil {

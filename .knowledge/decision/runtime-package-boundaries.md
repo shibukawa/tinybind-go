@@ -55,6 +55,18 @@ packages:
     excludes:
       - net/http
     note: requirement:html-component-api is HTTP-independent, so the HTML runtime stays a transport-neutral leaf
+  cborbind:
+    status: proposed again by requirement:cbor-codec-generation; existed 2026-08-19 to 2026-08-20
+    path: github.com/shibukawa/tinybind-go/cborbind
+    owns:
+      - the generation declarations of requirement:cbor-codec-generation, and nothing else
+      - no codec interface; the driver's are the contract, per rule:cbor-codec-interface-upstream
+    imports:
+      - github.com/shibukawa/tinygodriver/encoding/cbor
+    excludes:
+      - net/http
+      - database/sql
+    note: importing the driver is the dynamobind and firestorebind shape, not an exception; what may not import it is a shared transport runtime every project links, which is why the codecs of requirement:cbor-http-body call it from generated code and httpbind gains only driver-free helpers
   dynamobind:
     status: proposed by decision:dynamobind-runtime-package
     path: github.com/shibukawa/tinybind-go/dynamobind
@@ -82,7 +94,8 @@ dependency_direction:
   - httpbind -> jsonbind
   - sqlbind remains independent unless it needs a transport-neutral leaf
   - dynamobind -> system:tinygodriver-dynamodb, and firestorebind -> system:tinygodriver-firestore; the two runtimes that depend on an external driver, and the two that share no code with each other
-  - generated CBOR HTTP codecs -> system:tinygodriver-cbor, with no runtime package of their own; the cborbind runtime existed for one day, per decision:cbor-codecs-are-application-side
+  - generated CBOR HTTP codecs -> system:tinygodriver-cbor, with no runtime package of their own; requirement:cbor-http-body is a generator option rather than an imported runtime
+  - user package -> cborbind -> system:tinygodriver-cbor once requirement:cbor-codec-generation is built, and user package -> the driver directly, because generated code names driver types; the cborbind runtime existed for one day before decision:cbor-codecs-are-application-side, and returns without the application presets
 forbidden:
   - jsonbind -> httpbind
   - tinygodriver -> tinybind-go, in any package, example, or test
