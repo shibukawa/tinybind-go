@@ -21,7 +21,7 @@ kinds_admitted:
   signed: int8, int16, int32, int64, int
   unsigned: uint8, uint16, uint32, uint64, uint
   already_there: int and int64
-  aliases: byte and rune resolve to uint8 and int32 through requirement:alias-transparent-type-analysis
+  aliases: 'WRONG as recorded, corrected 2026-08-24 by requirement:byte-and-rune-field-kinds: byte and rune are predeclared alternative names rather than the *types.Alias node requirement:alias-transparent-type-analysis unwraps, so nothing resolved them and both spellings stayed refused until that change
   named_types: a named type over any of them takes that kind and converts at every site, unchanged from rule:named-type-field-kind
 platform_width_is_admitted_not_refused:
   what: int and uint are 64 bits on a host and 32 under wasm
@@ -79,6 +79,7 @@ other_modes:
 collections_are_admitted:
   decided: 2026-08-22, by the maintainer
   what: a slice or a map whose element is a sized integer is generated, not refused
+  one_exception_since: 'a slice or array of uint8 is a blob rather than a list of numbers, per decision:byte-slices-are-base64; a map of uint8 is unaffected, since its values are single bytes
   json_mechanism: jsonbind ParseSlice and ParseMap are already generic over the element, so the only obstacle is streamElemReader handing them a method expression; for a width with no one-to-one parser method the emitter writes a closure literal instead, which reads Uint64 or Int64, checks the width's bounds and converts
   the_closure_is_where_the_range_check_lives: per element, with the bound emitted as a literal, so generated code needs no math import
   cbor_mechanism: the driver has ReadUint32 and its siblings returning the exact width already, so an element reader is a direct call and the slice case is cheaper here than in JSON
@@ -89,6 +90,7 @@ and_this_answers_the_named_scalar_slice:
   standing_refusal: rule:named-type-field-kind collections_are_refused rejects a slice of a named scalar because the bulk decoder answers a concrete []string that Go will not assign to a slice of the named type, and it costs a conversion loop per element kind
   what_changed: the emitted closure is that conversion loop, written once as a shape rather than once per element kind, so the cost that justified the refusal is the cost this requirement is already paying
   recommendation: lift that refusal in the same change; it is the open question the rule itself records
+  outcome: lifted 2026-08-24 in its own change, on exactly this mechanism
   not_folded_in_silently: it changes a shipped refusal into generated code, so it is called out here rather than assumed
 uint64_above_the_float64_range_is_allowed:
   decided: 2026-08-22, by the maintainer
@@ -126,6 +128,7 @@ related:
   - rule:usage-directed-generation
   - decision:configbind-supported-types
   - requirement:tinygo-wasm
-open_questions:
-  - whether lifting rule:named-type-field-kind collections_are_refused rides in this change or follows it, which is scope rather than design
+answered_2026_08_24:
+  question: whether lifting rule:named-type-field-kind collections_are_refused rides in this change or follows it
+  answer: it followed, two days later, when the maintainer reported the asymmetry as a defect; the element-reader closure this requirement built took the named type as a parameter and nothing else had to be invented
 ```

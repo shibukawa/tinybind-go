@@ -88,7 +88,11 @@ The commonly supported combinations are:
 - `int64`
 - `bool`
 - `float64`
+- `byte` and `rune`, which are the `uint8` and `int32` they name
+- Named types over any scalar, as fields and as collection elements
 - Slices of those scalar types
+- Fixed-length arrays such as `[4]int` and `[2]Address`
+- `[]byte` and `[N]byte`, as base64
 - Nested structs
 - Slices of structs
 - Scalar maps such as `map[string]string`
@@ -117,6 +121,74 @@ func use(r io.Reader, w io.Writer) error {
 }
 ```
 
+### Fixed-length arrays
+
+A `[N]T` field is filled in place rather than replaced, so the two ends of the
+declared length are not symmetric:
+
+- **A shorter array fills what arrived and leaves the rest at the zero value.**
+  The length is the Go type's statement, and a document does not have to restate
+  it. `{"cells": [7]}` into a `[4]int` gives `[7 0 0 0]`.
+- **A longer array is an error.** Keeping the first `N` elements would drop the
+  tail, which is exactly the silent data loss a declared length exists to
+  prevent. The error names the member and reports `jsonbind.ErrArrayTooLong` as
+  its cause; over HTTP it is a 400.
+
+A `null` member leaves the field untouched, as it does for a slice, and a member
+that arrives twice decodes to the second array rather than to the two overlaid.
+
+Encoding needs no such rules: `[4]int{1, 2, 0, 0}` writes `[1,2,0,0]`, the full
+length every time, since an array has no nil form to collapse.
+
+One thing a slice allows is refused rather than silently mishandled: `omitzero`
+on an array of structs, because a Go array is comparable only when its element
+type is.
+
+### Named types
+
+A named type over a scalar is that scalar on the wire, which is what
+`encoding/json` does with one, and the codec converts in both directions:
+
+```go
+type UserID string
+type Level  uint16
+
+type Session struct {
+	Owner  UserID           `json:"owner"`   // "ada"
+	Guests []UserID         `json:"guests"`  // ["ada","grace"]
+	Ranks  map[string]Level `json:"ranks"`   // {"ada":3}
+	Slots  [3]Level         `json:"slots"`   // [1,2,0]
+}
+```
+
+Collections of one work the same way; the declared type survives the round trip,
+so `Guests` comes back a `[]UserID` rather than a `[]string`. A named type over
+a slice or a map — `type Tags []string` — is a different thing and is still
+refused: only the element may carry a name.
+
+### Byte slices
+
+A `[]byte` or `[N]byte` field is a base64 string, the way `encoding/json` and
+`encoding/json/v2` write one. `[]uint8` is the same Go type, so it is the same
+string. A `map[string]byte` is not a sequence and stays a map of numbers, and a
+lone `byte` or `rune` field is a number.
+
+```go
+type Attachment struct {
+	Body []byte  `json:"body"`  // "3q2+7w=="
+	Tag  [4]byte `json:"tag"`   // "AQIDBA=="
+}
+```
+
+A fixed-length blob follows the array rules above, counted in bytes: fewer bytes
+than the length leave the rest zero, and more is an error naming the member.
+Under CBOR both spellings are a byte string rather than an array of one-byte
+integers, which is a byte of overhead instead of one per element.
+
+Two things differ from `encoding/json` here, and both are deliberate — see the
+next section. Over HTTP a byte field can also arrive from a query, path, header
+or cookie; see [httpbind](httpbind.md).
+
 Without an explicit wire name, a field becomes lower camel case. `DecodeJSON` ignores fields tagged for the HTTP-only `query`, `path`, `header`, and `cookie` sources; `EncodeJSON` does not make that distinction and emits struct fields as it finds them. A JSON-only model is therefore clearest when it carries nothing but standard `json` names.
 
 ### Tag options
@@ -134,7 +206,7 @@ An option the codec does not recognise is a generation error, not a tag that qui
 
 The codec reads a document in a single forward pass and writes one by appending
 to a buffer, so it never builds an intermediate map and never reflects over your
-structs. Four consequences are worth knowing before you diff output against
+structs. Five consequences are worth knowing before you diff output against
 `encoding/json`:
 
 - **Members come out in struct field order**, not sorted by name. Map-typed
@@ -147,11 +219,16 @@ structs. Four consequences are worth knowing before you diff output against
   occurrence and never looks at the earlier ones, so a wrongly typed duplicate
   passes silently. Here every occurrence is decoded as it arrives, and a bad one
   reports a field error.
-- **A nil slice is written as `[]`, a nil map as `{}`.** `encoding/json` writes
-  `null` for both, which hands the client a distinction the Go type never drew:
-  nothing separates "no items" from "an empty list" on the Go side, so nothing
-  should separate them on the wire. `encoding/json/v2` writes the empty array
-  and the empty object, and so does this codec.
+- **A nil slice is written as `[]`, a nil map as `{}`, a nil `[]byte` as `""`.**
+  `encoding/json` writes `null` for all three, which hands the client a
+  distinction the Go type never drew: nothing separates "no items" from "an
+  empty list" on the Go side, so nothing should separate them on the wire.
+  `encoding/json/v2` writes the empty array and the empty object, and so does
+  this codec.
+- **A `[N]byte` is base64, not a list of numbers.** `encoding/json` applies its
+  base64 rule to a byte slice only, and will not read a string back into a byte
+  array. A fixed-length blob — a hash, a tag, a UUID — is exactly the case
+  base64 is wanted for, so both spellings are treated alike here.
 
 String escaping and number formatting match `encoding/json` byte for byte,
 including the HTML escaping of `<`, `>` and `&` that makes output safe to embed

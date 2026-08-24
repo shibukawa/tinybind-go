@@ -294,3 +294,19 @@ func TestRegisteredBinderAndWriterRoundTrip(t *testing.T) {
 		t.Errorf("body = %q, want %q", ctx.Response.Body(), want)
 	}
 }
+
+// ParseBytes is one of the value-source helpers the generated binder calls
+// under the httpbind qualifier, so the two runtimes have to answer alike or a
+// fasthttp build binds a blob differently from a net/http one.
+func TestParseBytesParity(t *testing.T) {
+	for _, s := range []string{"", "AQID", "AQIDBA==", "-_8", "not base64!!"} {
+		mine, myErr := httpbind.ParseBytes(s)
+		theirs, theirErr := fasthttpbind.ParseBytes(s)
+		if (myErr == nil) != (theirErr == nil) {
+			t.Fatalf("%q: net/http err %v, fasthttp err %v", s, myErr, theirErr)
+		}
+		if !bytes.Equal(mine, theirs) {
+			t.Fatalf("%q: net/http %v, fasthttp %v", s, mine, theirs)
+		}
+	}
+}

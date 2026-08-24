@@ -1,5 +1,7 @@
 package jsonbind
 
+import "errors"
+
 // Error describes a transport-neutral JSON mapping failure.
 type Error struct {
 	Code    string
@@ -45,3 +47,11 @@ func AsError(err error) (*Error, bool) {
 	}
 	return nil, false
 }
+
+// ErrArrayTooLong reports a JSON array carrying more elements than the
+// fixed-length Go array it decodes into can hold.
+//
+// It is the cause of the [Error] ParseArray returns, so a caller that wants to
+// tell a too-long array from a malformed one asks errors.Is rather than
+// matching the message.
+var ErrArrayTooLong = errors.New("jsonbind: too many array elements")

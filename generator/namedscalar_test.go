@@ -117,31 +117,20 @@ func analyzeNamedScalar(t *testing.T, body string) error {
 	return err
 }
 
-// A named element cannot ride the bulk decoders, which answer a concrete
-// []string that Go will not assign to a slice of the named type. It is refused
-// rather than emitted wrong, which is what it was before: the same shape used
-// to produce a call to a codec nothing defined.
-func TestNamedScalarSliceIsRefused(t *testing.T) {
-	err := analyzeNamedScalar(t, "type Req struct {\n\tTags []UserID `json:\"tags\"`\n}")
-	if err == nil {
-		t.Fatal("want an error")
-	}
-	for _, want := range []string{"Tags", "UserID", "element by element", "[]string"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q missing %q", err, want)
-		}
+// A named element used to be refused: the bulk decoders answer a concrete
+// []string that Go will not assign to a slice of the named type, and converting
+// meant a loop per element kind. requirement:sized-integer-field-kinds pays for
+// that loop already, as an emitted element-reader closure, so the cost that
+// justified the refusal was one already being paid.
+func TestNamedScalarSliceIsGenerated(t *testing.T) {
+	if err := analyzeNamedScalar(t, "type Req struct {\n\tTags []UserID `json:\"tags\"`\n}"); err != nil {
+		t.Fatalf("a slice of a named scalar was refused: %v", err)
 	}
 }
 
-func TestNamedScalarMapValueIsRefused(t *testing.T) {
-	err := analyzeNamedScalar(t, "type Req struct {\n\tByName map[string]Count `json:\"byName\"`\n}")
-	if err == nil {
-		t.Fatal("want an error")
-	}
-	for _, want := range []string{"ByName", "Count", "entry by entry", "map[string]int"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q missing %q", err, want)
-		}
+func TestNamedScalarMapValueIsGenerated(t *testing.T) {
+	if err := analyzeNamedScalar(t, "type Req struct {\n\tByName map[string]Count `json:\"byName\"`\n}"); err != nil {
+		t.Fatalf("a map of a named scalar was refused: %v", err)
 	}
 }
 

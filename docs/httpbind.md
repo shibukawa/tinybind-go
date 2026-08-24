@@ -5,7 +5,7 @@
 ## What is automated
 
 - Binding query, JSON, form, multipart, path, header, and cookie values to structs
-- Converting strings to `bool`, `float64`, and every fixed-width integer (`int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`); a value the declared width cannot hold is a 400 naming the field, never a truncated number
+- Converting strings to `bool`, `float64`, and every fixed-width integer (`int`, `int8`, `int16`, `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, plus `byte` and `rune`); a value the declared width cannot hold is a 400 naming the field, never a truncated number
 - Input validation and defaults from `check` tags
 - Encoding structs as JSON responses
 - Converting binding and validation failures to RFC 9457 Problem Details
@@ -134,7 +134,9 @@ An untagged field uses the `input` source. Without an explicit wire name, the fi
 | `cookie:"session"` | cookie | Session identifiers |
 | `method:"method"` | HTTP method | `GET`, `POST`, and so on |
 
-For scalar `input` fields, binding checks the query first and reads the body only when the query value is absent. Nested structs, slices, and maps always come from the body. Reach for explicit `query` and `payload` tags as soon as an ambiguous source would be a bug rather than a convenience.
+For scalar `input` fields, binding checks the query first and reads the body only when the query value is absent. Nested structs, slices, fixed-length arrays, and maps always come from the body. A byte field is the exception among composites: it has a spelling outside a document, so `query`, `path`, `header`, and `cookie` all carry one as base64. Untagged, it stays body-only — a blob's home is the body, and reading one off a URL is asked for by name.
+
+A value source accepts either base64 alphabet, padded or not, because a value that travelled through a URL may have been written either way; a standard-alphabet `+` has to be percent-encoded as `%2B` or it arrives as a space and the value is a 400. In a body a byte field is base64 under JSON and a byte string under CBOR. A `[N]byte` follows the fixed-length array rules counted in bytes, whichever source it came from. A `[N]T` field is filled in place: fewer elements than the length leave the rest at the zero value, and more than the length is a 400 naming the field rather than a body silently trimmed to fit. Reach for explicit `query` and `payload` tags as soon as an ambiguous source would be a bug rather than a convenience.
 
 ```go
 type SearchRequest struct {

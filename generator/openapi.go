@@ -385,6 +385,10 @@ func schemaForKind(kind string) map[string]any {
 		return map[string]any{"type": "number"}
 	case "file":
 		return map[string]any{"type": "string", "format": "binary"}
+	case KindBytes:
+		// The OpenAPI spelling of a base64 string, which is what the codec
+		// writes for a byte slice.
+		return map[string]any{"type": "string", "format": "byte"}
 	case KindRestAny, KindRestRaw:
 		// Rest maps are also expressed as additionalProperties on the parent object
 		// when present; this schema is used if the field appears as a property.

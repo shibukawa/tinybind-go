@@ -3,6 +3,7 @@ package jsonbind
 import (
 	"errors"
 	"io"
+	"strconv"
 	"sync/atomic"
 )
 
@@ -357,6 +358,59 @@ func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, 
 		}
 		out = append(out, v)
 	}
+}
+
+// ParseArray decodes a JSON array field into a fixed-length destination, which
+// the caller passes as a slice over its array: ParseArray(p, "cells", msg,
+// out.Cells[:], read).
+//
+// The two ends of a fixed length are not symmetric. A short array fills what
+// arrived and leaves the rest at the zero value, because a length the Go type
+// states is not a length the document has to restate. A long one is an error:
+// storing the first len(dst) elements would drop the tail, and a decoder that
+// silently loses data is the failure a declared length exists to prevent.
+//
+// The tail is zeroed rather than left alone, so a member that arrives twice
+// decodes to the second array rather than to the two overlaid.
+//
+// A JSON null leaves the destination untouched, as [ParseSlice] does. Errors
+// are annotated the same way as ParseSlice; a too-long array reports
+// [ErrArrayTooLong] as its cause.
+func ParseArray[T any](p *Parser, field, message string, dst []T, read func(*Parser) (T, error)) error {
+	null, err := p.ArrayStart()
+	if err != nil {
+		return FieldError(field, "invalid array", err)
+	}
+	if null {
+		return nil
+	}
+	filled := 0
+	for i := 0; ; i++ {
+		more, err := p.ArrayNext(i)
+		if err != nil {
+			return FieldError(field, "invalid array", err)
+		}
+		if !more {
+			break
+		}
+		if i >= len(dst) {
+			return FieldError(field, "expected at most "+strconv.Itoa(len(dst))+" elements", ErrArrayTooLong)
+		}
+		v, err := read(p)
+		if err != nil {
+			if message == "" {
+				return err
+			}
+			return FieldError(field, message, err)
+		}
+		dst[i] = v
+		filled = i + 1
+	}
+	var zero T
+	for i := filled; i < len(dst); i++ {
+		dst[i] = zero
+	}
+	return nil
 }
 
 // ParseMap decodes a JSON object field, reading each member value with read.

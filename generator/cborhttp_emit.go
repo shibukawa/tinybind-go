@@ -133,16 +133,23 @@ func emitCBORAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src, suffix strin
 		}
 	case KindStruct:
 		fmt.Fprintf(b, "%sdst = append%s%s(dst, %s)\n", prefix, f.TypeName, suffix, src)
-	case KindSlice:
+	case KindBytes:
+		// A byte string, not an array of one-byte integers: it is the form CBOR
+		// has for binary, and it is the shorter of the two by a byte an element.
+		fmt.Fprintf(b, "%sdst = cbor.AppendBytes(dst, %s)\n", prefix, f.BytesRead(src))
+	case KindSlice, KindArray:
+		// A fixed-length array shares this arm: len and range read one exactly
+		// as they read a slice, so the header count and the walk are the same
+		// two lines. Only the decode direction has to tell the kinds apart.
 		fmt.Fprintf(b, "%sdst = cbor.AppendArrayHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor i := range %s {\n", prefix, src)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[i]", suffix)
+		emitCBORAppendValue(b, f.ElemPlan(), prefix+"\t", src+"[i]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	case KindMap:
 		fmt.Fprintf(b, "%sdst = cbor.AppendMapHeader(dst, len(%s))\n", prefix, src)
 		fmt.Fprintf(b, "%sfor _, k := range jsonbind.SortedKeys(%s) {\n", prefix, src)
 		fmt.Fprintf(b, "%s\tdst = cbor.AppendText(dst, k)\n", prefix)
-		emitCBORAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]", suffix)
+		emitCBORAppendValue(b, f.ElemPlan(), prefix+"\t", src+"[k]", suffix)
 		fmt.Fprintf(b, "%s}\n", prefix)
 	default:
 		fmt.Fprintf(b, "%sdst = cbor.AppendNull(dst)\n", prefix)
@@ -186,9 +193,26 @@ func emitCBORHTTPDecode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 // the JSON path.
 type cborErrRet func(f FieldPlan, what string) string
 
-func cborPlainErrRet(FieldPlan, string) string { return "return out, err" }
+// cborArrayOverflow is the what a fixed-length array field reports when the
+// incoming array carries more elements than it can hold.
+//
+// It travels as a what rather than as a second error function because the two
+// shapes need different values from the same call site: the plain shape has no
+// err in scope at the point the count is compared, so it names the driver's
+// limit error instead of handing one up.
+const cborArrayOverflow = "too many array elements"
+
+func cborPlainErrRet(_ FieldPlan, what string) string {
+	if what == cborArrayOverflow {
+		return "return out, cbor.ErrLimitExceeded"
+	}
+	return "return out, err"
+}
 
 func cborBindErrRet(f FieldPlan, what string) string {
+	if what == cborArrayOverflow {
+		return fmt.Sprintf("return out, httpbind.BindError(%q, \"payload\", %q)", f.Wire, cborArrayOverflow)
+	}
 	return fmt.Sprintf("return out, httpbind.BindError(%q, \"payload\", %q)", f.Wire, "invalid "+what)
 }
 
@@ -238,6 +262,38 @@ func emitCBORReadValue(b *bytes.Buffer, f FieldPlan, prefix, dest, suffix string
 		emitCBORReadElem(b, f, prefix+"\t", "slice = append(slice, %s)", suffix, errRet)
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("slice"))
+	case KindArray:
+		if !supportedElemKind(f.ElemKind) {
+			fmt.Fprintf(b, "%sif err := cr.Skip(); err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "value"), prefix)
+			return
+		}
+		fmt.Fprintf(b, "%sn, indef, err := cr.ReadArrayHeader()\n", prefix)
+		fmt.Fprintf(b, "%sif err != nil || indef {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "array"), prefix)
+		// A shorter array is filled as far as it goes, because the length is
+		// the type's statement and the document need not restate it. A longer
+		// one is refused: keeping the first len() elements would drop the tail,
+		// which is the silent loss a declared length exists to prevent.
+		fmt.Fprintf(b, "%sif n > len(%s) {\n%s\t%s\n%s}\n", prefix, dest, prefix, errRet(f, cborArrayOverflow), prefix)
+		// Reset before filling, so a member arriving twice decodes to the
+		// second array rather than to the two overlaid.
+		fmt.Fprintf(b, "%s%s = %s{}\n", prefix, dest, f.GoType())
+		fmt.Fprintf(b, "%sfor j := 0; j < n; j++ {\n", prefix)
+		emitCBORReadElem(b, f, prefix+"\t", dest+"[j] = %s", suffix, errRet)
+		fmt.Fprintf(b, "%s}\n", prefix)
+	case KindBytes:
+		fmt.Fprintf(b, "%sv, err := cr.ReadBytes()\n", prefix)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "bytes"), prefix)
+		if f.IsFixedBytes() {
+			fmt.Fprintf(b, "%sif len(v) > len(%s) {\n%s\t%s\n%s}\n", prefix, dest, prefix, errRet(f, cborArrayOverflow), prefix)
+			fmt.Fprintf(b, "%s%s = %s{}\n", prefix, dest, f.GoType())
+			fmt.Fprintf(b, "%scopy(%s[:], v)\n", prefix, dest)
+			return
+		}
+		// ReadBytes borrows the body buffer rather than copying it, so a field
+		// keeping the slice would alias input the caller is free to reuse. The
+		// copy is what the JSON half pays anyway, since a base64 decode
+		// allocates its result.
+		fmt.Fprintf(b, "%s%s = append([]byte(nil), v...)\n", prefix, dest)
 	case KindMap:
 		if !supportedElemKind(f.ElemKind) {
 			fmt.Fprintf(b, "%sif err := cr.Skip(); err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "value"), prefix)
@@ -285,7 +341,7 @@ func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign, suffi
 		fmt.Fprintf(b, "%sev64, err := cr.ReadInt()\n", prefix)
 		fmt.Fprintf(b, "%sif err != nil || int64(int(ev64)) != ev64 {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, "int"), prefix)
 		fmt.Fprintf(b, "%sev := int(ev64)\n", prefix)
-		fmt.Fprintf(b, prefix+assign+"\n", "ev")
+		fmt.Fprintf(b, prefix+assign+"\n", f.ElemPlan().Write("ev"))
 		return
 	case "int64":
 		fmt.Fprintf(b, "%sev, err := cr.ReadInt()\n", prefix)
@@ -298,22 +354,17 @@ func emitCBORReadElem(b *bytes.Buffer, f FieldPlan, prefix string, assign, suffi
 		fmt.Fprintf(b, "%sev0, err := cr.%s()\n", prefix, reader)
 		fmt.Fprintf(b, "%sif err != nil%s {\n%s\t%s\n%s}\n", prefix, strings.ReplaceAll(guard, "v", "ev0"), prefix, errRet(f, f.ElemKind), prefix)
 		fmt.Fprintf(b, "%sev := %s\n", prefix, strings.ReplaceAll(conv, "v", "ev0"))
-		fmt.Fprintf(b, prefix+assign+"\n", "ev")
+		fmt.Fprintf(b, prefix+assign+"\n", f.ElemPlan().Write("ev"))
 		return
 	case KindStruct:
 		fmt.Fprintf(b, "%sev, err := decode%s%s(cr)\n", prefix, f.TypeName, suffix)
 	}
 	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, errRet(f, f.ElemKind), prefix)
-	fmt.Fprintf(b, prefix+assign+"\n", "ev")
+	fmt.Fprintf(b, prefix+assign+"\n", f.ElemPlan().Write("ev"))
 }
 
 // cborElemGoType is the Go element type a decoded slice or map is made of.
-func cborElemGoType(f FieldPlan) string {
-	if f.ElemKind == KindStruct {
-		return f.TypeName
-	}
-	return f.ElemKind
-}
+func cborElemGoType(f FieldPlan) string { return f.ElemGoType() }
 
 // emitCBORPayloadWalk writes the binder's CBOR arm: one pass over the body
 // map that fills payload fields and their presence flags, before the JSON and

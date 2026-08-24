@@ -5,7 +5,7 @@
 ## 自動化されること
 
 - query、JSON、form、multipart、path、header、cookie から構造体への変換
-- 文字列から `bool`、`float64`、および全ての固定幅整数(`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`)への変換。宣言した幅に収まらない値は切り捨てではなく、フィールド名を含む 400 になります
+- 文字列から `bool`、`float64`、および全ての固定幅整数(`int`、`int8`、`int16`、`int32`、`int64`、`uint`、`uint8`、`uint16`、`uint32`、`uint64`、および `byte`、`rune`)への変換。宣言した幅に収まらない値は切り捨てではなく、フィールド名を含む 400 になります
 - `check` タグによる入力検証とデフォルト値の適用
 - 構造体から JSON レスポンスへの変換
 - バインド・検証エラーから RFC 9457 Problem Details レスポンスへの変換
@@ -134,7 +134,9 @@ curl 'http://localhost:8080/hello?name=Ada'
 | `cookie:"session"` | cookie | セッション ID など |
 | `method:"method"` | HTTP method | `GET`、`POST` などを文字列で受ける |
 
-`input` のスカラー値は query を先に調べ、存在しないときだけ body を読みます。ネストした構造体、slice、map は常に body から読みます。入力元の曖昧さが利便性ではなくバグになりうるなら、その時点で `query` と `payload` を明示してください。
+`input` のスカラー値は query を先に調べ、存在しないときだけ body を読みます。ネストした構造体、slice、固定長配列、map は常に body から読みます。バイト列だけは例外です。ドキュメントの外にも綴りがあるので、`query`、`path`、`header`、`cookie` のいずれからも base64 として受け取れます。タグを付けなければ body のみのままです。blob の居場所は body であって、URL から読むのは名指しで頼むことだからです。
+
+値ソースは、どちらの base64 アルファベットでも、パディングの有無も問わず受け付けます。URL を通ってきた値がどちらの書き方をされているか分からないためです。標準アルファベットの `+` は `%2B` に percent-encode しないと空白になって届き、400 になります。body では JSON なら base64、CBOR なら byte string です。`[N]byte` はどのソースから来てもバイト単位で固定長配列の規則に従います。`[N]T` のフィールドはその場を埋めます。要素が長さに足りなければ残りはゼロ値のまま、長さを超えていれば body を黙って切り詰めるのではなく、フィールド名を含む 400 になります。入力元の曖昧さが利便性ではなくバグになりうるなら、その時点で `query` と `payload` を明示してください。
 
 ```go
 type SearchRequest struct {

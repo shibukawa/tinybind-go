@@ -34,12 +34,16 @@ conversion:
   write: the decoded value converted to the declared type, for every assigning path
   sites: the encoder, the document decoder, and every binder source — query, form, path, header and method
   untyped_constants_need_none: a default tag emits a literal, and an untyped constant assigns to a named type as it stands
-collections_are_refused:
-  what: a slice or map whose element is a named scalar is a generation error
-  why: the bulk decoders answer a concrete []string or map[string]int, which Go will not assign to a slice or map of the named type
-  cost_of_supporting: a conversion loop per element kind in every decoding path, which is roughly the size of the rest of this again
-  not_a_regression: the same shape produced a call to a codec nothing defined before this, so the change is from broken output to a diagnostic
-  the_diagnostic_says_the_fix: declare it as the underlying element type
+collections_are_generated:
+  lifted: 2026-08-24, by the maintainer, who reported the asymmetry as a defect
+  the_asymmetry_that_made_it_one: a bare Mark field generated and a []Mark field did not, so an author who wrote the working shape learned nothing about why the other failed
+  what: 'a slice, a fixed-length array or a map whose element is a named scalar takes the element''s declared type at both ends'
+  mechanism: the emitted element-reader closure returns the declared type, so ParseSlice, ParseArray and ParseMap infer it and answer a collection Go will assign
+  the_cost_was_already_paid: requirement:sized-integer-field-kinds emits exactly that closure for a width with no parser method of its own, so the conversion loop this used to refuse is one the generator already writes
+  written_once_as_a_shape: 'one closure emitter serves every element kind, rather than the loop per kind the refusal was avoiding'
+  cbor_needed_only_the_element_type: the driver reader already answers the exact width, so the collection is made of the declared type and each element converts on the way in
+  previously: 'a generation error naming the field, the element type and the fix; before that, a call to a codec nothing defined'
+  named_byte_element_is_not_a_blob: '[]Mark over byte is not []byte, so decision:byte-slices-are-base64 does not reach it and it stays a list of numbers
 compatibility:
   bytes: a project whose fields are all written as predeclared types emits identical output, since both conversions are the identity there
   evidence: every golden fixture and both page trees pass unchanged
@@ -48,6 +52,8 @@ verification:
   wire_form: a round trip proves a named scalar appears as its underlying kind rather than merely compiling
   both_were_checked_against_a_wrong_expectation_first: so they fail when they should
 related:
+  - requirement:sized-integer-field-kinds
+  - decision:byte-slices-are-base64
   - concept:standalone-json-codec
   - rule:usage-directed-generation
   - rule:same-package-convention
@@ -55,7 +61,7 @@ related:
 answered_2026_08_22:
   question: whether a slice or map of a named scalar is worth the conversion loops, which is the one shape this refuses rather than maps
   answer: requirement:sized-integer-field-kinds pays for the same loop as an emitted element-reader closure, written once as a shape rather than once per element kind, so the cost that justified this refusal is already being paid there
-  status: proposed to lift with that change; the refusal stands until it lands
+  status: lifted 2026-08-24, two days later; see collections_are_generated above
 open_questions:
   - whether a named type whose underlying is a named type of another package should follow requirement:json-codec-interface instead
 ```

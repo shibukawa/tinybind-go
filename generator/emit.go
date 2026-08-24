@@ -630,6 +630,12 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		if supportedElemKind(f.ElemKind) {
 			emitStreamSlice(b, f, prefix, dest)
 		}
+	case KindArray:
+		if supportedElemKind(f.ElemKind) {
+			emitStreamArray(b, f, prefix, dest, jsonMemberName(f))
+		}
+	case KindBytes:
+		emitStreamBytes(b, f, prefix, dest, jsonMemberName(f))
 	case KindMap:
 		if supportedElemKind(f.ElemKind) {
 			emitStreamMap(b, f, prefix, dest)
@@ -665,6 +671,33 @@ func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
 }
 
+// emitStreamArray fills a fixed-length array field in place. The destination is
+// handed over as a slice of itself, so one runtime helper serves both the codec
+// and the binder and neither carries a length of its own.
+//
+// A short array leaves the tail at the zero value and a long one is an error:
+// the length is the type's statement, and quietly dropping what does not fit
+// would lose data the document carried.
+func emitStreamArray(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) {
+	read, message := streamElemReader(f)
+	fmt.Fprintf(b, "%sif err := jsonbind.ParseArray(p, %q, %q, %s[:], %s); err != nil {\n%s\treturn out, err\n%s}\n",
+		prefix, member, message, dest, read, prefix, prefix)
+}
+
+// emitStreamBytes reads a base64 member. A fixed-length destination is filled
+// in place under the KindArray contract; a slice is replaced, and a null member
+// leaves whatever was bound earlier alone.
+func emitStreamBytes(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) {
+	if f.IsFixedBytes() {
+		fmt.Fprintf(b, "%sif err := jsonbind.ParseBase64Into(p, %q, %s[:]); err != nil {\n%s\treturn out, err\n%s}\n",
+			prefix, member, dest, prefix, prefix)
+		return
+	}
+	fmt.Fprintf(b, "%sv, err := jsonbind.ParseBase64(p, %q)\n", prefix, member)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
+	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
+}
+
 func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 	read, message := streamElemReader(f)
 	fmt.Fprintf(b, "%sv, err := jsonbind.ParseMap(p, %q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
@@ -679,10 +712,40 @@ func streamElemReader(f FieldPlan) (read, message string) {
 	if f.ElemKind == KindStruct {
 		return "decode" + f.TypeName + "JSON", ""
 	}
-	if isSizedIntKind(f.ElemKind) {
-		return sizedIntElemReader(f.ElemKind), "invalid " + f.ElemKind
+	message = "invalid " + f.ElemKind
+	switch {
+	case isSizedIntKind(f.ElemKind):
+		return sizedIntElemReader(f.ElemKind, f.ElemNamed), message
+	case f.ElemNamed != "":
+		// A named element cannot ride the bulk decoder's method expression:
+		// ParseSlice would answer a concrete []int, which Go will not assign to
+		// a slice of the named type. The closure is the conversion loop that
+		// refusal was avoiding, written once as a shape rather than once per
+		// element kind -- the same shape a sized element already needed.
+		return namedElemReader(f.ElemKind, f.ElemNamed), message
+	default:
+		return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), message
 	}
-	return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), "invalid " + f.ElemKind
+}
+
+// namedElemReader wraps a parser method so the bulk decoder answers a slice or
+// map of the declared type rather than of the kind underneath it.
+func namedElemReader(kind, named string) string {
+	return fmt.Sprintf("func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return %s, err }; return %s(v), nil }",
+		named, parserMethod(kind), zeroLiteralForKind(kind), named)
+}
+
+// zeroLiteralForKind is the untyped zero an element reader returns on failure,
+// which assigns to the named type without naming it.
+func zeroLiteralForKind(kind string) string {
+	switch kind {
+	case "string":
+		return `""`
+	case "bool":
+		return "false"
+	default:
+		return "0"
+	}
 }
 
 // supportedElemKind reports the slice and map element kinds the planner can
@@ -874,7 +937,7 @@ func notEmptyExpr(f FieldPlan, src string) string {
 	switch f.Kind {
 	case "string":
 		return src + ` != ""`
-	case KindSlice, KindMap:
+	case KindSlice, KindArray, KindBytes, KindMap:
 		return "len(" + src + ") > 0"
 	default:
 		return ""
@@ -897,6 +960,10 @@ func notZeroExpr(f FieldPlan, src string) string {
 		return src
 	case KindSlice, KindMap, KindRestAny, KindRestRaw:
 		return src + " != nil"
+	case KindArray:
+		return arrayZeroExpr(f, src, " != ")
+	case KindBytes:
+		return bytesZeroExpr(f, src, " != ", "nil")
 	case KindStruct:
 		return "!isZero" + f.TypeName + "(" + src + ")"
 	case "file":
@@ -922,6 +989,10 @@ func zeroExpr(f FieldPlan, src string) string {
 		return "!" + src
 	case KindSlice, KindMap, KindRestAny, KindRestRaw:
 		return src + " == nil"
+	case KindArray:
+		return arrayZeroExpr(f, src, " == ")
+	case KindBytes:
+		return bytesZeroExpr(f, src, " == ", "nil")
 	case KindStruct:
 		return "isZero" + f.TypeName + "(" + src + ")"
 	case "file":
@@ -931,6 +1002,33 @@ func zeroExpr(f FieldPlan, src string) string {
 	default:
 		return ""
 	}
+}
+
+// arrayZeroExpr compares a fixed-length array against its zero value, which is
+// what omitzero asks of every other comparable kind.
+//
+// A struct element answers nothing: a Go array is comparable only when its
+// element is, and a struct in this plan may hold a slice or a map. Spelling the
+// field as an omitzero field is refused outright by the planner; reaching here
+// means the array only sits inside a struct someone else asked about, and the
+// convention there is the one a foreign field already follows -- the member is
+// left out of the conjunction rather than made uncompilable.
+func arrayZeroExpr(f FieldPlan, src, op string) string {
+	if f.ElemKind == KindStruct {
+		return ""
+	}
+	return src + op + f.GoType() + "{}"
+}
+
+// bytesZeroExpr compares a byte field against its zero value. The two
+// spellings differ: a slice has nil and a fixed-length array does not, and an
+// array of bytes is always comparable, so unlike arrayZeroExpr this one always
+// has an answer.
+func bytesZeroExpr(f FieldPlan, src, op, nilLiteral string) string {
+	if f.IsFixedBytes() {
+		return src + op + f.GoType() + "{}"
+	}
+	return src + op + nilLiteral
 }
 
 // zeroCheckedTypes names the struct types that need an isZero helper: the ones
@@ -1012,16 +1110,22 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		// to name. Appending into the same destination is what lets this
 		// compose at any depth for free.
 		fmt.Fprintf(b, "%sdst = %s.AppendJSONTo(dst)\n", prefix, src)
-	case KindSlice:
+	case KindBytes:
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendBase64(dst, %s)\n", prefix, f.BytesRead(src))
+	case KindSlice, KindArray:
 		// A nil slice encodes as [], the way encoding/json/v2 writes one.
 		// encoding/json wrote null, which asked a client to tell "no items"
 		// apart from "an empty list" along a line the Go type never drew.
 		// The nil case needs nothing of its own: ranging over a nil slice
 		// yields nothing, so the brackets come out empty by themselves.
+		//
+		// A fixed-length array shares this arm unchanged: len and range read an
+		// array exactly as they read a slice, and encoding is the one direction
+		// where the two kinds have nothing to disagree about.
 		fmt.Fprintf(b, "%sdst = append(dst, '[')\n", prefix)
 		fmt.Fprintf(b, "%sfor i := range %s {\n", prefix, src)
 		fmt.Fprintf(b, "%s\tif i > 0 {\n%s\t\tdst = append(dst, ',')\n%s\t}\n", prefix, prefix, prefix)
-		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t\t", src+"[i]")
+		emitAppendValue(b, f.ElemPlan(), prefix+"\t\t", src+"[i]")
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%sdst = append(dst, ']')\n", prefix)
 	case KindMap:
@@ -1032,7 +1136,7 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		fmt.Fprintf(b, "%s\tif i > 0 {\n%s\t\tdst = append(dst, ',')\n%s\t}\n", prefix, prefix, prefix)
 		fmt.Fprintf(b, "%s\tdst = jsonbind.AppendString(dst, k)\n", prefix)
 		fmt.Fprintf(b, "%s\tdst = append(dst, ':')\n", prefix)
-		emitAppendValue(b, FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName}, prefix+"\t", src+"[k]")
+		emitAppendValue(b, f.ElemPlan(), prefix+"\t", src+"[k]")
 		fmt.Fprintf(b, "%s}\n", prefix)
 		fmt.Fprintf(b, "%sdst = append(dst, '}')\n", prefix)
 	default:
@@ -1181,7 +1285,7 @@ func binderNeedsOwnedBody(t TypePlan, types map[string]TypePlan) bool {
 		if f.Kind == KindForeign {
 			return true
 		}
-		if (f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindMap) && f.TypeName != "" {
+		if (f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindMap) && f.TypeName != "" {
 			return typeHasForeign(f.TypeName)
 		}
 		return false
@@ -1309,6 +1413,14 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 		fmt.Fprintf(b, "%sv, err := jsonbind.ParseSlice(p, %q, %q, %s)\n", prefix, f.Wire, message, read)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+	case KindArray:
+		if !supportedElemKind(f.ElemKind) {
+			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
+			return
+		}
+		emitStreamArray(b, f, prefix, dest, f.Wire)
+	case KindBytes:
+		emitStreamBytes(b, f, prefix, dest, f.Wire)
 	case KindMap:
 		if !supportedElemKind(f.ElemKind) {
 			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
@@ -1323,16 +1435,11 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 	}
 }
 
-// binderElemReader is streamElemReader under the binder's wire naming.
-func binderElemReader(f FieldPlan) (read, message string) {
-	if f.ElemKind == KindStruct {
-		return "decode" + f.TypeName + "JSON", ""
-	}
-	if isSizedIntKind(f.ElemKind) {
-		return sizedIntElemReader(f.ElemKind), "invalid " + f.ElemKind
-	}
-	return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), "invalid " + f.ElemKind
-}
+// binderElemReader is streamElemReader under the binder's wire naming. The two
+// walks differ in the member name they report, which their callers supply, and
+// in nothing the reader itself decides -- so this delegates rather than
+// repeating a body that has to stay identical.
+func binderElemReader(f FieldPlan) (read, message string) { return streamElemReader(f) }
 
 // emitBinderRestDefault writes the walk's default arm: collected into the rest
 // map when the model declares one, consumed otherwise. Exclusion needs no
@@ -1461,7 +1568,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			if track {
 				fmt.Fprintf(b, "\tif out.%s != \"\" {\n\t\tpresent%s = true\n\t}\n", f.Name, f.Name)
 			}
-		} else if !f.IsComposite() && f.Kind != "file" {
+		} else if f.BindsFromString() && f.Kind != "file" {
 			fmt.Fprintf(b, "\tif pv := httpbind.PathValue(r, %q); pv != \"\" {\n", f.Wire)
 			if track {
 				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
@@ -1475,7 +1582,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			if track {
 				fmt.Fprintf(b, "\tif out.%s != \"\" {\n\t\tpresent%s = true\n\t}\n", f.Name, f.Name)
 			}
-		} else if !f.IsComposite() && f.Kind != "file" {
+		} else if f.BindsFromString() && f.Kind != "file" {
 			fmt.Fprintf(b, "\tif hv := httpbind.HeaderValue(r, %q); hv != \"\" {\n", f.Wire)
 			if track {
 				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
@@ -1484,7 +1591,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			b.WriteString("\t}\n")
 		}
 	case SourceCookie:
-		if !f.IsComposite() {
+		if f.BindsFromString() {
 			fmt.Fprintf(b, "\tif cv, ok := httpbind.CookieValue(r, %q); ok {\n", f.Wire)
 			if track {
 				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
@@ -1500,7 +1607,7 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			}
 		}
 	case SourceQuery:
-		if !f.IsComposite() {
+		if f.BindsFromString() {
 			fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryLookup(queryVals, %q); ok {\n", f.Wire)
 			if track {
 				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
@@ -1544,6 +1651,19 @@ func emitConvertFromStringIndented(b *bytes.Buffer, f FieldPlan, varName, locati
 		fmt.Fprintf(b, "%sv, err := httpbind.ParseFloat64(%s)\n", prefix, varName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid float64\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
 		fmt.Fprintf(b, "%sout.%s = %s\n", prefix, f.Name, f.Write("v"))
+	case KindBytes:
+		fmt.Fprintf(b, "%sv, err := httpbind.ParseBytes(%s)\n", prefix, varName)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid base64\")\n%s}\n", prefix, prefix, f.Wire, location, prefix)
+		if !f.IsFixedBytes() {
+			fmt.Fprintf(b, "%sout.%s = v\n", prefix, f.Name)
+			return
+		}
+		// The same two ends a fixed-length blob has in a document, counted in
+		// bytes: what arrived is kept, the rest is zero, and one byte too many
+		// is refused rather than dropped.
+		fmt.Fprintf(b, "%sif len(v) > len(out.%s) {\n%s\treturn out, httpbind.BindError(%q, %q, \"too many bytes\")\n%s}\n", prefix, f.Name, prefix, f.Wire, location, prefix)
+		fmt.Fprintf(b, "%sout.%s = %s{}\n", prefix, f.Name, f.GoType())
+		fmt.Fprintf(b, "%scopy(out.%s[:], v)\n", prefix, f.Name)
 	case sizedIntCase(f.Kind):
 		// strconv does the range check at the declared width, so an
 		// out-of-range query value is a 400 rather than a wrapped number.
@@ -1757,18 +1877,25 @@ func sizedIntCase(kind string) string {
 // per-element conversion loop rule:named-type-field-kind priced when it
 // refused a named-scalar collection; written once as a shape, it costs one
 // literal comparison per element.
-func sizedIntElemReader(kind string) string {
+// named is the element's declared type when it has one, which the closure
+// returns instead of the width. The bounds stay untyped literals, so the range
+// check reads the same either way.
+func sizedIntElemReader(kind, named string) string {
 	_, unsigned, _ := intKindBits(kind)
 	method := "Int64"
 	if unsigned {
 		method = "Uint64"
 	}
+	typ := kind
+	if named != "" {
+		typ = named
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return 0, err }; ", kind, method)
+	fmt.Fprintf(&b, "func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return 0, err }; ", typ, method)
 	if lo, hi, needed := intKindBounds(kind); needed {
 		fmt.Fprintf(&b, "if v < %s || v > %s { return 0, jsonbind.ErrIntegerRange }; ", lo, hi)
 	}
-	fmt.Fprintf(&b, "return %s(v), nil }", kind)
+	fmt.Fprintf(&b, "return %s(v), nil }", typ)
 	return b.String()
 }
 

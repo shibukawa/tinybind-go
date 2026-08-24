@@ -102,9 +102,21 @@ declaration order.
 ## Field types
 
 `string`, `bool`, `float64`, every fixed-width integer (`int8` through
-`uint64`, plus `int` and `uint`), a nested struct, a slice of those, and a
+`uint64`, plus `int` and `uint`, and `byte` and `rune` as the widths they name),
+a nested struct, a slice of those, a fixed-length array of those, and a
 `map[string]…`. A named type over any of them works and converts in both
 directions.
+
+A byte sequence — `[]byte`, `[]uint8` or `[N]byte` — is a CBOR byte string
+rather than an array of one-byte integers: it says binary on the wire, and it
+costs one byte of header instead of one byte an element. The JSON codecs write
+the same field as base64, so the two agree about what the field is.
+
+A `[N]T` field is filled in place: a shorter CBOR array fills what arrived and
+leaves the rest at the zero value, and a longer one is `cbor.ErrLimitExceeded`
+rather than a quietly truncated read. The wire encoding is a plain CBOR array of
+exactly `N` items, so a peer holding a slice reads it and a peer holding an
+array of a different length does not.
 
 Anything else is a generation error naming the type and the field. A
 `payload:"*"` rest map, a field carrying its own JSON codec and no CBOR one,

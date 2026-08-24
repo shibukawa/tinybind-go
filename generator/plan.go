@@ -37,7 +37,19 @@ const (
 	KindRestRaw = "rest_raw" // map[string]json.RawMessage with payload:"*"
 	KindStruct  = "struct"
 	KindSlice   = "slice"
-	KindMap     = "map"
+	// KindArray is a fixed-length Go array field, which is a different kind
+	// from KindSlice because the two decode differently: a slice is built and
+	// assigned, while an array is filled in place against a length the type
+	// already states. Encoding is the one place they agree, and both arms say
+	// so by sharing it.
+	KindArray = "array"
+	// KindBytes is a slice or a fixed-length array of bytes, which is one kind
+	// rather than an element kind because its wire form has nothing to do with
+	// the uint8 it is made of: a base64 string in JSON and a byte string in
+	// CBOR. ArrayLen tells the two spellings apart, exactly as it does for
+	// KindArray.
+	KindBytes = "bytes"
+	KindMap   = "map"
 	// KindForeign is a field whose type is declared in another package and
 	// carries its own JSON codec through the jsonbind interfaces.
 	//
@@ -90,7 +102,17 @@ type FieldPlan struct {
 	// Foreign is which codec halves a KindForeign field's type carries. It is
 	// the zero value for every other kind.
 	Foreign  ForeignCodec
-	ElemKind string // for slice/map: string|int|int64|bool|float64|struct
+	ElemKind string // for slice/array/map: string|int|int64|bool|float64|struct
+	// ElemNamed is the declared type of a collection element whose ElemKind was
+	// resolved from that type's underlying kind, such as Mark for a []Mark over
+	// uint. It is the element's half of Named, and empty when the element is
+	// written as a predeclared type.
+	ElemNamed string
+	// ArrayLen is a KindArray field's length exactly as it was written, so a
+	// generated type spells [boardSize]Cell the way the source did rather than
+	// resolving the constant behind the author's back. It is empty for every
+	// other kind.
+	ArrayLen string
 	DB       string // SQL result column (db tag or snake_case field name)
 	GroupKey bool   // groupkey tag presence
 	Doc      string // godoc of the field (doc or line comment)
@@ -118,6 +140,26 @@ func (f FieldPlan) Write(expr string) string {
 	return f.Named + "(" + expr + ")"
 }
 
+// ElemPlan is the collection element as a field of its own, which is what lets
+// the scalar emitters serve an element without knowing they are inside a
+// collection. It carries the element's declared name, so the conversions Read
+// and Write spell for a named field are the same ones an element gets.
+func (f FieldPlan) ElemPlan() FieldPlan {
+	return FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName, Named: f.ElemNamed}
+}
+
+// ElemGoType is the Go type of one element, as generated code has to spell it.
+func (f FieldPlan) ElemGoType() string {
+	switch {
+	case f.ElemKind == KindStruct:
+		return f.TypeName
+	case f.ElemNamed != "":
+		return f.ElemNamed
+	default:
+		return f.ElemKind
+	}
+}
+
 // HasValidation reports whether anything about the field can reject a bound
 // value, across every tag that carries a constraint.
 func (f FieldPlan) HasValidation() bool {
@@ -136,12 +178,32 @@ func (f FieldPlan) IsRest() bool {
 	return f.Kind == KindRestAny || f.Kind == KindRestRaw
 }
 
+// BindsFromString reports a field a query, path, header or cookie value can
+// fill: every scalar, plus a byte sequence, which is the one composite that has
+// a string form.
+func (f FieldPlan) BindsFromString() bool {
+	return f.Kind == KindBytes || !f.IsComposite()
+}
+
 // IsComposite reports nested struct/slice/map kinds.
 //
 // A foreign field counts, because it is read from the document body through a
 // raw sub-slice exactly as a nested struct is, and never from the query.
 func (f FieldPlan) IsComposite() bool {
-	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindMap || f.Kind == KindForeign
+	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindBytes || f.Kind == KindMap || f.Kind == KindForeign
+}
+
+// IsFixedBytes reports a KindBytes field declared as [N]byte rather than
+// []byte, which is the one thing the two spellings decode differently.
+func (f FieldPlan) IsFixedBytes() bool { return f.Kind == KindBytes && f.ArrayLen != "" }
+
+// BytesRead renders a KindBytes field as the []byte every helper takes, which
+// for a fixed-length field means slicing it.
+func (f FieldPlan) BytesRead(expr string) string {
+	if f.IsFixedBytes() {
+		return expr + "[:]"
+	}
+	return expr
 }
 
 // GoType returns a Go type string for generated code (e.g. NestedCustomer, []string).
@@ -150,15 +212,18 @@ func (f FieldPlan) GoType() string {
 	case KindStruct:
 		return f.TypeName
 	case KindSlice:
-		if f.ElemKind == KindStruct {
-			return "[]" + f.TypeName
+		return "[]" + f.ElemGoType()
+	case KindArray:
+		return "[" + f.ArrayLen + "]" + f.ElemGoType()
+	case KindBytes:
+		// Spelled byte rather than uint8: they are the same type, and byte is
+		// what an author writing a blob field wrote.
+		if f.IsFixedBytes() {
+			return "[" + f.ArrayLen + "]byte"
 		}
-		return "[]" + f.ElemKind
+		return "[]byte"
 	case KindMap:
-		if f.ElemKind == KindStruct {
-			return "map[string]" + f.TypeName
-		}
-		return "map[string]" + f.ElemKind
+		return "map[string]" + f.ElemGoType()
 	case KindRestAny:
 		return "map[string]any"
 	case KindRestRaw:
@@ -573,8 +638,11 @@ func resolveNamedKind(t types.Type) NamedKind {
 	named, ok := t.(*types.Named)
 	if !ok {
 		// Not a named type at all: a predeclared scalar reaches here and is
-		// already handled by name, so nothing is recorded for it.
-		return NamedKind{}
+		// already handled by name, so no kind is recorded for it. What it is
+		// still is, because the refusal below quotes Underlying, and a blank
+		// there produced "type complex128 is  underneath" -- a diagnostic with
+		// a hole in it, which is the one thing a diagnostic may not have.
+		return NamedKind{Underlying: t.String()}
 	}
 	under := named.Underlying()
 	kind := NamedKind{Underlying: under.String()}
@@ -1039,7 +1107,15 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 				switch fp.Source {
 				case SourceInput, SourcePayload:
 					// keep; JSON bind uses body
-				case SourceQuery, SourcePath, SourceHeader, SourceCookie, SourceMethod:
+				case SourceQuery, SourcePath, SourceHeader, SourceCookie:
+					// A byte sequence is the one composite with a spelling
+					// outside a document, so it binds from a value source as
+					// base64. An untagged one stays body-only: a blob's home is
+					// the body, and reading it off a URL is asked for by name.
+					if fp.Kind != KindBytes {
+						return TypePlan{}, false, fmt.Errorf("field %s: nested %s only supports payload/input sources", id.Name, fp.Kind)
+					}
+				case SourceMethod:
 					return TypePlan{}, false, fmt.Errorf("field %s: nested %s only supports payload/input sources", id.Name, fp.Kind)
 				}
 			}
@@ -1080,6 +1156,14 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		}
 		return FieldPlan{}, false, fmt.Errorf("field %s: %s is not available on %s, whose type carries its own JSON codec and whose emptiness this generator cannot judge", fieldName, option, typeName)
 	}
+	if kind == KindArray && elemKind == KindStruct && omitZero {
+		// omitzero compares the field against its type's zero value, and a Go
+		// array is comparable only when its element is. A struct element here
+		// may hold a slice or a map, so the comparison would be a compile error
+		// in the generated file rather than a wrong answer -- refused with the
+		// reason instead, as a foreign field's omitzero already is.
+		return FieldPlan{}, false, fmt.Errorf("field %s: omitzero is not available on an array of %s, because a Go array is comparable only when its element type is", fieldName, typeName)
+	}
 	if jsonTagName != "" {
 		jsonName = jsonTagName
 	}
@@ -1104,6 +1188,24 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
 		}
 	}
+	// A collection of a named scalar carries the element's declared name where a
+	// collection of structs carries the struct's. They are moved apart here so
+	// TypeName keeps meaning "a struct this plan holds", which is what every
+	// other reader of it assumes.
+	var elemNamed string
+	if typeName != "" && isScalarKind(elemKind) {
+		elemNamed, typeName = typeName, ""
+	}
+	// The length is read off the field's own node rather than returned by
+	// fieldTypeKind: KindArray is produced only at the top level, since an
+	// array nested in a slice or a map is refused, so this is the node that
+	// carried it.
+	var arrayLen string
+	if kind == KindArray || kind == KindBytes {
+		if at, ok := typ.(*ast.ArrayType); ok && at.Len != nil {
+			arrayLen = types.ExprString(at.Len)
+		}
+	}
 	return FieldPlan{
 		Name:      fieldName,
 		Wire:      wire,
@@ -1120,6 +1222,8 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		Named:     namedScalarType(kind, typeName),
 		Foreign:   foreignCodecs[typeName],
 		ElemKind:  elemKind,
+		ElemNamed: elemNamed,
+		ArrayLen:  arrayLen,
 		DB:        dbColumn(fieldName, tag),
 		GroupKey:  tagPresent(tag, "groupkey"),
 		Doc:       doc,
@@ -1195,6 +1299,31 @@ func namedScalarType(kind, typeName string) string {
 		return ""
 	}
 	return typeName
+}
+
+// predeclaredAliasKind resolves the two predeclared alias spellings to the kind
+// names the emitters switch on.
+//
+// This arm dispatches on the identifier as written, and byte and rune are not
+// spellings go/types resolves for it: they are alternative names for the same
+// *types.Basic rather than the *types.Alias node
+// requirement:alias-transparent-type-analysis handles, so nothing upstream ever
+// rewrote them. A field declared as byte therefore fell past every scalar name,
+// reached the named-type lookup, matched no *types.Named, and was refused --
+// while a named type over byte was accepted, because that path reads
+// Underlying() and gets uint8.
+//
+// No conversion follows from this. The Go spec makes byte and uint8 the same
+// type, and rune and int32 the same type, so the resolved name describes the
+// field exactly and generated code assigns across it without a cast.
+func predeclaredAliasKind(name string) string {
+	switch name {
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
+	}
+	return name
 }
 
 func isScalarKind(kind string) bool {
@@ -1290,9 +1419,10 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 	case *ast.Ident:
 		// string, bool, float64 and every fixed-width integer; the widths were
 		// added by requirement:sized-integer-field-kinds and a field kind is
-		// still spelled as the Go type name.
-		if isScalarKind(t.Name) {
-			return t.Name, "", "", true, nil
+		// still spelled as the Go type name. byte and rune arrive as the width
+		// they are aliases for, which is what makes them ordinary fields here.
+		if name := predeclaredAliasKind(t.Name); isScalarKind(name) {
+			return name, "", "", true, nil
 		}
 		switch t.Name {
 		case "any", "error":
@@ -1316,6 +1446,14 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			case KindStruct:
 				return KindStruct, t.Name, "", true, nil
 			case "":
+				// A predeclared type is its own underlying type, so saying so
+				// twice reads as a bug in the message rather than as a fact
+				// about the field.
+				if named.Underlying == "" || named.Underlying == t.Name {
+					return "", "", "", false, fmt.Errorf(
+						"field %s: this generator cannot map %s; declare the field as a supported type, or give %s its own JSON codec",
+						fieldName, t.Name, t.Name)
+				}
 				return "", "", "", false, fmt.Errorf(
 					"field %s: type %s is %s underneath, which this generator cannot map; declare the field as a supported type, or give %s its own JSON codec",
 					fieldName, t.Name, named.Underlying, t.Name)
@@ -1343,6 +1481,14 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			}
 		}
 	case *ast.ArrayType:
+		// []T and [N]T are the same node, and only Len tells them apart. They
+		// were read as one kind before, so a fixed-length field was planned as
+		// a slice and its generated decoder assigned a []T to it -- a compile
+		// error inside a file headed DO NOT EDIT.
+		kind := KindSlice
+		if t.Len != nil {
+			kind = KindArray
+		}
 		ek, et, _, eok, eerr := fieldTypeKind(t.Elt, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
 		if eerr != nil {
 			return "", "", "", false, eerr
@@ -1351,20 +1497,22 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			return "", "", "", false, nil
 		}
 		switch {
+		case ek == "uint8" && et == "":
+			// A byte sequence, whatever it was spelled as. []byte and []uint8
+			// are one type, so they get one wire form, and it is the base64
+			// string encoding/json writes rather than the list of numbers the
+			// element kind would otherwise produce. A named element is not that
+			// type, so []Mark over byte stays a list of numbers.
+			return KindBytes, "", ek, true, nil
 		case isScalarKind(ek):
-			// A named element cannot ride the bulk decoders, which answer a
-			// concrete []string or []int that Go will not assign to a slice of
-			// the named type. Converting means a loop per element kind in every
-			// decoding path, which this does not do; it is refused rather than
-			// emitted wrong, which is what it was before.
-			if et != "" {
-				return "", "", "", false, fmt.Errorf(
-					"field %s: a slice of %s is not supported, because the named element type would need converting from %s element by element; declare it as []%s",
-					fieldName, et, ek, ek)
-			}
-			return KindSlice, "", ek, true, nil
+			// et is the element's declared name when it has one. It used to be
+			// a refusal: the bulk decoders answer a concrete []int that Go will
+			// not assign to a slice of the named type, and converting meant a
+			// loop per element kind. The emitted element-reader closure is that
+			// loop written once as a shape, so the cost is one already paid.
+			return kind, et, ek, true, nil
 		case ek == KindStruct:
-			return KindSlice, et, KindStruct, true, nil
+			return kind, et, KindStruct, true, nil
 		default:
 			return "", "", "", false, nil
 		}
@@ -1382,12 +1530,7 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 		}
 		switch {
 		case isScalarKind(ek):
-			if et != "" {
-				return "", "", "", false, fmt.Errorf(
-					"field %s: a map of %s is not supported, because the named value type would need converting from %s entry by entry; declare it as map[string]%s",
-					fieldName, et, ek, ek)
-			}
-			return KindMap, "", ek, true, nil
+			return KindMap, et, ek, true, nil
 		case ek == KindStruct:
 			return KindMap, et, KindStruct, true, nil
 		default:

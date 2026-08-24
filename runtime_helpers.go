@@ -315,3 +315,9 @@ func ParseIntBits(s string, bits int) (int64, error) {
 func ParseUintBits(s string, bits int) (uint64, error) {
 	return strconv.ParseUint(s, 10, bits)
 }
+
+// ParseBytes decodes a base64 query, path, header or cookie value into a byte
+// field. Both alphabets are accepted, padded or not, since a value that
+// travelled through a URL may have been written either way; the encoder always
+// produces padded standard base64.
+func ParseBytes(s string) ([]byte, error) { return bindcore.ParseBytes(s) }

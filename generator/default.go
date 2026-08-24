@@ -19,7 +19,7 @@ type DefaultRule struct {
 func ParseDefaultTag(raw, kind string) (DefaultRule, error) {
 	d := DefaultRule{Value: raw, Set: true}
 	switch kind {
-	case "file", KindRestAny, KindRestRaw, KindStruct, KindSlice, KindMap:
+	case "file", KindRestAny, KindRestRaw, KindStruct, KindSlice, KindArray, KindBytes, KindMap:
 		return DefaultRule{}, fmt.Errorf("default: only scalar fields support defaults, not %s", kind)
 	}
 	if _, err := defaultGoLiteral(kind, raw); err != nil {

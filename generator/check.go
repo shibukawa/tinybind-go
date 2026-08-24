@@ -155,7 +155,7 @@ func validateCheckAgainstKind(c CheckRules, kind string) error {
 	isString := kind == "string"
 	isFile := kind == "file"
 	isRest := kind == KindRestAny || kind == KindRestRaw
-	isComposite := kind == KindStruct || kind == KindSlice || kind == KindMap
+	isComposite := kind == KindStruct || kind == KindSlice || kind == KindArray || kind == KindBytes || kind == KindMap
 	if isFile || isRest || isComposite {
 		// Nested/file/rest content rules deferred; only required is allowed for now.
 		if c.Min != nil || c.Max != nil || c.MinLen != nil || c.MaxLen != nil || c.Len != nil ||
