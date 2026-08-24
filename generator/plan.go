@@ -423,7 +423,7 @@ func analyzeLoadedPackage(load *packageLoad, opts Options) (*PackagePlan, error)
 		}
 		binderNames := configuredTypeNames(f, normalized.fileTypes, pkg.Imports)
 		foreignCodecs := codecCapableTypeNames(f, pkg.TypesInfo)
-		namedKinds := namedFieldKinds(f, pkg.TypesInfo)
+		namedKinds := namedFieldKinds(f, pkg.TypesInfo, plan.PackagePath)
 		for name, ok := range binderNames {
 			packageBinderNames[name] = ok
 		}
@@ -587,6 +587,20 @@ type NamedKind struct {
 	// Underlying is the underlying type as written, for the diagnostic that
 	// reports a type nothing can be done with.
 	Underlying string
+	// Declared is the name generated code spells for this field's type: the
+	// name of the *types.Named the identifier resolves to once every alias
+	// layer is peeled away. It is "" when nothing resolves to a same-package
+	// *types.Named at all -- a predeclared scalar, or an alias of one -- which
+	// is what lets such a field read and write with no conversion at all,
+	// identical to declaring it with the predeclared type directly.
+	Declared string
+	// ForeignPackage is the import path an alias resolved into when it is not
+	// this package's own. Set only when Kind and Underlying are both unset:
+	// this package's run is the only thing that will ever generate a
+	// decode<Name>JSON, so a struct declared elsewhere cannot be planned here,
+	// and neither can a scalar whose identity this generator would have to
+	// spell with an import it does not manage.
+	ForeignPackage string
 }
 
 // namedFieldKinds resolves every same-package identifier used as a struct field
@@ -595,7 +609,7 @@ type NamedKind struct {
 // It is precomputed per file, the way the file type and foreign codec sets are,
 // so the field analysis stays an AST walk with a lookup rather than gaining a
 // type checker of its own.
-func namedFieldKinds(f *ast.File, info *types.Info) map[string]NamedKind {
+func namedFieldKinds(f *ast.File, info *types.Info, packagePath string) map[string]NamedKind {
 	if f == nil || info == nil {
 		return nil
 	}
@@ -606,7 +620,7 @@ func namedFieldKinds(f *ast.File, info *types.Info) map[string]NamedKind {
 			return true
 		}
 		for _, field := range st.Fields.List {
-			collectNamedKinds(field.Type, info, out)
+			collectNamedKinds(field.Type, info, packagePath, out)
 		}
 		return true
 	})
@@ -615,38 +629,72 @@ func namedFieldKinds(f *ast.File, info *types.Info) map[string]NamedKind {
 
 // collectNamedKinds records the identifier at every position a field type can
 // put one, so an element type is resolved as well as a whole field type.
-func collectNamedKinds(expr ast.Expr, info *types.Info, out map[string]NamedKind) {
+//
+// packagePath is carried down to resolveNamedKind unchanged: it is the package
+// this run is analyzing, needed there to tell an alias reaching a same-package
+// declaration from one crossing into another package's.
+func collectNamedKinds(expr ast.Expr, info *types.Info, packagePath string, out map[string]NamedKind) {
 	switch e := expr.(type) {
 	case *ast.Ident:
 		if _, seen := out[e.Name]; seen {
 			return
 		}
-		out[e.Name] = resolveNamedKind(info.TypeOf(e))
+		out[e.Name] = resolveNamedKind(info.TypeOf(e), packagePath)
 	case *ast.ArrayType:
-		collectNamedKinds(e.Elt, info, out)
+		collectNamedKinds(e.Elt, info, packagePath, out)
 	case *ast.MapType:
-		collectNamedKinds(e.Value, info, out)
+		collectNamedKinds(e.Value, info, packagePath, out)
 	case *ast.StarExpr:
-		collectNamedKinds(e.X, info, out)
+		collectNamedKinds(e.X, info, packagePath, out)
 	}
 }
 
-func resolveNamedKind(t types.Type) NamedKind {
+// resolveNamedKind resolves t -- the type of a same-package identifier used as
+// a struct field type or collection element -- to what it is underneath, per
+// requirement:alias-transparent-type-analysis: an alias behaves exactly like
+// the type it names, at every depth.
+//
+// packagePath is the package this run is analyzing. It is needed only to tell
+// a same-package declaration from one an alias reaches across a package
+// boundary into, which this generator can no more plan for than it could plan
+// for the same foreign type spelled out with its package qualifier.
+func resolveNamedKind(t types.Type, packagePath string) NamedKind {
 	if t == nil {
 		return NamedKind{}
 	}
-	named, ok := t.(*types.Named)
-	if !ok {
-		// Not a named type at all: a predeclared scalar reaches here and is
-		// already handled by name, so no kind is recorded for it. What it is
-		// still is, because the refusal below quotes Underlying, and a blank
-		// there produced "type complex128 is  underneath" -- a diagnostic with
-		// a hole in it, which is the one thing a diagnostic may not have.
-		return NamedKind{Underlying: t.String()}
+	// types.Unalias follows an entire alias chain to its end, not just one
+	// layer: type M = Mark (with type Mark uint) lands on Mark's own
+	// *types.Named exactly as if the field had been declared Mark directly,
+	// and type Mark = uint lands on uint's own *types.Basic with no Named in
+	// sight at all.
+	resolved := types.Unalias(t)
+	var declared string
+	if named, ok := resolved.(*types.Named); ok && named.Obj() != nil {
+		if pkg := named.Obj().Pkg(); pkg != nil && pkg.Path() != packagePath {
+			// This package's run is the only thing that will ever generate a
+			// decode<Name>JSON, so a struct declared elsewhere is refused
+			// exactly as one reached any other way already is -- the field
+			// kind analysis does not learn a new way to reach foreign code.
+			return NamedKind{ForeignPackage: pkg.Path()}
+		}
+		// Declared is the type's own declared name, not necessarily the
+		// identifier the field was written with: for a plain defined type the
+		// two are the same string, and for an alias they differ, which is
+		// what makes type M = Mark generate the same conversions type Mark
+		// would rather than calling a conversion "M" that only compiles by
+		// coincidence.
+		declared = named.Obj().Name()
+		resolved = named.Underlying()
 	}
-	under := named.Underlying()
-	kind := NamedKind{Underlying: under.String()}
-	switch u := under.(type) {
+	// declared stays "" when resolved never passed through a same-package
+	// *types.Named at all: a predeclared scalar, or an alias of one. A field
+	// in that shape reads and writes as its underlying kind with no
+	// conversion, which is what makes it byte-identical to declaring the
+	// field with the predeclared type directly -- the acceptance
+	// requirement:alias-transparent-type-analysis states for every site it
+	// covers, this one included.
+	kind := NamedKind{Underlying: resolved.String(), Declared: declared}
+	switch u := resolved.(type) {
 	case *types.Basic:
 		switch u.Kind() {
 		case types.String:
@@ -664,9 +712,7 @@ func resolveNamedKind(t types.Type) NamedKind {
 		case types.Int16:
 			kind.Kind = "int16"
 		case types.Int32:
-			// types.Int32 is also rune, whose named types are ordinary int32
-			// fields once requirement:alias-transparent-type-analysis has
-			// resolved the alias.
+			// types.Int32 is also rune.
 			kind.Kind = "int32"
 		case types.Uint:
 			kind.Kind = "uint"
@@ -1442,9 +1488,23 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 				// right for the ordinary case.
 				return KindStruct, t.Name, "", true, nil
 			}
+			if named.ForeignPackage != "" {
+				// t.Name is an alias reaching into another package, which this
+				// generator cannot plan for any more than it could plan for
+				// the same foreign type spelled out with a package qualifier.
+				return "", "", "", false, fmt.Errorf(
+					"field %s: %s is declared in %s, across a package boundary this generator cannot reach; declare the field as a supported type, or give %s its own JSON codec",
+					fieldName, t.Name, named.ForeignPackage, t.Name)
+			}
 			switch named.Kind {
 			case KindStruct:
-				return KindStruct, t.Name, "", true, nil
+				// named.Declared is the struct's own declared name. It is
+				// t.Name for a field written with the struct type directly,
+				// and something else for one reached through an alias -- using
+				// the wrong one here would plan a struct nothing declares, and
+				// the emitted file would call a decode<Name>JSON that nothing
+				// defines.
+				return KindStruct, named.Declared, "", true, nil
 			case "":
 				// A predeclared type is its own underlying type, so saying so
 				// twice reads as a bug in the message rather than as a fact
@@ -1459,9 +1519,13 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 					fieldName, t.Name, named.Underlying, t.Name)
 			default:
 				// A named scalar binds and encodes as what it is underneath,
-				// which is what encoding/json does with one. The declared name
-				// is carried so generated code converts in both directions.
-				return named.Kind, t.Name, "", true, nil
+				// which is what encoding/json does with one. named.Declared
+				// carries the declared name generated code converts across in
+				// both directions -- empty for an alias of the predeclared
+				// type itself, which is what makes such a field generate with
+				// no conversion at all, identical to declaring it with the
+				// predeclared type directly.
+				return named.Kind, named.Declared, "", true, nil
 			}
 		}
 	case *ast.SelectorExpr:

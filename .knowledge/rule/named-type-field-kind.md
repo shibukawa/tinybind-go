@@ -43,7 +43,7 @@ collections_are_generated:
   written_once_as_a_shape: 'one closure emitter serves every element kind, rather than the loop per kind the refusal was avoiding'
   cbor_needed_only_the_element_type: the driver reader already answers the exact width, so the collection is made of the declared type and each element converts on the way in
   previously: 'a generation error naming the field, the element type and the fix; before that, a call to a codec nothing defined'
-  named_byte_element_is_not_a_blob: '[]Mark over byte is not []byte, so decision:byte-slices-are-base64 does not reach it and it stays a list of numbers
+  named_byte_element_is_not_a_blob: '[]Mark over byte is not []byte, so decision:byte-slices-are-base64 does not reach it and it stays a list of numbers'
 compatibility:
   bytes: a project whose fields are all written as predeclared types emits identical output, since both conversions are the identity there
   evidence: every golden fixture and both page trees pass unchanged
@@ -51,6 +51,10 @@ verification:
   the_test_is_a_compile: a named scalar reaches the encoder, the decoder and five binder sources, and a site that forgets a conversion emits source that does not build, which no substring assertion would catch
   wire_form: a round trip proves a named scalar appears as its underlying kind rather than merely compiling
   both_were_checked_against_a_wrong_expectation_first: so they fail when they should
+aliases_of_a_named_scalar_are_generated_too:
+  fixed: 2026-08-24, alongside requirement:alias-transparent-type-analysis
+  what: a field whose type is an alias of a same-package named type -- type M = Mark, with type Mark uint -- resolves and converts exactly as a field declared Mark directly would
+  full_account: requirement:alias-transparent-type-analysis same_package_field_kind_resolution
 related:
   - requirement:sized-integer-field-kinds
   - decision:byte-slices-are-base64
@@ -58,6 +62,7 @@ related:
   - rule:usage-directed-generation
   - rule:same-package-convention
   - requirement:typed-server-action
+  - requirement:alias-transparent-type-analysis
 answered_2026_08_22:
   question: whether a slice or map of a named scalar is worth the conversion loops, which is the one shape this refuses rather than maps
   answer: requirement:sized-integer-field-kinds pays for the same loop as an emitted element-reader closure, written once as a shape rather than once per element kind, so the cost that justified this refusal is already being paid there
