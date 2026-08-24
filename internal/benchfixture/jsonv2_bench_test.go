@@ -1,15 +1,29 @@
-//go:build goexperiment.jsonv2
+//go:build tinybind_jsonv2bench
 
-// encoding/json/v2 is still behind GOEXPERIMENT on Go 1.26, so these only build
-// when the experiment is on:
+// encoding/json/v2 and jsontext are stable as of Go 1.27, but this module
+// declares "go 1.26.0" and stays there: raising it would raise the minimum Go
+// version for every package this module exports, for every downstream
+// consumer, just to build a benchmark that measures whether v2 is worth
+// switching to -- a question with no bearing on what those consumers import.
+// The tag is the opt-in that keeps this file out of an ordinary `go build` or
+// `go test ./...` the way GOEXPERIMENT=jsonv2 used to on Go 1.26, before the
+// experiment graduated and the build tag it was spelled with started matching
+// unconditionally.
 //
-//	GOEXPERIMENT=jsonv2 go test ./internal/benchfixture -run xxx -bench JSON -benchmem
+// Running these therefore needs two things together: the tag, and a Go
+// toolchain new enough to compile encoding/json/v2 under this module's
+// declared language version. Go resolves stdlib API availability from the
+// module's own go.mod "go" line, not from a flag or the installed toolchain,
+// so the tag alone is not enough -- bump go.mod locally to try this, or run it
+// from a throwaway module that imports this package's parent for its fixtures.
 //
-// Two questions are being answered. Whether turning the experiment on is worth
-// it on its own — the v1 API is reimplemented over v2, so the plain Stdlib
-// benchmarks in this package answer that by changing under the flag. And
-// whether generated code should target jsontext instead of jsonbind's own
-// parser, which the token benchmarks below answer.
+//	go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
+//
+// Two questions are being answered. Whether v2 is worth it on its own -- the
+// v1 API is reimplemented over v2, so the plain Stdlib benchmarks in this
+// package answer that by changing under the flag. And whether generated code
+// should target jsontext instead of jsonbind's own parser, which the token
+// benchmarks below answer.
 
 package benchfixture
 
@@ -116,12 +130,14 @@ func v2DecodeLineItem(d *jsontext.Decoder) (LineItem, error) {
 		case "qty":
 			var t jsontext.Token
 			if t, err = d.ReadToken(); err == nil {
-				out.Qty = int(t.Int())
+				var n int64
+				n, err = t.Int()
+				out.Qty = int(n)
 			}
 		case "price":
 			var t jsontext.Token
 			if t, err = d.ReadToken(); err == nil {
-				out.Price = t.Float()
+				out.Price, err = t.Float()
 			}
 		default:
 			err = d.SkipValue()
@@ -171,7 +187,7 @@ func v2DecodeOrder(d *jsontext.Decoder) (Order, error) {
 		case "total":
 			var t jsontext.Token
 			if t, err = d.ReadToken(); err == nil {
-				out.Total = t.Float()
+				out.Total, err = t.Float()
 			}
 		case "paid":
 			var t jsontext.Token

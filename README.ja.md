@@ -363,11 +363,20 @@ wasm とネイティブで strip のかかり方が違うのは、デバッグ�
 
 ### encoding/json/v2
 
-`encoding/json/v2` は Go 1.26 でもまだ `GOEXPERIMENT=jsonv2` の裏にあり、ライブラリから無条件に import することはできません。それでも計測したのは、「生成 codec は v2 を対象にすべきではないか」という当然の疑問があるからです。
+`encoding/json/v2` と `jsontext` は Go 1.27 で安定版になりましたが、このモジュール
+は `go 1.26.0` のままにしています。上げてしまうと、このモジュールが export する全パ
+ッケージについて、下流の消費者全員の Go の最低バージョンが上がってしまいます。「生成
+codec は v2 を対象にすべきではないか」という比較のためだけに、それは割に合いません。
+比較は opt-in の build tag の裏に置いていて、それだけでもビルドは通りません。Go は
+stdlib API が使えるかどうかをフラグではなくモジュール自身が宣言する言語バージョンか
+ら判断するので、コンパイルするには `go.mod` を手元で一時的に上げる必要があります。
 
 ```bash
-GOEXPERIMENT=jsonv2 go test ./internal/benchfixture -run xxx -bench JSON -benchmem
+go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
 ```
+
+(このモジュール自身の `go.mod` を一時的に `go 1.27.0` に上げるか、この repo を fixture
+として import する使い捨てモジュールから実行してください)
 
 | 経路 | v1・フラグなし | v1・フラグあり | v2 API | 生成コード |
 |------|----------------|----------------|--------|------------|
@@ -407,7 +416,7 @@ experiment を有効にした strip 済み wasm ビルドは、同じプログ�
 - レジストリの `reflect.Type` は **型の識別キー**のみで、フィールド走査には使わない。
 - 生成される bind/write コードは `reflect` を import しない。
 - `jsonbind` は JSON の解析と出力を自前で行い `encoding/json` を import しない。JSON だけを扱うバイナリに reflect ベースの codec が載らないので、`tinygo build -target wasi` なら約4割、`-no-debug` 付きなら約半分が削れる。[ベンチマーク](#バイナリサイズ)を参照。
-- `GOEXPERIMENT=jsonv2` を付けてビルドしないこと。Go 1.26 でも `encoding/json/v2` は experiment の裏にあり、TinyGo では同じ wasi バイナリが約60%膨らむ。`jsonbind` はそもそも呼ばない。
+- TinyGo ビルドが辿るコードに `encoding/json/v2` や `jsontext` を import しないこと。`jsonbind` はそもそもどちらも呼ばない。この repo でそれを行っている唯一の場所 `internal/benchfixture` は `tinybind_jsonv2bench` build tag の裏にあり、strip した wasi バイナリで `jsonbind` の3.5倍のサイズになると計測している。[encoding/json/v2](#encodingjsonv2) を参照。
 
 ### 既知の制限
 

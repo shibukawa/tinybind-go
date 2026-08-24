@@ -502,13 +502,20 @@ table, is the flag's native equivalent.
 
 ### encoding/json/v2
 
-`encoding/json/v2` is still behind `GOEXPERIMENT=jsonv2` on Go 1.26, so a
-library cannot import it unconditionally. It was measured anyway, because the
-obvious question is whether generated codecs should target it instead.
+`encoding/json/v2` and `jsontext` are stable as of Go 1.27, but this module
+declares `go 1.26.0` and stays there — bumping it would raise the minimum Go
+version for every package this module exports, for every downstream consumer,
+just to build a benchmark measuring whether v2 is worth switching to. The
+comparison lives behind an opt-in build tag instead, and needs a locally bumped
+`go.mod` to compile at all, since Go resolves stdlib API availability from the
+module's own declared language version rather than from a flag:
 
 ```bash
-GOEXPERIMENT=jsonv2 go test ./internal/benchfixture -run xxx -bench JSON -benchmem
+go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
 ```
+
+(with this module's own `go.mod` temporarily raised to `go 1.27.0`, or run from
+a throwaway module that imports this repo for its fixtures).
 
 | Path | v1, flag off | v1, flag on | v2 API | Generated |
 |------|--------------|-------------|--------|-----------|
@@ -560,7 +567,7 @@ Verified with **TinyGo 0.41.1 + Go 1.26.x**.
 - Registry uses `reflect.Type` only as a **type identity key**, not for field walking.
 - Generated bind/write code does not import `reflect`.
 - `jsonbind` parses and writes JSON itself and does not import `encoding/json`, so a JSON-only binary carries no reflection-based codec — around 40% of a `tinygo build -target wasi` binary, and about half of a `-no-debug` one. See [Benchmarks](#binary-size).
-- Do not build with `GOEXPERIMENT=jsonv2`. `encoding/json/v2` is still behind the experiment on Go 1.26, and on TinyGo it grows the same wasi binary by about 60% while `jsonbind` never calls it.
+- Do not import `encoding/json/v2` or `jsontext` into code a TinyGo build reaches. `jsonbind` never calls either, and the one place this repo does — `internal/benchfixture`, behind the `tinybind_jsonv2bench` build tag — measured a stripped wasi binary at 3.5× the size of the same program on `jsonbind`; see [encoding/json/v2](#encodingjsonv2).
 
 ### Known limitations
 
