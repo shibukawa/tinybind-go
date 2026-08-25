@@ -10,7 +10,16 @@ import (
 type PageParams struct {
 	Topic string
 	Page  *int
+	Tag   []string
 }
+
+type planPageOpsScope1 struct {
+	Outer PageParams
+	Item  string
+	Index int
+}
+
+var planPageOpsScope1Ops = htmlbind.Builder[planPageOpsScope1]{}
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
@@ -21,6 +30,7 @@ func planPageInput(p PageParams) string {
 	return delta.CanonJoin(
 		delta.CanonString[string](p.Topic),
 		delta.CanonOptional(p.Page, delta.CanonInt),
+		delta.CanonArray(p.Tag, delta.CanonString[string]),
 	)
 }
 
@@ -45,6 +55,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 			if p.Page != nil {
 				body = htmlbind.JSONMember(body, "page", htmlbind.JSONInt(*p.Page))
 			}
+			body = htmlbind.JSONMember(body, "tag", htmlbind.JSONArray(p.Tag, htmlbind.JSONString[string]))
 			return htmlbind.Escape("{" + body + "}"), true
 		}),
 		planPageOps.Static(" class=\"about\"> <h1>about "),
@@ -64,7 +75,18 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 				}),
 				planPageOps.Static("</p> "),
 			}),
-		planPageOps.Static(" <button data-tb-on=\"click:reload\">reload</button> </div> "),
+		planPageOps.Static(" <ul>"),
+		htmlbind.For(
+			func(p PageParams) []string { return p.Tag },
+			func(p PageParams, item string, index int) planPageOpsScope1 {
+				return planPageOpsScope1{Outer: p, Item: item, Index: index}
+			},
+			[]htmlbind.Op[planPageOpsScope1]{
+				planPageOpsScope1Ops.Static("<li>tag "),
+				planPageOpsScope1Ops.Text(func(p planPageOpsScope1) string { return p.Item }),
+				planPageOpsScope1Ops.Static("</li>"),
+			}),
+		planPageOps.Static("</ul> <button data-tb-on=\"click:reload\">reload</button> </div> "),
 	},
 }
 

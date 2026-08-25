@@ -125,8 +125,9 @@ func bindOneField(t *testing.T, field string) (string, error) {
 	return string(code), nil
 }
 
-// A byte sequence is the one composite with a spelling outside a document, so
-// unlike a slice or a map it binds from a value source.
+// A byte sequence has a spelling outside a document at every value source, so
+// unlike a map it binds from any of them. A slice of scalar reaches only the
+// query, where a repeated key spells it; see TestQueryTagBindsASliceOfScalar.
 func TestAByteSequenceBindsFromAValueSource(t *testing.T) {
 	for _, tag := range []string{"query:\"l\"", "path:\"l\"", "header:\"L\"", "cookie:\"l\""} {
 		t.Run(tag, func(t *testing.T) {
@@ -139,9 +140,9 @@ func TestAByteSequenceBindsFromAValueSource(t *testing.T) {
 			}
 		})
 	}
-	// method has no value to carry, and every other composite still has no
-	// spelling outside the document.
-	for _, field := range []string{"L []byte `method:\"l\"`", "S []string `query:\"s\"`", "M map[string]string `query:\"m\"`"} {
+	// method has no value to carry, a map has no spelling outside the
+	// document at all, and a slice has one only where a key may repeat.
+	for _, field := range []string{"L []byte `method:\"l\"`", "S []string `path:\"s\"`", "M map[string]string `query:\"m\"`"} {
 		if _, err := bindOneField(t, field); err == nil || !strings.Contains(err.Error(), "only supports payload/input sources") {
 			t.Fatalf("%s: %v", field, err)
 		}

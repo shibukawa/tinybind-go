@@ -1607,6 +1607,18 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 			}
 		}
 	case SourceQuery:
+		if f.BindsRepeatedFromQuery() {
+			// Every value the key carries, in URL order. An absent key and one
+			// carrying only empty values both leave the slice nil, which is
+			// what makes a blank filter control contribute nothing.
+			fmt.Fprintf(b, "\tfor _, qv := range httpbind.QueryLookupAll(queryVals, %q) {\n", f.Wire)
+			if track {
+				fmt.Fprintf(b, "\t\tpresent%s = true\n", f.Name)
+			}
+			emitAppendFromStringIndented(b, f, "qv", "query", "\t\t")
+			b.WriteString("\t}\n")
+			return
+		}
 		if f.BindsFromString() {
 			fmt.Fprintf(b, "\tif qv, ok := httpbind.QueryLookup(queryVals, %q); ok {\n", f.Wire)
 			if track {
@@ -1630,6 +1642,56 @@ func emitFieldBind(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan) {
 		}
 		emitConvertFromStringIndented(b, f, "qv", "query", "\t\t")
 		b.WriteString("\t}\n")
+	}
+}
+
+// emitAppendFromStringIndented converts one value of a repeated query key and
+// appends it to the field's slice. It is emitConvertFromStringIndented with the
+// assignment replaced by an append, over the element kind rather than the
+// field's own: a slice of scalar is the only shape that reaches it.
+//
+// One unparsable element fails the whole request. A partially filled slice
+// would be a filter the user never asked for, which is worse than a 400.
+func emitAppendFromStringIndented(b *bytes.Buffer, f FieldPlan, varName, location, prefix string) {
+	elem := f.ElemPlan()
+	appendf := func(expr string) {
+		fmt.Fprintf(b, "%sout.%s = append(out.%s, %s)\n", prefix, f.Name, f.Name, elem.Write(expr))
+	}
+	fail := func(what string) {
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.BindError(%q, %q, \"invalid %s\")\n%s}\n",
+			prefix, prefix, f.Wire, location, what, prefix)
+	}
+	switch elem.Kind {
+	case "string":
+		appendf(varName)
+	case "int":
+		fmt.Fprintf(b, "%sv, err := httpbind.ParseInt(%s)\n", prefix, varName)
+		fail("int")
+		appendf("v")
+	case "int64":
+		fmt.Fprintf(b, "%sv, err := httpbind.ParseInt64(%s)\n", prefix, varName)
+		fail("int64")
+		appendf("v")
+	case "bool":
+		fmt.Fprintf(b, "%sv, err := httpbind.ParseBool(%s)\n", prefix, varName)
+		fail("bool")
+		appendf("v")
+	case "float64":
+		fmt.Fprintf(b, "%sv, err := httpbind.ParseFloat64(%s)\n", prefix, varName)
+		fail("float64")
+		appendf("v")
+	case sizedIntCase(elem.Kind):
+		// strconv range-checks at the declared width, so an out-of-range
+		// element is a 400 rather than a wrapped number, exactly as a scalar
+		// of that width is.
+		bits, unsigned, _ := intKindBits(elem.Kind)
+		fn := "ParseIntBits"
+		if unsigned {
+			fn = "ParseUintBits"
+		}
+		fmt.Fprintf(b, "%sv, err := httpbind.%s(%s, %d)\n", prefix, fn, varName, bits)
+		fail(elem.Kind)
+		appendf(elem.Kind + "(v)")
 	}
 }
 

@@ -168,18 +168,25 @@ func checkComponentInputs(route Route, component ComponentSignature) []error {
 		}
 	}
 	for i, input := range component.Inputs {
-		_, optional, ok := bindableType(input.Type)
+		_, optional, repeated, ok := bindableType(input.Type)
 		if !ok {
+			if optional && repeated {
+				fail("%s", optionalRepeatedError(input.Name, input.Type))
+				continue
+			}
 			kind := "query parameter"
 			if i < len(route.Params) {
 				kind = "path parameter"
 			}
-			fail("%s %q has type %s; without a func %s every component parameter comes from the URL, so it must be a scalar",
+			fail("%s %q has type %s; without a func %s every component parameter comes from the URL, so it must be a scalar or a slice of one",
 				kind, input.Name, input.Type, PageFuncName)
 			continue
 		}
 		if optional && i < len(route.Params) {
 			fail("%s", optionalPathError(input.Name, input.Type, route.Params[i].Kind == CatchAllSegment))
+		}
+		if repeated && i < len(route.Params) {
+			fail("%s", repeatedPathError(input.Name, input.Type))
 		}
 	}
 	return errs

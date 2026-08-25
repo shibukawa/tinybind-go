@@ -25,9 +25,15 @@ func {{ .DecodeFunc }}({{ .Symbols.Request }} {{ .Symbols.RequestType }}) ({{ .P
 {{- end }}
 {{- range .Fields }}
 {{- if .IsQuery }}
+{{- if .Repeated }}
+	for _, raw := range {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.QueryLookupAll }}(query, {{ .Key | quote }}) {
+{{- template "appendConvert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
+	}
+{{- else }}
 	if raw, _ := {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.QueryLookup }}(query, {{ .Key | quote }}); raw != "" {
 {{- template "convert" dict "Field" . "Symbols" $.Symbols "Indent" "\t\t" }}
 	}
+{{- end }}
 {{- else }}
 {{- if and (eq .Base "string") (not .Required) }}
 	out.{{ .Go }} = {{ $.Symbols.ErrorAlias }}.{{ $.Symbols.PathValue }}({{ $.Symbols.Request }}, {{ .Key | quote }})
@@ -93,6 +99,24 @@ than a zero value.
 {{- else }}
 {{ .Indent }}out.{{ .Field.Go }} = v
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{- /*
+appendConvert reads one value of a repeated key into its slice. It is the
+convert step with the assignment replaced by an append, and with no optional
+case: a repeated key says absent by arriving empty, so there is no pointer to
+take the address of.
+*/ -}}
+{{- define "appendConvert" }}
+{{- if eq .Field.Base "string" }}
+{{ .Indent }}out.{{ .Field.Go }} = append(out.{{ .Field.Go }}, raw)
+{{- else }}
+{{ .Indent }}v, err := {{ .Field.Parse }}
+{{ .Indent }}if err != nil {
+{{ .Indent }}	return out, {{ template "error" dict "Symbols" .Symbols "Code" .Field.ErrCode "Message" .Field.ErrMessage "Cause" "err" }}
+{{ .Indent }}}
+{{ .Indent }}out.{{ .Field.Go }} = append(out.{{ .Field.Go }}, {{ if .Field.Convert }}{{ .Field.Convert }}(v){{ else }}v{{ end }})
 {{- end }}
 {{- end }}
 

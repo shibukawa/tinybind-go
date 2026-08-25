@@ -72,19 +72,44 @@ var scalarTypes = map[string]bool{
 	"float32": true, "float64": true,
 }
 
-// bindableType splits a declared input type into the scalar a decoder parses and
-// whether it arrives as a pointer.
+// bindableType splits a declared input type into the scalar a decoder parses,
+// whether it arrives as a pointer, and whether it collects a repeated key.
 //
 // A pointer is how an optional query parameter tells an absent value from a zero
 // one, which a Go parameter cannot otherwise express. It is also what the
 // template language already generates for an optional declaration such as
 // `page: int?`, so the spelling is the compiler's rather than this package's.
-func bindableType(declared string) (base string, optional bool, ok bool) {
+func bindableType(declared string) (base string, optional, repeated, ok bool) {
 	base = declared
 	if rest, found := strings.CutPrefix(base, "*"); found {
 		base, optional = rest, true
 	}
-	return base, optional, scalarTypes[base]
+	if rest, found := strings.CutPrefix(base, "[]"); found {
+		base, repeated = rest, true
+	}
+	// A repeated key already says absent by arriving empty, so an optional one
+	// would be a second spelling of the same fact, and *[]T and []*T would both
+	// have to mean it. Neither is offered.
+	if optional && repeated {
+		return base, optional, repeated, false
+	}
+	return base, optional, repeated, scalarTypes[base]
+}
+
+// optionalRepeatedError explains why an optional slice is rejected. Both halves
+// of the type say "may be absent", and a repeated key already says it by
+// carrying no values, so the pair has no meaning left to carry.
+func optionalRepeatedError(name, declared string) string {
+	return fmt.Sprintf("query parameter %q has type %s; a repeated key is already absent when it carries no values, so a slice cannot also be optional",
+		name, declared)
+}
+
+// repeatedPathError explains why a repeated path parameter is rejected. A URL
+// path has one value per segment and a catch-all binds its whole remainder as
+// one string, so no segment can carry a key twice.
+func repeatedPathError(name, declared string) string {
+	return fmt.Sprintf("path parameter %q has type %s; a path segment carries one value, so only a query parameter can be repeated",
+		name, declared)
 }
 
 // optionalPathError explains why an optional path parameter is rejected. A

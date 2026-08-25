@@ -1,4 +1,4 @@
-export component Page(topic: string, page: int?): html {
+export component Page(topic: string, page: int?, tag: string[]): html {
 <script component>
 export function setup({ topic, page }) {
   return { reload() { console.log(topic, page) } }
@@ -7,6 +7,7 @@ export function setup({ topic, page }) {
   <div class="about">
     <h1>about {topic}</h1>
     {if page == null} <p>every page</p> {else} <p>page {page}</p> {/if}
+    <ul>{for t in tag}<li>tag {t}</li>{/for}</ul>
     <button on-click="reload">reload</button>
   </div>
 }
