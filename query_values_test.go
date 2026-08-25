@@ -46,3 +46,70 @@ func TestQueryLookupMatchesParseQuery(t *testing.T) {
 		}
 	}
 }
+
+// QueryLookupAll is the array spelling, so it must agree with url.ParseQuery
+// the way QueryLookup does: same keys, same order, minus the empty values a
+// blank control contributes and an element must not become.
+func TestQueryLookupAllMatchesParseQuery(t *testing.T) {
+	rawQueries := []string{
+		"",
+		"tag=a&tag=b",
+		"tag=b&tag=a&tag=b",
+		"q=go&tag=a&other=1&tag=b",
+		"tag=&tag=a",
+		"tag&tag=a",
+		"tag=",
+		"tag=a%2Cb",
+		"tag=a+b&tag=%20c",
+		"tag=%zz&tag=ok",
+		"semi=1;tag=2&tag=3",
+	}
+	keys := []string{"tag", "q", "other", "semi", "absent"}
+	for _, raw := range rawQueries {
+		r := httptest.NewRequest("GET", "/?"+raw, nil)
+		q := httpbind.Queries(r)
+		parsed, _ := url.ParseQuery(raw)
+		for _, key := range keys {
+			var want []string
+			for _, v := range parsed[key] {
+				if v != "" {
+					want = append(want, v)
+				}
+			}
+			got := httpbind.QueryLookupAll(q, key)
+			if len(got) != len(want) {
+				t.Fatalf("raw=%q key=%q: got %q want %q", raw, key, got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("raw=%q key=%q: element %d got %q want %q", raw, key, i, got[i], want[i])
+				}
+			}
+		}
+	}
+}
+
+// A comma is an ordinary value character. tag=a%2Cb and tag=a,b are the same
+// single element, which is why the joined spelling is not an array here.
+func TestQueryLookupAllDoesNotSplitOnComma(t *testing.T) {
+	for _, raw := range []string{"tag=a%2Cb", "tag=a,b"} {
+		r := httptest.NewRequest("GET", "/?"+raw, nil)
+		got := httpbind.QueryLookupAll(httpbind.Queries(r), "tag")
+		if len(got) != 1 || got[0] != "a,b" {
+			t.Errorf("raw=%q: got %q, want one element %q", raw, got, "a,b")
+		}
+	}
+}
+
+// Brackets are ordinary key characters, so the PHP spelling binds the key it
+// literally names and nothing reaches the key an author declared.
+func TestQueryLookupAllTreatsBracketsAsPartOfTheKey(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?tag[]=a&tag[]=b", nil)
+	q := httpbind.Queries(r)
+	if got := httpbind.QueryLookupAll(q, "tag"); len(got) != 0 {
+		t.Errorf(`QueryLookupAll(q, "tag") = %q, want none for a bracket-spelled query`, got)
+	}
+	if got := httpbind.QueryLookupAll(q, "tag[]"); len(got) != 2 {
+		t.Errorf(`QueryLookupAll(q, "tag[]") = %q, want both values`, got)
+	}
+}

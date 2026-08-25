@@ -65,6 +65,27 @@ func QueryLookup(q QueryValues, key string) (string, bool) {
 	return "", false
 }
 
+// QueryLookupAll returns every value for key, in the order the URL wrote them.
+//
+// A repeated key is the array spelling a browser produces: an urlencoded form
+// writes one pair per successful control, so a checkbox group named tag
+// submits tag=a&tag=b. Nothing else is an array here — brackets are ordinary
+// key characters, and a comma is an ordinary value character.
+//
+// An empty value contributes nothing. A blank control submits its key with no
+// value, so counting one would turn an untouched filter field into an element
+// no user chose, and tag= and a bare tag are indistinguishable anyway.
+func QueryLookupAll(q QueryValues, key string) []string {
+	var out []string
+	for i := range q.pairs {
+		v, ok, matched := matchQueryPair(q.pairs[i].rawKey, q.pairs[i].rawValue, key)
+		if matched && ok && v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // matchQueryPair decides one raw pair against a wanted key. matched reports
 // the pair answered the lookup; a pair whose escapes do not decode is treated
 // the way url.ParseQuery treats it — as if it were not there.

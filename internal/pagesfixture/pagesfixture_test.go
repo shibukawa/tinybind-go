@@ -556,9 +556,9 @@ func TestClientHandlerLowersInARenderedPage(t *testing.T) {
 }
 
 func TestComponentParametersRenderAsJSON(t *testing.T) {
-	body := get(t, serveMux(), "/about?topic=routing&page=3").Body.String()
+	body := get(t, serveMux(), "/about?topic=routing&page=3&tag=a&tag=b").Body.String()
 	props := attributeValue(t, body, "data-tb-props")
-	if props != `{"topic":"routing","page":3}` {
+	if props != `{"topic":"routing","page":3,"tag":["a","b"]}` {
 		t.Errorf("props = %s", props)
 	}
 }
@@ -567,11 +567,46 @@ func TestAnAbsentOptionalParameterOmitsItsKey(t *testing.T) {
 	// One absence for JavaScript to test rather than a key holding null.
 	body := get(t, serveMux(), "/about?topic=routing").Body.String()
 	props := attributeValue(t, body, "data-tb-props")
-	if props != `{"topic":"routing"}` {
+	// A repeated key that carried no values is an empty array rather than an
+	// absence: a slice always has a length, where an optional has nothing to
+	// report. The two arities are deliberately spelled differently here.
+	if props != `{"topic":"routing","tag":[]}` {
 		t.Errorf("props = %s, want the absent optional omitted", props)
 	}
 	if strings.Contains(props, "null") {
 		t.Errorf("an absence was rendered as null: %s", props)
+	}
+}
+
+// The array spelling end to end: a repeated key reaches a declared slice, in
+// URL order, and renders. This is the checkbox-group filter the whole feature
+// exists for.
+func TestARepeatedQueryKeyReachesThePage(t *testing.T) {
+	body := get(t, serveMux(), "/about?topic=routing&tag=boots&tag=hats").Body.String()
+	for _, want := range []string{"tag boots", "tag hats"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q: %s", want, body)
+		}
+	}
+	if before, after := strings.Index(body, "tag boots"), strings.Index(body, "tag hats"); before > after {
+		t.Errorf("the elements did not keep URL order: %s", body)
+	}
+}
+
+// A blank control submits its key with no value, so it must contribute no
+// element. Otherwise an untouched filter field would add a tag no user chose.
+func TestAnEmptyValueContributesNoElement(t *testing.T) {
+	body := get(t, serveMux(), "/about?topic=routing&tag=&tag=hats").Body.String()
+	if strings.Count(body, "<li>tag ") != 1 {
+		t.Errorf("an empty value became an element: %s", body)
+	}
+}
+
+// Brackets are ordinary key characters, so the PHP spelling reaches nothing.
+func TestTheBracketSpellingBindsNothing(t *testing.T) {
+	body := get(t, serveMux(), "/about?topic=routing&tag[]=boots").Body.String()
+	if strings.Contains(body, "<li>tag ") {
+		t.Errorf("a bracket-spelled key bound to the declared parameter: %s", body)
 	}
 }
 

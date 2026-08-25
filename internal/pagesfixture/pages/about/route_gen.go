@@ -13,6 +13,7 @@ import (
 type RouteParams struct {
 	Topic string
 	Page  *int
+	Tag   []string
 }
 
 // DecodeRoute reads the path and query values of GET /about.
@@ -30,6 +31,9 @@ func DecodeRoute(r *http.Request) (RouteParams, error) {
 		}
 		value := v
 		out.Page = &value
+	}
+	for _, raw := range httpbind.QueryLookupAll(query, "tag") {
+		out.Tag = append(out.Tag, raw)
 	}
 	return out, nil
 }

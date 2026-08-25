@@ -310,3 +310,26 @@ func TestParseBytesParity(t *testing.T) {
 		}
 	}
 }
+
+// The array accessor has to agree across transports the way the scalar one
+// does: same values, same order, and the same refusal to count an empty one.
+func TestQueryLookupAllParity(t *testing.T) {
+	const raw = "tag=a&q=go&tag=&tag=b%20c&tag[]=x"
+	for _, key := range []string{"tag", "q", "tag[]", "absent"} {
+		r := httptest.NewRequest(http.MethodGet, "/?"+raw, nil)
+		want := httpbind.QueryLookupAll(httpbind.Queries(r), key)
+
+		ctx := &fasthttp.RequestCtx{}
+		ctx.Request.SetRequestURI("/?" + raw)
+		got := fasthttpbind.QueryLookupAll(fasthttpbind.Queries(ctx), key)
+
+		if len(got) != len(want) {
+			t.Fatalf("key=%q: fasthttp %q, net/http %q", key, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("key=%q element %d: fasthttp %q, net/http %q", key, i, got[i], want[i])
+			}
+		}
+	}
+}

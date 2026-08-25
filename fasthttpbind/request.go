@@ -42,6 +42,24 @@ func QueryLookup(q *fasthttp.Args, key string) (string, bool) {
 	return "", false
 }
 
+// QueryLookupAll returns every value for key, in the order the URL wrote them,
+// which is the array spelling an urlencoded form submits for a repeated
+// control name. An empty value contributes nothing, matching the net/http
+// counterpart: a blank control submits its key with no value, and counting one
+// would invent an element no user chose.
+func QueryLookupAll(q *fasthttp.Args, key string) []string {
+	if q == nil {
+		return nil
+	}
+	var out []string
+	q.VisitAll(func(k, v []byte) {
+		if len(v) > 0 && string(k) == key {
+			out = append(out, string(v))
+		}
+	})
+	return out
+}
+
 // QueryValue returns the first query parameter value for key.
 func QueryValue(ctx *fasthttp.RequestCtx, key string) (string, bool) {
 	return QueryLookup(Queries(ctx), key)

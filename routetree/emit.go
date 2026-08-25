@@ -125,6 +125,10 @@ type Symbols struct {
 	PathValue   string
 	QueryValues string
 	QueryLookup string
+	// QueryLookupAll is the accessor a repeated input reads through. It
+	// returns every value the key carries, in URL order, which is what makes
+	// the array spelling a form submits reach a declared slice.
+	QueryLookupAll string
 	// ActionSelector and DispatchAction are selectors on ErrorAlias naming the
 	// two halves of the page's own POST route: reading which server function a
 	// native form submit named, and running it with the post-redirect-get default
@@ -163,6 +167,7 @@ func DefaultSymbols() Symbols {
 		PathValue:      "PathValue",
 		QueryValues:    "Queries",
 		QueryLookup:    "QueryLookup",
+		QueryLookupAll: "QueryLookupAll",
 		ActionSelector: "ActionSelector",
 		DispatchAction: "DispatchAction",
 		StrconvImport:  "strconv",
@@ -226,6 +231,7 @@ func (s Symbols) normalized() Symbols {
 		"w "+s.HTTPAlias+".ResponseWriter, r *"+s.HTTPAlias+".Request")
 	s.Writer = orDefault(s.Writer, "w")
 	s.Request = orDefault(s.Request, "r")
+	s.QueryLookupAll = orDefault(s.QueryLookupAll, "QueryLookupAll")
 	s.CatchAllSuffix = orDefault(s.CatchAllSuffix, NetHTTPCatchAllSuffix)
 	s.RootPattern = orDefault(s.RootPattern, NetHTTPRootPattern)
 	return s
@@ -525,6 +531,10 @@ type DecoderField struct {
 	Optional bool
 	// IsQuery reads from the query string rather than the path.
 	IsQuery bool
+	// Repeated collects every value the key carries into a slice, in URL
+	// order, which is the array spelling a form submits. It is set for a query
+	// parameter only, and never together with Optional.
+	Repeated bool
 	// Required rejects an empty value. A catch-all is not required, because an
 	// empty remainder is a legal match.
 	Required bool
@@ -592,12 +602,21 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 
 	fields := make([]DecoderField, 0, len(inputs))
 	for i, input := range inputs {
-		base, optional, _ := bindableType(input.Type)
+		base, optional, repeated, ok := bindableType(input.Type)
+		if !ok {
+			message := fmt.Sprintf("input %q has type %s, which no generated decoder can bind from a URL",
+				input.Name, input.Type)
+			if optional && repeated {
+				message = optionalRepeatedError(input.Name, input.Type)
+			}
+			return DecoderModel{}, &Error{Path: route.PageFile, Message: message}
+		}
 		field := DecoderField{
 			Go:       ExportedName(input.Name),
 			Type:     input.Type,
 			Base:     base,
 			Optional: optional,
+			Repeated: repeated,
 		}
 		if i < len(route.Params) {
 			segment := route.Params[i]
@@ -605,6 +624,12 @@ func (e *Emitter) decoderModel(route Route, inputs []Value) (DecoderModel, error
 				return DecoderModel{}, &Error{
 					Path:    route.PageFile,
 					Message: optionalPathError(input.Name, input.Type, segment.Kind == CatchAllSegment),
+				}
+			}
+			if repeated {
+				return DecoderModel{}, &Error{
+					Path:    route.PageFile,
+					Message: repeatedPathError(input.Name, input.Type),
 				}
 			}
 			field.Key = segment.Name

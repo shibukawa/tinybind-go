@@ -101,6 +101,60 @@ func TestEmitDecoderNarrowsAnOptionalSizedInteger(t *testing.T) {
 	mustContain(t, source, "Limit *int32", "strconv.ParseInt(raw, 10, 32)", "value := int32(v)", "out.Limit = &value")
 }
 
+func TestEmitDecoderBindsARepeatedQueryParameter(t *testing.T) {
+	source := emit(t, decoderRoute("/list", "list"), []Value{{Name: "tag", Type: "[]string"}})
+
+	mustContain(t, source,
+		"Tag []string",
+		`for _, raw := range httpbind.QueryLookupAll(query, "tag")`,
+		"out.Tag = append(out.Tag, raw)",
+	)
+	if strings.Contains(source, "strconv") {
+		t.Errorf("repeated string decoder imports strconv:\n%s", source)
+	}
+}
+
+func TestEmitDecoderNarrowsARepeatedSizedInteger(t *testing.T) {
+	source := emit(t, decoderRoute("/list", "list"), []Value{{Name: "id", Type: "[]int32"}})
+
+	mustContain(t, source,
+		"ID []int32",
+		`for _, raw := range httpbind.QueryLookupAll(query, "id")`,
+		"strconv.ParseInt(raw, 10, 32)",
+		"out.ID = append(out.ID, int32(v))",
+		// One bad element fails the request; a partial slice is never returned.
+		`Message: "query parameter id is not a valid int32"`,
+	)
+}
+
+func TestEmitDecoderRejectsARepeatedPathParameter(t *testing.T) {
+	route := decoderRoute("/users/{id}", "id_", dyn("id"))
+	_, err := EmitDecoder(route, []Value{{Name: "id", Type: "[]string"}})
+	if err == nil {
+		t.Fatal("repeated path parameter accepted, want rejection")
+	}
+	if !strings.Contains(err.Error(), "carries one value") {
+		t.Errorf("error = %v, want it to say why a segment cannot repeat", err)
+	}
+}
+
+func TestEmitDecoderRejectsAnOptionalRepeatedQueryParameter(t *testing.T) {
+	_, err := EmitDecoder(decoderRoute("/list", "list"), []Value{{Name: "tag", Type: "*[]string"}})
+	if err == nil {
+		t.Fatal("optional repeated parameter accepted, want rejection")
+	}
+	if !strings.Contains(err.Error(), "already absent when it carries no values") {
+		t.Errorf("error = %v, want it to say why a slice cannot also be optional", err)
+	}
+}
+
+func TestEmitDecoderRejectsARepeatedNonScalar(t *testing.T) {
+	_, err := EmitDecoder(decoderRoute("/list", "list"), []Value{{Name: "tag", Type: "[]User"}})
+	if err == nil {
+		t.Fatal("repeated struct accepted, want rejection")
+	}
+}
+
 func TestEmitDecoderRejectsAnOptionalPathParameter(t *testing.T) {
 	route := decoderRoute("/users/{id}", "id_", dyn("id"))
 	_, err := EmitDecoder(route, []Value{{Name: "id", Type: "*string"}})

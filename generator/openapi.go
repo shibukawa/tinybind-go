@@ -94,6 +94,7 @@ func indexTypes(plan *PackagePlan) map[string]TypePlan {
 }
 
 func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[string]any, cborHTTP bool) map[string]any {
+	scope := schemaScope{schemas: schemas, types: types}
 	op := map[string]any{
 		"responses": map[string]any{},
 	}
@@ -120,7 +121,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 
 	if route.Request != "" {
 		reqName := stripPackage(route.Request)
-		ensureSchema(schemas, reqName, types[reqName])
+		ensureSchema(scope, reqName, types[reqName])
 		if tp, ok := types[reqName]; ok {
 			for _, f := range tp.Fields {
 				if f.HasValidation() {
@@ -145,7 +146,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 					if bodyProps == nil {
 						bodyProps = map[string]any{}
 					}
-					bodyProps[f.Wire] = schemaForField(f)
+					bodyProps[f.Wire] = schemaForField(f, scope)
 					if f.Check.Required {
 						bodyRequired = append(bodyRequired, f.Wire)
 					}
@@ -161,7 +162,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 					if bodyProps == nil {
 						bodyProps = map[string]any{}
 					}
-					bodyProps[f.Wire] = schemaForField(f)
+					bodyProps[f.Wire] = schemaForField(f, scope)
 					if f.Check.Required {
 						bodyRequired = append(bodyRequired, f.Wire)
 					}
@@ -229,7 +230,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 			elem = extractStreamElem(route.Response)
 		}
 		elem = stripPackage(elem)
-		ensureSchema(schemas, elem, types[elem])
+		ensureSchema(scope, elem, types[elem])
 		ref := schemaRef(elem)
 		content := map[string]any{
 			"text/event-stream":    map[string]any{"schema": ref},
@@ -246,7 +247,7 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 		respName := stripPackage(route.Response)
 		// skip Stream-only names already handled
 		if !strings.Contains(respName, "Stream[") {
-			ensureSchema(schemas, respName, types[respName])
+			ensureSchema(scope, respName, types[respName])
 			for _, st := range successStatuses {
 				resp := map[string]any{
 					"description": http.StatusText(st),
@@ -331,7 +332,18 @@ func buildOperation(route parser.Route, types map[string]TypePlan, schemas map[s
 }
 
 func parameter(in string, f FieldPlan, required bool) map[string]any {
-	schema := schemaForField(f)
+	schema := schemaForField(f, schemaScope{})
+	// A repeated query key is an array on the wire, so the document has to say
+	// array rather than the string the default arm would name. Nothing else is
+	// written: the OpenAPI default for a query parameter is style form with
+	// explode true, which already serializes an array as the repeated key the
+	// binder reads.
+	//
+	// Only required applies to a slice, and the parameter object carries that
+	// itself, so no check-tag constraint is lost by replacing the schema here.
+	if in == "query" && f.BindsRepeatedFromQuery() {
+		schema = map[string]any{"type": "array", "items": schemaForKind(f.ElemKind)}
+	}
 	// Field docs belong on the parameter object, so drop the schema copies.
 	delete(schema, "description")
 	delete(schema, "deprecated")
@@ -398,9 +410,27 @@ func schemaForKind(kind string) map[string]any {
 	}
 }
 
+// schemaScope is what a schema needs to describe a field whose value is not a
+// scalar: the component map a named type registers itself into, and the type
+// index to build that type from.
+//
+// A parameter passes the zero value. A path, header, cookie, or query field is
+// a scalar, a byte sequence, or a slice of scalars, and none of those reaches a
+// named type.
+type schemaScope struct {
+	schemas map[string]any
+	types   map[string]TypePlan
+}
+
 // schemaForField builds an OpenAPI schema object including check-tag constraints
 // and the enum and default tags.
-func schemaForField(f FieldPlan) map[string]any {
+func schemaForField(f FieldPlan, scope schemaScope) map[string]any {
+	if composite, ok := compositeSchema(f, scope); ok {
+		// validateCheckAgainstKind allows only required on a composite, and enum
+		// and default are scalars-only too, so nothing below this point could
+		// have reached one. The godoc still can.
+		return describe(composite, f.Doc)
+	}
 	s := schemaForKind(f.Kind)
 	c := f.Check
 	if c.Min != nil {
@@ -450,6 +480,61 @@ func schemaForField(f FieldPlan) map[string]any {
 	return describe(s, f.Doc)
 }
 
+// compositeSchema builds the schema of a field whose value is not a scalar. It
+// reports false for every kind schemaForKind already spells, which is every
+// scalar plus a file, a byte sequence, and a rest map.
+//
+// Without this, a slice, a map, and a nested struct all fell to the default arm
+// of schemaForKind and were documented as strings.
+func compositeSchema(f FieldPlan, scope schemaScope) (map[string]any, bool) {
+	switch f.Kind {
+	case KindSlice, KindArray:
+		out := map[string]any{"type": "array", "items": elementSchema(f, scope)}
+		// A fixed-length array has exactly that many elements, and the codec
+		// enforces it. The length is kept as it was written, so a constant name
+		// stays unstated rather than being resolved behind the author's back.
+		if n, err := strconv.Atoi(f.ArrayLen); err == nil && n >= 0 {
+			out["minItems"], out["maxItems"] = n, n
+		}
+		return out, true
+	case KindMap:
+		// A JSON object keys by string and a urlencoded body has no other
+		// spelling either, so the key type says nothing a document carries. The
+		// value type is the whole content.
+		return map[string]any{"type": "object", "additionalProperties": elementSchema(f, scope)}, true
+	case KindStruct:
+		return namedSchema(f.TypeName, scope), true
+	}
+	return nil, false
+}
+
+// elementSchema describes one element of a collection. A collection of
+// collections never reaches here: the analysis records no field plan for one,
+// so nothing downstream — this document included — ever sees it.
+func elementSchema(f FieldPlan, scope schemaScope) map[string]any {
+	if f.ElemKind == KindStruct {
+		return namedSchema(f.TypeName, scope)
+	}
+	// A named element such as the Mark of a []Mark documents as the kind it is
+	// written over, which is what the codec reads and writes.
+	return schemaForKind(f.ElemKind)
+}
+
+// namedSchema registers a struct type as a component and refers to it, so one
+// type reached from several places is described once.
+//
+// A type the analysis did not plan, and a parameter with no scope to register
+// into, both fall back to an unconstrained object rather than to the string the
+// default arm would have produced.
+func namedSchema(name string, scope schemaScope) map[string]any {
+	name = stripPackage(name)
+	if name == "" || scope.schemas == nil {
+		return map[string]any{"type": "object"}
+	}
+	ensureSchema(scope, name, scope.types[name])
+	return schemaRef(name)
+}
+
 func enumJSONValue(kind, val string) any {
 	switch kind {
 	case "int", "int64":
@@ -475,18 +560,23 @@ func enumJSONValue(kind, val string) any {
 	}
 }
 
-func ensureSchema(schemas map[string]any, name string, tp TypePlan) {
-	if name == "" {
+func ensureSchema(scope schemaScope, name string, tp TypePlan) {
+	if name == "" || scope.schemas == nil {
 		return
 	}
-	if _, ok := schemas[name]; ok {
+	if _, ok := scope.schemas[name]; ok {
 		return
 	}
 	if tp.Name == "" {
 		// unknown type: generic object
-		schemas[name] = map[string]any{"type": "object"}
+		scope.schemas[name] = map[string]any{"type": "object"}
 		return
 	}
+	// Claim the name before walking the fields. A type holding a slice of
+	// itself refers to itself through namedSchema, and the entry it finds here
+	// is what stops that walk; the finished schema replaces this one below,
+	// and a reference addresses the name rather than the value.
+	scope.schemas[name] = map[string]any{"type": "object"}
 	props := map[string]any{}
 	var required []string
 	additionalProps := false
@@ -502,7 +592,7 @@ func ensureSchema(schemas map[string]any, name string, tp TypePlan) {
 		if key == "" {
 			key = f.Wire
 		}
-		props[key] = schemaForField(f)
+		props[key] = schemaForField(f, scope)
 		if f.Check.Required {
 			required = append(required, key)
 		}
@@ -517,7 +607,7 @@ func ensureSchema(schemas map[string]any, name string, tp TypePlan) {
 	if len(required) > 0 {
 		schema["required"] = stringSliceAny(required)
 	}
-	schemas[name] = describe(schema, tp.Doc)
+	scope.schemas[name] = describe(schema, tp.Doc)
 }
 
 // stringSliceAny converts []string to []any for OpenAPI document maps / YAML.

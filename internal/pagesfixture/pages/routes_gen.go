@@ -45,6 +45,7 @@ func Register(mux *http.ServeMux, options ...htmlbind.Option) {
 			params := about.PageParams{
 				Topic: route.Topic,
 				Page:  route.Page,
+				Tag:   route.Tag,
 			}
 			wrappers := []htmlbind.Wrapper{
 				BindLayout(LayoutParams{}),

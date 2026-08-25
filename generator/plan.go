@@ -185,6 +185,16 @@ func (f FieldPlan) BindsFromString() bool {
 	return f.Kind == KindBytes || !f.IsComposite()
 }
 
+// BindsRepeatedFromQuery reports a field one repeated query key fills: a slice
+// of scalars. A URL carries a key many times natively and an urlencoded form
+// submits a checkbox group exactly that way, so this is the one composite
+// besides a byte sequence that a query string has a spelling for.
+//
+// A slice of struct is not one: an object still needs a document.
+func (f FieldPlan) BindsRepeatedFromQuery() bool {
+	return f.Kind == KindSlice && isScalarKind(f.ElemKind)
+}
+
 // IsComposite reports nested struct/slice/map kinds.
 //
 // A foreign field counts, because it is read from the document body through a
@@ -1153,11 +1163,23 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 				switch fp.Source {
 				case SourceInput, SourcePayload:
 					// keep; JSON bind uses body
-				case SourceQuery, SourcePath, SourceHeader, SourceCookie:
+				case SourceQuery:
+					// Two composites have a spelling outside a document. A byte
+					// sequence binds as base64, and a slice of scalar binds
+					// from a repeated key, which is what a URL carries natively
+					// and what a checkbox group submits.
+					if fp.Kind != KindBytes && !fp.BindsRepeatedFromQuery() {
+						return TypePlan{}, false, fmt.Errorf("field %s: nested %s only supports payload/input sources", id.Name, fp.Kind)
+					}
+				case SourcePath, SourceHeader, SourceCookie:
 					// A byte sequence is the one composite with a spelling
 					// outside a document, so it binds from a value source as
 					// base64. An untagged one stays body-only: a blob's home is
 					// the body, and reading it off a URL is asked for by name.
+					//
+					// A repeated key stops here: a path segment carries one
+					// value, and a repeated header or cookie is a question
+					// about those protocols rather than about arrays.
 					if fp.Kind != KindBytes {
 						return TypePlan{}, false, fmt.Errorf("field %s: nested %s only supports payload/input sources", id.Name, fp.Kind)
 					}
