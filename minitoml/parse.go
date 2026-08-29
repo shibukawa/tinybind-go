@@ -203,6 +203,14 @@ func (p *parser) parseKeyValue() error {
 	if err := p.checkTableArrayConflict(p.cur, full, joinKey(p.basePath(), full), keyLine, keyCol); err != nil {
 		return err
 	}
+	// Defining a key twice is invalid TOML, and every mainstream parser rejects
+	// it; minitoml used to keep the later value silently, which turns a
+	// copy-pasted line into a value nobody chose. A different dotted key, a
+	// second table, or another array-of-tables element writes a distinct full
+	// key or a distinct element document, so only an exact redefinition matches.
+	if _, exists := p.cur.Get(full); exists {
+		return p.errorf(keyLine, keyCol, "key %q is already defined", joinKey(p.basePath(), full))
+	}
 	p.cur.Set(full, val)
 	return nil
 }
