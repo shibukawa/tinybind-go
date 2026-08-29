@@ -32,14 +32,20 @@ func CheckUUID(s string) bool {
 		return false
 	}
 	// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	for i, c := range s {
+	//
+	// Iterated by byte, not by rune: range over a string steps by runes, so a
+	// multi-byte rune skipped the byte positions it covered — including a
+	// dash position — and byte(c) truncated the rune before the hex test, so
+	// a Cyrillic а passed as '0'. Every byte is judged exactly once here.
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		switch i {
 		case 8, 13, 18, 23:
 			if c != '-' {
 				return false
 			}
 		default:
-			if !isHex(byte(c)) {
+			if !isHex(c) {
 				return false
 			}
 		}
