@@ -204,7 +204,8 @@ The generated subset is tunable through the same options:
   instead of struct field order.
 
 The body size cap is `httpbind.SetMaxCBORBodyBytes` (default 1 MiB), shared by
-both transport runtimes. A `payload:"*"` rest map has no CBOR mapping and is
+both transport runtimes and listed with every other one in
+[size and shape limits](limits.md). A `payload:"*"` rest map has no CBOR mapping and is
 reported at generation rather than silently dropped.
 
 ### Path, header, and cookie values
@@ -254,11 +255,15 @@ curl http://localhost:8080/uploads \
   -F 'image=@avatar.png'
 ```
 
-The default multipart body limit is 1 MiB. Raise it during application startup when uploads need more:
+The default multipart body limit is 1 MiB, and it bounds each file part as well. Raise it during application startup when uploads need more:
 
 ```go
 httpbind.SetMaxMultipartBodyBytes(8 << 20) // 8 MiB
 ```
+
+It does not reach an `application/x-www-form-urlencoded` body, which the
+transport parses and bounds on its own; see
+[size and shape limits](limits.md#what-the-transport-owns).
 
 ### Collecting undeclared fields
 
@@ -491,7 +496,7 @@ The runtime owns the connection's lifecycle, and every knob has a working defaul
 | `EnableCompression` | off | permessage-deflate, which costs binary size under TinyGo |
 | `CheckOrigin` | same-host | `func(origin, host string) bool` |
 
-Change them per process with `httpbind.SetSocketDefaults`, or per endpoint with `httpbind.WebSocketWith`.
+Change them per process with `httpbind.SetSocketDefaults`, or per endpoint with `httpbind.WebSocketWith`. `ReadLimit` is listed with the module's other size limits in [size and shape limits](limits.md).
 
 The idle timeout has no "off": under TinyGo a read with no deadline cannot be interrupted by anything, so a socket left that way is a goroutine and a connection nobody can reclaim. A cross-origin handshake is refused by default — a socket that accepts any origin is CSRF with a connection attached.
 

@@ -4,7 +4,7 @@
 
 TinyGo と通常 Go のための、リフレクション不要・コード生成ファーストのバインディングライブラリです。HTTP・JSON・SQL・DynamoDB のランタイム依存を別パッケージに分離しています。
 
-利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [cborbind](docs/cborbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md) · [firestorebind](docs/firestorebind.ja.md) · [cachekeybind](docs/cachekeybind.ja.md) · [リロード可能な component](docs/httpbind_reloadable_componet.ja.md) · [fasthttp バックエンド](docs/httpbind_fasthttp.ja.md)
+利用ガイド: [httpbind](docs/httpbind.ja.md) · [jsonbind](docs/jsonbind.ja.md) · [cborbind](docs/cborbind.ja.md) · [configbind](docs/configbind.ja.md) · [htmlbind](docs/htmlbind.ja.md) · [sqlbind](docs/sqlbind.ja.md) · [dynamobind](docs/dynamobind.ja.md) · [firestorebind](docs/firestorebind.ja.md) · [cachekeybind](docs/cachekeybind.ja.md) · [リロード可能な component](docs/httpbind_reloadable_componet.ja.md) · [fasthttp バックエンド](docs/httpbind_fasthttp.ja.md) · [サイズと形の上限](docs/limits.ja.md)
 
 この上にフレームワークを作る方へ: まず [フレームワーク向け機能一覧](docs/httpbind_framework_facilities.ja.md)（何が使えて何が無いかの索引）、次に [htmlbind フレームワーク実装者向けガイド](docs/htmlbind_frameworkowner.ja.md)、利用者が fasthttp 向けにビルドするなら [fasthttp バックエンド フレームワーク実装者向けガイド](docs/httpbind_fasthttp_frameworkowner.ja.md)
 
@@ -228,10 +228,12 @@ result, err := generator.New(options).GeneratePackage(ctx, generator.GenerateReq
 `Options.FileTypes.Set` で明示できます。
 
 単独 JSON API は `jsonbind.DecodeJSON` / `jsonbind.EncodeJSON` です。
-JSON の読み込み上限はデフォルト 1 MiB で、全体設定は
-`jsonbind.SetMaxJSONBodyBytes`、呼び出し単位では
-`jsonbind.DecodeJSONLimit` を使います。`jsonbind` は transport-neutral な
-エラーを返し、HTTP request の上限超過は `httpbind.Bind` が 413 に変換します。
+JSON の読み込み上限はデフォルト 1 MiB、オブジェクトと配列のネストは
+`encoding/json` と同じく 10000 段までです。`jsonbind` は transport-neutral な
+エラーを返し、`httpbind.Bind` が上限超過を 413 に、不正な文書を 400 に変換します。
+リクエストがぶつかりうる上限（ボディ、ネスト、アップロード、WebSocket
+メッセージ、そしてこのモジュールではなくトランスポートが持つもの）は
+[サイズと形の上限](docs/limits.ja.md)にまとめてあります。
 
 JOIN 結果は生成されたreflection-freeコードを使う `ScanRows[T]` で木構造にまとめられます。各階層で一つの
 スカラーフィールドに `groupkey:""`、列名には `db:"column_name"` を付けます。

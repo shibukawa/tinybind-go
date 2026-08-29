@@ -193,7 +193,7 @@ tinybind-gen generate -cbor-http
 - `-cbor-http-reject-floats` — `float64` フィールドを生成時に拒否します(スケール整数を運ぶスキーマ向け)。
 - `-cbor-http-sorted-keys` — map のメンバを構造体フィールド順ではなく RFC 8949 の bytewise キー順で出力します。
 
-body サイズの上限は `httpbind.SetMaxCBORBodyBytes`(デフォルト 1 MiB)で、両方のトランスポートランタイムが同じ値を共有します。`payload:"*"` の rest map は CBOR に対応する形がないため、黙って落とすのではなく生成時にエラーとして報告されます。
+body サイズの上限は `httpbind.SetMaxCBORBodyBytes`(デフォルト 1 MiB)で、両方のトランスポートランタイムが同じ値を共有します。他の上限とあわせて[サイズと形の上限](limits.ja.md)に一覧があります。`payload:"*"` の rest map は CBOR に対応する形がないため、黙って落とすのではなく生成時にエラーとして報告されます。
 
 ### path、header、cookie
 
@@ -242,11 +242,15 @@ curl http://localhost:8080/uploads \
   -F 'image=@avatar.png'
 ```
 
-multipart body の既定上限は 1 MiB です。それ以上のアップロードを受けるなら、アプリ起動時に引き上げます。
+multipart body の既定上限は 1 MiB で、各ファイルパートも同じ値で縛られます。それ以上のアップロードを受けるなら、アプリ起動時に引き上げます。
 
 ```go
 httpbind.SetMaxMultipartBodyBytes(8 << 20) // 8 MiB
 ```
+
+これは `application/x-www-form-urlencoded` の body には届きません。そちらは
+トランスポートが解析し、トランスポート自身の上限で縛ります。
+[サイズと形の上限](limits.ja.md#トランスポート側の上限)を参照してください。
 
 ### 未宣言フィールドをまとめて受ける
 
@@ -479,7 +483,7 @@ func chat(w http.ResponseWriter, r *http.Request) {
 | `EnableCompression` | off | permessage-deflate。TinyGo ではバイナリサイズを食う |
 | `CheckOrigin` | 同一ホスト | `func(origin, host string) bool` |
 
-プロセス全体は `httpbind.SetSocketDefaults`、エンドポイント単位は `httpbind.WebSocketWith` で変えられます。
+プロセス全体は `httpbind.SetSocketDefaults`、エンドポイント単位は `httpbind.WebSocketWith` で変えられます。`ReadLimit` はモジュールの他のサイズ上限とあわせて[サイズと形の上限](limits.ja.md)に一覧があります。
 
 アイドルタイムアウトに「無効」はありません。TinyGo ではデッドラインなしの読み込みを何者も中断できないので、そうしたソケットは誰も回収できないゴルーチンと接続になります。クロスオリジンのハンドシェイクは既定で拒否します。任意のオリジンを受けるソケットは、接続が張りっぱなしの CSRF だからです。
 

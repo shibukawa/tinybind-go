@@ -4,7 +4,7 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [cborbind](docs/cborbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [cborbind](docs/cborbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md) · [size and shape limits](docs/limits.md)
 
 Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md) and, if your users will build against fasthttp, [the fasthttp backend for framework owners](docs/httpbind_fasthttp_frameworkowner.md). Owning a browser runtime as well? [Client behaviour](docs/httpbind_client_behavior.md) covers server actions, client handlers, and component parameters in one place.
 
@@ -305,10 +305,12 @@ value, err := jsonbind.DecodeJSON[Document](reader)
 err = jsonbind.EncodeJSON(writer, value)
 ```
 
-JSON reads are capped at 1 MiB by default. Use
-`jsonbind.SetMaxJSONBodyBytes` globally or `jsonbind.DecodeJSONLimit` per call.
-`jsonbind` returns transport-neutral errors; `httpbind.Bind` maps an oversized
-HTTP request to status 413.
+JSON reads are capped at 1 MiB by default, and objects and arrays may nest
+10000 deep, matching `encoding/json`. `jsonbind` returns transport-neutral
+errors; `httpbind.Bind` maps an oversized HTTP request to status 413 and a
+malformed one to 400. Every limit a request can run into — bodies, nesting,
+uploads, WebSocket messages, and the ones the transport owns rather than this
+module — is collected in [size and shape limits](docs/limits.md).
 
 Joined SQL rows can be grouped into an object tree with generated, reflection-free `ScanRows[T]` code:
 
