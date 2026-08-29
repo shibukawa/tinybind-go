@@ -6,12 +6,28 @@ import (
 	"github.com/shibukawa/tinygodriver/fasthttp"
 )
 
-// Write serializes a typed response value via a registered writer.
+// Write serializes a typed response value to the response via a registered
+// writer, or, for a type carrying its own encoder, through jsonbind.Appender.
 // Status is always 200 OK; use WriteStatus for other success codes.
+//
+// The interface arm mirrors the net/http half, for the reason its doc gives: a
+// type carrying a method has an author-written encoder, and it is what lets a
+// value from a package this build never analyzed be answered with at all. A
+// handler returning such a type must not work on one transport and report
+// missing_codec on the other.
 //
 // There is no separate request parameter: RequestCtx carries both halves, and
 // the net/http signature only takes r to reach negotiation it then discards.
 func Write[T any](ctx *fasthttp.RequestCtx, value T) error {
+	if _, carries := any((*T)(nil)).(jsonbind.Appender); carries {
+		if source, ok := any(value).(jsonbind.Appender); ok {
+			buf := jsonbind.GetBuffer()
+			*buf = source.AppendJSONTo((*buf)[:0])
+			err := WriteJSONBytes(ctx, 200, *buf)
+			jsonbind.PutBuffer(buf)
+			return err
+		}
+	}
 	fn, ok := lookupWriter[T]()
 	if !ok {
 		return missingWriterError()

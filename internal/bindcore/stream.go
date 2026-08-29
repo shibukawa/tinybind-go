@@ -117,12 +117,25 @@ type Stream[T any] struct {
 func NewStream[T any](w io.Writer, format StreamFormat) *Stream[T] {
 	s := &Stream[T]{w: w, format: format}
 	// A type carrying its own encoder wins over the registry, on the terms
-	// jsonbind.EncodeJSON states, so the resolved fast path only applies when
-	// no method is in play.
-	if _, carries := any((*T)(nil)).(jsonbind.Appender); !carries {
-		if fn, ok := jsonbind.AppendFuncFor[T](); ok {
-			s.appendFn = fn
+	// jsonbind.EncodeJSON states — and it has to win on the fast path, not by
+	// falling to the slow one. The slow path's framing counts on a registered
+	// writer's trailing newline, which the append form deliberately does not
+	// carry, so routing a method-carrying type through it dropped the SSE
+	// frame's blank line and NDJSON's separators entirely.
+	if _, carries := any((*T)(nil)).(jsonbind.Appender); carries {
+		var probe T
+		if _, ok := any(probe).(jsonbind.Appender); ok {
+			s.appendFn = func(dst []byte, v T) []byte {
+				return any(v).(jsonbind.Appender).AppendJSONTo(dst)
+			}
 		}
+		// Appender on *T alone: a stored value cannot reach the method, so
+		// Write's EncodeJSON falls through to the registry writer, whose
+		// trailing newline the slow path counts on.
+		return s
+	}
+	if fn, ok := jsonbind.AppendFuncFor[T](); ok {
+		s.appendFn = fn
 	}
 	return s
 }

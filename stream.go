@@ -56,7 +56,9 @@ type Stream[T any] = bindcore.Stream[T]
 // terminated when fn fails halfway through it.
 func WriteStream[T any](w http.ResponseWriter, r *http.Request, fn func(*Stream[T]) error) {
 	if w == nil {
-		WriteError(w, r, BadRequest(Problem{Code: "stream", Message: "nil ResponseWriter"}))
+		// Nothing to write the problem to either: WriteError would dereference
+		// the same nil writer this guard exists for. Returning silently matches
+		// the fasthttp half's nil-ctx answer.
 		return
 	}
 	// The format is negotiated once, and the headers and status go out here

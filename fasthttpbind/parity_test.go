@@ -10,6 +10,7 @@ import (
 
 	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/fasthttpbind"
+	"github.com/shibukawa/tinybind-go/jsonbind"
 	"github.com/shibukawa/tinygodriver/fasthttp"
 )
 
@@ -411,5 +412,38 @@ func checkQueryParity(t *testing.T, raw, key string) {
 		if got[i] != want[i] {
 			t.Fatalf("%s key=%q: net/http=%q fasthttp=%q", target, key, want, got)
 		}
+	}
+}
+
+// methodResp carries its own encoder and registers nothing, which is the
+// jsonbind.GenerateCodec shape: the method is the only way to serialize it.
+// Write must answer with it on both transports — it used to work on net/http
+// and report missing_codec here.
+type methodResp struct{ N int }
+
+func (v methodResp) AppendJSONTo(dst []byte) []byte {
+	dst = append(dst, `{"n":`...)
+	dst = jsonbind.AppendInt(dst, int64(v.N))
+	return append(dst, '}')
+}
+
+func TestWriteAppenderCarryingTypeParity(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	if err := httpbind.Write(rec, r, methodResp{N: 7}); err != nil {
+		t.Fatalf("net/http Write: %v", err)
+	}
+
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/x")
+	if err := fasthttpbind.Write(ctx, methodResp{N: 7}); err != nil {
+		t.Fatalf("fasthttp Write: %v", err)
+	}
+
+	if got, want := string(ctx.Response.Body()), rec.Body.String(); got != want {
+		t.Fatalf("bodies differ: fasthttp %q, net/http %q", got, want)
+	}
+	if got, want := string(ctx.Response.Header.ContentType()), rec.Header().Get("Content-Type"); got != want {
+		t.Fatalf("content types differ: fasthttp %q, net/http %q", got, want)
 	}
 }
