@@ -132,12 +132,15 @@ func KeyArray[T any](values []T, encode func(T) string) string {
 type MemoryCache struct {
 	mu      sync.Mutex
 	entries map[string]memoryEntry
-	// order approximates insertion age. Eviction pops from the front by moving
-	// head instead of shifting the slice; a key expiry already removed keeps its
-	// slot and is skipped when it surfaces.
-	order []string
-	head  int
-	max   int
+	// order approximates age. Eviction pops from the front by moving head
+	// instead of shifting the slice. A slot carries the generation of the entry
+	// it was written for, so a slot left behind by an expired-then-reset key is
+	// recognised as stale and skipped rather than evicting the live entry that
+	// now holds the key.
+	order   []orderSlot
+	head    int
+	max     int
+	nextSeq uint64
 	// now is swappable so expiry is testable without sleeping.
 	now func() time.Time
 }
@@ -145,6 +148,17 @@ type MemoryCache struct {
 type memoryEntry struct {
 	value   []byte
 	expires time.Time
+	// seq is the generation this entry was written at. An order slot matches
+	// the live entry only when their seqs agree.
+	seq uint64
+}
+
+// orderSlot is one age-ordered reference to a key at the generation it was
+// written. A later write to the same key leaves this slot behind with an older
+// seq, which is how eviction tells a stale reference from the live one.
+type orderSlot struct {
+	key string
+	seq uint64
 }
 
 // NewMemoryCache returns a store holding at most maxEntries entries. A
@@ -176,16 +190,20 @@ func (c *MemoryCache) Set(_ context.Context, key string, value []byte, ttl time.
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.entries[key]; !exists {
-		c.order = append(c.order, key)
-	}
-	c.entries[key] = memoryEntry{value: value, expires: c.now().Add(ttl)}
+	c.nextSeq++
+	c.entries[key] = memoryEntry{value: value, expires: c.now().Add(ttl), seq: c.nextSeq}
+	c.order = append(c.order, orderSlot{key: key, seq: c.nextSeq})
 	// Insertion order approximates age well enough for a render cache, and it
-	// avoids the bookkeeping a true LRU would add to every hit.
+	// avoids the bookkeeping a true LRU would add to every hit. A popped slot
+	// evicts only the entry it was written for: a stale slot (its key has since
+	// been rewritten at a newer seq) is skipped, so it cannot delete the live
+	// value the way it once did.
 	for c.max > 0 && len(c.entries) > c.max && c.head < len(c.order) {
-		oldest := c.order[c.head]
+		slot := c.order[c.head]
 		c.head++
-		delete(c.entries, oldest)
+		if e, ok := c.entries[slot.key]; ok && e.seq == slot.seq {
+			delete(c.entries, slot.key)
+		}
 	}
 	c.compact()
 }
@@ -205,9 +223,9 @@ func (c *MemoryCache) compact() {
 		return
 	}
 	kept := c.order[:0]
-	for _, key := range c.order[c.head:] {
-		if _, ok := c.entries[key]; ok {
-			kept = append(kept, key)
+	for _, slot := range c.order[c.head:] {
+		if e, ok := c.entries[slot.key]; ok && e.seq == slot.seq {
+			kept = append(kept, slot)
 		}
 	}
 	c.order, c.head = kept, 0

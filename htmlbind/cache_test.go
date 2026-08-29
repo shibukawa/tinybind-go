@@ -115,3 +115,30 @@ func TestCacheKeySeparatesBindingValues(t *testing.T) {
 		t.Fatalf("the binding displaced the scope prefix: %q", scoped)
 	}
 }
+
+// A key re-Set after its own expiry must survive the next eviction. The expired
+// key leaves a stale slot in the order queue; before the generation check,
+// eviction popped that stale slot and deleted the freshly written entry under
+// the same key, while an older key survived — so the hottest key with a short
+// TTL was the one that kept missing.
+func TestMemoryCacheReSetSurvivesEviction(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1000, 0)
+	cache := NewMemoryCache(2)
+	cache.now = func() time.Time { return now }
+
+	cache.Set(ctx, "a", []byte("a1"), time.Second)
+	cache.Set(ctx, "b", []byte("b1"), time.Minute)
+
+	now = now.Add(2 * time.Second) // a expires
+	if _, ok := cache.Get(ctx, "a"); ok {
+		t.Fatal("a should have expired")
+	}
+
+	cache.Set(ctx, "a", []byte("a2"), time.Minute) // re-set the expired key
+	cache.Set(ctx, "c", []byte("c1"), time.Minute) // forces one eviction
+
+	if got, ok := cache.Get(ctx, "a"); !ok || string(got) != "a2" {
+		t.Fatalf("re-set a was evicted: got %q ok=%v", got, ok)
+	}
+}
