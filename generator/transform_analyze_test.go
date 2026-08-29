@@ -38,8 +38,9 @@ func TestAnalyzeTransformSplitsThePackage(t *testing.T) {
 
 	wantAdmitted := []string{"callsAdmittedHelper", "contextHandler", "discardHandler", "plainHandler", "renderOK"}
 	wantRefused := []string{
-		"closureHandler", "escapeHandler", "inheritsRefusal",
-		"refusedHelper", "typeAssertionHandler", "unknownCallHandler", "unknownSelectorHandler",
+		"chanEscapeHandler", "closureHandler", "escapeHandler", "fieldEscapeHandler",
+		"globalEscapeHandler", "goEscapeHandler", "inheritsRefusal", "refusedHelper",
+		"typeAssertionHandler", "unknownCallHandler", "unknownSelectorHandler",
 	}
 	if strings.Join(admitted, ",") != strings.Join(wantAdmitted, ",") {
 		t.Errorf("admitted = %v\n    want %v", admitted, wantAdmitted)
@@ -68,6 +69,10 @@ func TestRefusalKinds(t *testing.T) {
 		"typeAssertionHandler":   RefusalTypeAssertion,
 		"closureHandler":         RefusalEscapes,
 		"escapeHandler":          RefusalEscapes,
+		"goEscapeHandler":        RefusalEscapes,
+		"chanEscapeHandler":      RefusalEscapes,
+		"fieldEscapeHandler":     RefusalEscapes,
+		"globalEscapeHandler":    RefusalEscapes,
 		"inheritsRefusal":        RefusalInheritedFromCallee,
 	} {
 		if got := refusalFor(t, plan, name).Kind; got != want {
