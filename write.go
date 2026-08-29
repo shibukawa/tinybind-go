@@ -85,11 +85,15 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 // never reflects over the value and never allocates an intermediate map.
 func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
 	h := w.Header()
-	h.Set("Content-Type", "application/json")
+	// Assigned rather than Set: the key is already canonical, and Set builds a
+	// fresh one-element slice per call where the Content-Type can share one for
+	// the life of the process. Nothing in net/http mutates a stored slice —
+	// the stdlib itself stores shared slices this way for Date.
+	h["Content-Type"] = jsonContentType
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		// The full body is in hand, so declare its length; without it a body
 		// beyond net/http's output buffer is sent chunked for no reason.
-		h.Set("Content-Length", strconv.Itoa(len(data)+1))
+		h["Content-Length"] = []string{strconv.Itoa(len(data) + 1)}
 		w.WriteHeader(status)
 		if _, err := w.Write(data); err != nil {
 			return err
@@ -97,11 +101,15 @@ func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
 		_, err := w.Write(newline)
 		return err
 	}
-	h.Set("Content-Length", strconv.Itoa(len(data)))
+	h["Content-Length"] = []string{strconv.Itoa(len(data))}
 	w.WriteHeader(status)
 	_, err := w.Write(data)
 	return err
 }
+
+// jsonContentType is the shared header value WriteJSONBytes stores. It must
+// never be appended to or written through.
+var jsonContentType = []string{"application/json"}
 
 var newline = []byte("\n")
 
