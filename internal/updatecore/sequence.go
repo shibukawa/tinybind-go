@@ -53,7 +53,7 @@ func (o Options) SequenceAddressHeader() string { return o.HeaderNamespace() + "
 // the whole recovery path: a sequence is an optimisation over markup that is
 // still available, never a thing a screen depends on.
 func (o Options) Sequence(r Reader) (Response, bool) {
-	if o.Negotiate(r).Mode != ModeSequence {
+	if o.NegotiateMode(r).Mode != ModeSequence {
 		return Response{}, false
 	}
 	address := r.Header(o.SequenceAddressHeader())

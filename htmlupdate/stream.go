@@ -50,7 +50,7 @@ type StreamPlan = updatecore.StreamPlan
 // caller's: take them from [Options.StreamHeaders] before calling.
 func (o Options) WriteStream(w http.ResponseWriter, r *http.Request, head []string, fn func(*DeltaStream) error) {
 	o.writeStream(w, updatecore.StreamPlan{
-		Mode: ModeNavigation, Version: o.Negotiate(r).Version, Head: head,
+		Mode: ModeNavigation, Version: o.core().NegotiateMode(reader(r)).Version, Head: head,
 	}, fn)
 }
 
@@ -64,7 +64,7 @@ func (o Options) WriteStream(w http.ResponseWriter, r *http.Request, head []stri
 // the stream ended.
 func (o Options) WriteLiveStream(w http.ResponseWriter, r *http.Request, head []string, fn func(*DeltaStream) error) {
 	o.writeStream(w, updatecore.StreamPlan{
-		Mode: ModeLive, Live: true, Version: o.Negotiate(r).Version, Head: head,
+		Mode: ModeLive, Live: true, Version: o.core().NegotiateMode(reader(r)).Version, Head: head,
 	}, fn)
 }
 

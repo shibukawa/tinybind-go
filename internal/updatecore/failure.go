@@ -137,7 +137,7 @@ func (o Options) Refuse(r Reader, f Failure) Response {
 		o.OnFailure(r.Context(), f)
 	}
 	response := FailureResponse(f)
-	for _, name := range o.VaryOn(o.Negotiate(r).Mode) {
+	for _, name := range o.VaryOn(o.NegotiateMode(r).Mode) {
 		response.Header.Add("Vary", name)
 	}
 	return response

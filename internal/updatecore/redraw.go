@@ -200,7 +200,7 @@ const notFoundMessage = "404 page not found"
 // [htmlbind.Builder.CSRFField] needs a token. The boundary prefix and the build
 // identity are supplied from these Options and do not need passing.
 func (o Options) Redraw(r Reader, reg *Registry, options ...htmlbind.Option) (Response, bool) {
-	if o.Negotiate(r).Mode != ModeRedraw {
+	if o.NegotiateMode(r).Mode != ModeRedraw {
 		return Response{}, false
 	}
 	kind := r.Header(o.KindHeader())

@@ -342,13 +342,37 @@ type Negotiated struct {
 	Known delta.Manifest
 }
 
-// Negotiate resolves how a request must be answered.
+// Negotiate resolves how a request must be answered, with the client's echoed
+// validator manifest decoded into Known.
 //
 // Anything unrecognized resolves to ModeDocument rather than to an error: a
 // stale client, a truncated header, and a proxy that dropped a header must all
 // still produce a working page. That is a total function on the mode name
 // rather than a version comparison, so it holds with no version at all.
+//
+// Decoding the manifest is the request's most expensive step — it is up to
+// ManifestLimit bytes the client chose, one delta.Instance per entry — and only
+// the three delta renders that read Known need it. Every other caller (the
+// headers, the mode branches, the echoed version) takes NegotiateMode, which
+// skips the decode, so one request decodes the manifest once rather than on
+// every negotiation it makes.
 func (o Options) Negotiate(r Reader) Negotiated {
+	negotiated := o.NegotiateMode(r)
+	switch negotiated.Mode {
+	case ModeNavigation, ModeLive, ModeRedraw:
+		encoded := r.Header(o.ManifestHeader())
+		if len(encoded) > o.ManifestLimit() {
+			encoded = ""
+		}
+		negotiated.Known = DecodeManifest(encoded)
+	}
+	return negotiated
+}
+
+// NegotiateMode resolves the mode and version without decoding the client's
+// validator manifest. It is what a caller that varies a header or branches on
+// the mode uses; a caller that reads the echoed validators takes Negotiate.
+func (o Options) NegotiateMode(r Reader) Negotiated {
 	name, version, ok := parseRender(r.Header(o.RenderHeader()))
 	if !ok {
 		return Negotiated{Mode: ModeDocument}
@@ -387,11 +411,7 @@ func (o Options) Negotiate(r Reader) Negotiated {
 	if r.Header(o.BuildHeader()) != o.Build() {
 		return Negotiated{Mode: ModeDocument}
 	}
-	encoded := r.Header(o.ManifestHeader())
-	if len(encoded) > o.ManifestLimit() {
-		encoded = ""
-	}
-	return Negotiated{Mode: mode, Version: version, Known: DecodeManifest(encoded)}
+	return Negotiated{Mode: mode, Version: version}
 }
 
 // RenderToken is the value a response echoes for one mode.

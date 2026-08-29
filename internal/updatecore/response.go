@@ -68,7 +68,7 @@ func (resp Response) NotModified(r Reader) bool {
 // and the live marker from the composition. Pass the wrappers and leaf a render
 // entry will be given; pass none and the live marker is omitted.
 func (o Options) Headers(r Reader, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment) http.Header {
-	negotiated := o.Negotiate(r)
+	negotiated := o.NegotiateMode(r)
 	header := http.Header{}
 	for _, name := range o.VaryOn(negotiated.Mode) {
 		header.Add("Vary", name)
@@ -152,7 +152,7 @@ func (o Options) LiveHeaders(r Reader, wrappers []htmlbind.Wrapper, leaf htmlbin
 
 func (o Options) streamHeaders(r Reader, wrappers []htmlbind.Wrapper, leaf htmlbind.Fragment, servesLive bool) http.Header {
 	header := o.Headers(r, wrappers, leaf)
-	negotiated := o.Negotiate(r)
+	negotiated := o.NegotiateMode(r)
 	switch negotiated.Mode {
 	case ModeNavigation:
 		header.Set("Content-Type", o.StreamMediaType())

@@ -39,7 +39,7 @@ type StreamPlan = updatecore.StreamPlan
 // response committed when the head record went out.
 func (o Options) WriteStream(ctx *fasthttp.RequestCtx, head []string, fn func(*DeltaStream) error) {
 	o.writeStream(ctx, updatecore.StreamPlan{
-		Mode: ModeNavigation, Version: o.Negotiate(ctx).Version, Head: head,
+		Mode: ModeNavigation, Version: o.core().NegotiateMode(reader(ctx)).Version, Head: head,
 	}, fn)
 }
 
@@ -48,7 +48,7 @@ func (o Options) WriteStream(ctx *fasthttp.RequestCtx, head []string, fn func(*D
 // terminator can mean "come back" rather than "stop".
 func (o Options) WriteLiveStream(ctx *fasthttp.RequestCtx, head []string, fn func(*DeltaStream) error) {
 	o.writeStream(ctx, updatecore.StreamPlan{
-		Mode: ModeLive, Live: true, Version: o.Negotiate(ctx).Version, Head: head,
+		Mode: ModeLive, Live: true, Version: o.core().NegotiateMode(reader(ctx)).Version, Head: head,
 	}, fn)
 }
 
