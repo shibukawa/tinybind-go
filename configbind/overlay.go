@@ -102,7 +102,13 @@ func (o *Overlay) GetTables(key string) ([]*Overlay, bool) {
 	return e.Tables, true
 }
 
-// GetMulti returns multi values when present; otherwise splits Raw by comma if needed.
+// GetMulti returns the values of a list field. A source that carries a real
+// list — a repeated CLI flag, a TOML array — returns it verbatim. A scalar
+// reaching a list field is env's spelling of a list: env carries only
+// KEY=value, so a repeated flag and a TOML array have no equivalent, and a
+// comma is the one separator left. Each element is trimmed and empty elements
+// are dropped, so "a, b," is [a b] rather than [a " b" ""]; a value that must
+// hold a comma is set through TOML or a CLI flag instead.
 func (o *Overlay) GetMulti(key string) ([]string, bool) {
 	e, ok := o.Get(key)
 	if !ok || e.IsTables {
@@ -114,7 +120,14 @@ func (o *Overlay) GetMulti(key string) ([]string, bool) {
 	if e.Raw == "" {
 		return []string{}, true
 	}
-	return []string{e.Raw}, true
+	parts := strings.Split(e.Raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out, true
 }
 
 // Keys returns sorted config keys.
