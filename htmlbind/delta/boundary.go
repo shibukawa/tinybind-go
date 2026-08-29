@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shibukawa/tinybind-go/htmlbind"
 )
 
 // Instance is one update boundary as it appeared in a render.
@@ -236,7 +238,11 @@ func (c *collector) Close() {
 // stay visible, and a template's content does not render. That is why the two
 // hole shapes, deliberately identical until now, have diverged.
 func (c *collector) placeholder(attr, id string) string {
-	return `<template ` + attr + `="` + id + `"></template>`
+	// The id is escaped for the attribute, matching BoundaryAttr on the render
+	// path: it is author or request data, and a browser decodes the attribute
+	// back to the raw id the manifest and header carry, so the client's
+	// selector still matches. attr is the framework's own configured name.
+	return `<template ` + attr + `="` + htmlbind.Escape(id) + `"></template>`
 }
 
 // Write records into the innermost open boundary only. Both the frame validator
@@ -280,9 +286,20 @@ func (c *collector) Slot(begin bool) {
 // Choice records what a client needs in order to take the same path through the
 // sequence tree the render took.
 func (c *collector) Choice(value string) {
-	if depth := len(c.stack); depth > 0 {
-		c.stack[depth-1].values = append(c.stack[depth-1].values, value)
+	depth := len(c.stack)
+	if depth == 0 {
+		return
 	}
+	state := c.stack[depth-1]
+	// A Choice made while a slot span is open is inside an inlined component,
+	// whose whole output the tree carries as one opaque slot — Slot collapses
+	// the same way. Recording the interior branch or loop count would add a
+	// value the tree has no node for, so it is suppressed exactly as the nested
+	// slots inside that span are.
+	if state.depth > 0 {
+		return
+	}
+	state.values = append(state.values, value)
 }
 
 func (c *collector) TakePending() (attr, id string, ok bool) {

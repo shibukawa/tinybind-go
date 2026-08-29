@@ -249,3 +249,87 @@ func TestANonHijackableWriterIsRefusedRatherThanHanging(t *testing.T) {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }
+
+// naiveSocket returns the read error straight out, the way the doc example's
+// `if err != nil { return err }` does. A normal close must not reach the stream
+// error handler even then: ServeSocket recognizes it and ends quietly.
+func naiveSocket(s *bindcore.Socket[sockIn, sockOut]) error {
+	for {
+		in, err := s.Read()
+		if err != nil {
+			return err
+		}
+		if err := s.Write(sockOut{Text: in.Text}); err != nil {
+			return err
+		}
+	}
+}
+
+func TestNormalCloseIsNotReportedOnEitherTransport(t *testing.T) {
+	backends := []socketBackend{
+		{"net/http", func(t *testing.T, o fasthttpbind.SocketOptions) (string, chan error) {
+			refusals := make(chan error, 4)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := httpbind.WebSocketWith(w, r, o, naiveSocket); err != nil {
+					refusals <- err
+				}
+			}))
+			t.Cleanup(server.Close)
+			return "ws" + strings.TrimPrefix(server.URL, "http"), refusals
+		}},
+		{"fasthttp", func(t *testing.T, o fasthttpbind.SocketOptions) (string, chan error) {
+			refusals := make(chan error, 4)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("listen: %v", err)
+			}
+			server := &fasthttp.Server{Handler: func(ctx *fasthttp.RequestCtx) {
+				if err := fasthttpbind.WebSocketWith(ctx, o, naiveSocket); err != nil {
+					refusals <- err
+				}
+			}}
+			go func() { _ = server.Serve(ln) }()
+			t.Cleanup(func() { _ = server.Shutdown() })
+			return "ws://" + ln.Addr().String(), refusals
+		}},
+	}
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			reported := make(chan error, 4)
+			bindcore.SetStreamErrorHandler(func(err error) { reported <- err })
+			t.Cleanup(func() { bindcore.SetStreamErrorHandler(nil) })
+
+			url, refusals := backend.serve(t, fasthttpbind.SocketOptions{})
+			conn := dialSocket(t, url, nil)
+			if err := conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+				t.Fatalf("client close: %v", err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_, _, _ = conn.ReadMessage() // drain the server's answering close
+
+			select {
+			case err := <-reported:
+				t.Fatalf("a normal close was reported to the error handler: %v", err)
+			case err := <-refusals:
+				t.Fatalf("a normal close was returned from the entry: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
+	}
+}
+
+// IsNormalClose answers the same on both surfaces, which is what lets one Read
+// loop end quietly on either transport.
+func TestIsNormalCloseParity(t *testing.T) {
+	closeErr := &websocket.CloseError{Code: websocket.CloseNormalClosure}
+	if !httpbind.IsNormalClose(closeErr) {
+		t.Error("net/http IsNormalClose rejected a normal CloseError")
+	}
+	if !fasthttpbind.IsNormalClose(closeErr) {
+		t.Error("fasthttp IsNormalClose rejected a normal CloseError")
+	}
+	if httpbind.IsNormalClose(errors.New("boom")) || fasthttpbind.IsNormalClose(errors.New("boom")) {
+		t.Error("a plain error was classified as a normal close")
+	}
+}

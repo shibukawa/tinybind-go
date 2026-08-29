@@ -421,6 +421,19 @@ func (p *parser) parseBasicString() (string, error) {
 				b.WriteByte('\r')
 			case 't':
 				b.WriteByte('\t')
+			case 'u', 'U':
+				// \uXXXX and \UXXXXXXXX are TOML 1.0.0 escapes, and the scaffold
+				// writer emits \uXXXX for control characters — so rejecting them
+				// made a generated config unloadable by the parser that wrote it.
+				width := 4
+				if esc == 'U' {
+					width = 8
+				}
+				r, err := p.readUnicodeEscape(width, line, col)
+				if err != nil {
+					return "", err
+				}
+				b.WriteRune(r)
 			default:
 				return "", p.errorf(p.line, p.col, "unsupported string escape \\%c", esc)
 			}
@@ -492,6 +505,36 @@ func (p *parser) skipComment() {
 	for !p.eof() && p.peek() != '\n' && p.peek() != '\r' {
 		p.advance()
 	}
+}
+
+// readUnicodeEscape consumes the width hex digits after a \u or \U and returns
+// the code point. A short run, a non-hex digit, or a value outside Unicode is
+// an error rather than a silently wrong rune. line and col point at the escape.
+func (p *parser) readUnicodeEscape(width, line, col int) (rune, error) {
+	var v rune
+	for i := 0; i < width; i++ {
+		if p.eof() {
+			return 0, p.errorf(line, col, "unterminated unicode escape")
+		}
+		c := p.peek()
+		var d rune
+		switch {
+		case c >= '0' && c <= '9':
+			d = rune(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = rune(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = rune(c-'A') + 10
+		default:
+			return 0, p.errorf(line, col, "invalid unicode escape")
+		}
+		v = v<<4 | d
+		p.advance()
+	}
+	if v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF) {
+		return 0, p.errorf(line, col, "unicode escape out of range")
+	}
+	return v, nil
 }
 
 func (p *parser) eof() bool {

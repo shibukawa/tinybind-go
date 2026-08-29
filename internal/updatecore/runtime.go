@@ -191,7 +191,10 @@ func (o Options) scriptTag(config RuntimeConfig) string {
 		`" data-config="` + htmlAttrEscape(string(encoded)) + `" defer></script>`
 }
 
+// htmlAttrReplacer is built once: strings.NewReplacer compiles a trie, and
+// rebuilding it per call put that cost on every script-tag render.
+var htmlAttrReplacer = strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;", "<", "&lt;", ">", "&gt;")
+
 func htmlAttrEscape(value string) string {
-	replacer := strings.NewReplacer("&", "&amp;", `"`, "&#34;", "'", "&#39;", "<", "&lt;", ">", "&gt;")
-	return replacer.Replace(value)
+	return htmlAttrReplacer.Replace(value)
 }

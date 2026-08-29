@@ -82,11 +82,16 @@ func (o Options) ScriptTagFor(csrfToken string) string { return o.core().ScriptT
 // Options.CallerOwnsRuntime and RuntimeSource.
 func (o Options) RuntimeHandler() http.Handler {
 	modified := time.Time{}
+	// The source is materialized once. RuntimeSource copies the embedded
+	// string and string() copied it back, so every request — 304s included —
+	// paid two 45 KB allocations for bytes that never change.
+	source := string(updatecore.RuntimeSource())
+	name := o.core().RuntimeBaseName() + ".js"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", updatecore.RuntimeContentType)
 		w.Header().Set("ETag", `"`+updatecore.RuntimeVersion()+`"`)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		http.ServeContent(w, r, o.core().RuntimeBaseName()+".js", modified, strings.NewReader(string(updatecore.RuntimeSource())))
+		http.ServeContent(w, r, name, modified, strings.NewReader(source))
 	})
 }
 

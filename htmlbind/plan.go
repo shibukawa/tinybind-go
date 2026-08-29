@@ -237,6 +237,17 @@ func execOps[P any](r *Renderer, ops []Op[P], params P) error {
 			}
 			continue
 		}
+		// An op that splices its own nodes into the tree must not be bracketed
+		// as one slot here, or the two halves disagree: sequenceOf gives a Val
+		// its body's decomposition and a Require no node at all, while a bracket
+		// collapses the whole body to one value and invents an empty value for
+		// the Require. The op's own Exec brackets whatever its body needs.
+		if _, inlines := op.(interface{ sequenceInline() []SeqNode }); inlines {
+			if err := op.Exec(r, params); err != nil {
+				return err
+			}
+			continue
+		}
 		r.collect.Slot(true)
 		err := op.Exec(r, params)
 		r.collect.Slot(false)

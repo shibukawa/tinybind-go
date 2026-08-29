@@ -224,8 +224,26 @@ func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
 			return p.buf[start:i], needsWork, nil
 		}
 		if c == '\\' {
+			// The escape is validated here, where every string passes exactly
+			// once, so a skipped member is held to the same grammar as a bound
+			// one. Without this, \q decoded to a literal q and a truncated \u
+			// to U+FFFD — documents encoding/json rejects — and RawValue would
+			// re-emit them to a downstream parser as JSON.
 			needsWork = true
-			i += 2
+			if i+1 >= len(p.buf) {
+				return nil, false, p.fail("unterminated JSON string")
+			}
+			switch p.buf[i+1] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				i += 2
+			case 'u':
+				if i+6 > len(p.buf) || !isHex4(p.buf[i+2:i+6]) {
+					return nil, false, p.fail("invalid unicode escape in JSON string")
+				}
+				i += 6
+			default:
+				return nil, false, p.fail("invalid escape in JSON string")
+			}
 			continue
 		}
 		if c < 0x20 {
@@ -258,22 +276,67 @@ func (p *Parser) String() (string, error) {
 	return string(p.scratch), nil
 }
 
-// numberSpan returns the number token without copying.
+// numberSpan returns the number token without copying, held to RFC 8259's
+// grammar: -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?.
+//
+// It is validated here, where every number passes exactly once, rather than in
+// the readers: +1, .5, 01 and 1. are documents encoding/json rejects, and
+// before this check the float reader accepted them, the int readers accepted
+// the leading zero, and SkipValue accepted all four — so a rest map's RawValue
+// carried them onward as JSON.
 func (p *Parser) numberSpan() ([]byte, error) {
 	p.ws()
 	start := p.pos
-	for p.pos < len(p.buf) {
-		c := p.buf[p.pos]
-		if (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E' {
-			p.pos++
-			continue
-		}
-		break
+	i := p.pos
+	buf := p.buf
+	if i < len(buf) && buf[i] == '-' {
+		i++
 	}
-	if p.pos == start {
+	switch {
+	case i < len(buf) && buf[i] == '0':
+		i++
+	case i < len(buf) && buf[i] >= '1' && buf[i] <= '9':
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' {
+			i++
+		}
+	default:
 		return nil, p.fail("JSON value must be a number")
 	}
-	return p.buf[start:p.pos], nil
+	if i < len(buf) && buf[i] == '.' {
+		i++
+		from := i
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' {
+			i++
+		}
+		if i == from {
+			return nil, p.fail("invalid JSON number")
+		}
+	}
+	if i < len(buf) && (buf[i] == 'e' || buf[i] == 'E') {
+		i++
+		if i < len(buf) && (buf[i] == '+' || buf[i] == '-') {
+			i++
+		}
+		from := i
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' {
+			i++
+		}
+		if i == from {
+			return nil, p.fail("invalid JSON number")
+		}
+	}
+	p.pos = i
+	return buf[start:i], nil
+}
+
+// isHex4 reports whether the four bytes of a \u escape are hex digits.
+func isHex4(s []byte) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // Int decodes a JSON number as int. null decodes as 0.

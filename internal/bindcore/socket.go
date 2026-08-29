@@ -445,5 +445,49 @@ func ServeSocket[In, Out any](conn MessageConn, opts SocketOptions, fn func(*Soc
 	if cerr := socket.Close(); err == nil {
 		err = cerr
 	}
+	// A socket ends when the peer closes it, and that is not a failure to route
+	// anywhere. The peer-initiated close arrives as a normal CloseError from the
+	// read, and our own answering Close then reports that the frame was already
+	// sent; neither is reportable. The classifier is transport-owned because the
+	// CloseError types are the drivers' and differ between them — which is why a
+	// handler comparing against one driver's type misfired on the other.
+	if IsNormalClose(err) {
+		return nil
+	}
 	return err
+}
+
+// normalCloseClassifiers hold each transport's rule for what counts as a normal
+// end of a socket. bindcore names no driver, so the driver-specific check — a
+// CloseError of a normal or going-away code, or the sentinel returned when a
+// close was already sent — is registered by the transport that imports it.
+var normalCloseClassifiers []func(error) bool
+
+// RegisterNormalClose adds a transport's normal-close rule. Each transport
+// package calls it once from init, so IsNormalClose answers the same on both
+// surfaces for the callback body they share.
+func RegisterNormalClose(fn func(error) bool) {
+	if fn != nil {
+		normalCloseClassifiers = append(normalCloseClassifiers, fn)
+	}
+}
+
+// IsNormalClose reports whether err is the ordinary end of a socket rather than
+// a failure — the peer's normal or going-away close, an already-sent close, or
+// EOF. A handler's read loop tests it to end without routing the close to the
+// error handler, and it answers alike on both transports where a driver's own
+// IsCloseError does not.
+func IsNormalClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	for _, fn := range normalCloseClassifiers {
+		if fn(err) {
+			return true
+		}
+	}
+	return false
 }

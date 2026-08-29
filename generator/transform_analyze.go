@@ -206,6 +206,42 @@ func (a *transformAnalyzer) classify() {
 			return true
 		})
 
+		// The closure guard above catches a transport value carried out by a
+		// literal; these catch it carried out any other way. On fasthttp the
+		// rewrite makes r.Context() the pooled *RequestCtx, so a handler that
+		// hands it to a goroutine, sends it on a channel, or stores it in a
+		// field or global keeps a value the server recycles into the next
+		// request the moment this handler returns. Each such position is a
+		// refusal, not a rewrite — matching rule:fasthttpbind-requestctx-lifetime
+		// — and forced outranks the r.Context() rewrite that would otherwise
+		// account for the same ident.
+		markEscape := func(subtree ast.Node, detail string) {
+			ast.Inspect(subtree, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && a.isTransportIdent(candidate, id) {
+					forced[id] = a.refuse(candidate.Name, RefusalEscapes, id, detail)
+				}
+				return true
+			})
+		}
+		ast.Inspect(candidate.Decl.Body, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.GoStmt:
+				markEscape(node.Call, "hands the transport to a goroutine that outlives the handler")
+			case *ast.SendStmt:
+				markEscape(node.Value, "sends the transport on a channel that outlives the handler")
+			case *ast.AssignStmt:
+				// A fresh local (:=) or a discard (_ =) keeps the value inside
+				// the handler; a store into a field, element, or deref, or an
+				// assignment to an existing name, can outlive it.
+				for i, lhs := range node.Lhs {
+					if escapeLHS(lhs, node.Tok) {
+						markEscape(escapeRHS(node, i), "stores the transport where it outlives the handler")
+					}
+				}
+			}
+			return true
+		})
+
 		ast.Inspect(candidate.Decl.Body, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.AssignStmt:
@@ -472,6 +508,35 @@ func (a *transformAnalyzer) plan() *TransformPlan {
 // placeholder the rewriter later replaces with the chosen identifier.
 func expandContext(replacement string) string {
 	return strings.ReplaceAll(replacement, "$ctx", contextPlaceholder)
+}
+
+// escapeLHS reports whether assigning to lhs can outlive the handler. A plain
+// new local (:=) and the blank identifier keep the value in the handler; a
+// store into a field, element, or pointee, or an assignment to an already-bound
+// name, can hand it somewhere longer-lived.
+func escapeLHS(lhs ast.Expr, tok token.Token) bool {
+	switch target := lhs.(type) {
+	case *ast.Ident:
+		if target.Name == "_" {
+			return false
+		}
+		// := binds a fresh local; = writes a name that may be a field's
+		// receiver captured earlier or a package global.
+		return tok == token.ASSIGN
+	case *ast.SelectorExpr, *ast.IndexExpr, *ast.StarExpr:
+		return true
+	default:
+		return true
+	}
+}
+
+// escapeRHS returns the right-hand expression paired with LHS index i, or the
+// whole right side when a single call feeds several names (a, b := f()).
+func escapeRHS(node *ast.AssignStmt, i int) ast.Node {
+	if len(node.Rhs) == len(node.Lhs) {
+		return node.Rhs[i]
+	}
+	return &ast.CompositeLit{Elts: node.Rhs}
 }
 
 func allBlank(exprs []ast.Expr) bool {

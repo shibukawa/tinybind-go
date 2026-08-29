@@ -280,3 +280,73 @@ func TestWriteStream_AppendFastPathFramesMatchEncoderPath(t *testing.T) {
 		})
 	}
 }
+
+// methodEvt carries its own encoder the way a jsonbind.GenerateCodec type
+// does: AppendJSONTo on the value, one compact document, no trailing newline.
+// Nothing is registered for it, which is exactly the situation the annotation
+// exists for — the type crosses a boundary with no generic call at the
+// crossing to plan a registration.
+type methodEvt struct {
+	Type string
+	N    int
+}
+
+func (v methodEvt) AppendJSONTo(dst []byte) []byte {
+	dst = append(dst, `{"type":`...)
+	dst = jsonbind.AppendString(dst, v.Type)
+	dst = append(dst, `,"n":`...)
+	dst = jsonbind.AppendInt(dst, int64(v.N))
+	return append(dst, '}')
+}
+
+// A type whose encoder is its own method must still produce framed events: the
+// SSE frame ends in a blank line and NDJSON is one document per line. It used
+// to produce neither — the method form carries no trailing newline, and the
+// slow path counted on one — so EventSource never dispatched and the NDJSON
+// contract was gone.
+func TestWriteStream_AppenderCarryingType_Framing(t *testing.T) {
+	sse := httptest.NewRequest(http.MethodPost, "/chat", nil)
+	sse.Header.Set("Accept", "text/event-stream")
+	rec := httptest.NewRecorder()
+	httpbind.WriteStream(rec, sse, func(s *httpbind.Stream[methodEvt]) error {
+		if err := s.Write(methodEvt{Type: "a", N: 1}); err != nil {
+			return err
+		}
+		return s.Write(methodEvt{Type: "b", N: 2})
+	})
+	want := "data: {\"type\":\"a\",\"n\":1}\n\ndata: {\"type\":\"b\",\"n\":2}\n\n"
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("SSE framing:\n got %q\nwant %q", got, want)
+	}
+
+	nd := httptest.NewRequest(http.MethodPost, "/chat", nil)
+	nd.Header.Set("User-Agent", "curl/8.4.0")
+	rec = httptest.NewRecorder()
+	httpbind.WriteStream(rec, nd, func(s *httpbind.Stream[methodEvt]) error {
+		if err := s.Write(methodEvt{Type: "a", N: 1}); err != nil {
+			return err
+		}
+		return s.Write(methodEvt{Type: "b", N: 2})
+	})
+	want = "{\"type\":\"a\",\"n\":1}\n{\"type\":\"b\",\"n\":2}\n"
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("NDJSON framing:\n got %q\nwant %q", got, want)
+	}
+
+	arr := httptest.NewRequest(http.MethodPost, "/chat", nil)
+	arr.Header.Set("Accept", "application/json")
+	rec = httptest.NewRecorder()
+	httpbind.WriteStream(rec, arr, func(s *httpbind.Stream[methodEvt]) error {
+		return s.Write(methodEvt{Type: "a", N: 1})
+	})
+	if got := rec.Body.String(); got != "[{\"type\":\"a\",\"n\":1}\n]" {
+		t.Fatalf("JSON array framing: got %q", got)
+	}
+}
+
+// The nil-writer guard must survive its own case: it used to hand the nil
+// writer to WriteError, which dereferences it for the problem headers.
+func TestWriteStreamNilWriter(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/chat", nil)
+	httpbind.WriteStream[evt](nil, req, func(s *httpbind.Stream[evt]) error { return nil })
+}

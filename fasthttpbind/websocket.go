@@ -1,6 +1,8 @@
 package fasthttpbind
 
 import (
+	"errors"
+
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinygodriver/fasthttp"
 	websocket "github.com/shibukawa/tinygodriver/fasthttpwebsocket"
@@ -9,6 +11,22 @@ import (
 // Socket is a typed WebSocket connection. It is the same type the net/http
 // runtime uses, so a callback body compiles unchanged on either transport.
 type Socket[In, Out any] = bindcore.Socket[In, Out]
+
+// A normal close is not a failure the error handler should see. This driver's
+// CloseError is a distinct type from the net/http driver's, so each surface
+// registers its own rule and IsNormalClose then answers alike for the callback
+// body they share.
+func init() {
+	bindcore.RegisterNormalClose(func(err error) bool {
+		return errors.Is(err, websocket.ErrCloseSent) ||
+			websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
+	})
+}
+
+// IsNormalClose reports whether a socket error is the ordinary end of the
+// connection rather than a failure. It answers the same as the net/http
+// surface's, which is what lets one Read loop end quietly on either transport.
+func IsNormalClose(err error) bool { return bindcore.IsNormalClose(err) }
 
 // SocketOptions configures one socket. A zero field takes the process default
 // installed with SetSocketDefaults.

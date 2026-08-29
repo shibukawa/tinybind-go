@@ -3,6 +3,7 @@ package fasthttpupdate
 import (
 	"bufio"
 	"context"
+	"time"
 
 	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/internal/updatecore"
@@ -202,17 +203,35 @@ func detachRequestCtx(cctx context.Context, ctx *fasthttp.RequestCtx) context.Co
 // The channel is read out of the RequestCtx while the handler still owns it,
 // and it belongs to the server rather than to the pooled request, so holding it
 // past the handler is safe where holding the ctx is not.
+//
+// The context wraps that channel directly rather than bridging it to a
+// WithCancel through a goroutine. The bridge goroutine blocked on a channel
+// that closes only at process shutdown, so every streamed request left one
+// behind for the life of the server — a leak sized by request count. A context
+// whose Done is the channel itself needs nothing torn down.
 func shutdownContext(ctx *fasthttp.RequestCtx) context.Context {
 	done := ctx.Done()
 	if done == nil {
 		return context.Background()
 	}
-	derived, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-done
-		cancel()
-	}()
-	return derived
+	return shutdownCtx{done: done}
+}
+
+// shutdownCtx is a context.Context over the server's shutdown channel: no
+// deadline, no values, done exactly when the server stops.
+type shutdownCtx struct{ done <-chan struct{} }
+
+func (c shutdownCtx) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c shutdownCtx) Done() <-chan struct{}       { return c.done }
+func (c shutdownCtx) Value(any) any               { return nil }
+
+func (c shutdownCtx) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
 }
 
 // SetStreamErrorHandler installs the destination for stream failures raised

@@ -4,6 +4,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -104,6 +105,39 @@ func escapeHandler(w http.ResponseWriter, r *http.Request) {
 	_ = w
 }
 
+// The rewrite turns r.Context() into the pooled *RequestCtx on fasthttp, so
+// carrying it out of the handler — to a goroutine, a channel, a field, or a
+// global — is a refusal even though the selector on its own is rewritable.
+
+var ctxSink context.Context
+var ctxChan = make(chan context.Context, 1)
+
+type ctxHolder struct{ ctx context.Context }
+
+var heldCtx ctxHolder
+
+func goEscapeHandler(w http.ResponseWriter, r *http.Request) {
+	go consumeContext(r.Context())
+	_ = httpbind.Write[CreateUserResponse](w, r, CreateUserResponse{})
+}
+
+func chanEscapeHandler(w http.ResponseWriter, r *http.Request) {
+	ctxChan <- r.Context()
+	_ = httpbind.Write[CreateUserResponse](w, r, CreateUserResponse{})
+}
+
+func fieldEscapeHandler(w http.ResponseWriter, r *http.Request) {
+	heldCtx.ctx = r.Context()
+	_ = httpbind.Write[CreateUserResponse](w, r, CreateUserResponse{})
+}
+
+func globalEscapeHandler(w http.ResponseWriter, r *http.Request) {
+	ctxSink = r.Context()
+	_ = httpbind.Write[CreateUserResponse](w, r, CreateUserResponse{})
+}
+
+func consumeContext(ctx context.Context) { _ = ctx }
+
 func register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /users", plainHandler)
 	mux.HandleFunc("GET /ctx", contextHandler)
@@ -115,4 +149,8 @@ func register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /assert", typeAssertionHandler)
 	mux.HandleFunc("GET /closure", closureHandler)
 	mux.HandleFunc("GET /escape", escapeHandler)
+	mux.HandleFunc("GET /go-escape", goEscapeHandler)
+	mux.HandleFunc("GET /chan-escape", chanEscapeHandler)
+	mux.HandleFunc("GET /field-escape", fieldEscapeHandler)
+	mux.HandleFunc("GET /global-escape", globalEscapeHandler)
 }

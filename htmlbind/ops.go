@@ -276,7 +276,13 @@ func (boundaryAttrOp[P]) Exec(r *Renderer, _ P) error {
 	if !ok {
 		return nil
 	}
-	return r.Write(" " + attr + `="` + id + `"`)
+	// The id is author or request data — a reloadable component's own field, or
+	// a redraw's request header — so it is escaped for the attribute it lands
+	// in, like every other value this package writes. The manifest and the
+	// X-Tinybind-Instance header carry the raw id, and a browser decodes this
+	// attribute back to that same raw id, so the client's selector still
+	// matches. attr is the framework's own configured name and is not quoted.
+	return r.Write(" " + attr + `="` + Escape(id) + `"`)
 }
 
 // If selects one of two instruction lists.
@@ -342,8 +348,24 @@ type forCtxOp[P, E, S any] struct {
 	body  []Op[S]
 }
 
+// sequenceBody exposes the loop body to the sequence walk, exactly as forOp
+// does. Without it a context-taking loop decomposed as one opaque slot: the
+// tree carried a single SeqSlot while the render bracketed the whole loop as
+// one value, so the per-row split was lost and a boundary opened inside the
+// body landed in the wrong span.
+func (o forCtxOp[P, E, S]) sequenceBody() []SeqNode {
+	return sequenceOf(o.body)
+}
+
 func (o forCtxOp[P, E, S]) Exec(r *Renderer, params P) error {
-	for index, item := range o.items(r.boundaryContext(), params) {
+	items := o.items(r.boundaryContext(), params)
+	// The body travels once and the run count travels as data, the same
+	// contract forOp states, so a collecting render records the count and a
+	// client repeats its walk that many times.
+	if r.collect != nil {
+		r.collect.Choice(strconv.Itoa(len(items)))
+	}
+	for index, item := range items {
 		if err := execOps(r, o.body, o.scope(params, item, index)); err != nil {
 			return err
 		}

@@ -74,28 +74,37 @@ func ReportStreamError(err error) {
 // StreamHeader is one response header a format requires.
 type StreamHeader struct{ Name, Value string }
 
+// The header sets are fixed per format, so they are built once. A caller only
+// reads them (it copies each into the response), so one shared slice per format
+// serves every request rather than allocating four headers per stream.
+var (
+	sseStreamHeaders = []StreamHeader{
+		{"Content-Type", "text/event-stream; charset=utf-8"},
+		{"Cache-Control", "no-cache"},
+		{"Connection", "keep-alive"},
+		// Disable proxy buffering when supported (nginx etc.).
+		{"X-Accel-Buffering", "no"},
+	}
+	jsonArrayStreamHeaders = []StreamHeader{
+		{"Content-Type", "application/json; charset=utf-8"},
+		{"Cache-Control", "no-cache"},
+	}
+	ndjsonStreamHeaders = []StreamHeader{
+		{"Content-Type", "application/x-ndjson; charset=utf-8"},
+		{"Cache-Control", "no-cache"},
+	}
+)
+
 // StreamHeaders lists the headers a format's response opens with, in order, so
-// both surfaces send the same set.
+// both surfaces send the same set. The returned slice is shared and read-only.
 func StreamHeaders(format StreamFormat) []StreamHeader {
 	switch format {
 	case StreamSSE:
-		return []StreamHeader{
-			{"Content-Type", "text/event-stream; charset=utf-8"},
-			{"Cache-Control", "no-cache"},
-			{"Connection", "keep-alive"},
-			// Disable proxy buffering when supported (nginx etc.).
-			{"X-Accel-Buffering", "no"},
-		}
+		return sseStreamHeaders
 	case StreamJSONArray:
-		return []StreamHeader{
-			{"Content-Type", "application/json; charset=utf-8"},
-			{"Cache-Control", "no-cache"},
-		}
+		return jsonArrayStreamHeaders
 	default: // NDJSON / JSONL
-		return []StreamHeader{
-			{"Content-Type", "application/x-ndjson; charset=utf-8"},
-			{"Cache-Control", "no-cache"},
-		}
+		return ndjsonStreamHeaders
 	}
 }
 
@@ -117,12 +126,25 @@ type Stream[T any] struct {
 func NewStream[T any](w io.Writer, format StreamFormat) *Stream[T] {
 	s := &Stream[T]{w: w, format: format}
 	// A type carrying its own encoder wins over the registry, on the terms
-	// jsonbind.EncodeJSON states, so the resolved fast path only applies when
-	// no method is in play.
-	if _, carries := any((*T)(nil)).(jsonbind.Appender); !carries {
-		if fn, ok := jsonbind.AppendFuncFor[T](); ok {
-			s.appendFn = fn
+	// jsonbind.EncodeJSON states — and it has to win on the fast path, not by
+	// falling to the slow one. The slow path's framing counts on a registered
+	// writer's trailing newline, which the append form deliberately does not
+	// carry, so routing a method-carrying type through it dropped the SSE
+	// frame's blank line and NDJSON's separators entirely.
+	if _, carries := any((*T)(nil)).(jsonbind.Appender); carries {
+		var probe T
+		if _, ok := any(probe).(jsonbind.Appender); ok {
+			s.appendFn = func(dst []byte, v T) []byte {
+				return any(v).(jsonbind.Appender).AppendJSONTo(dst)
+			}
 		}
+		// Appender on *T alone: a stored value cannot reach the method, so
+		// Write's EncodeJSON falls through to the registry writer, whose
+		// trailing newline the slow path counts on.
+		return s
+	}
+	if fn, ok := jsonbind.AppendFuncFor[T](); ok {
+		s.appendFn = fn
 	}
 	return s
 }
@@ -275,8 +297,8 @@ func NegotiateStream(streamQuery, accept, userAgent string) StreamFormat {
 	// 2) Accept — first matching media type wins (left to right).
 	if accept != "" {
 		for part := range strings.SplitSeq(accept, ",") {
-			media := strings.TrimSpace(strings.Split(part, ";")[0])
-			media = strings.ToLower(media)
+			media, _, _ := strings.Cut(part, ";")
+			media = strings.ToLower(strings.TrimSpace(media))
 			switch media {
 			case "text/event-stream":
 				return StreamSSE

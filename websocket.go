@@ -1,6 +1,7 @@
 package httpbind
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
@@ -17,6 +18,23 @@ import (
 //
 // Read must be called from one goroutine. Write may be called from any.
 type Socket[In, Out any] = bindcore.Socket[In, Out]
+
+// A normal close is not a failure the error handler should see. The CloseError
+// type is this driver's, so the rule is registered here rather than in
+// bindcore, which names no driver; the fasthttp surface registers its own.
+func init() {
+	bindcore.RegisterNormalClose(func(err error) bool {
+		return errors.Is(err, websocket.ErrCloseSent) ||
+			websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
+	})
+}
+
+// IsNormalClose reports whether a socket error is the ordinary end of the
+// connection — the peer's normal or going-away close, an already-sent close, or
+// EOF — rather than a failure. A Read loop tests it to end quietly, and it
+// answers the same on the fasthttp surface, where this driver's own
+// IsCloseError would not recognize the other driver's CloseError.
+func IsNormalClose(err error) bool { return bindcore.IsNormalClose(err) }
 
 // SocketOptions configures one socket. A zero field takes the process default
 // installed with SetSocketDefaults, and nothing reaches the driver as zero.
