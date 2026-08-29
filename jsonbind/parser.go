@@ -14,10 +14,45 @@ import (
 type Parser struct {
 	buf []byte
 	pos int
+	// depth counts the objects and arrays open at this position, so a document
+	// cannot drive the walk deeper than MaxNestingDepth.
+	depth int
 	// Keys and values get separate scratch buffers so a decoded key stays
 	// valid while the matching value is being decoded.
 	keyScratch []byte
 	scratch    []byte
+}
+
+// MaxNestingDepth bounds how deeply objects and arrays may nest, matching
+// encoding/json's own limit.
+//
+// The walk is recursive — SkipValue and Any call themselves, and a generated
+// decoder calls the next one down — so without a bound the depth of the
+// document is the depth of the Go stack, and a request body decides it. A
+// megabyte of '[' is half a million frames: on a host that is tens of
+// megabytes of stack per request, and on a TinyGo target, whose stack is fixed
+// and small, it is an overflow rather than an error.
+//
+// Nothing legitimate approaches this. A document that does is refused as a
+// parse failure, which generated binders already map to 400.
+const MaxNestingDepth = 10000
+
+// enter counts one open object or array.
+func (p *Parser) enter() error {
+	if p.depth >= MaxNestingDepth {
+		return p.fail("JSON value nested too deeply")
+	}
+	p.depth++
+	return nil
+}
+
+// leave closes one. It is written where the closing bracket is consumed, which
+// is ObjectKey and ArrayNext rather than a matching call of the caller's: the
+// parser has no nesting stack and the closer is the only place it can know.
+func (p *Parser) leave() {
+	if p.depth > 0 {
+		p.depth--
+	}
 }
 
 // NewParser returns a Parser reading data. data is not copied, and values
@@ -25,7 +60,7 @@ type Parser struct {
 func NewParser(data []byte) *Parser { return &Parser{buf: data} }
 
 // Reset points p at data, reusing its scratch buffers.
-func (p *Parser) Reset(data []byte) { p.buf, p.pos = data, 0 }
+func (p *Parser) Reset(data []byte) { p.buf, p.pos, p.depth = data, 0, 0 }
 
 func (p *Parser) fail(msg string) error { return newError("json_parse", msg, nil) }
 
@@ -54,6 +89,9 @@ func (p *Parser) ObjectStart() (isNull bool, err error) {
 	}
 	if p.buf[p.pos] != '{' {
 		return false, p.fail("JSON value must be an object")
+	}
+	if err := p.enter(); err != nil {
+		return false, err
 	}
 	p.pos++
 	return false, nil
@@ -87,6 +125,7 @@ func (p *Parser) objectKeySpan(n int) (span []byte, escaped, ok bool, err error)
 	}
 	if p.buf[p.pos] == '}' {
 		p.pos++
+		p.leave()
 		return nil, false, false, nil
 	}
 	if n > 0 {
@@ -123,6 +162,9 @@ func (p *Parser) ArrayStart() (isNull bool, err error) {
 	if p.buf[p.pos] != '[' {
 		return false, p.fail("JSON value must be an array")
 	}
+	if err := p.enter(); err != nil {
+		return false, err
+	}
 	p.pos++
 	return false, nil
 }
@@ -135,6 +177,7 @@ func (p *Parser) ArrayNext(n int) (bool, error) {
 	}
 	if p.buf[p.pos] == ']' {
 		p.pos++
+		p.leave()
 		return false, nil
 	}
 	if n > 0 {
