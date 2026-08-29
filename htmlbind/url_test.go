@@ -126,6 +126,64 @@ func TestSafeSrcsetKeepsTheGoodCandidates(t *testing.T) {
 	}
 }
 
+// A candidate's URL ends at whitespace, not at a comma, so a data URL — the one
+// form whose payload holds commas — survives the walk it used to be torn by.
+func TestSafeSrcsetKeepsDataURLsWhole(t *testing.T) {
+	opts := newRenderOptions(nil)
+	const inline = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+	for _, tc := range []struct{ name, in, want string }{
+		{"alone", inline, inline},
+		{"with a descriptor", inline + " 1x", inline + " 1x"},
+		{"beside another candidate", inline + " 1x, /b.png 2x", inline + " 1x, /b.png 2x"},
+		{"after another candidate", "/a.png 1x, " + inline + " 2x", "/a.png 1x, " + inline + " 2x"},
+	} {
+		if got := opts.safeSrcsetURLs(tc.in); got != tc.want {
+			t.Errorf("%s: safeSrcsetURLs = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A refused candidate leaves nothing behind. Splitting on commas used to drop
+// only the header of a refused data URL and keep its payload, which is a
+// relative URL the browser then fetches from the document's own origin.
+func TestSafeSrcsetDropsARefusedDataURLWhole(t *testing.T) {
+	opts := newRenderOptions(nil)
+	const script = "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="
+	for _, tc := range []struct{ name, in, want string }{
+		{"alone", script + " 1x", ""},
+		{"before a good one", script + " 1x, /b.png 2x", "/b.png 2x"},
+		{"after a good one", "/a.png 1x, " + script + " 2x", "/a.png 1x"},
+	} {
+		if got := opts.safeSrcsetURLs(tc.in); got != tc.want {
+			t.Errorf("%s: safeSrcsetURLs = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The separator forms the grammar allows, none of which may turn one candidate
+// into two or admit a scheme the policy refuses.
+func TestSafeSrcsetSeparatorForms(t *testing.T) {
+	opts := newRenderOptions(nil)
+	for _, tc := range []struct{ name, in, want string }{
+		{"empty", "", ""},
+		{"separators only", " , , ", ""},
+		// A comma inside the URL token belongs to the URL, which is the same
+		// rule that keeps a data URL whole, stated on a relative one.
+		{"comma inside the url", "/a.png,/b.png 2x", "/a.png,/b.png 2x"},
+		{"trailing comma ends a descriptorless candidate", "/a.png, /b.png 2x", "/a.png, /b.png 2x"},
+		{"several trailing commas", "/a.png,,, /b.png 2x", "/a.png, /b.png 2x"},
+		{"repeated commas", "/a.png 1x,,/b.png 2x", "/a.png 1x, /b.png 2x"},
+		{"leading separators", " ,/a.png 1x", "/a.png 1x"},
+		{"tab and newline separate", "/a.png\t1x,\n/b.png\t2x", "/a.png 1x, /b.png 2x"},
+		{"hostile candidate after a comma", "/a.png 1x,javascript:alert(1) 2x", "/a.png 1x"},
+		{"hostile candidate with no descriptor", "/a.png 1x, javascript:alert(1)", "/a.png 1x"},
+	} {
+		if got := opts.safeSrcsetURLs(tc.in); got != tc.want {
+			t.Errorf("%s: safeSrcsetURLs(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestSafeSpaceURLsKeepsTheGoodEntries(t *testing.T) {
 	opts := newRenderOptions(nil)
 	got := opts.safeSpaceURLs("https://a.example/p javascript:alert(1) https://b.example/p")
