@@ -15,7 +15,6 @@ import (
 	"context"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -673,7 +672,7 @@ func (r *Renderer) Write(value string) error {
 // entities separately so a value that needs escaping never builds an
 // intermediate string.
 func (r *Renderer) WriteEscaped(value string) error {
-	if !strings.ContainsAny(value, `&<>"'`) {
+	if !escapeNeeded(value) {
 		return r.Write(value)
 	}
 	start := 0

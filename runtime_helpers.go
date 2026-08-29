@@ -257,7 +257,7 @@ func QueryValue(r *http.Request, key string) (string, bool) {
 	if r.URL == nil {
 		return "", false
 	}
-	return queryScan(r.URL.RawQuery, key)
+	return bindcore.ScanQuery(r.URL.RawQuery, key)
 }
 
 // PathValue returns the path value for key (Go 1.22+ ServeMux).

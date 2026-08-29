@@ -225,7 +225,6 @@ func TestParser_SkipValueValidatesStructure(t *testing.T) {
 	}
 }
 
-
 func TestReadLimitHint_ReadsExactlyToTheLimit(t *testing.T) {
 	body := `{"value":"12345"}`
 	got, err := ReadLimitHint(strings.NewReader(body), int64(len(body)), 0)

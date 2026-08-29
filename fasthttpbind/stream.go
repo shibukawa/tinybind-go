@@ -68,8 +68,9 @@ func NegotiateStreamFormat(ctx *fasthttp.RequestCtx) StreamFormat {
 	if ctx == nil {
 		return StreamNDJSON
 	}
+	streamQuery, _ := bindcore.ScanQuery(string(ctx.URI().QueryString()), "stream")
 	return bindcore.NegotiateStream(
-		string(ctx.QueryArgs().Peek("stream")),
+		streamQuery,
 		string(ctx.Request.Header.Peek("Accept")),
 		string(ctx.Request.Header.Peek("User-Agent")),
 	)

@@ -189,24 +189,54 @@ func urlScheme(normalized string) (string, bool) {
 // One hostile candidate does not discard the good ones, because the attribute
 // is a list of alternatives rather than a single value and dropping all of them
 // would turn a scheme rejection into a missing image.
+//
+// A candidate's URL ends at whitespace, not at a comma, which is the srcset
+// grammar and is what an inline image needs: cutting the list on commas alone
+// tore "data:image/png;base64,AAAA 1x" into a header and a payload, so the one
+// attribute able to carry an image without a request was the one this mangled,
+// and a data URL it meant to refuse survived as a relative candidate. A comma
+// still ends a candidate — it just cannot end the URL.
 func (o *renderOptions) safeSrcsetURLs(value string) string {
-	candidates := strings.Split(value, ",")
-	kept := candidates[:0]
-	for _, candidate := range candidates {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed == "" {
+	var kept []string
+	for i := 0; i < len(value); {
+		// Whitespace, plus the separators the previous candidate left behind.
+		for i < len(value) && (isASCIIWhitespace(value[i]) || value[i] == ',') {
+			i++
+		}
+		if i >= len(value) {
+			break
+		}
+		start := i
+		for i < len(value) && !isASCIIWhitespace(value[i]) {
+			i++
+		}
+		reference, descriptor := value[start:i], ""
+		if trimmed := strings.TrimRight(reference, ","); len(trimmed) != len(reference) {
+			// Trailing commas mean this candidate carries no descriptor, and
+			// they separate it from the next one rather than belonging to it.
+			reference = trimmed
+		} else {
+			from := i
+			for i < len(value) && value[i] != ',' {
+				i++
+			}
+			descriptor = strings.TrimSpace(value[from:i])
+		}
+		if !o.permitsURL(reference) {
 			continue
 		}
-		// A candidate is a URL, then optional whitespace and a descriptor.
-		reference := trimmed
-		if cut := strings.IndexFunc(trimmed, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }); cut >= 0 {
-			reference = trimmed[:cut]
+		if descriptor != "" {
+			reference += " " + descriptor
 		}
-		if o.permitsURL(reference) {
-			kept = append(kept, trimmed)
-		}
+		kept = append(kept, reference)
 	}
 	return strings.Join(kept, ", ")
+}
+
+// isASCIIWhitespace reports the five code points HTML calls ASCII whitespace,
+// which are the ones that separate a srcset candidate's URL from its descriptor.
+func isASCIIWhitespace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r'
 }
 
 // safeSpaceURLs applies the scheme policy to a whitespace-separated URL list,

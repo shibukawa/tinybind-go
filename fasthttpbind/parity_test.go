@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -330,6 +331,85 @@ func TestQueryLookupAllParity(t *testing.T) {
 			if got[i] != want[i] {
 				t.Fatalf("key=%q element %d: fasthttp %q, net/http %q", key, i, got[i], want[i])
 			}
+		}
+	}
+}
+
+// queryParityCases are the spellings the two runtimes used to answer
+// differently: the driver's own parser admits a pair carrying a semicolon and a
+// pair whose percent escape is broken, and url.ParseQuery drops both. Every one
+// of these is a query a client writes, so the difference was the client's to
+// pick — which is why both surfaces now split the raw query through
+// bindcore.ParseQuery instead of each reading its own transport's idea of it.
+var queryParityCases = []string{
+	"a=1", "a=1&a=2", "a", "a=", "=1",
+	"a=1;b=2", "tag=a;b&tag=c",
+	"a=%zz", "a=%", "a=x%2", "%zz=1",
+	"a%2Fb=c", "a+b=c+d", "a=%E3%81%82", "&&a=1", "a=1&", "%41=%42",
+}
+
+func TestQueryParity(t *testing.T) {
+	for _, raw := range queryParityCases {
+		for _, key := range []string{"a", "b", "tag", "A B", "a/b"} {
+			checkQueryParity(t, raw, key)
+		}
+	}
+}
+
+// FuzzQueryParity keeps the two surfaces reading one query the same way. It
+// drives both through their own transport's URI parsing rather than setting
+// RawQuery by hand, so a divergence it reports is one a request can produce.
+func FuzzQueryParity(f *testing.F) {
+	for _, raw := range queryParityCases {
+		f.Add(raw, "a")
+	}
+	f.Fuzz(func(t *testing.T, raw, key string) {
+		// A fragment marker and a raw control byte never survive a request line
+		// intact, so feeding them compares the two URI parsers rather than the
+		// two query views.
+		for i := 0; i < len(raw); i++ {
+			if raw[i] < 0x21 || raw[i] > 0x7e || raw[i] == '#' {
+				return
+			}
+		}
+		if _, err := url.ParseRequestURI("/x?" + raw); err != nil {
+			return
+		}
+		checkQueryParity(t, raw, key)
+	})
+}
+
+func checkQueryParity(t *testing.T, raw, key string) {
+	t.Helper()
+	target := "/x?" + raw
+
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(target)
+
+	wantValue, wantOK := httpbind.QueryLookup(httpbind.Queries(r), key)
+	gotValue, gotOK := fasthttpbind.QueryLookup(fasthttpbind.Queries(ctx), key)
+	if gotValue != wantValue || gotOK != wantOK {
+		t.Fatalf("%s key=%q: net/http=(%q,%v) fasthttp=(%q,%v)", target, key, wantValue, wantOK, gotValue, gotOK)
+	}
+
+	// The single-shot accessor answers off the same split, so it has to agree
+	// with the pre-parsed one on both sides.
+	if v, ok := fasthttpbind.QueryValue(ctx, key); v != wantValue || ok != wantOK {
+		t.Fatalf("%s key=%q: fasthttp QueryValue=(%q,%v), QueryLookup=(%q,%v)", target, key, v, ok, wantValue, wantOK)
+	}
+	if v, ok := httpbind.QueryValue(r, key); v != wantValue || ok != wantOK {
+		t.Fatalf("%s key=%q: net/http QueryValue=(%q,%v), QueryLookup=(%q,%v)", target, key, v, ok, wantValue, wantOK)
+	}
+
+	want := httpbind.QueryLookupAll(httpbind.Queries(r), key)
+	got := fasthttpbind.QueryLookupAll(fasthttpbind.Queries(ctx), key)
+	if len(got) != len(want) {
+		t.Fatalf("%s key=%q: net/http=%q fasthttp=%q", target, key, want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s key=%q: net/http=%q fasthttp=%q", target, key, want, got)
 		}
 	}
 }

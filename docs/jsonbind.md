@@ -261,7 +261,10 @@ type RawEnvelope struct {
 
 ## Read limits
 
-The default JSON document limit is 1 MiB.
+The default JSON document limit is 1 MiB, and objects and arrays may nest
+`jsonbind.MaxNestingDepth` (10000) deep. Every limit in the module, including
+the ones the transport owns rather than this one, is collected in
+[size and shape limits](limits.md).
 
 Change the process-wide limit during startup:
 
