@@ -1,6 +1,9 @@
 package fasthttpbind
 
-import "github.com/shibukawa/tinygodriver/fasthttp"
+import (
+	"github.com/shibukawa/tinybind-go/internal/bindcore"
+	"github.com/shibukawa/tinygodriver/fasthttp"
+)
 
 // DefaultActionSelectorField is the hidden field a generated form carries to say
 // which server function a native submit is for. It matches the net/http half, so
@@ -20,8 +23,10 @@ func ActionSelector(ctx *fasthttp.RequestCtx, field string) string {
 	if field == "" {
 		field = DefaultActionSelectorField
 	}
-	if value := ctx.QueryArgs().Peek(field); len(value) > 0 {
-		return string(value)
+	// Through ScanQuery rather than QueryArgs, so a selector carrying an escape
+	// resolves to what the net/http half resolves it to.
+	if value, _ := bindcore.ScanQuery(string(ctx.URI().QueryString()), field); value != "" {
+		return value
 	}
 	return string(ctx.PostArgs().Peek(field))
 }

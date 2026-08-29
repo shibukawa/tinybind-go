@@ -14,55 +14,50 @@ import (
 // which copies. That is the whole safety argument: no value handed to a binder
 // can survive into another request.
 
-// Queries returns the parsed query arguments. Generated binders call this once
-// per request and resolve each field with QueryLookup.
-func Queries(ctx *fasthttp.RequestCtx) *fasthttp.Args {
+// QueryValues is the request's query string split once into raw key=value
+// spans. It is an alias, like the error model and File, so a binder holds the
+// same type on either transport and the lookups cannot drift apart.
+type QueryValues = bindcore.QueryValues
+
+// Queries parses the request's query string once. Generated binders call this
+// once per request and resolve each field with QueryLookup.
+//
+// It splits the raw query itself rather than reading ctx.QueryArgs(), because
+// the driver's parser admits pairs url.ParseQuery drops — one carrying a
+// semicolon, one whose percent escape is broken — and the two runtimes then
+// bind different values for a query the client chose. bindcore.ParseQuery is
+// the one implementation both surfaces answer from.
+//
+// The pooled query bytes are converted once here, so every span the lookups cut
+// from them is owned by this request and none can outlive it.
+func Queries(ctx *fasthttp.RequestCtx) QueryValues {
 	if ctx == nil {
-		return nil
+		return QueryValues{}
 	}
-	return ctx.QueryArgs()
+	return bindcore.ParseQuery(string(ctx.URI().QueryString()))
 }
 
 // QueryLookup returns the first value for key from pre-parsed query values.
 // A key present with an empty value reports ("", true), matching net/http.
-//
-// Peek runs first because both it and Has are linear scans of the same list:
-// a hit answers in one pass, and the second scan is paid only to tell a
-// present-but-empty key apart from an absent one.
-func QueryLookup(q *fasthttp.Args, key string) (string, bool) {
-	if q == nil {
-		return "", false
-	}
-	if v := q.Peek(key); len(v) > 0 {
-		return string(v), true
-	}
-	if q.Has(key) {
-		return "", true
-	}
-	return "", false
-}
+func QueryLookup(q QueryValues, key string) (string, bool) { return q.Lookup(key) }
 
 // QueryLookupAll returns every value for key, in the order the URL wrote them,
 // which is the array spelling an urlencoded form submits for a repeated
 // control name. An empty value contributes nothing, matching the net/http
 // counterpart: a blank control submits its key with no value, and counting one
 // would invent an element no user chose.
-func QueryLookupAll(q *fasthttp.Args, key string) []string {
-	if q == nil {
-		return nil
-	}
-	var out []string
-	q.VisitAll(func(k, v []byte) {
-		if len(v) > 0 && string(k) == key {
-			out = append(out, string(v))
-		}
-	})
-	return out
-}
+func QueryLookupAll(q QueryValues, key string) []string { return q.LookupAll(key) }
 
 // QueryValue returns the first query parameter value for key.
+//
+// It copies the query out of the pooled request on every call, so a caller
+// resolving several fields calls Queries once and QueryLookup per field, which
+// is what generated binders do.
 func QueryValue(ctx *fasthttp.RequestCtx, key string) (string, bool) {
-	return QueryLookup(Queries(ctx), key)
+	if ctx == nil {
+		return "", false
+	}
+	return bindcore.ScanQuery(string(ctx.URI().QueryString()), key)
 }
 
 // PathValue returns the path value for key.
