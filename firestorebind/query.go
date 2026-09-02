@@ -43,14 +43,14 @@ func QueryPage[T any, PT interface {
 	if err != nil {
 		return Page[T]{}, err
 	}
-	return QueryPageOn[T, PT](ctx, h, q, opts...)
+	return h.QueryPage[T, PT](ctx, q, opts...)
 }
 
-// QueryPageOn is QueryPage taking its Handle as an argument.
-func QueryPageOn[T any, PT interface {
+// QueryPage is QueryPage on a Handle the caller already holds.
+func (h Handle) QueryPage[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
+}](ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
 	c, _, err := h.resolve()
 	if err != nil {
 		return Page[T]{}, err
@@ -60,6 +60,17 @@ func QueryPageOn[T any, PT interface {
 		return Page[T]{}, err
 	}
 	return decodeBatch[T, PT](batch)
+}
+
+// QueryPageOn is QueryPage taking its Handle as an argument.
+//
+// Deprecated: use the QueryPage method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryPageOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
+	return h.QueryPage[T, PT](ctx, q, opts...)
 }
 
 // Query iterates every entity a query matches, requesting batches as the range
@@ -84,20 +95,20 @@ func Query[T any, PT interface {
 			yield(zero, err)
 			return
 		}
-		QueryOn[T, PT](ctx, h, q, opts...)(yield)
+		h.Query[T, PT](ctx, q, opts...)(yield)
 	}
 }
 
-// QueryOn is Query taking its Handle as an argument. The Handle is resolved once
-// for the whole range rather than once per batch.
-func QueryOn[T any, PT interface {
+// Query is Query on a Handle the caller already holds. The Handle is resolved
+// once for the whole range rather than once per batch.
+func (h Handle) Query[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
+}](ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		next := q
 		for {
-			page, err := QueryPageOn[T, PT](ctx, h, next, opts...)
+			page, err := h.QueryPage[T, PT](ctx, next, opts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -116,6 +127,17 @@ func QueryOn[T any, PT interface {
 			next = next.Start(page.EndCursor)
 		}
 	}
+}
+
+// QueryOn is Query taking its Handle as an argument.
+//
+// Deprecated: use the Query method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
+	return h.Query[T, PT](ctx, q, opts...)
 }
 
 // KeyPage is one batch of a keys-only query.
@@ -148,11 +170,11 @@ func QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...datastore.Re
 	if err != nil {
 		return KeyPage{}, err
 	}
-	return QueryKeysPageOn(ctx, h, q, opts...)
+	return h.QueryKeysPage(ctx, q, opts...)
 }
 
-// QueryKeysPageOn is QueryKeysPage taking its Handle as an argument.
-func QueryKeysPageOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
+// QueryKeysPage is QueryKeysPage on a Handle the caller already holds.
+func (h Handle) QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
 	c, _, err := h.resolve()
 	if err != nil {
 		return KeyPage{}, err
@@ -162,6 +184,14 @@ func QueryKeysPageOn(ctx context.Context, h Handle, q *datastore.Query, opts ...
 		return KeyPage{}, err
 	}
 	return keysFromBatch(batch)
+}
+
+// QueryKeysPageOn is QueryKeysPage taking its Handle as an argument.
+//
+// Deprecated: use the QueryKeysPage method on Handle, which carries the body.
+// This function remains so no caller is forced to move.
+func QueryKeysPageOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
+	return h.QueryKeysPage(ctx, q, opts...)
 }
 
 func keysFromBatch(batch *datastore.Batch) (KeyPage, error) {
@@ -195,16 +225,24 @@ func Count(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption
 	if err != nil {
 		return 0, err
 	}
-	return CountOn(ctx, h, q, opts...)
+	return h.Count(ctx, q, opts...)
 }
 
-// CountOn is Count taking its Handle as an argument.
-func CountOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
+// Count is Count on a Handle the caller already holds.
+func (h Handle) Count(ctx context.Context, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
 	c, _, err := h.resolve()
 	if err != nil {
 		return 0, err
 	}
 	return c.Count(ctx, q, opts...)
+}
+
+// CountOn is Count taking its Handle as an argument.
+//
+// Deprecated: use the Count method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func CountOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
+	return h.Count(ctx, q, opts...)
 }
 
 func decodeBatch[T any, PT interface {

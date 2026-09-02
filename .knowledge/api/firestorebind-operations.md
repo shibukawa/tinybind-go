@@ -45,7 +45,7 @@ iterated:
   no_scan: a kind-only Query is what Scan would have been, so there is no second entry point
 keys_only:
   QueryKeysPage: "func QueryKeysPage(ctx, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error)"
-  QueryKeysPageTx: "func QueryKeysPageTx(ctx, tx *Tx, q *datastore.Query) (KeyPage, error)"
+  QueryKeysPageTx: "func (tx *Tx) QueryKeysPage(ctx, q *datastore.Query) (KeyPage, error)", with QueryKeysPageTx(ctx, tx, q) remaining as a deprecated wrapper since decision:generic-method-migration"
   KeyPage: "type KeyPage struct { Keys []datastore.Key; EndCursor datastore.Cursor; More datastore.MoreResults; SkippedResults int32 }"
   ungenericized: nothing is decoded, so there is no type to infer
   does_not_set_keys_only: the query must already carry KeysOnly; a wrapper that set it would return keys where the caller's query said entities
@@ -81,8 +81,8 @@ batch:
 transactions: decision:firestore-transaction-scope
 context_client:
   where: no entry takes a client; every one resolves through ClientFromContext, per decision:firestore-context-client-api
-  parameter_twin: each entry here gains an "On" form taking a Handle, per requirement:firestore-parameter-api; the entries named above are the Context form and stay the default
-  twin_is_discovered: calling either form emits the same codec, per requirement:parameter-api-call-discovery
+  parameter_twin: each entry here is also a method on Handle, per requirement:firestore-parameter-api and decision:generic-method-migration; the entries named above are the Context form and stay the default, and the "On" functions of the earlier spelling remain as deprecated wrappers
+  twin_is_discovered: calling any of the three spellings emits the same codec, per requirement:parameter-api-call-discovery
   namespace: applied by the runtime entry, so a generated key carries none
 errors:
   passthrough: errors.Is against every driver sentinel and errors.As to *datastore.Error keep working through every helper

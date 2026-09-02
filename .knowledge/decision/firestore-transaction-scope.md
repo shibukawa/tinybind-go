@@ -39,6 +39,7 @@ typed_transaction:
   tx_type: a firestorebind.Tx wrapping *datastore.Tx, so a typed read inside a transaction is the same generic shape as outside
   reads: LoadTx, LoadAllTx, QueryPageTx and CountTx, each taking the tx after the ctx
   why_a_suffix_rather_than_an_overload: Go methods cannot take type parameters, so a typed read cannot be a method on Tx, and a package-level Load taking a tx would collide with the one that does not. The suffix is what the language leaves; an earlier draft wrote these as Load[T](tx, key), which does not compile
+  since_go_1_27: the reads are methods on Tx, tx.Load[T](ctx, key) beside tx.Store(v), per decision:generic-method-migration; the suffixed functions remain as deprecated wrappers, and a declared query's <Name>Tx twin still calls them
   writes: "tx.Store(v)", "tx.Insert(v)", "tx.Update(v)", "tx.Remove(v)"; queued and returning nothing, matching the driver
   why_not_reuse_the_top_level_functions: a transactional read must go through the transaction handle, and a Context-carried handle would make one call site mean two different things; the tx is an argument, per decision:firestore-context-client-api
   client: still from the Context; the transaction adds a handle, not a client

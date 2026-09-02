@@ -327,7 +327,10 @@ func DecodeJSONAny(raw []byte) (any, error) {
 // Structural errors are annotated with the field's document name; an element
 // error is annotated with message, or passed through unchanged when message is
 // empty so a nested decoder can report its own fields.
-func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, error)) ([]T, error) {
+//
+// The element type is the method's own type parameter, which is what kept this
+// and its siblings package functions before Go 1.27; it is inferred from read.
+func (p *Parser) ParseSlice[T any](field, message string, read func(*Parser) (T, error)) ([]T, error) {
 	null, err := p.ArrayStart()
 	if err != nil {
 		return nil, FieldError(field, "invalid array", err)
@@ -360,8 +363,16 @@ func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, 
 	}
 }
 
+// ParseSlice decodes a JSON array field, reading each element with read.
+//
+// Deprecated: use the ParseSlice method on Parser, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, error)) ([]T, error) {
+	return p.ParseSlice(field, message, read)
+}
+
 // ParseArray decodes a JSON array field into a fixed-length destination, which
-// the caller passes as a slice over its array: ParseArray(p, "cells", msg,
+// the caller passes as a slice over its array: p.ParseArray("cells", msg,
 // out.Cells[:], read).
 //
 // The two ends of a fixed length are not symmetric. A short array fills what
@@ -376,7 +387,7 @@ func ParseSlice[T any](p *Parser, field, message string, read func(*Parser) (T, 
 // A JSON null leaves the destination untouched, as [ParseSlice] does. Errors
 // are annotated the same way as ParseSlice; a too-long array reports
 // [ErrArrayTooLong] as its cause.
-func ParseArray[T any](p *Parser, field, message string, dst []T, read func(*Parser) (T, error)) error {
+func (p *Parser) ParseArray[T any](field, message string, dst []T, read func(*Parser) (T, error)) error {
 	null, err := p.ArrayStart()
 	if err != nil {
 		return FieldError(field, "invalid array", err)
@@ -413,10 +424,18 @@ func ParseArray[T any](p *Parser, field, message string, dst []T, read func(*Par
 	return nil
 }
 
+// ParseArray decodes a JSON array field into a fixed-length destination.
+//
+// Deprecated: use the ParseArray method on Parser, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func ParseArray[T any](p *Parser, field, message string, dst []T, read func(*Parser) (T, error)) error {
+	return p.ParseArray(field, message, dst, read)
+}
+
 // ParseMap decodes a JSON object field, reading each member value with read.
 // A JSON null decodes as a nil map and an empty object as a non-nil empty
 // one. Errors are annotated the same way as ParseSlice.
-func ParseMap[T any](p *Parser, field, message string, read func(*Parser) (T, error)) (map[string]T, error) {
+func (p *Parser) ParseMap[T any](field, message string, read func(*Parser) (T, error)) (map[string]T, error) {
 	null, err := p.ObjectStart()
 	if err != nil {
 		return nil, FieldError(field, "invalid map", err)
@@ -443,6 +462,14 @@ func ParseMap[T any](p *Parser, field, message string, read func(*Parser) (T, er
 		}
 		out[name] = v
 	}
+}
+
+// ParseMap decodes a JSON object field, reading each member value with read.
+//
+// Deprecated: use the ParseMap method on Parser, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func ParseMap[T any](p *Parser, field, message string, read func(*Parser) (T, error)) (map[string]T, error) {
+	return p.ParseMap(field, message, read)
 }
 
 func fieldTypeError(message string, cause error) error {

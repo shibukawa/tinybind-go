@@ -201,6 +201,80 @@ func TestDynamoUsageFollowsHandleCallSites(t *testing.T) {
 			want:    []string{"func (v Reading) ItemKey(", "func (v *Reading) DecodeItem("},
 			notWant: []string{"EncodeItem"},
 		},
+		// The method spelling of each On entry, which is what an application
+		// author writes since Go 1.27; the receiver is not an argument, so the
+		// value sits where the Context form has it.
+		{
+			name:    "the load method emits the decoder",
+			call:    `	_, _ = h.Load[Reading](ctx, "t", dynamodb.Key{})`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the loadall method discovers the element",
+			call:    `	_, _, _ = h.LoadAll[Reading](ctx, "t", nil)`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the query method emits the decoder",
+			call:    `	_ = h.Query[Reading](ctx, "t", "sensor = :s")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the querypage method emits the decoder",
+			call:    `	_, _ = h.QueryPage[Reading](ctx, "t", "sensor = :s")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the scan method emits the decoder",
+			call:    `	_ = h.Scan[Reading](ctx, "t")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the scanpage method emits the decoder",
+			call:    `	_, _ = h.ScanPage[Reading](ctx, "t")`,
+			want:    []string{"func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
+		{
+			name:    "the store method emits the encoder, not the decoder",
+			call:    `	_ = h.Store(ctx, "t", Reading{})`,
+			want:    []string{"func (v Reading) EncodeItem("},
+			notWant: []string{"DecodeItem"},
+		},
+		{
+			name:    "the storeall method discovers the slice element",
+			call:    `	_, _ = h.StoreAll(ctx, "t", []Reading{})`,
+			want:    []string{"func (v Reading) EncodeItem("},
+			notWant: []string{"DecodeItem"},
+		},
+		{
+			name: "the store returning method emits both codecs",
+			call: `	_, _, _ = h.StoreReturning(ctx, "t", Reading{})`,
+			want: []string{"func (v Reading) EncodeItem(", "func (v *Reading) DecodeItem("},
+		},
+		{
+			name:    "the remove method emits the key and its table",
+			call:    `	_ = h.Remove(ctx, "t", Reading{})`,
+			want:    []string{"func (v Reading) ItemKey(", "func ReadingTable("},
+			notWant: []string{"EncodeItem", "DecodeItem"},
+		},
+		{
+			name:    "the update method emits the key",
+			call:    `	_ = h.Update(ctx, "t", Reading{}, "SET at = :a")`,
+			want:    []string{"func (v Reading) ItemKey("},
+			notWant: []string{"EncodeItem", "DecodeItem"},
+		},
+		{
+			name:    "the remove returning method emits the key and the decoder",
+			call:    `	_, _, _ = h.RemoveReturning(ctx, "t", Reading{})`,
+			want:    []string{"func (v Reading) ItemKey(", "func (v *Reading) DecodeItem("},
+			notWant: []string{"EncodeItem"},
+		},
 	}
 	body := "type Reading struct {\n\tSensor string `dynamo:\"sensor,partitionkey\"`\n\tAt int64 `dynamo:\"at\"`\n}"
 	for _, test := range tests {

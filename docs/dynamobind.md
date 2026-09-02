@@ -377,26 +377,29 @@ func (h Handle) Client() *dynamodb.Client
 func (h Handle) Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ```
 
-Every runtime entry has a twin suffixed `On` that takes the `Handle`:
+Every runtime entry is also a method on the `Handle`:
 
 ```go
 h := dynamobind.NewHandle(client, dynamobind.WithTableNames(names))
 
-reading, err := dynamobind.LoadOn[Reading](ctx, h, "readings", key)
-err = dynamobind.StoreOn(ctx, h, "readings", reading)
-for reading, err := range dynamobind.QueryOn[Reading](ctx, h, "readings", cond) {
+reading, err := h.Load[Reading](ctx, "readings", key)
+err = h.Store(ctx, "readings", reading)
+for reading, err := range h.Query[Reading](ctx, "readings", cond) {
 }
 ```
 
-The `On` forms hold the implementation and the Context forms delegate to them, so
+The methods hold the implementation and the Context forms delegate to them, so
 the two cannot drift. The `Context` is still the first argument in both: it
-carries the deadline, and the driver needs it. What the `On` form drops is the
+carries the deadline, and the driver needs it. What the method drops is the
 `ctx.Value` lookup, not the `Context`.
 
 The zero `Handle` is `ErrNoClient`, exactly as a Context carrying no client is.
 
-There is no method form. Go does not allow type parameters on methods, and every
-item entry is generic in the item type, so `h.Load[Reading](...)` cannot exist.
+The methods need Go 1.27, the first release that lets a method declare its own
+type parameter. Before it every entry had a twin suffixed `On` taking the
+`Handle` as an argument — `dynamobind.LoadOn[Reading](ctx, h, "readings", key)`
+— and those functions remain, deprecated, each forwarding to its method, so no
+caller is forced to move.
 
 Why you might want it:
 
@@ -536,10 +539,10 @@ struct inherits its parent's operations. A `.tb.dynamo` declaration counts as a
 use of its result type, so a package whose only DynamoDB use is a declaration
 still gets the decoder its generated query needs.
 
-Either client form counts. `StoreOn` is discovered exactly as `Store` is, so a
-package that passes its `Handle` at every call site generates what the Context
-form generates, and a package mixing the two — declared queries on the Context,
-item operations on a `Handle` — needs no setting to be seen.
+Either client form counts. `h.Store` and `StoreOn` are discovered exactly as
+`Store` is, so a package that passes its `Handle` at every call site generates
+what the Context form generates, and a package mixing the two — declared queries
+on the Context, item operations on a `Handle` — needs no setting to be seen.
 
 The key builder is the exception: a type that declares a `partitionkey` gets
 `ItemKey` and its table definition whether or not a call needs them. The

@@ -191,6 +191,92 @@ func TestFirestoreUsageFollowsHandleCallSites(t *testing.T) {
 			want:    []string{"func (v Reading) EntityKey("},
 			notWant: []string{"EncodeEntity", "DecodeEntity"},
 		},
+		// The method spelling of each On entry, and of the transactional reads,
+		// which is what an application author writes since Go 1.27.
+		{
+			name:    "the load method emits the decoder",
+			call:    "\t_, _ = h.Load[Reading](ctx, datastore.NameKey(\"Reading\", \"r\"))\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the loadall method discovers the element",
+			call:    "\t_, _, _, _ = h.LoadAll[Reading](ctx, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the query method emits the decoder",
+			call:    "\t_ = h.Query[Reading](ctx, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the querypage method emits the decoder",
+			call:    "\t_, _ = h.QueryPage[Reading](ctx, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the store method emits the encoder",
+			call:    "\t_, _ = h.Store(ctx, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "the insert method emits the encoder",
+			call:    "\t_, _ = h.Insert(ctx, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "the update method emits the encoder",
+			call:    "\t_ = h.Update(ctx, Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "the storeall method discovers the slice element",
+			call:    "\t_, _ = h.StoreAll(ctx, []Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "the insertall method discovers the slice element",
+			call:    "\t_, _ = h.InsertAll(ctx, []Reading{})\n",
+			want:    []string{"func (v Reading) EncodeEntity("},
+			notWant: []string{"DecodeEntity"},
+		},
+		{
+			name:    "the remove method emits the key",
+			call:    "\t_ = h.Remove(ctx, Reading{})\n",
+			want:    []string{"func (v Reading) EntityKey("},
+			notWant: []string{"EncodeEntity", "DecodeEntity"},
+		},
+		{
+			name:    "the removeall method emits the key",
+			call:    "\t_ = h.RemoveAll(ctx, []Reading{})\n",
+			want:    []string{"func (v Reading) EntityKey("},
+			notWant: []string{"EncodeEntity", "DecodeEntity"},
+		},
+		{
+			name:    "the transaction load method emits the decoder",
+			call:    "\tvar tx *firestorebind.Tx\n\t_, _ = tx.Load[Reading](ctx, datastore.NameKey(\"Reading\", \"r\"))\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the transaction loadall method emits the decoder",
+			call:    "\tvar tx *firestorebind.Tx\n\t_, _, _, _ = tx.LoadAll[Reading](ctx, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
+		{
+			name:    "the transaction querypage method emits the decoder",
+			call:    "\tvar tx *firestorebind.Tx\n\t_, _ = tx.QueryPage[Reading](ctx, nil)\n",
+			want:    []string{"func (v *Reading) DecodeEntity("},
+			notWant: []string{"EncodeEntity"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -29,6 +29,7 @@ handle:
 runtime_entries:
   rule: one parameter-taking twin per entry of api:dynamobind-operations, with the Handle after ctx and before the table
   suffix: "On", per the open clause of decision:nosql-client-supply-modes
+  method_form: since 2026-09-02 each On twin is a method on Handle carrying the body, h.Load[T](ctx, table, key), and the On function forwards to it as a deprecated wrapper, per decision:generic-method-migration
   item: "LoadOn[T, PT](ctx, h Handle, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error)", and the same shift for Store, Remove, Update
   returning: StoreReturningOn and RemoveReturningOn
   paged: QueryPageOn and ScanPageOn

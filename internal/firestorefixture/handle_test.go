@@ -102,3 +102,97 @@ func TestKeyForOnPlacesAsKeyForDoes(t *testing.T) {
 		t.Fatalf("the zero Handle stamped %q", got.Namespace)
 	}
 }
+
+// TestHandleMethodsAgreeWithTheOnForms pins that a Handle method and its
+// deprecated On function are one operation on the wire: an entity written
+// through the method is what the function reads back, and the reverse. The
+// keyless entries are checked the same way, on the namespace a key is given.
+func TestHandleMethodsAgreeWithTheOnForms(t *testing.T) {
+	client, _ := newFakeDatastore(t)
+	handle := firestorebind.NewHandle(client)
+	ctx := t.Context()
+
+	want := sample()
+	if _, err := handle.Store(ctx, want); err != nil {
+		t.Fatalf("Handle.Store: %v", err)
+	}
+	got, err := firestorebind.LoadOn[firestorefixture.Reading](ctx, handle, want.EntityKey())
+	if err != nil {
+		t.Fatalf("LoadOn: %v", err)
+	}
+	if got.ID != want.ID || got.Note != want.Note {
+		t.Errorf("the method write is not what the function read: %+v", got)
+	}
+
+	second := want
+	second.Note = "through the function"
+	if _, err := firestorebind.StoreOn(ctx, handle, second); err != nil {
+		t.Fatalf("StoreOn: %v", err)
+	}
+	viaMethod, err := handle.Load[firestorefixture.Reading](ctx, second.EntityKey())
+	if err != nil {
+		t.Fatalf("Handle.Load: %v", err)
+	}
+	if viaMethod.Note != second.Note {
+		t.Errorf("the function write is not what the method read: %+v", viaMethod)
+	}
+
+	tenant := firestorebind.WithNamespace(func(context.Context) string { return "acme" })
+	placed := firestorebind.NewHandle(client, tenant)
+	key := datastore.NameKey("Reading", "x")
+	if placed.KeyFor(ctx, key).Namespace != firestorebind.KeyForOn(ctx, placed, key).Namespace {
+		t.Errorf("KeyFor and KeyForOn placed the key differently")
+	}
+}
+
+// TestTransactionReadsAreMethods pins the first entry of
+// decision:generic-method-migration: a read inside a transaction is a method
+// on the Tx beside the writes, and the deprecated LoadTx reads the same entity.
+func TestTransactionReadsAreMethods(t *testing.T) {
+	ctx, _ := withFake(t)
+	task := firestorefixture.Task{Number: 3, Title: "before"}
+	if _, err := firestorefixture.InsertTask(ctx, task); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	err := firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
+		got, err := tx.Load[firestorefixture.Task](ctx, task.EntityKey())
+		if err != nil {
+			return err
+		}
+		if got.Title != "before" {
+			t.Errorf("Tx.Load read %+v", got)
+		}
+		got.Title = "after"
+		tx.Store(got)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	err = firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
+		viaMethod, err := tx.Load[firestorefixture.Task](ctx, task.EntityKey())
+		if err != nil {
+			return err
+		}
+		viaFunc, err := firestorebind.LoadTx[firestorefixture.Task](ctx, tx, task.EntityKey())
+		if err != nil {
+			return err
+		}
+		if viaMethod.Title != "after" || viaFunc.Title != viaMethod.Title {
+			t.Errorf("the two spellings read %+v and %+v", viaMethod, viaFunc)
+		}
+		many, _, _, err := tx.LoadAll[firestorefixture.Task](ctx, []datastore.Key{task.EntityKey()})
+		if err != nil {
+			return err
+		}
+		if len(many) != 1 || many[0].Title != "after" {
+			t.Errorf("Tx.LoadAll read %+v", many)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}

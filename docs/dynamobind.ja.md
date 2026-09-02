@@ -362,21 +362,21 @@ func (h Handle) Client() *dynamodb.Client
 func (h Handle) Table(ctx context.Context, table string) (*dynamodb.Client, string, error)
 ```
 
-ランタイムの入口にはそれぞれ `On` を付けた双子があり、`Handle` を引数に取ります。
+ランタイムの入口はそれぞれ `Handle` のメソッドとしても呼べます。
 
 ```go
 h := dynamobind.NewHandle(client, dynamobind.WithTableNames(names))
 
-reading, err := dynamobind.LoadOn[Reading](ctx, h, "readings", key)
-err = dynamobind.StoreOn(ctx, h, "readings", reading)
-for reading, err := range dynamobind.QueryOn[Reading](ctx, h, "readings", cond) {
+reading, err := h.Load[Reading](ctx, "readings", key)
+err = h.Store(ctx, "readings", reading)
+for reading, err := range h.Query[Reading](ctx, "readings", cond) {
 }
 ```
 
-実装を持っているのは `On` の側で、Context 版はそこへ委譲します。2 つがずれることはありません。
+実装を持っているのはメソッドの側で、Context 版はそこへ委譲します。2 つがずれることはありません。
 
 **`Context` は両方とも第 1 引数のままです。** deadline を運ぶのは Context であり、driver が
-それを要求するからです。`On` 版が落とすのは `ctx.Value` の参照であって、`Context` では
+それを要求するからです。メソッド版が落とすのは `ctx.Value` の参照であって、`Context` では
 ありません。
 
 zero 値の `Handle` は `ErrNoClient` です。client の無い Context とまったく同じ扱いです。
@@ -513,7 +513,7 @@ go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir .
 ます。`.tb.dynamo` の宣言も結果型の使用として数えるので、DynamoDB の利用が宣言だけの
 package でも、生成されたクエリが必要とする decoder は出ます。
 
-client の渡し方はどちらでも数えます。`StoreOn` は `Store` と同じように発見されるので、
+client の渡し方はどちらでも数えます。`h.Store` も `StoreOn` も `Store` と同じように発見されるので、
 呼び出しごとに `Handle` を渡す package でも Context 版と同じものが生成されますし、宣言済み
 クエリは Context・item 操作は `Handle` という混在も、設定なしでそのまま見つかります。
 

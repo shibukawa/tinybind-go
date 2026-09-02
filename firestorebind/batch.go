@@ -41,14 +41,14 @@ func LoadAll[T any, PT interface {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return LoadAllOn[T, PT](ctx, h, keys, opts...)
+	return h.LoadAll[T, PT](ctx, keys, opts...)
 }
 
-// LoadAllOn is LoadAll taking its Handle as an argument.
-func LoadAllOn[T any, PT interface {
+// LoadAll is LoadAll on a Handle the caller already holds.
+func (h Handle) LoadAll[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing, deferred []datastore.Key, err error) {
+}](ctx context.Context, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing, deferred []datastore.Key, err error) {
 	c, ns, err := h.resolve()
 	if err != nil {
 		return nil, nil, nil, err
@@ -76,6 +76,17 @@ func LoadAllOn[T any, PT interface {
 	return values, missing, deferred, nil
 }
 
+// LoadAllOn is LoadAll taking its Handle as an argument.
+//
+// Deprecated: use the LoadAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func LoadAllOn[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.ReadOption) (values []T, missing, deferred []datastore.Key, err error) {
+	return h.LoadAll[T, PT](ctx, keys, opts...)
+}
+
 // StoreAll upserts many entities, chunked into as few commits as the request
 // limit allows.
 //
@@ -97,12 +108,20 @@ func StoreAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.Wr
 	if err != nil {
 		return nil, err
 	}
-	return StoreAllOn(ctx, h, vs, opts...)
+	return h.StoreAll(ctx, vs, opts...)
+}
+
+// StoreAll is StoreAll on a Handle the caller already holds.
+func (h Handle) StoreAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
+	return mutateAll(ctx, h, vs, opts, datastore.UpsertOp)
 }
 
 // StoreAllOn is StoreAll taking its Handle as an argument.
+//
+// Deprecated: use the StoreAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
 func StoreAllOn[T EntityEncoder](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
-	return mutateAll(ctx, h, vs, opts, datastore.UpsertOp)
+	return h.StoreAll(ctx, vs, opts...)
 }
 
 // InsertAll inserts many entities. Each fails independently with
@@ -112,12 +131,20 @@ func InsertAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.W
 	if err != nil {
 		return nil, err
 	}
-	return InsertAllOn(ctx, h, vs, opts...)
+	return h.InsertAll(ctx, vs, opts...)
+}
+
+// InsertAll is InsertAll on a Handle the caller already holds.
+func (h Handle) InsertAll[T EntityEncoder](ctx context.Context, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
+	return mutateAll(ctx, h, vs, opts, datastore.InsertOp)
 }
 
 // InsertAllOn is InsertAll taking its Handle as an argument.
+//
+// Deprecated: use the InsertAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
 func InsertAllOn[T EntityEncoder](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) ([]datastore.Key, error) {
-	return mutateAll(ctx, h, vs, opts, datastore.InsertOp)
+	return h.InsertAll(ctx, vs, opts...)
 }
 
 // RemoveAll deletes the entities identified by the keys of vs.
@@ -131,16 +158,24 @@ func RemoveAll[T Keyer](ctx context.Context, vs []T, opts ...datastore.WriteOpti
 	if err != nil {
 		return err
 	}
-	return RemoveAllOn(ctx, h, vs, opts...)
+	return h.RemoveAll(ctx, vs, opts...)
 }
 
-// RemoveAllOn is RemoveAll taking its Handle as an argument.
-func RemoveAllOn[T Keyer](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) error {
+// RemoveAll is RemoveAll on a Handle the caller already holds.
+func (h Handle) RemoveAll[T Keyer](ctx context.Context, vs []T, opts ...datastore.WriteOption) error {
 	keys := make([]datastore.Key, 0, len(vs))
 	for _, v := range vs {
 		keys = append(keys, v.EntityKey())
 	}
-	return RemoveKeysOn(ctx, h, keys, opts...)
+	return h.RemoveKeys(ctx, keys, opts...)
+}
+
+// RemoveAllOn is RemoveAll taking its Handle as an argument.
+//
+// Deprecated: use the RemoveAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func RemoveAllOn[T Keyer](ctx context.Context, h Handle, vs []T, opts ...datastore.WriteOption) error {
+	return h.RemoveAll(ctx, vs, opts...)
 }
 
 // RemoveKeys deletes the entities named by keys.
@@ -162,11 +197,11 @@ func RemoveKeys(ctx context.Context, keys []datastore.Key, opts ...datastore.Wri
 	if err != nil {
 		return err
 	}
-	return RemoveKeysOn(ctx, h, keys, opts...)
+	return h.RemoveKeys(ctx, keys, opts...)
 }
 
-// RemoveKeysOn is RemoveKeys taking its Handle as an argument.
-func RemoveKeysOn(ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.WriteOption) error {
+// RemoveKeys is RemoveKeys on a Handle the caller already holds.
+func (h Handle) RemoveKeys(ctx context.Context, keys []datastore.Key, opts ...datastore.WriteOption) error {
 	c, ns, err := h.resolve()
 	if err != nil {
 		return err
@@ -192,6 +227,14 @@ func RemoveKeysOn(ctx context.Context, h Handle, keys []datastore.Key, opts ...d
 		}
 	}
 	return nil
+}
+
+// RemoveKeysOn is RemoveKeys taking its Handle as an argument.
+//
+// Deprecated: use the RemoveKeys method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func RemoveKeysOn(ctx context.Context, h Handle, keys []datastore.Key, opts ...datastore.WriteOption) error {
+	return h.RemoveKeys(ctx, keys, opts...)
 }
 
 func mutateAll[T EntityEncoder](

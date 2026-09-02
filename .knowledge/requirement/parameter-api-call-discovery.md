@@ -33,6 +33,13 @@ positions:
   write_side: one argument later, the Handle sitting between the Context and the table
   dynamo: ArgumentType 3, against 2 for "Store(ctx, table, v, opts...)"
   firestore: ArgumentType 2, against 1 for "Store(ctx, v, opts...)"
+method_spelling_2026_09_02:
+  what: every On entry became a method on Handle and every Tx read a method on Tx, per decision:generic-method-migration, so the canonical set names each of them a second time as a Method target
+  read_side: unchanged; the type is still the first type argument, whether spelled as h.Load[Reading](ctx, key) or inferred
+  write_side: the receiver is not an argument, so the value is back where the Context form reads it; dynamo ArgumentType 2 and firestore ArgumentType 1
+  tx_reads: Method targets on Tx for Load, LoadAll and QueryPage, beside the write methods already registered
+  inferred_calls: a generic method instantiated by inference records its instance on the selector, which instantiatedTypeArgAt already read for the Tx writes, so no discovery code changed
+  verified: the two usage tables carry a row per method, explicit and inferred; every row passes against the patched set
 no_twin_to_register:
   tx_entries: LoadTx, LoadAllTx, QueryPageTx and the Tx write methods take a receiver already carrying the handle, so no On form exists
   keyless_entries: KeyForOn, KeysForOn, CountOn, QueryKeysPageOn, RemoveKeysOn, RunOn and RunReadOnlyOn name no model, so they carry nothing for discovery to read

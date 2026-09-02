@@ -50,14 +50,14 @@ type Handle struct {
 	names  TableResolver
 }
 
-// NewHandle binds a client to the table naming of one deployment, for the entries
-// suffixed On.
+// NewHandle binds a client to the table naming of one deployment, for the methods
+// on it.
 //
 // It takes the same ClientOption list as WithClient, so a program moving between
 // the two forms rewrites the call and not the configuration:
 //
 //	h := dynamobind.NewHandle(client, dynamobind.WithTableNames(names))
-//	r, err := dynamobind.LoadOn[Reading](ctx, h, "readings", key)
+//	r, err := h.Load[Reading](ctx, "readings", key)
 func NewHandle(c *dynamodb.Client, options ...ClientOption) Handle {
 	h := Handle{client: c}
 	for _, option := range options {
@@ -72,8 +72,8 @@ func NewHandle(c *dynamodb.Client, options ...ClientOption) Handle {
 func (h Handle) Client() *dynamodb.Client { return h.client }
 
 // Table resolves a declared table name into the client and the name to send.
-// Every entry suffixed On calls it, and so does TableFromContext once it has
-// read the Handle out of a Context.
+// Every method on Handle calls it, and so does TableFromContext once it has read
+// the Handle out of a Context.
 func (h Handle) Table(ctx context.Context, table string) (*dynamodb.Client, string, error) {
 	if h.client == nil {
 		return nil, "", ErrNoClient
@@ -118,8 +118,8 @@ func WithHandle(ctx context.Context, h Handle) context.Context {
 // HandleFromContext returns the Handle installed by WithClient or WithHandle.
 //
 // It is the one lookup a caller needs: a framework reading it once in middleware
-// has the client and the table naming in hand, and can then call the entries
-// suffixed On with no further Context lookup on the operation path.
+// has the client and the table naming in hand, and can then call the Handle's
+// methods with no further Context lookup on the operation path.
 func HandleFromContext(ctx context.Context) (Handle, error) {
 	h, ok := ctx.Value(clientContextKey{}).(Handle)
 	if !ok || h.client == nil {

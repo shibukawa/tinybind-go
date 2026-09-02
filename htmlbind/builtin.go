@@ -61,8 +61,19 @@ type Segment[P, V any] struct {
 // still before the response commits, so a caller can turn it into an error
 // status rather than a half-written document; from a settled await boundary or a
 // delta rerender it travels as any other member failure does.
-func Provide[P, V any](element, provider string, fn func(context.Context) (V, error), segments []Segment[P, V]) Op[P] {
+//
+// V is the method's own type parameter, which is what kept it a package function
+// before Go 1.27; it is inferred from fn.
+func (Builder[P]) Provide[V any](element, provider string, fn func(context.Context) (V, error), segments []Segment[P, V]) Op[P] {
 	return provideOp[P, V]{element: element, provider: provider, fn: fn, segments: segments}
+}
+
+// Provide renders a per-request value into an element's segments.
+//
+// Deprecated: use the Provide method on Builder, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func Provide[P, V any](element, provider string, fn func(context.Context) (V, error), segments []Segment[P, V]) Op[P] {
+	return Builder[P]{}.Provide(element, provider, fn, segments)
 }
 
 type provideOp[P, V any] struct {
