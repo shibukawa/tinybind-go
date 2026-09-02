@@ -56,7 +56,7 @@ func silentAwaitPlan(load func() (string, error)) *Plan[struct{}] {
 func awaitPlanWith(load func() (string, error), handler []Op[AsyncError]) *Plan[struct{}] {
 	builder := Builder[struct{}]{}
 	return &Plan[struct{}]{Ops: []Op[struct{}]{
-		Await(
+		Builder[struct{}]{}.Await(
 			func(ctx context.Context, _ struct{}) (string, error) {
 				var value string
 				if err := Concurrent(ctx, func() error {
@@ -188,7 +188,7 @@ func TestRenderAsyncFlushesAfterTheInitialPass(t *testing.T) {
 		return "done", nil
 	})
 	done := make(chan error, 1)
-	go func() { done <- consume(output, RenderAsync(context.Background(), output, Bind(plan, struct{}{}))) }()
+	go func() { done <- consume(output, RenderAsync(context.Background(), output, plan.Bind(struct{}{}))) }()
 	// The fallback has to reach the client before the binding settles, which is
 	// the whole point of streaming.
 	deadline := time.After(2 * time.Second)
@@ -230,10 +230,10 @@ func TestAsyncRenderInjectsNoRuntimeOfItsOwn(t *testing.T) {
 	page := &Plan[struct{}]{Head: []string{`<title>t</title>`}, Ops: []Op[struct{}]{
 		Builder[struct{}]{}.Static("body"),
 	}}
-	wrappers := []Wrapper{BindWrapper(shell, Fragment{}, func(target *Fragment, children Fragment) { *target = children })}
+	wrappers := []Wrapper{shell.BindWrapper(Fragment{}, func(target *Fragment, children Fragment) { *target = children })}
 
 	var streamed bytes.Buffer
-	if err := consume(&streamed, RenderChainAsync(context.Background(), &streamed, wrappers, Bind(page, struct{}{}))); err != nil {
+	if err := consume(&streamed, RenderChainAsync(context.Background(), &streamed, wrappers, page.Bind(struct{}{}))); err != nil {
 		t.Fatal(err)
 	}
 	// Applying a completion is the framework's job, so the render contributes no
@@ -246,7 +246,7 @@ func TestAsyncRenderInjectsNoRuntimeOfItsOwn(t *testing.T) {
 	}
 
 	var settled bytes.Buffer
-	if err := RenderChain(&settled, wrappers, Bind(page, struct{}{})); err != nil {
+	if err := RenderChain(&settled, wrappers, page.Bind(struct{}{})); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(settled.String(), "<script") {
@@ -282,14 +282,14 @@ func TestEarlyStopDoesNotWaitForPendingWork(t *testing.T) {
 		return "second", nil
 	})
 	page := &Plan[struct{}]{Ops: []Op[struct{}]{
-		Builder[struct{}]{}.Component(func(struct{}) Fragment { return Bind(settled, struct{}{}) }),
-		Builder[struct{}]{}.Component(func(struct{}) Fragment { return Bind(pending, struct{}{}) }),
+		Builder[struct{}]{}.Component(func(struct{}) Fragment { return settled.Bind(struct{}{}) }),
+		Builder[struct{}]{}.Component(func(struct{}) Fragment { return pending.Bind(struct{}{}) }),
 	}}
 	var output bytes.Buffer
 	returned := make(chan int, 1)
 	go func() {
 		seen := 0
-		for content, err := range RenderAsync(context.Background(), &output, Bind(page, struct{}{})) {
+		for content, err := range RenderAsync(context.Background(), &output, page.Bind(struct{}{})) {
 			if err != nil || content.BoundaryID == "" {
 				t.Errorf("unexpected item %+v, err %v", content, err)
 			}
@@ -312,7 +312,7 @@ func TestUnrecoveredBoundaryEndsTheSequence(t *testing.T) {
 	boom := errors.New("boom")
 	plan := silentAwaitPlan(func() (string, error) { return "", boom })
 	var output bytes.Buffer
-	err := consume(&output, RenderAsync(context.Background(), &output, Bind(plan, struct{}{})))
+	err := consume(&output, RenderAsync(context.Background(), &output, plan.Bind(struct{}{})))
 	var unrecovered *UnrecoveredError
 	if !errors.As(err, &unrecovered) {
 		t.Fatalf("err = %v, want an UnrecoveredError", err)
@@ -334,7 +334,7 @@ func TestUnrecoveredBoundaryFailsTheSynchronousRender(t *testing.T) {
 	boom := errors.New("boom")
 	plan := silentAwaitPlan(func() (string, error) { return "", boom })
 	var output bytes.Buffer
-	err := Render(&output, Bind(plan, struct{}{}))
+	err := Render(&output, plan.Bind(struct{}{}))
 	var unrecovered *UnrecoveredError
 	if !errors.As(err, &unrecovered) {
 		t.Fatalf("err = %v, want an UnrecoveredError", err)
@@ -359,7 +359,7 @@ func TestChainValidationFailsBeforeWriting(t *testing.T) {
 	}
 	var streamed bytes.Buffer
 	var failure error
-	for _, err := range RenderChainAsync(context.Background(), &streamed, []Wrapper{{}}, Bind(staticPlan("x"), struct{}{})) {
+	for _, err := range RenderChainAsync(context.Background(), &streamed, []Wrapper{{}}, (staticPlan("x")).Bind(struct{}{})) {
 		failure = err
 	}
 	if !errors.Is(failure, ErrNilWrapper) {

@@ -22,7 +22,7 @@ func livePlan(deliveries func(context.Context) iter.Seq2[string, error], handler
 		HasAwaitBlock: true,
 		HasLiveBlock:  true,
 		Ops: []Op[struct{}]{
-			Live(
+			Builder[struct{}]{}.Live(
 				func(ctx context.Context, _ struct{}) []LiveBinding[string] {
 					return []LiveBinding[string]{
 						func(deliver func(func(*string), error) bool) error {
@@ -79,7 +79,7 @@ func collect(t *testing.T, sequence iter.Seq2[Content, error]) ([]Content, error
 
 func TestLiveYieldsEveryDelivery(t *testing.T) {
 	var document bytes.Buffer
-	got, err := collect(t, RenderLive(t.Context(), &document, Bind(livePlan(values("1", "2", "3"), recoverHandler()), struct{}{})))
+	got, err := collect(t, RenderLive(t.Context(), &document, (livePlan(values("1", "2", "3"), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLiveDocumentEntryTakesOnlyTheFirstDelivery(t *testing.T) {
 	// The document response has to finish. A live boundary on it behaves like a
 	// settled await boundary: real content on the first paint, then no more.
 	var document bytes.Buffer
-	got, err := collect(t, RenderAsync(t.Context(), &document, Bind(livePlan(values("1", "2", "3"), recoverHandler()), struct{}{})))
+	got, err := collect(t, RenderAsync(t.Context(), &document, (livePlan(values("1", "2", "3"), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestLiveUnsubscribeStopsTheSource(t *testing.T) {
 			}
 		}
 	}
-	if _, err := collect(t, RenderAsync(t.Context(), io.Discard, Bind(livePlan(source, recoverHandler()), struct{}{}))); err != nil {
+	if _, err := collect(t, RenderAsync(t.Context(), io.Discard, (livePlan(source, recoverHandler())).Bind(struct{}{}))); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if produced != 1 {
@@ -153,7 +153,7 @@ func TestLiveFailureDeliveryIsNotTerminal(t *testing.T) {
 			yield("recovered", nil)
 		}
 	}
-	got, err := collect(t, RenderLive(t.Context(), io.Discard, Bind(livePlan(source, recoverHandler()), struct{}{})))
+	got, err := collect(t, RenderLive(t.Context(), io.Discard, (livePlan(source, recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
 		HasAwaitBlock: true,
 		HasLiveBlock:  true,
 		Ops: []Op[struct{}]{
-			Live(
+			Builder[struct{}]{}.Live(
 				func(context.Context, struct{}) []LiveBinding[reporterScope] {
 					return []LiveBinding[reporterScope]{failing, healthy}
 				},
@@ -229,7 +229,7 @@ func TestLiveErrorReporterRunsOffTheBoundaryLock(t *testing.T) {
 		var failure error
 		// Each delivery is forwarded as it arrives rather than collected, so the
 		// test can observe the third one while the reporter is still blocked.
-		for content, err := range RenderLive(t.Context(), io.Discard, Bind(plan, struct{}{}),
+		for content, err := range RenderLive(t.Context(), io.Discard, plan.Bind(struct{}{}),
 			WithErrorReporter(func(error) {
 				reports.Add(1)
 				once.Do(func() { close(entered) })
@@ -291,7 +291,7 @@ func TestLiveFailureWithNoRecoverEndsTheSubscription(t *testing.T) {
 			yield("", errors.New("gone"))
 		}
 	}
-	got, err := collect(t, RenderLive(t.Context(), io.Discard, Bind(livePlan(source, nil), struct{}{})))
+	got, err := collect(t, RenderLive(t.Context(), io.Discard, (livePlan(source, nil)).Bind(struct{}{})))
 	var unrecovered *UnrecoveredError
 	if !errors.As(err, &unrecovered) {
 		t.Fatalf("err = %v, want UnrecoveredError", err)
@@ -316,7 +316,7 @@ func TestLiveCancellationEndsQuietly(t *testing.T) {
 			yield("", ctx.Err())
 		}
 	}
-	got, err := collect(t, RenderLive(ctx, io.Discard, Bind(livePlan(source, recoverHandler()), struct{}{})))
+	got, err := collect(t, RenderLive(ctx, io.Discard, (livePlan(source, recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("err = %v, want no error: expected cancellation produces no recover content", err)
 	}
@@ -327,7 +327,7 @@ func TestLiveCancellationEndsQuietly(t *testing.T) {
 
 func TestLiveSyncEntryRendersFirstDeliveryInPlace(t *testing.T) {
 	var page bytes.Buffer
-	if err := Render(&page, Bind(livePlan(values("now", "later"), recoverHandler()), struct{}{})); err != nil {
+	if err := Render(&page, (livePlan(values("now", "later"), recoverHandler())).Bind(struct{}{})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if page.String() != "now" {
@@ -338,7 +338,7 @@ func TestLiveSyncEntryRendersFirstDeliveryInPlace(t *testing.T) {
 
 func TestLiveSyncEntryKeepsFallbackWhenNothingIsDelivered(t *testing.T) {
 	var page bytes.Buffer
-	if err := Render(&page, Bind(livePlan(values(), recoverHandler()), struct{}{})); err != nil {
+	if err := Render(&page, (livePlan(values(), recoverHandler())).Bind(struct{}{})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if page.String() != "pending" {
@@ -351,11 +351,11 @@ func TestLiveBoundaryIDsRepeatAcrossRenders(t *testing.T) {
 	// Re-executing the same chain has to produce the same placeholder ids, which
 	// is what lets a reconnect address the boundaries already on screen without
 	// the client sending anything to align them.
-	first, err := collect(t, RenderAsync(t.Context(), io.Discard, Bind(livePlan(values("a"), recoverHandler()), struct{}{})))
+	first, err := collect(t, RenderAsync(t.Context(), io.Discard, (livePlan(values("a"), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("first render: %v", err)
 	}
-	second, err := collect(t, RenderAsync(t.Context(), io.Discard, Bind(livePlan(values("b"), recoverHandler()), struct{}{})))
+	second, err := collect(t, RenderAsync(t.Context(), io.Discard, (livePlan(values("b"), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("second render: %v", err)
 	}
@@ -366,8 +366,8 @@ func TestLiveBoundaryIDsRepeatAcrossRenders(t *testing.T) {
 }
 
 func TestHasLiveBlockReportsTheChain(t *testing.T) {
-	live := Bind(livePlan(values("a"), recoverHandler()), struct{}{})
-	static := Bind(staticPlan("plain"), struct{}{})
+	live := (livePlan(values("a"), recoverHandler())).Bind(struct{}{})
+	static := (staticPlan("plain")).Bind(struct{}{})
 	if !live.HasLiveBlock() {
 		t.Error("live fragment reports no live block")
 	}
@@ -428,7 +428,7 @@ func TestQuietSourceDoesNotHangTheDocumentEntry(t *testing.T) {
 	// The document response has to finish. A source with nothing to say yet must
 	// not be able to hold it open.
 	var document bytes.Buffer
-	got, err := collect(t, RenderAsync(t.Context(), &document, Bind(livePlan(quiet, recoverHandler()), struct{}{}),
+	got, err := collect(t, RenderAsync(t.Context(), &document, (livePlan(quiet, recoverHandler())).Bind(struct{}{}),
 		WithAsyncTimeout(50*time.Millisecond)))
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -450,7 +450,7 @@ func TestQuietSourceFallsBackOnTheSyncEntry(t *testing.T) {
 	// The non-JavaScript path has to answer too, and a fallback is the only
 	// honest thing to answer with when no value arrived.
 	var page bytes.Buffer
-	if err := Render(&page, Bind(livePlan(quiet, recoverHandler()), struct{}{}),
+	if err := Render(&page, (livePlan(quiet, recoverHandler())).Bind(struct{}{}),
 		WithAsyncTimeout(50*time.Millisecond)); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestLiveEntryLetsASourceStayQuiet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := collect(t, RenderLive(ctx, io.Discard, Bind(livePlan(quiet, recoverHandler()), struct{}{}),
+	if _, err := collect(t, RenderLive(ctx, io.Discard, (livePlan(quiet, recoverHandler())).Bind(struct{}{}),
 		WithAsyncTimeout(20*time.Millisecond))); err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestLiveEntryLetsASourceStayQuiet(t *testing.T) {
 // which is the shape that used to mint a placeholder per delivery.
 func nestedPlan(deliveries func(context.Context) iter.Seq2[string, error], inner func(string) (string, error)) *Plan[struct{}] {
 	return &Plan[struct{}]{HasAwaitBlock: true, HasLiveBlock: true, Ops: []Op[struct{}]{
-		Live(
+		Builder[struct{}]{}.Live(
 			func(ctx context.Context, _ struct{}) []LiveBinding[string] {
 				return []LiveBinding[string]{func(deliver func(func(*string), error) bool) error {
 					for value, err := range deliveries(ctx) {
@@ -492,7 +492,7 @@ func nestedPlan(deliveries func(context.Context) iter.Seq2[string, error], inner
 			func(struct{}) string { return "" },
 			func(_ struct{}, err AsyncError) AsyncError { return err },
 			[]Op[string]{
-				Await(
+				Builder[string]{}.Await(
 					func(_ context.Context, value string) (string, error) { return inner(value) },
 					func(_ string, err AsyncError) AsyncError { return err },
 					[]Op[string]{Builder[string]{}.Text(func(value string) string { return value })},
@@ -512,7 +512,7 @@ func TestNestedBoundaryIDsAreReusedAcrossDeliveries(t *testing.T) {
 	// them without bound and leave the client holding ones nothing replaces.
 	ids := map[string]bool{}
 	for content, err := range RenderLive(t.Context(), io.Discard,
-		Bind(nestedPlan(values("1", "2", "3", "4", "5"), func(v string) (string, error) { return v, nil }), struct{}{})) {
+		(nestedPlan(values("1", "2", "3", "4", "5"), func(v string) (string, error) { return v, nil })).Bind(struct{}{})) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -557,7 +557,7 @@ func TestSupersededDeliveryCannotLandOnAReusedPlaceholder(t *testing.T) {
 		}
 	}
 	var nested []string
-	for content, err := range RenderLive(t.Context(), io.Discard, Bind(nestedPlan(source, inner), struct{}{})) {
+	for content, err := range RenderLive(t.Context(), io.Discard, (nestedPlan(source, inner)).Bind(struct{}{})) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -580,7 +580,7 @@ func TestPanicInASourceBecomesARecoverableFailure(t *testing.T) {
 	source := func(context.Context) iter.Seq2[string, error] {
 		return func(yield func(string, error) bool) { panic("source blew up") }
 	}
-	got, err := collect(t, RenderLive(t.Context(), io.Discard, Bind(livePlan(source, recoverHandler()), struct{}{})))
+	got, err := collect(t, RenderLive(t.Context(), io.Discard, (livePlan(source, recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

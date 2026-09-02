@@ -272,12 +272,3 @@ func (b *Builder) AppendValues[T any](values []T) error {
 	}
 	return nil
 }
-
-// AppendValues expands a slice into a comma-separated placeholder list.
-//
-// Deprecated: use the AppendValues method on Builder, which carries the body.
-// This function remains so no generated caller is forced to move; generated SQL
-// still names it as _tinybindSQLArgs.
-func AppendValues[T any](b *Builder, values []T) error {
-	return b.AppendValues(values)
-}

@@ -22,7 +22,7 @@ func TestValEvaluatesItsValueOncePerRender(t *testing.T) {
 	calls := 0
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		Val(
+		Builder[valParams]{}.Val(
 			func(p valParams) string { calls++; return "loaded-" + p.ID },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{
@@ -34,7 +34,7 @@ func TestValEvaluatesItsValueOncePerRender(t *testing.T) {
 			}),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(plan, valParams{ID: "7"})); err != nil {
+	if err := Render(&out, plan.Bind(valParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
@@ -52,7 +52,7 @@ func TestValCtxReceivesTheRenderContext(t *testing.T) {
 	type key struct{}
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		ValCtx(
+		Builder[valParams]{}.ValCtx(
 			func(ctx context.Context, p valParams) string {
 				value, _ := ctx.Value(key{}).(string)
 				return value
@@ -62,7 +62,7 @@ func TestValCtxReceivesTheRenderContext(t *testing.T) {
 	}}
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), key{}, "from-context")
-	if err := Render(&out, Bind(plan, valParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(valParams{}), WithContext(ctx)); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if out.String() != "from-context" {
@@ -77,7 +77,7 @@ func TestValCtxReceivesTheRenderContext(t *testing.T) {
 func TestValSplicesItsBodyIntoTheSequence(t *testing.T) {
 	body := Builder[valScope]{}
 	bound := &Plan[valParams]{Ops: []Op[valParams]{
-		Val(
+		Builder[valParams]{}.Val(
 			func(p valParams) string { return p.ID },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{
@@ -110,13 +110,13 @@ func TestValErrEndsTheRender(t *testing.T) {
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
 		Builder[valParams]{}.Static("<main>"),
-		ValErr(
+		Builder[valParams]{}.ValErr(
 			func(p valParams) (string, error) { return "", want },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value })}),
 	}}
 	var out strings.Builder
-	err := Render(&out, Bind(plan, valParams{ID: "7"}))
+	err := Render(&out, plan.Bind(valParams{ID: "7"}))
 	if !errors.Is(err, want) {
 		t.Fatalf("render error = %v, want %v", err, want)
 	}
@@ -132,13 +132,13 @@ func TestValErrEndsTheRender(t *testing.T) {
 func TestValErrRendersWhenTheCallSucceeds(t *testing.T) {
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		ValErr(
+		Builder[valParams]{}.ValErr(
 			func(p valParams) (string, error) { return "loaded-" + p.ID, nil },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(plan, valParams{ID: "7"})); err != nil {
+	if err := Render(&out, plan.Bind(valParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if out.String() != "loaded-7" {
@@ -151,7 +151,7 @@ func TestValErrCtxFailsAndReadsTheContext(t *testing.T) {
 	want := errors.New("cancelled")
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		ValErrCtx(
+		Builder[valParams]{}.ValErrCtx(
 			func(ctx context.Context, p valParams) (string, error) { return "", ctx.Err() },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
@@ -159,7 +159,7 @@ func TestValErrCtxFailsAndReadsTheContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out strings.Builder
-	if err := Render(&out, Bind(plan, valParams{}), WithContext(ctx)); err == nil {
+	if err := Render(&out, plan.Bind(valParams{}), WithContext(ctx)); err == nil {
 		t.Fatalf("render succeeded on a cancelled context, want %v", want)
 	}
 }
@@ -169,7 +169,7 @@ func TestValErrCtxFailsAndReadsTheContext(t *testing.T) {
 func TestValErrSplicesItsBodyIntoTheSequence(t *testing.T) {
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		ValErr(
+		Builder[valParams]{}.ValErr(
 			func(p valParams) (string, error) { return p.ID, nil },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value }), body.Static("</h1>")}),
@@ -187,13 +187,13 @@ func TestALeafsLeadingBindingFailsBeforeAnyByte(t *testing.T) {
 	body := Builder[valScope]{}
 	leaf := &Plan[valParams]{Ops: []Op[valParams]{
 		Builder[valParams]{}.Static(" "),
-		ValErr(
+		Builder[valParams]{}.ValErr(
 			func(p valParams) (string, error) { return "", want },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Static("<h1>"), body.Text(func(p valScope) string { return p.Value })}),
 	}}
 	var out strings.Builder
-	err := Render(&out, Bind(leaf, valParams{ID: "7"}))
+	err := Render(&out, leaf.Bind(valParams{ID: "7"}))
 	if !errors.Is(err, want) {
 		t.Fatalf("render error = %v, want %v", err, want)
 	}
@@ -210,13 +210,13 @@ func TestAPreparedBindingIsNotRecomputed(t *testing.T) {
 	calls := 0
 	body := Builder[valScope]{}
 	leaf := &Plan[valParams]{Ops: []Op[valParams]{
-		Val(
+		Builder[valParams]{}.Val(
 			func(p valParams) string { calls++; return "loaded-" + p.ID },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(leaf, valParams{ID: "7"})); err != nil {
+	if err := Render(&out, leaf.Bind(valParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
@@ -233,12 +233,12 @@ func TestASlotFragmentIsNotPrepared(t *testing.T) {
 	calls := 0
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		Val(
+		Builder[valParams]{}.Val(
 			func(p valParams) string { calls++; return p.ID },
 			func(p valParams, value string) valScope { return valScope{Outer: p, Value: value} },
 			[]Op[valScope]{body.Text(func(p valScope) string { return p.Value })}),
 	}}
-	fragment := Bind(plan, valParams{ID: "9"})
+	fragment := plan.Bind(valParams{ID: "9"})
 	var out strings.Builder
 	if err := Render(&out, fragment); err != nil {
 		t.Fatalf("render: %v", err)
@@ -265,7 +265,7 @@ func TestAWrapperWithABindingRendersAroundItsChild(t *testing.T) {
 	calls := 0
 	body := Builder[wrapperScope]{}
 	layout := &Plan[wrapperParams]{Ops: []Op[wrapperParams]{
-		Val(
+		Builder[wrapperParams]{}.Val(
 			func(p wrapperParams) string { calls++; return "banner-" + p.Title },
 			func(p wrapperParams, v string) wrapperScope { return wrapperScope{Outer: p, Value: v} },
 			[]Op[wrapperScope]{
@@ -282,7 +282,7 @@ func TestAWrapperWithABindingRendersAroundItsChild(t *testing.T) {
 	var out strings.Builder
 	wrapper := layout.BindWrapper(wrapperParams{Title: "home"},
 		func(p *wrapperParams, children Fragment) { p.Children = children })
-	if err := RenderChain(&out, []Wrapper{wrapper}, Bind(leaf, valParams{ID: "7"})); err != nil {
+	if err := RenderChain(&out, []Wrapper{wrapper}, leaf.Bind(valParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
@@ -306,7 +306,7 @@ func TestHoistingDoesNotChangeTheSequence(t *testing.T) {
 	// The shape hoisting produces: markup that was written before the binding
 	// now sits inside its body.
 	hoisted := &Plan[valParams]{Ops: []Op[valParams]{
-		Val(
+		Builder[valParams]{}.Val(
 			func(p valParams) string { return p.ID },
 			func(p valParams, v string) valScope { return valScope{Outer: p, Value: v} },
 			[]Op[valScope]{
@@ -335,7 +335,7 @@ func TestEveryEntryGivesThePrologueItsOwnContext(t *testing.T) {
 	type key struct{}
 	body := Builder[valScope]{}
 	plan := &Plan[valParams]{Ops: []Op[valParams]{
-		ValErrCtx(
+		Builder[valParams]{}.ValErrCtx(
 			func(ctx context.Context, p valParams) (string, error) {
 				value, _ := ctx.Value(key{}).(string)
 				if value == "" {
@@ -349,11 +349,11 @@ func TestEveryEntryGivesThePrologueItsOwnContext(t *testing.T) {
 	ctx := context.WithValue(context.Background(), key{}, "from-request")
 
 	var direct strings.Builder
-	if err := Render(&direct, Bind(plan, valParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&direct, plan.Bind(valParams{}), WithContext(ctx)); err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	var collected strings.Builder
-	if _, err := CollectChain(&collected, nil, nil, Bind(plan, valParams{}), WithContext(ctx)); err != nil {
+	if _, err := CollectChain(&collected, nil, nil, plan.Bind(valParams{}), WithContext(ctx)); err != nil {
 		t.Fatalf("CollectChain: %v", err)
 	}
 	for name, out := range map[string]string{"Render": direct.String(), "CollectChain": collected.String()} {

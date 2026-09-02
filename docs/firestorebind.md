@@ -632,8 +632,8 @@ and `h.KeyFor` returns the key untouched for it.
 The methods need Go 1.27, the first release that lets a method declare its own
 type parameter. Before it every entry had a twin suffixed `On` taking the
 `Handle` as an argument — `firestorebind.LoadOn[Reading](ctx, h, key)` — and
-those functions remain, deprecated, each forwarding to its method, so no caller
-is forced to move.
+those functions are gone: a call site moves the `Handle` in front of the dot
+and drops the suffix.
 
 ## Runtime operations
 
@@ -738,8 +738,7 @@ func (tx *Tx) Remove(v Keyer, opts ...datastore.WriteOption)
 Reads and writes are both methods on the `*Tx`, so one transaction is written
 one way. Before Go 1.27 the reads were package functions taking the `*Tx` after
 the `ctx` — `LoadTx`, `LoadAllTx`, `QueryPageTx`, `QueryKeysPageTx`, `CountTx` —
-and those remain, deprecated, each forwarding to its method. A generated
-`<Name>Tx` twin still calls them.
+and those are gone; a generated `<Name>Tx` twin calls the methods.
 
 `dynamobind` offers no transactions, because the DynamoDB driver declares none.
 The reasoning that excluded them there includes them here: they are the only way
@@ -884,11 +883,11 @@ carries none. A `.tb.firestore` declaration counts as a use of its result type,
 so a package whose only Firestore use is a declaration still gets the decoder its
 generated query needs.
 
-Either client form counts. `h.Store` and `StoreOn` are discovered exactly as
-`Store` is, and `tx.Load` as `LoadTx` is, so a package that passes its `Handle`
-at every call site generates what the Context form generates, and a package
-mixing the two — declared queries on the Context, entity operations on a
-`Handle` — needs no setting to be seen.
+Either client form counts. `h.Store` is discovered exactly as `Store` is, and
+`tx.Load` beside them, so a package that passes its `Handle` at every call site
+generates what the Context form generates, and a package mixing the two —
+declared queries on the Context, entity operations on a `Handle` — needs no
+setting to be seen.
 
 Three methods are the exception, emitted from the tag rather than from a
 discovered call: `Kind`, `EntityKey` and `EntityVersion`. The documented way to

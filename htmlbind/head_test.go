@@ -27,13 +27,13 @@ func shellPlan(head []string) (*Plan[struct{ Children Fragment }], Builder[struc
 
 func bodyFragment(head []string, text string) Fragment {
 	ops := Builder[struct{}]{}
-	return Bind(&Plan[struct{}]{Head: head, Ops: []Op[struct{}]{ops.Static(text)}}, struct{}{})
+	return (&Plan[struct{}]{Head: head, Ops: []Op[struct{}]{ops.Static(text)}}).Bind(struct{}{})
 }
 
 func renderShell(t *testing.T, page Fragment, options ...Option) string {
 	t.Helper()
 	plan, _ := shellPlan(nil)
-	shell := BindWrapper(plan, struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
+	shell := plan.BindWrapper(struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
 		p.Children = children
 	})
 	var out strings.Builder
@@ -105,7 +105,7 @@ func TestCallerHeadEscapesValues(t *testing.T) {
 func TestCallerHeadRejectsInlineScript(t *testing.T) {
 	page := bodyFragment(nil, "body")
 	plan, _ := shellPlan(nil)
-	shell := BindWrapper(plan, struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
+	shell := plan.BindWrapper(struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
 		p.Children = children
 	})
 	err := RenderChain(io.Discard, []Wrapper{shell}, page, WithHead(HeadScript(
@@ -124,7 +124,7 @@ func TestCallerHeadRejectsInlineScript(t *testing.T) {
 func TestCallerHeadFailsBeforeTheFirstByte(t *testing.T) {
 	page := bodyFragment(nil, "body")
 	plan, _ := shellPlan(nil)
-	shell := BindWrapper(plan, struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
+	shell := plan.BindWrapper(struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
 		p.Children = children
 	})
 	var out strings.Builder
@@ -173,7 +173,7 @@ func TestRenderHeadNodesForTheFragmentPath(t *testing.T) {
 func TestCallerHeadOnTheAsyncEntry(t *testing.T) {
 	page := bodyFragment(nil, "body")
 	plan, _ := shellPlan(nil)
-	shell := BindWrapper(plan, struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
+	shell := plan.BindWrapper(struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
 		p.Children = children
 	})
 	var out strings.Builder

@@ -35,4 +35,4 @@ var planHelloPlan = &htmlbind.Plan[HelloParams]{
 }
 
 // Hello binds Hello to its parameters, producing a renderable fragment.
-func Hello(params HelloParams) htmlbind.Fragment { return htmlbind.Bind(planHelloPlan, params) }
+func Hello(params HelloParams) htmlbind.Fragment { return planHelloPlan.Bind(params) }

@@ -68,14 +68,6 @@ func (Builder[P]) Provide[V any](element, provider string, fn func(context.Conte
 	return provideOp[P, V]{element: element, provider: provider, fn: fn, segments: segments}
 }
 
-// Provide renders a per-request value into an element's segments.
-//
-// Deprecated: use the Provide method on Builder, which carries the body. This
-// function remains so no generated or hand-written caller is forced to move.
-func Provide[P, V any](element, provider string, fn func(context.Context) (V, error), segments []Segment[P, V]) Op[P] {
-	return Builder[P]{}.Provide(element, provider, fn, segments)
-}
-
 type provideOp[P, V any] struct {
 	element  string
 	provider string

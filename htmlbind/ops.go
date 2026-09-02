@@ -346,22 +346,6 @@ func (Builder[P]) ForCtx[E, S any](items func(context.Context, P) []E, scope fun
 	return forCtxOp[P, E, S]{items: items, scope: scope, body: body}
 }
 
-// For repeats body once per item.
-//
-// Deprecated: use the For method on Builder, which carries the body. This
-// function remains so no generated or hand-written caller is forced to move.
-func For[P, E, S any](items func(P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
-	return Builder[P]{}.For(items, scope, body)
-}
-
-// ForCtx is For for an item list that needs the render context.
-//
-// Deprecated: use the ForCtx method on Builder, which carries the body. This
-// function remains so no generated or hand-written caller is forced to move.
-func ForCtx[P, E, S any](items func(context.Context, P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
-	return Builder[P]{}.ForCtx(items, scope, body)
-}
-
 type forCtxOp[P, E, S any] struct {
 	items func(context.Context, P) []E
 	scope func(P, E, int) S
@@ -428,12 +412,12 @@ func (o forOp[P, E, S]) Exec(r *Renderer, params P) error {
 // It exists so a template can name a synchronous external's result: without it
 // every mention of the result is another call, which is cheap for a small
 // lookup and is not cheap for a component that loads its own data.
-func Val[P, V, S any](value func(P) V, scope func(P, V) S, body []Op[S]) Op[P] {
+func (Builder[P]) Val[V, S any](value func(P) V, scope func(P, V) S, body []Op[S]) Op[P] {
 	return valOp[P, V, S]{value: value, scope: scope, body: body}
 }
 
 // ValCtx is Val for a value whose expression needs the render context.
-func ValCtx[P, V, S any](value func(context.Context, P) V, scope func(P, V) S, body []Op[S]) Op[P] {
+func (Builder[P]) ValCtx[V, S any](value func(context.Context, P) V, scope func(P, V) S, body []Op[S]) Op[P] {
 	return valCtxOp[P, V, S]{value: value, scope: scope, body: body}
 }
 
@@ -476,14 +460,14 @@ func (o valCtxOp[P, V, S]) Exec(r *Renderer, params P) error {
 //
 // Nothing is written before the value is computed, so a failure here leaves the
 // binding's subtree unrendered rather than half-rendered.
-func ValErr[P, V, S any](value func(P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
+func (Builder[P]) ValErr[V, S any](value func(P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
 	return valErrOp[P, V, S]{value: value, scope: scope, body: body}
 }
 
 // ValErrCtx is ValErr for a value whose expression also needs the render
 // context. The name puts Ctx last because generation builds it by appending the
 // suffix, the same way every other context-carrying instruction is named.
-func ValErrCtx[P, V, S any](value func(context.Context, P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
+func (Builder[P]) ValErrCtx[V, S any](value func(context.Context, P) (V, error), scope func(P, V) S, body []Op[S]) Op[P] {
 	return valErrCtxOp[P, V, S]{value: value, scope: scope, body: body}
 }
 
@@ -518,20 +502,6 @@ func (o valErrCtxOp[P, V, S]) Exec(r *Renderer, params P) error {
 	}
 	return execOps(r, o.body, o.scope(params, value))
 }
-
-// Require fails the render when check rejects the parameters. Generation emits
-// it ahead of an await boundary that binds a required async parameter, so a
-// caller who left one unset gets an error before the boundary commits its
-// fallback and fixes the response status.
-//
-// It writes nothing, which is the point: the check has to run on the initial
-// pass, where a failure can still become an error response, rather than in the
-// boundary goroutine that runs after the response is already committed.
-//
-// Deprecated: use the Require method on Builder. It carries no type parameter
-// beyond the receiver's own, so the method form was always available; this
-// function remains so no generated or hand-written caller is forced to move.
-func Require[P any](check func(P) error) Op[P] { return Builder[P]{}.Require(check) }
 
 // Require fails the render when check rejects the parameters. Generation emits
 // it ahead of an await boundary that binds a required async parameter, so a
@@ -589,20 +559,6 @@ func (Builder[P]) Await[S, R any](
 	handler []Op[R],
 ) Op[P] {
 	return awaitOp[P, S, R]{resolve: resolve, recovery: recovery, primary: primary, fallback: fallback, handler: handler}
-}
-
-// Await opens an await boundary.
-//
-// Deprecated: use the Await method on Builder, which carries the body. This
-// function remains so no generated or hand-written caller is forced to move.
-func Await[P, S, R any](
-	resolve func(context.Context, P) (S, error),
-	recovery func(P, AsyncError) R,
-	primary []Op[S],
-	fallback []Op[P],
-	handler []Op[R],
-) Op[P] {
-	return Builder[P]{}.Await(resolve, recovery, primary, fallback, handler)
 }
 
 type awaitOp[P, S, R any] struct {
@@ -954,21 +910,6 @@ func (Builder[P]) Live[S, R any](
 		fallback: fallback,
 		handler:  handler,
 	}
-}
-
-// Live opens a live boundary.
-//
-// Deprecated: use the Live method on Builder, which carries the body. This
-// function remains so no generated or hand-written caller is forced to move.
-func Live[P, S, R any](
-	bindings func(context.Context, P) []LiveBinding[S],
-	scope func(P) S,
-	recovery func(P, AsyncError) R,
-	primary []Op[S],
-	fallback []Op[P],
-	handler []Op[R],
-) Op[P] {
-	return Builder[P]{}.Live(bindings, scope, recovery, primary, fallback, handler)
 }
 
 type liveOp[P, S, R any] struct {

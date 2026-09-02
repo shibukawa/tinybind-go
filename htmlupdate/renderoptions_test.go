@@ -81,7 +81,7 @@ func formRegistry(t *testing.T, plan *htmlbind.Plan[formParams]) *htmlupdate.Reg
 			if err != nil {
 				return htmlbind.Fragment{}, err
 			}
-			return htmlbind.Bind(plan, formParams{ID: instanceID, Link: *link}), nil
+			return plan.Bind(formParams{ID: instanceID, Link: *link}), nil
 		},
 	})
 	return registry
@@ -118,7 +118,7 @@ func TestRedrawRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 // region with its validation errors is the case WriteUpdateStatus documents.
 func TestActionRendersAnUnsafeFormWhenGivenAToken(t *testing.T) {
 	region := []htmlupdate.Update{
-		htmlupdate.Replace("signup", htmlbind.Bind(formPlan, formParams{ID: "signup"})),
+		htmlupdate.Replace("signup", formPlan.Bind(formParams{ID: "signup"})),
 	}
 
 	if _, err := options.WriteUpdateStatus(actionRequest(), http.StatusUnprocessableEntity, region); err == nil {
@@ -229,7 +229,7 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 	registry.Register(htmlupdate.Reloadable{
 		KindID: "Ctx@0001",
 		Render: func(_ context.Context, instanceID string, _ url.Values) (htmlbind.Fragment, error) {
-			return htmlbind.Bind(plan, formParams{ID: instanceID}), nil
+			return plan.Bind(formParams{ID: instanceID}), nil
 		},
 	})
 
@@ -251,7 +251,7 @@ func TestRedrawRendersUnderTheRequestContext(t *testing.T) {
 // missed on the earlier sweep because these entries render through the delta
 // package rather than by calling htmlbind directly.
 func TestEveryRenderEntryTakesRenderOptions(t *testing.T) {
-	page := htmlbind.Bind(formPlan, formParams{ID: "signup"})
+	page := formPlan.Bind(formParams{ID: "signup"})
 	entries := map[string]func(w http.ResponseWriter, r *http.Request, options ...htmlbind.Option) error{
 		"Render": func(w http.ResponseWriter, r *http.Request, o ...htmlbind.Option) error {
 			return options.Render(w, r, nil, page, o...)

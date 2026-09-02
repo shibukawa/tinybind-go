@@ -73,13 +73,13 @@ func TestAFailingBindingChoosesTheResponse(t *testing.T) {
 			body := htmlbind.Builder[redirectScope]{}
 			leaf := &htmlbind.Plan[redirectParams]{Ops: []htmlbind.Op[redirectParams]{
 				htmlbind.Builder[redirectParams]{}.Static("<main>"),
-				htmlbind.ValErr(
+				htmlbind.Builder[redirectParams]{}.ValErr(
 					func(p redirectParams) (string, error) { return "", fail },
 					func(p redirectParams, v string) redirectScope { return redirectScope{Outer: p, Value: v} },
 					[]htmlbind.Op[redirectScope]{body.Text(func(p redirectScope) string { return p.Value })}),
 			}}
 			var out strings.Builder
-			err := htmlbind.Render(&out, htmlbind.Bind(leaf, redirectParams{ID: "7"}))
+			err := htmlbind.Render(&out, leaf.Bind(redirectParams{ID: "7"}))
 			if !errors.Is(err, fail) {
 				t.Fatalf("render error = %v, want %v", err, fail)
 			}

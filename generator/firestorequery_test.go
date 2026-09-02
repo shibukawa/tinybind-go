@@ -379,11 +379,11 @@ export statement Ids(sensor: Sensor): firestore.keys<Reading> {
 `)
 	for _, want := range []string{
 		"func PageTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (firestorebind.Page[Reading], error) {",
-		"firestorebind.QueryPageTx[Reading](ctx, tx, q)",
+		"tx.QueryPage[Reading](ctx, q)",
 		"func TotalTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (int64, error) {",
-		"firestorebind.CountTx(ctx, tx, q)",
+		"tx.Count(ctx, q)",
 		"func IdsTx(ctx context.Context, tx *firestorebind.Tx, sensor Sensor) (firestorebind.KeyPage, error) {",
-		"firestorebind.QueryKeysPageTx(ctx, tx, q)",
+		"tx.QueryKeysPage(ctx, q)",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated code is missing %q\n%s", want, code)

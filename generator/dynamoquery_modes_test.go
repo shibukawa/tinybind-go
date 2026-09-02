@@ -50,8 +50,8 @@ func TestDynamoParameterAPIPutsTheHandleInTheSignature(t *testing.T) {
 	for _, want := range []string{
 		"func ReadingsSince(ctx context.Context, h dynamobind.Handle, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]",
 		"func ReadingsPage(ctx context.Context, h dynamobind.Handle, sensor string, opts ...dynamodb.QueryOption) (dynamobind.Page[Reading], error)",
-		"return dynamobind.QueryOn[Reading](ctx, h, readingsSinceTable, readingsSinceKeyCondition, opts...)",
-		"return dynamobind.QueryPageOn[Reading](ctx, h, readingsPageTable, readingsPageKeyCondition, opts...)",
+		"return h.Query[Reading](ctx, readingsSinceTable, readingsSinceKeyCondition, opts...)",
+		"return h.QueryPage[Reading](ctx, readingsPageTable, readingsPageKeyCondition, opts...)",
 	} {
 		if !bytes.Contains(generated, []byte(want)) {
 			t.Errorf("missing %q:\n%s", want, generated)
@@ -78,7 +78,7 @@ func TestDynamoHandleResolverReadsTheFrameworkValue(t *testing.T) {
 		`_tinybindresolver "fixture/pw"`,
 		"func ReadingsSince(ctx context.Context, sensor string, from int64, opts ...dynamodb.QueryOption) iter.Seq2[Reading, error]",
 		"h, err := _tinybindresolver.DynamoHandle(ctx)",
-		"return dynamobind.QueryOn[Reading](ctx, h, readingsSinceTable, readingsSinceKeyCondition, opts...)",
+		"return h.Query[Reading](ctx, readingsSinceTable, readingsSinceKeyCondition, opts...)",
 	} {
 		if !bytes.Contains(generated, []byte(want)) {
 			t.Errorf("missing %q:\n%s", want, generated)

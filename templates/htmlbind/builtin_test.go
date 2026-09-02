@@ -64,7 +64,7 @@ func TestBuiltinElementRendersAPerRequestValue(t *testing.T) {
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
 		BuiltinElements: []htmlbind.BuiltinElement{appNonce()},
 	})
-	if !strings.Contains(generated, `htmlbind.Provide("app-nonce", "NonceFor", NonceFor`) {
+	if !strings.Contains(generated, `.Provide("app-nonce", "NonceFor", NonceFor`) {
 		t.Fatalf("no provider step:\n%s", generated)
 	}
 	// The fixed part of the markup is folded into static bytes, so it costs the
@@ -566,7 +566,7 @@ func TestEveryOccurrenceNamesTheSameProvider(t *testing.T) {
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
 		BuiltinElements: []htmlbind.BuiltinElement{appNonce()},
 	})
-	if got := strings.Count(generated, `htmlbind.Provide("app-nonce", "NonceFor"`); got != 2 {
+	if got := strings.Count(generated, `.Provide("app-nonce", "NonceFor"`); got != 2 {
 		t.Fatalf("two occurrences produced %d steps:\n%s", got, generated)
 	}
 }

@@ -73,7 +73,7 @@ func TestZeroHandleIsErrNoClient(t *testing.T) {
 	// The iterators report it once rather than panicking, which is what a
 	// failed page already does.
 	calls := 0
-	for _, err := range dynamobind.ScanOn[decodable, *decodable](context.Background(), zero, "readings") {
+	for _, err := range zero.Scan[decodable, *decodable](context.Background(), "readings") {
 		calls++
 		if !errors.Is(err, dynamobind.ErrNoClient) {
 			t.Fatalf("iterator error = %v", err)
@@ -172,12 +172,11 @@ func (item) EncodeItem() dynamodb.Item       { return dynamodb.Item{} }
 func (item) ItemKey() dynamodb.Key           { return dynamodb.Key{} }
 func (*item) DecodeItem(dynamodb.Item) error { return nil }
 
-// TestHandleMethodsAreTheOnForms pins that each method and its deprecated On
-// function are one operation, on the path every case here can reach without a
-// server: the zero Handle answers ErrNoClient through either spelling, and the
-// iterators yield it once. The wire-level agreement is checked in the
+// TestZeroHandleMethodsReportErrNoClient walks every Handle method on the path
+// each can reach without a server: the zero Handle answers ErrNoClient, and the
+// iterators yield it once. The wire-level behaviour is checked in the
 // dynamofixture tests.
-func TestHandleMethodsAreTheOnForms(t *testing.T) {
+func TestZeroHandleMethodsReportErrNoClient(t *testing.T) {
 	var zero dynamobind.Handle
 	ctx := context.Background()
 	key := dynamodb.Key{}
@@ -201,40 +200,21 @@ func TestHandleMethodsAreTheOnForms(t *testing.T) {
 
 	_, err := zero.Load[item](ctx, "t", key)
 	noClient("Load", err)
-	_, err = dynamobind.LoadOn[item](ctx, zero, "t", key)
-	noClient("LoadOn", err)
 	_, _, err = zero.LoadAll[item](ctx, "t", []dynamodb.Key{key})
 	noClient("LoadAll", err)
-	_, _, err = dynamobind.LoadAllOn[item](ctx, zero, "t", []dynamodb.Key{key})
-	noClient("LoadAllOn", err)
 	noClient("Store", zero.Store(ctx, "t", item{}))
-	noClient("StoreOn", dynamobind.StoreOn(ctx, zero, "t", item{}))
 	_, err = zero.StoreAll(ctx, "t", []item{{}})
 	noClient("StoreAll", err)
-	_, err = dynamobind.StoreAllOn(ctx, zero, "t", []item{{}})
-	noClient("StoreAllOn", err)
 	_, _, err = zero.StoreReturning(ctx, "t", item{})
 	noClient("StoreReturning", err)
-	_, _, err = dynamobind.StoreReturningOn(ctx, zero, "t", item{})
-	noClient("StoreReturningOn", err)
 	noClient("Remove", zero.Remove(ctx, "t", item{}))
-	noClient("RemoveOn", dynamobind.RemoveOn(ctx, zero, "t", item{}))
 	_, _, err = zero.RemoveReturning(ctx, "t", item{})
 	noClient("RemoveReturning", err)
-	_, _, err = dynamobind.RemoveReturningOn(ctx, zero, "t", item{})
-	noClient("RemoveReturningOn", err)
 	noClient("Update", zero.Update(ctx, "t", item{}, "SET a = :a"))
-	noClient("UpdateOn", dynamobind.UpdateOn(ctx, zero, "t", item{}, "SET a = :a"))
 	_, err = zero.QueryPage[item](ctx, "t", "k = :k")
 	noClient("QueryPage", err)
-	_, err = dynamobind.QueryPageOn[item](ctx, zero, "t", "k = :k")
-	noClient("QueryPageOn", err)
 	_, err = zero.ScanPage[item](ctx, "t")
 	noClient("ScanPage", err)
-	_, err = dynamobind.ScanPageOn[item](ctx, zero, "t")
-	noClient("ScanPageOn", err)
 	once("Query", zero.Query[item](ctx, "t", "k = :k"))
-	once("QueryOn", dynamobind.QueryOn[item](ctx, zero, "t", "k = :k"))
 	once("Scan", zero.Scan[item](ctx, "t"))
-	once("ScanOn", dynamobind.ScanOn[item](ctx, zero, "t"))
 }

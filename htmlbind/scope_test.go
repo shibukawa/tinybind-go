@@ -27,7 +27,7 @@ func scopePlan(declaresPrivate, declaresPublic bool, source string, cache *htmlb
 }
 
 func scopeFragment(declaresPrivate, declaresPublic bool, source string) htmlbind.Fragment {
-	return htmlbind.Bind(scopePlan(declaresPrivate, declaresPublic, source, nil), scopeParams{Text: "x"})
+	return (scopePlan(declaresPrivate, declaresPublic, source, nil)).Bind(scopeParams{Text: "x"})
 }
 
 type wrapperParams struct {
@@ -47,7 +47,7 @@ func scopeWrapper(declaresPrivate, declaresPublic bool, source string) htmlbind.
 			ops.Static("</div>"),
 		},
 	}
-	return htmlbind.BindWrapper(plan, wrapperParams{Text: "w"},
+	return plan.BindWrapper(wrapperParams{Text: "w"},
 		func(target *wrapperParams, children htmlbind.Fragment) { target.Children = children })
 }
 
@@ -149,7 +149,7 @@ func TestSlotFoldsPrivateButNotPublic(t *testing.T) {
 			ops.Slot(func(p wrapperParams) htmlbind.Fragment { return p.Children }, nil),
 		},
 	}
-	owner := htmlbind.Bind(plan, wrapperParams{Children: scopeFragment(true, false, "AccountPanel")})
+	owner := plan.Bind(wrapperParams{Children: scopeFragment(true, false, "AccountPanel")})
 	if !owner.IsPrivate() {
 		t.Fatal("a private slot argument left its owner shared")
 	}
@@ -166,7 +166,7 @@ func TestSlotFoldsPrivateButNotPublic(t *testing.T) {
 			ops.Slot(func(p wrapperParams) htmlbind.Fragment { return p.Children }, nil),
 		},
 	}
-	shared := htmlbind.Bind(publicPlan, wrapperParams{Children: scopeFragment(false, true, "")})
+	shared := publicPlan.Bind(wrapperParams{Children: scopeFragment(false, true, "")})
 	if shared.IsPrivate() {
 		t.Fatal("a public owner holding a public argument reported private")
 	}
@@ -184,7 +184,7 @@ func TestScopedKeyIsFramedAndSeparatesReaders(t *testing.T) {
 
 	render := func(scope, text string) string {
 		var out bytes.Buffer
-		if err := htmlbind.Render(&out, htmlbind.Bind(plan, scopeParams{Text: text}),
+		if err := htmlbind.Render(&out, plan.Bind(scopeParams{Text: text}),
 			htmlbind.WithCache(store), htmlbind.WithCacheScope(scope)); err != nil {
 			t.Fatal(err)
 		}
@@ -225,14 +225,14 @@ func TestPrivateWithNoScopeStoresNothingAndRendersTheSame(t *testing.T) {
 	plan := scopePlan(true, false, "Panel", &policy)
 
 	var unscoped bytes.Buffer
-	if err := htmlbind.Render(&unscoped, htmlbind.Bind(plan, scopeParams{Text: "one"}), htmlbind.WithCache(store)); err != nil {
+	if err := htmlbind.Render(&unscoped, plan.Bind(scopeParams{Text: "one"}), htmlbind.WithCache(store)); err != nil {
 		t.Fatal(err)
 	}
 	if store.Len() != 0 {
 		t.Fatalf("a private component with no scope stored %d entries, want 0", store.Len())
 	}
 	var scoped bytes.Buffer
-	if err := htmlbind.Render(&scoped, htmlbind.Bind(plan, scopeParams{Text: "one"}),
+	if err := htmlbind.Render(&scoped, plan.Bind(scopeParams{Text: "one"}),
 		htmlbind.WithCache(store), htmlbind.WithCacheScope("reader-1")); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestPublicComponentIgnoresTheScopeValue(t *testing.T) {
 	plan := scopePlan(false, true, "", &policy)
 	for _, scope := range []string{"reader-1", "reader-2", ""} {
 		var out bytes.Buffer
-		if err := htmlbind.Render(&out, htmlbind.Bind(plan, scopeParams{Text: "one"}),
+		if err := htmlbind.Render(&out, plan.Bind(scopeParams{Text: "one"}),
 			htmlbind.WithCache(store), htmlbind.WithCacheScope(scope)); err != nil {
 			t.Fatal(err)
 		}

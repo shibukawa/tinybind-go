@@ -39,7 +39,7 @@ func TestContextOpsReadTheRenderContext(t *testing.T) {
 
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), ctxKey{}, "tok-1")
-	if err := Render(&out, Bind(plan, ctxParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{}), WithContext(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	want := `<form data-token="tok-1" hidden>tok-1<b>on</b></form>`
@@ -60,7 +60,7 @@ func TestContextOpsEscapeLikeTheirPlainForms(t *testing.T) {
 	}}
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), ctxKey{}, `"><script>x()</script>`)
-	if err := Render(&out, Bind(plan, ctxParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{}), WithContext(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "<script>") {
@@ -82,7 +82,7 @@ func TestContextOpsWithNoContextOption(t *testing.T) {
 		}),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(plan, ctxParams{})); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{})); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "no-context" {
@@ -104,13 +104,13 @@ func TestSlotCtxRendersAFragment(t *testing.T) {
 	ops := Builder[ctxParams]{}
 	plan := &Plan[ctxParams]{Ops: []Op[ctxParams]{
 		ops.SlotCtx(func(ctx context.Context, p ctxParams) Fragment {
-			return Bind(field, ctxParams{})
+			return field.Bind(ctxParams{})
 		}, nil),
 	}}
 
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), ctxKey{}, "tok-2")
-	if err := Render(&out, Bind(plan, ctxParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{}), WithContext(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	want := `<input type="hidden" name="csrf" value="tok-2">`
@@ -135,7 +135,7 @@ func TestContextOpsInsideAnAwaitBoundary(t *testing.T) {
 	inner := Builder[awaitScope]{}
 	ops := Builder[ctxParams]{}
 	plan := &Plan[ctxParams]{Ops: []Op[ctxParams]{
-		Await(
+		Builder[ctxParams]{}.Await(
 			func(ctx context.Context, p ctxParams) (awaitScope, error) {
 				return awaitScope{Outer: p, Value: "settled"}, nil
 			},
@@ -152,7 +152,7 @@ func TestContextOpsInsideAnAwaitBoundary(t *testing.T) {
 
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), ctxKey{}, "tok-3")
-	if err := Render(&out, Bind(plan, ctxParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{}), WithContext(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "settled:tok-3") {
@@ -170,7 +170,7 @@ func TestForCtxReadsTheContext(t *testing.T) {
 	}
 	inner := Builder[item]{}
 	plan := &Plan[ctxParams]{Ops: []Op[ctxParams]{
-		ForCtx(
+		Builder[ctxParams]{}.ForCtx(
 			func(ctx context.Context, p ctxParams) []string {
 				return strings.Split(tokenFrom(ctx), ",")
 			},
@@ -182,7 +182,7 @@ func TestForCtxReadsTheContext(t *testing.T) {
 	}}
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), ctxKey{}, "a,b,c")
-	if err := Render(&out, Bind(plan, ctxParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(ctxParams{}), WithContext(ctx)); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "abc" {

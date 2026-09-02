@@ -54,6 +54,4 @@ var planDocumentPlan = &htmlbind.Plan[DocumentParams]{
 }
 
 // Document binds Document to its parameters, producing a renderable fragment.
-func Document(params DocumentParams) htmlbind.Fragment {
-	return htmlbind.Bind(planDocumentPlan, params)
-}
+func Document(params DocumentParams) htmlbind.Fragment { return planDocumentPlan.Bind(params) }

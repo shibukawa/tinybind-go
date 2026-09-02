@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/htmlbind/delta"
 )
 
@@ -22,7 +21,7 @@ func TestBoundaryInstanceIDIsEscaped(t *testing.T) {
 	// during delta collection where the collector is live.
 	var top strings.Builder
 	if _, err := delta.CollectChain(&top, []byte("k"), nil,
-		htmlbind.Bind(rowPlan(func(p rowParams) string { return p.ID }),
+		(rowPlan(func(p rowParams) string { return p.ID })).Bind(
 			rowParams{ID: hostileID, Text: "hi"})); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +32,7 @@ func TestBoundaryInstanceIDIsEscaped(t *testing.T) {
 	// A nested boundary leaves a <template> placeholder carrying its id.
 	var page strings.Builder
 	if _, err := delta.CollectChain(&page, []byte("k"), nil,
-		htmlbind.Bind(pagePlan(rowPlan(func(p rowParams) string { return p.ID })),
+		(pagePlan(rowPlan(func(p rowParams) string { return p.ID }))).Bind(
 			pageParams{Rows: []rowParams{{ID: hostileID, Text: "hi"}}})); err != nil {
 		t.Fatal(err)
 	}

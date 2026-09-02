@@ -664,7 +664,7 @@ func parserMethod(kind string) string {
 
 func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sv, err := jsonbind.ParseSlice(p, %q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
+	fmt.Fprintf(b, "%sv, err := p.ParseSlice(%q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
 	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 	// A null member leaves the destination alone, so a value bound earlier
 	// survives it.
@@ -680,7 +680,7 @@ func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 // would lose data the document carried.
 func emitStreamArray(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) {
 	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sif err := jsonbind.ParseArray(p, %q, %q, %s[:], %s); err != nil {\n%s\treturn out, err\n%s}\n",
+	fmt.Fprintf(b, "%sif err := p.ParseArray(%q, %q, %s[:], %s); err != nil {\n%s\treturn out, err\n%s}\n",
 		prefix, member, message, dest, read, prefix, prefix)
 }
 
@@ -700,7 +700,7 @@ func emitStreamBytes(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) 
 
 func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sv, err := jsonbind.ParseMap(p, %q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
+	fmt.Fprintf(b, "%sv, err := p.ParseMap(%q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
 	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
 }
@@ -1410,7 +1410,7 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 			return
 		}
 		read, message := binderElemReader(f)
-		fmt.Fprintf(b, "%sv, err := jsonbind.ParseSlice(p, %q, %q, %s)\n", prefix, f.Wire, message, read)
+		fmt.Fprintf(b, "%sv, err := p.ParseSlice(%q, %q, %s)\n", prefix, f.Wire, message, read)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case KindArray:
@@ -1427,7 +1427,7 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 			return
 		}
 		read, message := binderElemReader(f)
-		fmt.Fprintf(b, "%sv, err := jsonbind.ParseMap(p, %q, %q, %s)\n", prefix, f.Wire, message, read)
+		fmt.Fprintf(b, "%sv, err := p.ParseMap(%q, %q, %s)\n", prefix, f.Wire, message, read)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	default:

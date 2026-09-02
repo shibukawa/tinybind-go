@@ -430,14 +430,14 @@ func (e *goEmitter) emitComponentPlan(component *TemplateDecl) error {
 
 	name := e.c.componentGoName(component.Name)
 	fmt.Fprintf(&e.b, "// %s binds %s to its parameters, producing a renderable fragment.\n", name, component.Name)
-	fmt.Fprintf(&e.b, "func %s(params %s) htmlbind.Fragment { return htmlbind.Bind(%sPlan, params) }\n\n", name, params, prefix)
+	fmt.Fprintf(&e.b, "func %s(params %s) htmlbind.Fragment { return %sPlan.Bind(params) }\n\n", name, params, prefix)
 	// Only an exported component is part of the composition surface, so only it
 	// needs a chain binder.
 	if children, ok := info.params["children"]; ok && children.kind == kindHTML && component.Exported {
 		binder := "Bind" + goPublicName(name)
 		fmt.Fprintf(&e.b, "// %s binds %s as a chain wrapper filling its unnamed slot.\n", binder, component.Name)
 		fmt.Fprintf(&e.b, "func %s(params %s) htmlbind.Wrapper {\n", binder, params)
-		fmt.Fprintf(&e.b, "\treturn htmlbind.BindWrapper(%sPlan, params, func(target *%s, children htmlbind.Fragment) { target.Children = children })\n}\n\n",
+		fmt.Fprintf(&e.b, "\treturn %sPlan.BindWrapper(params, func(target *%s, children htmlbind.Fragment) { target.Children = children })\n}\n\n",
 			prefix, params)
 	}
 	return nil
@@ -1279,8 +1279,8 @@ func (e *goEmitter) emitForOp(p *planEmitter, node *syntax.ForNode) error {
 	}
 	p.flush()
 	withContext := e.usesRenderContext(node.Iterable)
-	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) []%s { return %s },\n\tfunc(%s %s, item %s, index int) %s { return %s{Outer: %s, Item: item, Index: index} },\n%s)",
-		ctxOp("For", withContext), closureParams(p.scope.goType, withContext), goType(elem), iterable,
+	p.raw(fmt.Sprintf("%s.%s(\n\tfunc(%s) []%s { return %s },\n\tfunc(%s %s, item %s, index int) %s { return %s{Outer: %s, Item: item, Index: index} },\n%s)",
+		p.scope.builder, ctxOp("For", withContext), closureParams(p.scope.goType, withContext), goType(elem), iterable,
 		receiverIdent, p.scope.goType, goType(elem), scopeType, scopeType, receiverIdent,
 		indentBlock(body.literal(), "\t")))
 	return nil
@@ -1333,8 +1333,8 @@ func (e *goEmitter) emitValBinding(p *planEmitter, node *syntax.ValNode, index i
 	if e.failingCall(binding.Value) {
 		op, results, returns = ctxOp("ValErr", withContext), "("+goType(t)+", error)", "return "+value
 	}
-	p.raw(fmt.Sprintf("htmlbind.%s(\n\tfunc(%s) %s { %s },\n\tfunc(%s %s, value %s) %s { return %s{Outer: %s, %s: value} },\n%s)",
-		op, closureParams(p.scope.goType, withContext), results, returns,
+	p.raw(fmt.Sprintf("%s.%s(\n\tfunc(%s) %s { %s },\n\tfunc(%s %s, value %s) %s { return %s{Outer: %s, %s: value} },\n%s)",
+		p.scope.builder, op, closureParams(p.scope.goType, withContext), results, returns,
 		receiverIdent, p.scope.goType, goType(t), scopeType, scopeType, receiverIdent, field,
 		indentBlock(body.literal(), "\t")))
 	return nil
@@ -1566,11 +1566,11 @@ func (e *goEmitter) emitAwaitOp(p *planEmitter, node *syntax.AwaitNode) error {
 		receiverIdent, p.scope.goType, recoverType, recoverType, receiverIdent)
 	p.flush()
 	if len(checks) > 0 {
-		p.raw(fmt.Sprintf("htmlbind.Require(func(%s %s) error {\n%s\n\treturn nil\n})",
-			receiverIdent, p.scope.goType, strings.Join(checks, "\n")))
+		p.raw(fmt.Sprintf("%s.Require(func(%s %s) error {\n%s\n\treturn nil\n})",
+			p.scope.builder, receiverIdent, p.scope.goType, strings.Join(checks, "\n")))
 	}
-	p.raw(fmt.Sprintf("htmlbind.Await(\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
-		indentBlock(resolve, "\t"), build,
+	p.raw(fmt.Sprintf("%s.Await(\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		p.scope.builder, indentBlock(resolve, "\t"), build,
 		indentBlock(primaryOps.literal(), "\t"),
 		indentBlock(fallbackOps.literal(), "\t"),
 		indentBlock(handler, "\t")))
@@ -1623,7 +1623,7 @@ func (e *goEmitter) emitComponentOp(p *planEmitter, node *ComponentNode) error {
 		}
 		fmt.Fprintf(&e.declarations, "var %sPlan = &htmlbind.Plan[%s]{Ops: %s}\n\n",
 			fillPlan, p.scope.goType, indentBlock(fill.literal(), "\t"))
-		fills[name] = fmt.Sprintf("htmlbind.Bind(%sPlan, %s)", fillPlan, receiverIdent)
+		fills[name] = fmt.Sprintf("%sPlan.Bind(%s)", fillPlan, receiverIdent)
 	}
 	var fields []string
 	for _, parameter := range component.order {
@@ -2027,8 +2027,8 @@ func (e *goEmitter) finishLiveOp(p *planEmitter, parts liveOpParts) error {
 	build := fmt.Sprintf("func(%s %s, err htmlbind.AsyncError) %s { return %s{Outer: %s, Err: err} }",
 		receiverIdent, p.scope.goType, parts.recoverType, parts.recoverType, receiverIdent)
 	p.flush()
-	p.raw(fmt.Sprintf("htmlbind.Live(\n%s,\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
-		indentBlock(bindings, "\t"), scope, build,
+	p.raw(fmt.Sprintf("%s.Live(\n%s,\n\t%s,\n\t%s,\n%s,\n%s,\n%s)",
+		p.scope.builder, indentBlock(bindings, "\t"), scope, build,
 		indentBlock(parts.primary, "\t"),
 		indentBlock(parts.fallback, "\t"),
 		indentBlock(parts.handler, "\t")))

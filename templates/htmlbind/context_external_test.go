@@ -50,7 +50,7 @@ func TestSyncExternalReceivesTheRenderContext(t *testing.T) {
 		`SlotCtx(func(ctx context.Context, p PageParams) htmlbind.Fragment { return Field(ctx) }, nil)`,
 		`TextCtx(func(ctx context.Context, p PageParams) string { return Token(ctx) })`,
 		`IfCtx(func(ctx context.Context, p PageParams) bool { return Enabled(ctx) }`,
-		`htmlbind.ForCtx(`,
+		`.ForCtx(`,
 		`func(ctx context.Context, p PageParams) []string { return Tags(ctx) }`,
 		`ComponentCtx(func(ctx context.Context, p`,
 	} {
@@ -78,7 +78,7 @@ func TestExternalsWithoutContextAreUnchanged(t *testing.T) {
 	for _, want := range []string{
 		`Text(func(p PageParams) string { return Token() })`,
 		`Slot(func(p PageParams) htmlbind.Fragment { return Field() }, nil)`,
-		`htmlbind.For(`,
+		`.For(`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("generated code is missing %q\n%s", want, got)

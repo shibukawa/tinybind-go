@@ -595,7 +595,7 @@ func (e *goEmitter) emitNodes(nodes []Node, scope map[string]valueType) error {
 				if t.optional {
 					return e.c.error(n.Pos, "optional arrays cannot be expanded as SQL values")
 				}
-				e.line("if _err := " + runtime("AppendValues") + "(_b, " + code + "); _err != nil { return _err }")
+				e.line("if _err := _b.AppendValues(" + code + "); _err != nil { return _err }")
 			} else {
 				e.line("_b.Arg(" + code + ")")
 			}

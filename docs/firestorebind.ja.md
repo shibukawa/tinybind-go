@@ -599,8 +599,8 @@ zero 値の `Handle` は `ErrNoClient` です。client の無い Context とま�
 
 メソッドが使えるのは Go 1.27 からです。メソッドが自前の型パラメータを宣言できる最初の
 リリースだからです。それ以前は各入口に `Handle` を引数に取る `On` 付きの双子 —
-`firestorebind.LoadOn[Reading](ctx, h, key)` — があり、それらの関数は deprecated として
-残って、それぞれ対応するメソッドへ転送します。呼び出し側が移行を強いられることはありません。
+`firestorebind.LoadOn[Reading](ctx, h, key)` — がありましたが、それらの関数は削除され
+ました。呼び出し側は `Handle` をドットの前へ移し、接尾辞を落とします。
 
 ## ランタイム操作
 
@@ -701,8 +701,8 @@ func (tx *Tx) Remove(v Keyer, opts ...datastore.WriteOption)
 
 読みも書きも `*Tx` のメソッドなので、1 つの transaction は 1 つの書き方で済みます。Go 1.27
 より前は、読みは `ctx` の次に `*Tx` を取る package 関数 — `LoadTx`、`LoadAllTx`、
-`QueryPageTx`、`QueryKeysPageTx`、`CountTx` — で、これらは deprecated として残り、それぞれ
-対応するメソッドへ転送します。生成される `<Name>Tx` の双子は今もこれらを呼びます。
+`QueryPageTx`、`QueryKeysPageTx`、`CountTx` — でしたが、削除されました。生成される
+`<Name>Tx` の双子はメソッドを呼びます。
 
 `dynamobind` は transaction を提供しません。DynamoDB の driver が宣言していないからです。
 あちらで除外した理由が、こちらでは採用する理由になります。read-modify-write を表現できる
@@ -841,8 +841,8 @@ decoder、どこからも名指されない型からは何も出ません。ネ�
 宣言は結果型の使用としてカウントされるので、Firestore の使用が宣言だけのパッケージでも、
 生成されたクエリが必要とする decoder は出ます。
 
-client の渡し方はどちらでもカウントされます。`h.Store` も `StoreOn` も `Store` と同じように
-発見され、`tx.Load` も `LoadTx` と同じように発見されるので、呼び出しごとに `Handle` を渡すパッケージでも Context 版と同じものが生成されますし、
+client の渡し方はどちらでもカウントされます。`h.Store` は `Store` と同じように発見され、
+`tx.Load` もその隣で発見されるので、呼び出しごとに `Handle` を渡すパッケージでも Context 版と同じものが生成されますし、
 宣言済みクエリは Context・entity 操作は `Handle` という混在も、設定なしで見つかります。
 
 例外が 3 つあり、呼び出しの発見ではなく tag から生成されます。`Kind`、`EntityKey`、

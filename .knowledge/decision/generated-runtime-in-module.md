@@ -37,7 +37,7 @@ sql_runtime:
     api: sqlbind.NewBuilder(style) with Dollar and Question constants
     phase: fixed at generation time per decision:sql-dialect-generation-time and rule:sql-placeholder-emission
   executor_reuse: existing sqlbind.SQLExecutor satisfies Execer and Querier, so decision:sql-context-executor-api resolvers stay unchanged
-  generic_helper: AppendValues was a package function because a Go method could not introduce its own type parameter; since Go 1.27 it is a method on Builder and the function forwards to it, deprecated, which generated SQL still binds as _tinybindSQLArgs, per decision:generic-method-migration
+  generic_helper: AppendValues was a package function because a Go method could not introduce its own type parameter; since Go 1.27 it is a method on Builder, the function is gone, and generated SQL calls _b.AppendValues, per decision:generic-method-migration
 html_runtime:
   package: github.com/shibukawa/tinybind-go/htmlbind
   moved:

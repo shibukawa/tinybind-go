@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/shibukawa/tinybind-go/fasthttpupdate"
-	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 	"github.com/shibukawa/tinygodriver/fasthttp"
 )
@@ -138,7 +137,7 @@ func TestWriteLiveStreamParity(t *testing.T) {
 
 func TestRenderStreamParity(t *testing.T) {
 	req := navigation("/feed")
-	fragment := htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 4})
+	fragment := badgePlan.Bind(badgeParams{ID: "cart", Count: 4})
 
 	recorder := httptest.NewRecorder()
 	if err := netOptions.RenderStream(recorder, req.netHTTP(), nil, fragment); err != nil {
@@ -153,7 +152,7 @@ func TestRenderStreamParity(t *testing.T) {
 
 func TestRenderStreamAsyncParity(t *testing.T) {
 	req := navigation("/feed")
-	fragment := htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 4})
+	fragment := badgePlan.Bind(badgeParams{ID: "cart", Count: 4})
 
 	recorder := httptest.NewRecorder()
 	if err := netOptions.RenderStreamAsync(context.Background(), recorder, req.netHTTP(), nil, fragment); err != nil {
@@ -170,7 +169,7 @@ func TestRenderStreamAsyncParity(t *testing.T) {
 // is the entry the downstream report grouped with the streaming half; it never
 // belonged there.
 func TestRenderParity(t *testing.T) {
-	fragment := htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 4})
+	fragment := badgePlan.Bind(badgeParams{ID: "cart", Count: 4})
 
 	for _, tc := range []struct {
 		name string
@@ -201,7 +200,7 @@ func TestRenderParity(t *testing.T) {
 func TestLiveStreamDetachesTheRequestCtx(t *testing.T) {
 	req := live("/feed")
 	ctx := req.fast()
-	fragment := htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 4})
+	fragment := badgePlan.Bind(badgeParams{ID: "cart", Count: 4})
 
 	// Passing the RequestCtx as its own cancellation is exactly what the
 	// transform produces, so it has to be survivable rather than merely

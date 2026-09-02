@@ -398,8 +398,8 @@ The zero `Handle` is `ErrNoClient`, exactly as a Context carrying no client is.
 The methods need Go 1.27, the first release that lets a method declare its own
 type parameter. Before it every entry had a twin suffixed `On` taking the
 `Handle` as an argument — `dynamobind.LoadOn[Reading](ctx, h, "readings", key)`
-— and those functions remain, deprecated, each forwarding to its method, so no
-caller is forced to move.
+— and those functions are gone: a call site moves the `Handle` in front of the
+dot and drops the suffix.
 
 Why you might want it:
 
@@ -539,8 +539,8 @@ struct inherits its parent's operations. A `.tb.dynamo` declaration counts as a
 use of its result type, so a package whose only DynamoDB use is a declaration
 still gets the decoder its generated query needs.
 
-Either client form counts. `h.Store` and `StoreOn` are discovered exactly as
-`Store` is, so a package that passes its `Handle` at every call site generates
+Either client form counts. `h.Store` is discovered exactly as `Store` is, so a
+package that passes its `Handle` at every call site generates
 what the Context form generates, and a package mixing the two — declared queries
 on the Context, item operations on a `Handle` — needs no setting to be seen.
 

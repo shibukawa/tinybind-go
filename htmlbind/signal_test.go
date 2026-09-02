@@ -70,7 +70,7 @@ func collectAll(t *testing.T, sequence iter.Seq2[Content, error]) (deliveries []
 
 func TestSignalTravelsBesideDeliveriesWithoutDisturbingThem(t *testing.T) {
 	deliveries, signals, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(delivery("1"), signal(newAppToast("saved")), delivery("2")), recoverHandler()), struct{}{})))
+		(livePlan(emits(delivery("1"), signal(newAppToast("saved")), delivery("2")), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -98,9 +98,9 @@ func TestSignalKeepsItsPlaceInTheSourcesOwnOrder(t *testing.T) {
 	// against the deliveries around it.
 	var order []string
 	for content, item := range RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(
+		(livePlan(emits(
 			delivery("a"), signal(NamedSignal("one")), delivery("b"), signal(NamedSignal("two")),
-		), recoverHandler()), struct{}{})) {
+		), recoverHandler())).Bind(struct{}{})) {
 		if item != nil {
 			got, ok := AsSignal(item)
 			if !ok {
@@ -122,7 +122,7 @@ func TestSignalWithNoRecoverClauseDoesNotEndTheSubscription(t *testing.T) {
 	// one, so this is the case that proves classification happens ahead of the
 	// omitted-recover rule rather than beside it.
 	deliveries, signals, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(signal(newAppToast("hi")), delivery("1")), nil), struct{}{})))
+		(livePlan(emits(signal(newAppToast("hi")), delivery("1")), nil)).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v, want the signal to pass through a clause with no recover subtree", err)
 	}
@@ -133,7 +133,7 @@ func TestSignalWithNoRecoverClauseDoesNotEndTheSubscription(t *testing.T) {
 
 func TestSignalRendersNoRecoverSubtree(t *testing.T) {
 	deliveries, _, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(signal(NamedSignal("app.ping"))), recoverHandler()), struct{}{})))
+		(livePlan(emits(signal(NamedSignal("app.ping"))), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestSignalRendersNoRecoverSubtree(t *testing.T) {
 func TestSignalIsNotReportedToTheErrorHook(t *testing.T) {
 	var reported []error
 	_, _, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(signal(newAppToast("x")), delivery("1")), recoverHandler()), struct{}{}),
+		(livePlan(emits(signal(newAppToast("x")), delivery("1")), recoverHandler())).Bind(struct{}{}),
 		WithErrorReporter(func(err error) { reported = append(reported, err) })))
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -162,8 +162,8 @@ func TestSignalDoesNotSupersedeNestedBoundaries(t *testing.T) {
 	// took the delivery path the inner boundary would be cancelled and its
 	// placeholder would keep a fallback nothing replaces.
 	deliveries, signals, err := collectAll(t, RenderLive(t.Context(), io.Discard,
-		Bind(nestedPlan(emits(delivery("1"), signal(NamedSignal("app.ping"))),
-			func(value string) (string, error) { return "inner-" + value, nil }), struct{}{})))
+		(nestedPlan(emits(delivery("1"), signal(NamedSignal("app.ping"))),
+			func(value string) (string, error) { return "inner-" + value, nil })).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSignalOnTheDocumentEntryIsDroppedAndIsNotADelivery(t *testing.T) {
 	// the fallback on a page that had real content to show.
 	var document bytes.Buffer
 	deliveries, signals, err := collectAll(t, RenderAsync(t.Context(), &document,
-		Bind(livePlan(emits(signal(newAppToast("early")), delivery("1"), delivery("2")), recoverHandler()), struct{}{})))
+		(livePlan(emits(signal(newAppToast("early")), delivery("1"), delivery("2")), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestSignalOnTheDocumentEntryIsDroppedAndIsNotADelivery(t *testing.T) {
 
 func TestSignalOnTheSyncEntryIsDropped(t *testing.T) {
 	var page bytes.Buffer
-	err := Render(&page, Bind(livePlan(emits(signal(newAppToast("x")), delivery("1")), recoverHandler()), struct{}{}))
+	err := Render(&page, (livePlan(emits(signal(newAppToast("x")), delivery("1")), recoverHandler())).Bind(struct{}{}))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestSignalOnTheSyncEntryIsDropped(t *testing.T) {
 func TestSyncEntryKeepsItsFallbackWhenOnlySignalsArrive(t *testing.T) {
 	// Not marking a signal as delivered is what leaves the fallback available.
 	var page bytes.Buffer
-	err := Render(&page, Bind(livePlan(emits(signal(NamedSignal("app.ping"))), recoverHandler()), struct{}{}))
+	err := Render(&page, (livePlan(emits(signal(NamedSignal("app.ping"))), recoverHandler())).Bind(struct{}{}))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestInvalidSignalTakesTheFailurePath(t *testing.T) {
 		"never built":   appToast{},
 	} {
 		_, signals, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-			Bind(livePlan(emits(signal(emitted), delivery("1")), nil), struct{}{})))
+			(livePlan(emits(signal(emitted), delivery("1")), nil)).Bind(struct{}{})))
 		if err == nil {
 			t.Errorf("%s: render succeeded, want the fault to end the clause with no recover subtree", name)
 		}
@@ -322,7 +322,7 @@ func TestInvalidSignalTakesTheFailurePath(t *testing.T) {
 
 func TestInvalidSignalRendersRecoverWhenTheClauseHasOne(t *testing.T) {
 	deliveries, _, err := collectAll(t, RenderLive(t.Context(), &bytes.Buffer{},
-		Bind(livePlan(emits(signal(NamedSignal(""))), recoverHandler()), struct{}{})))
+		(livePlan(emits(signal(NamedSignal(""))), recoverHandler())).Bind(struct{}{})))
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

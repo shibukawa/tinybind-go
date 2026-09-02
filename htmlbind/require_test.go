@@ -43,7 +43,7 @@ func TestRequireContributesNoSequenceNode(t *testing.T) {
 	// The property everything rests on: the sequence and the values one render
 	// produced reproduce that render's bytes.
 	var out strings.Builder
-	if err := Render(&out, Bind(checked, requireParams{ID: "7"})); err != nil {
+	if err := Render(&out, checked.Bind(requireParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	rebuilt, err := checked.Sequence().Reassemble([]string{"7"})
@@ -80,7 +80,7 @@ func TestRequireEndsTheRenderBeforeWriting(t *testing.T) {
 		body.Static("<h1>secret</h1>"),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(plan, requireParams{ID: "7"})); !errors.Is(err, want) {
+	if err := Render(&out, plan.Bind(requireParams{ID: "7"})); !errors.Is(err, want) {
 		t.Fatalf("render error = %v, want %v", err, want)
 	}
 	if out.String() != "" {
@@ -100,7 +100,7 @@ func TestRequireRunsBeforeAnyByte(t *testing.T) {
 		body.Static("<h1>secret</h1>"),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(leaf, requireParams{ID: "7"})); !errors.Is(err, want) {
+	if err := Render(&out, leaf.Bind(requireParams{ID: "7"})); !errors.Is(err, want) {
 		t.Fatalf("render error = %v, want %v", err, want)
 	}
 	if out.Len() != 0 {
@@ -116,13 +116,13 @@ func TestACheckDoesNotStopTheBindingAfterItBeingPrepared(t *testing.T) {
 	body := Builder[requireScope]{}
 	leaf := &Plan[requireParams]{Ops: []Op[requireParams]{
 		Builder[requireParams]{}.Require(func(requireParams) error { return nil }),
-		ValErr(
+		Builder[requireParams]{}.ValErr(
 			func(p requireParams) (string, error) { return "", want },
 			func(p requireParams, value string) requireScope { return requireScope{Outer: p, Value: value} },
 			[]Op[requireScope]{body.Static("<h1>"), body.Text(func(p requireScope) string { return p.Value })}),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(leaf, requireParams{ID: "7"})); !errors.Is(err, want) {
+	if err := Render(&out, leaf.Bind(requireParams{ID: "7"})); !errors.Is(err, want) {
 		t.Fatalf("render error = %v, want %v", err, want)
 	}
 	if out.Len() != 0 {
@@ -141,7 +141,7 @@ func TestAPreparedCheckIsNotRerun(t *testing.T) {
 		body.Static("<h1>ok</h1>"),
 	}}
 	var out strings.Builder
-	if err := Render(&out, Bind(leaf, requireParams{ID: "7"})); err != nil {
+	if err := Render(&out, leaf.Bind(requireParams{ID: "7"})); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
@@ -175,14 +175,14 @@ func TestACachedComponentRunsItsCheckOnAMissAndNotOnAHit(t *testing.T) {
 	}
 	store := newRecordingStore()
 	var miss strings.Builder
-	if err := Render(&miss, Bind(plan(), requireParams{ID: "7"}), WithCache(store)); err != nil {
+	if err := Render(&miss, plan().Bind(requireParams{ID: "7"}), WithCache(store)); err != nil {
 		t.Fatalf("miss: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("the miss ran the check %d times, want once", calls)
 	}
 	var hit strings.Builder
-	if err := Render(&hit, Bind(plan(), requireParams{ID: "7"}), WithCache(store)); err != nil {
+	if err := Render(&hit, plan().Bind(requireParams{ID: "7"}), WithCache(store)); err != nil {
 		t.Fatalf("hit: %v", err)
 	}
 	if calls != 1 {
@@ -210,7 +210,7 @@ func TestRequireCtxReceivesTheRenderContext(t *testing.T) {
 	}}
 	var out strings.Builder
 	ctx := context.WithValue(context.Background(), key{}, "allowed")
-	if err := Render(&out, Bind(plan, requireParams{}), WithContext(ctx)); err != nil {
+	if err := Render(&out, plan.Bind(requireParams{}), WithContext(ctx)); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if out.String() != "<h1>ok</h1>" {
@@ -219,7 +219,7 @@ func TestRequireCtxReceivesTheRenderContext(t *testing.T) {
 	// A render that supplied no context still has one, so the check runs and
 	// answers rather than failing for want of a context.
 	var refused strings.Builder
-	if err := Render(&refused, Bind(plan, requireParams{})); !errors.Is(err, denied) {
+	if err := Render(&refused, plan.Bind(requireParams{})); !errors.Is(err, denied) {
 		t.Fatalf("render error = %v, want %v", err, denied)
 	}
 }

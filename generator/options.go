@@ -605,26 +605,9 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		ItemKeyCall(Function(path, "Remove"), ArgumentType("item", 2)),
 		ItemKeyCall(Function(path, "Update"), ArgumentType("item", 2)),
 		ItemKeyDecodeCall(Function(path, "RemoveReturning"), ArgumentType("item", 2)),
-		// The Handle-taking twins of requirement:dynamo-parameter-api. The read
-		// side still names its type in the same type parameter, and the write
-		// side reads its value one place later, the Handle sitting between the
-		// Context and the table.
-		ItemDecodeCall(Function(path, "LoadOn"), GenericType("item", 0)),
-		ItemDecodeCall(Function(path, "LoadAllOn"), GenericType("item", 0)),
-		ItemDecodeCall(Function(path, "QueryOn"), GenericType("item", 0)),
-		ItemDecodeCall(Function(path, "QueryPageOn"), GenericType("item", 0)),
-		ItemDecodeCall(Function(path, "ScanOn"), GenericType("item", 0)),
-		ItemDecodeCall(Function(path, "ScanPageOn"), GenericType("item", 0)),
-		ItemEncodeCall(Function(path, "StoreOn"), ArgumentType("item", 3)),
-		ItemEncodeCall(Function(path, "StoreAllOn"), ArgumentType("item", 3)),
-		ItemEncodeDecodeCall(Function(path, "StoreReturningOn"), ArgumentType("item", 3)),
-		ItemKeyCall(Function(path, "RemoveOn"), ArgumentType("item", 3)),
-		ItemKeyCall(Function(path, "UpdateOn"), ArgumentType("item", 3)),
-		ItemKeyDecodeCall(Function(path, "RemoveReturningOn"), ArgumentType("item", 3)),
-		// The same entries as methods on Handle, which carry the bodies since Go
-		// 1.27 let a method declare its own type parameter. The receiver is not
-		// an argument, so the write side reads its value where the Context form
-		// does, at index 2.
+		// The same entries as methods on Handle, per requirement:dynamo-parameter-api.
+		// The receiver is not an argument, so the write side reads its value
+		// where the Context form does, at index 2.
 		ItemDecodeCall(Method(path, "Load", path, "Handle"), GenericType("item", 0)),
 		ItemDecodeCall(Method(path, "LoadAll", path, "Handle"), GenericType("item", 0)),
 		ItemDecodeCall(Method(path, "Query", path, "Handle"), GenericType("item", 0)),
@@ -679,20 +662,15 @@ func canonicalCBORBindCalls() []CallPattern {
 // from the value argument at index 1: the signature is (ctx, v, opts...), with
 // no table and no client, so it is one earlier than the DynamoDB equivalent.
 //
-// The Handle-taking twins of requirement:firestore-parameter-api follow the
-// same rule one place later, and the *Tx entries have no twin because the
-// receiver already carries the handle. Since Go 1.27 the twins and the
-// transactional reads are methods, whose receiver is not an argument, so a
-// method reads its value where the Context form does.
+// The Handle methods of requirement:firestore-parameter-api and the *Tx reads
+// follow the same rule: the receiver is not an argument, so a method reads its
+// value where the Context form does.
 func canonicalFirestoreCalls(path string) []CallPattern {
 	return []CallPattern{
 		EntityDecodeCall(Function(path, "Load"), GenericType("entity", 0)),
 		EntityDecodeCall(Function(path, "LoadAll"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "LoadTx"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "LoadAllTx"), GenericType("entity", 0)),
 		EntityDecodeCall(Function(path, "Query"), GenericType("entity", 0)),
 		EntityDecodeCall(Function(path, "QueryPage"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "QueryPageTx"), GenericType("entity", 0)),
 		EntityEncodeCall(Function(path, "Store"), ArgumentType("entity", 1)),
 		EntityEncodeCall(Function(path, "Insert"), ArgumentType("entity", 1)),
 		EntityEncodeCall(Function(path, "Update"), ArgumentType("entity", 1)),
@@ -700,19 +678,8 @@ func canonicalFirestoreCalls(path string) []CallPattern {
 		EntityEncodeCall(Function(path, "InsertAll"), ArgumentType("entity", 1)),
 		EntityKeyCall(Function(path, "Remove"), ArgumentType("entity", 1)),
 		EntityKeyCall(Function(path, "RemoveAll"), ArgumentType("entity", 1)),
-		EntityDecodeCall(Function(path, "LoadOn"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "LoadAllOn"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "QueryOn"), GenericType("entity", 0)),
-		EntityDecodeCall(Function(path, "QueryPageOn"), GenericType("entity", 0)),
-		EntityEncodeCall(Function(path, "StoreOn"), ArgumentType("entity", 2)),
-		EntityEncodeCall(Function(path, "InsertOn"), ArgumentType("entity", 2)),
-		EntityEncodeCall(Function(path, "UpdateOn"), ArgumentType("entity", 2)),
-		EntityEncodeCall(Function(path, "StoreAllOn"), ArgumentType("entity", 2)),
-		EntityEncodeCall(Function(path, "InsertAllOn"), ArgumentType("entity", 2)),
-		EntityKeyCall(Function(path, "RemoveOn"), ArgumentType("entity", 2)),
-		EntityKeyCall(Function(path, "RemoveAllOn"), ArgumentType("entity", 2)),
-		// The same entries as methods on Handle, the receiver carrying what the
-		// On twins took as an argument, so the value is back at index 1.
+		// The same entries as methods on Handle, per requirement:firestore-parameter-api;
+		// the receiver is not an argument, so the value stays at index 1.
 		EntityDecodeCall(Method(path, "Load", path, "Handle"), GenericType("entity", 0)),
 		EntityDecodeCall(Method(path, "LoadAll", path, "Handle"), GenericType("entity", 0)),
 		EntityDecodeCall(Method(path, "Query", path, "Handle"), GenericType("entity", 0)),

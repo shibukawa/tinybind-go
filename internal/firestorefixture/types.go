@@ -120,7 +120,7 @@ func SweepKeys(ctx context.Context, keys []datastore.Key) error {
 // transaction is for here: nothing on this wire evaluates a predicate.
 func RenameInTransaction(ctx context.Context, key datastore.Key, title string) error {
 	return firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
-		task, err := firestorebind.LoadTx[Task](ctx, tx, key)
+		task, err := tx.Load[Task](ctx, key)
 		if err != nil {
 			return err
 		}

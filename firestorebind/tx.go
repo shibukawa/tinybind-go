@@ -62,14 +62,6 @@ func (h Handle) Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.T
 	}, opts...)
 }
 
-// RunOn is Run taking its Handle as an argument.
-//
-// Deprecated: use the Run method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func RunOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
-	return h.Run(ctx, fn, opts...)
-}
-
 // RunReadOnly executes fn against a consistent snapshot.
 //
 // It queues no writes, so a read-only transaction never contends and never
@@ -92,14 +84,6 @@ func (h Handle) RunReadOnly(ctx context.Context, fn func(*Tx) error, opts ...dat
 	return c.RunReadOnly(ctx, func(tx *datastore.Tx) error {
 		return fn(&Tx{tx: tx, namespace: ns, ctx: ctx})
 	}, opts...)
-}
-
-// RunReadOnlyOn is RunReadOnly taking its Handle as an argument.
-//
-// Deprecated: use the RunReadOnly method on Handle, which carries the body.
-// This function remains so no caller is forced to move.
-func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
-	return h.RunReadOnly(ctx, fn, opts...)
 }
 
 // Store queues an upsert of v.
@@ -151,17 +135,6 @@ func (t *Tx) Load[T any, PT interface {
 	return out, nil
 }
 
-// LoadTx reads one entity by key inside a transaction.
-//
-// Deprecated: use the Load method on Tx, which carries the body. This function
-// remains so no caller is forced to move.
-func LoadTx[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, tx *Tx, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
-	return tx.Load[T, PT](ctx, key, opts...)
-}
-
 // LoadAll reads many entities by key inside the transaction. The three results
 // mean what they do in the package-level LoadAll.
 func (t *Tx) LoadAll[T any, PT interface {
@@ -191,17 +164,6 @@ func (t *Tx) LoadAll[T any, PT interface {
 	return values, missing, deferred, nil
 }
 
-// LoadAllTx reads many entities by key inside a transaction.
-//
-// Deprecated: use the LoadAll method on Tx, which carries the body. This
-// function remains so no caller is forced to move.
-func LoadAllTx[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, tx *Tx, keys []datastore.Key) (values []T, missing, deferred []datastore.Key, err error) {
-	return tx.LoadAll[T, PT](ctx, keys)
-}
-
 // QueryPage runs one query inside the transaction and decodes its batch.
 func (t *Tx) QueryPage[T any, PT interface {
 	*T
@@ -212,17 +174,6 @@ func (t *Tx) QueryPage[T any, PT interface {
 		return Page[T]{}, err
 	}
 	return decodeBatch[T, PT](batch)
-}
-
-// QueryPageTx runs one query inside a transaction and decodes its batch.
-//
-// Deprecated: use the QueryPage method on Tx, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryPageTx[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, tx *Tx, q *datastore.Query) (Page[T], error) {
-	return tx.QueryPage[T, PT](ctx, q)
 }
 
 // QueryKeysPage runs one keys-only query inside the transaction.
@@ -236,23 +187,7 @@ func (t *Tx) QueryKeysPage(ctx context.Context, q *datastore.Query) (KeyPage, er
 	return keysFromBatch(batch)
 }
 
-// QueryKeysPageTx runs one keys-only query inside a transaction.
-//
-// Deprecated: use the QueryKeysPage method on Tx, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryKeysPageTx(ctx context.Context, tx *Tx, q *datastore.Query) (KeyPage, error) {
-	return tx.QueryKeysPage(ctx, q)
-}
-
 // Count counts matching entities inside the transaction.
 func (t *Tx) Count(ctx context.Context, q *datastore.Query) (int64, error) {
 	return t.tx.Count(ctx, q)
-}
-
-// CountTx counts matching entities inside a transaction.
-//
-// Deprecated: use the Count method on Tx, which carries the body. This function
-// remains so no caller is forced to move.
-func CountTx(ctx context.Context, tx *Tx, q *datastore.Query) (int64, error) {
-	return tx.Count(ctx, q)
 }

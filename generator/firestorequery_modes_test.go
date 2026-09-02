@@ -98,10 +98,10 @@ func TestFirestoreParameterAPIPutsTheHandleInTheSignature(t *testing.T) {
 
 	for _, want := range []string{
 		"func BySensor(ctx context.Context, h firestorebind.Handle, sensor Sensor, opts ...datastore.ReadOption) iter.Seq2[Reading, error]",
-		"return firestorebind.QueryOn[Reading](ctx, h, q, opts...)",
-		"return firestorebind.QueryPageOn[Reading](ctx, h, q, opts...)",
-		"return firestorebind.CountOn(ctx, h, q, opts...)",
-		"return firestorebind.QueryKeysPageOn(ctx, h, q, opts...)",
+		"return h.Query[Reading](ctx, q, opts...)",
+		"return h.QueryPage[Reading](ctx, q, opts...)",
+		"return h.Count(ctx, q, opts...)",
+		"return h.QueryKeysPage(ctx, q, opts...)",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("missing %q:\n%s", want, code)
@@ -124,7 +124,7 @@ func TestFirestoreHandleResolverReadsTheFrameworkValue(t *testing.T) {
 		`_tinybindresolver "tempmod/pw"`,
 		"func BySensor(ctx context.Context, sensor Sensor, opts ...datastore.ReadOption) iter.Seq2[Reading, error]",
 		"h, err := _tinybindresolver.DatastoreHandle(ctx)",
-		"return firestorebind.QueryOn[Reading](ctx, h, q, opts...)",
+		"return h.Query[Reading](ctx, q, opts...)",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("missing %q:\n%s", want, code)

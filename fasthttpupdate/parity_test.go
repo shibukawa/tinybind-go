@@ -69,7 +69,7 @@ func render(_ context.Context, instanceID string, values url.Values) (htmlbind.F
 	if page > 10 {
 		return htmlbind.Fragment{}, errors.New("forbidden page")
 	}
-	return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID, Count: page}), nil
+	return badgePlan.Bind(badgeParams{ID: instanceID, Count: page}), nil
 }
 
 func registry(t *testing.T) *htmlupdate.Registry {
@@ -222,7 +222,7 @@ func TestActionParity(t *testing.T) {
 	}
 
 	updates := []htmlupdate.Update{
-		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 2})),
+		htmlupdate.Replace("cart", badgePlan.Bind(badgeParams{ID: "cart", Count: 2})),
 	}
 	want, err := netOptions.WriteUpdateStatus(action.netHTTP(), http.StatusUnprocessableEntity, updates)
 	if err != nil {

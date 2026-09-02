@@ -3,7 +3,7 @@ id: decision:generic-method-migration
 type: decision
 title: Which Package Functions Become Methods, And When
 ---
-Every entry on the deferred list became a method on 2026-09-02, once Go 1.27 and TinyGo 0.42 both shipped; each old function stays as a deprecated wrapper, and the generator reads both spellings.
+Every entry on the deferred list became a method on 2026-09-02, once Go 1.27 and TinyGo 0.42 both shipped; the old functions are gone, the emitters write the method spelling, and the generator reads it.
 
 ```yaml
 source:
@@ -42,37 +42,45 @@ deferred:
     order_kept: the transaction reads, then the On entries, then the builder, then the parser, then the SQL builder; each below records what it became
     call_shape: a method declaring its own type parameter is instantiated at the call as h.Load[Reading](ctx, key), with a constraint-bound second parameter such as PT inferred from the first; an entry whose type is inferable from an argument spells none, so h.Store(ctx, v) reads as a plain call
     receiver_for_a_generic_type: Builder[P] can declare a method with further parameters of its own, For[E, S], so the html entries needed no new receiver either
+  functions_removed_same_day:
+    instruction: the owner asked that the old functions go rather than stay deprecated, because the godoc had grown past what the surface warrants, and that generated output move with them
+    what_went: every On and Tx function, For, ForCtx, Await, Live, Provide and the Val family in htmlbind, ParseSlice, ParseArray and ParseMap, AppendValues, and the three the 2026-08-13 round had kept as deprecated wrappers, Require, Bind and BindWrapper
+    val_family: Val, ValCtx, ValErr and ValErrCtx were not on the inventory, having arrived after it was filed, but carried the same extra type parameters and moved with the rest
+    emitters: the html plan emitter writes the enclosing scope's builder in front of For, Val, Require, Await, Live and Provide and the plan in front of Bind and BindWrapper; the decoder emitter writes p.ParseSlice, p.ParseArray and p.ParseMap; the SQL emitter writes _b.AppendValues; the declared-query emitters write h.Query and tx.QueryPage with their siblings
+    regenerated: every committed fixture that carried a function spelling, through the CLI, REGEN=1 and UPDATE_GOLDEN=1 paths recorded in the project memory; the pages fixtures needed the old functions present while their stale test binaries ran, which a throwaway shim file provided and then left
+    discovery: the Function patterns for the removed names are gone from the canonical set, and the usage tables keep only the method rows
+    migration_shape_superseded: the deprecated-wrapper form below was the plan while the change was upstream-only; with both halves owned here the removal is the final state
   priority_order:
     - what: firestorebind.Tx typed reads
       entries: [LoadTx, LoadAllTx, QueryPageTx]
       value: the only one worth more than tidiness; writes are already methods, so one transaction is written two ways in adjacent lines
       survives_the_change: LoadTx gives two reasons for the function form and only one is the language; a context-carried handle would still make one call site mean two things depending on which context reached it, so the operation stays reached through the transaction value
-      became: tx.Load[T], tx.LoadAll[T] and tx.QueryPage[T], carrying the bodies; the three functions forward to them
+      became: tx.Load[T], tx.LoadAll[T] and tx.QueryPage[T]; the three functions are gone
       also_moved: QueryKeysPageTx and CountTx, which declare no type parameter and could have been methods all along; they went with the rest so the transaction reads one way rather than two, per the same reasoning the downstream memo store applied to its own keyless entries
-      generated_twins_unchanged: a declared query's <Name>Tx twin still calls the function form, per generated_output_unchanged above; moving the emitter is a separate change that regenerates every fixture
+      generated_twins: a declared query's <Name>Tx twin calls the methods, since the emitter moved the same day
     - what: the *On entries on Handle
       why_a_method_is_possible: Handle is a concrete type, so the explicit form becomes a method while the context-resolving form is untouched
       dynamobind: [LoadOn, LoadAllOn, StoreOn, StoreAllOn, StoreReturningOn, RemoveOn, RemoveReturningOn, UpdateOn, QueryPageOn, QueryOn, ScanPageOn, ScanOn]
       firestorebind: [LoadOn, LoadAllOn, StoreOn, StoreAllOn, InsertOn, InsertAllOn, UpdateOn, RemoveOn, RemoveAllOn, QueryPageOn, QueryOn]
       weight: the reporter wraps none of these, so they are what an application author writes
       verified: 2026-08-13; all twelve and all eleven exist under those names
-      became: the same names without the suffix, as methods on Handle; the Context form now delegates to the method, and the On function forwards to it, so the implementation still lives in exactly one place
+      became: the same names without the suffix, as methods on Handle; the Context form delegates to the method, and the On functions are gone
       also_moved: the keyless firestorebind twins RemoveKeysOn, QueryKeysPageOn, CountOn, KeyForOn, KeysForOn, RunOn and RunReadOnlyOn, for the reason given under the transaction entry
-      discovery: a Method pattern per entry beside each Function pattern, in generator/options.go, so a package written in the method spelling generates what the On spelling generated; requirement:parameter-api-call-discovery records the positions
+      discovery: a Method pattern per entry in generator/options.go, replacing the Function pattern of the On name; requirement:parameter-api-call-discovery records the positions
     - what: htmlbind.Builder[P]
       entries: [For, ForCtx, Await, Live, Provide]
       value: least visible, since no application reads generated plans
-      became: methods on Builder[P] declaring E and S, S and R, or V of their own, every one inferred from an argument
-      generated_output_unchanged: the emitter still writes the function form; the fixtures under testdata/templates/htmlbind would all regenerate otherwise
+      became: methods on Builder[P] declaring E and S, S and R, or V of their own, every one inferred from an argument; the Val family, Require, Bind and BindWrapper went the same way
+      generated_output: a plan spells every op through its scope's builder, and a component binder through its plan; the fixtures under testdata/templates/htmlbind regenerated
     - what: jsonbind.Parser
       entries: [ParseSlice, ParseMap]
       shape: a struct with a dozen methods, and the two operations parameterized on the decoded element standing outside it
       caller: this module's own generated action decoders
       became: p.ParseSlice, p.ParseMap and, for the same reason, p.ParseArray, which arrived after the inventory was filed and had the same shape
-      generated_output_unchanged: as above; generated decoders still spell jsonbind.ParseSlice(p, ...)
+      generated_output: generated decoders spell p.ParseSlice(...)
     - what: sqlbind.AppendValues
       value: last, because it is one function beside Builder's Arg and Statement
-      became: b.AppendValues; generated SQL still binds the function as _tinybindSQLArgs, per decision:generated-runtime-in-module
+      became: b.AppendValues; generated SQL calls _b.AppendValues, per decision:generated-runtime-in-module
   permanently_excluded:
     what: sqlbind.ScanRows
     why: Rows is an interface, so no language change lets the package give it a method
@@ -80,14 +88,14 @@ deferred:
     recorded_because: the reporter asked that it be recorded rather than rediscovered each round
 migration_shape:
   applies_to: both halves
-  form: the method becomes the body, the existing function stays as a deprecated wrapper
-  breakage: none; nothing stored, generated, or on the wire changes, so no caller is forced to move
+  form_as_planned: the method becomes the body, the existing function stays as a deprecated wrapper
+  form_as_landed: the method becomes the body and the function is removed, per functions_removed_same_day; a caller moves the receiver in front of the dot
+  breakage: a call shape only; nothing stored or on the wire changes, and generated output regenerates to the method spelling
   tested_2026_09_02:
     equivalence: one test per package pins that the function and the method are one operation; htmlbind and jsonbind and sqlbind compare results, the NoSQL packages write through one spelling and read through the other against the fake servers, and the zero Handle answers ErrNoClient through both
-    discovery: the two usage tables in the generator carry a row per method spelling, explicit and inferred, beside the row for its On form
+    discovery: the two usage tables in the generator carry a row per method spelling, explicit and inferred
     toolchain: go test across the module and scripts/tinygo-check.sh, which now exercises a generic method under TinyGo
-open:
-  emitter: whether generated plans, decoders, SQL and query twins should move to the method spelling; each is a fixture regeneration and none is forced by this change
+open: none; the emitters moved with the functions
 related:
   - decision:cache-key-generator-seams
   - decision:reflection-free

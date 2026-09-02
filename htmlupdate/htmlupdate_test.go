@@ -83,14 +83,14 @@ var options = htmlupdate.Options{Key: []byte("test key"), ServeRuntime: true}
 func server() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrappers := []htmlbind.Wrapper{
-			htmlbind.BindWrapper(documentPlan, documentParams{}, func(target *documentParams, children htmlbind.Fragment) {
+			documentPlan.BindWrapper(documentParams{}, func(target *documentParams, children htmlbind.Fragment) {
 				target.Children = children
 			}),
-			htmlbind.BindWrapper(layoutPlan, layoutParams{Section: r.URL.Query().Get("section")}, func(target *layoutParams, children htmlbind.Fragment) {
+			layoutPlan.BindWrapper(layoutParams{Section: r.URL.Query().Get("section")}, func(target *layoutParams, children htmlbind.Fragment) {
 				target.Children = children
 			}),
 		}
-		leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+		leaf := pagePlan.Bind(pageParams{Query: r.URL.Query().Get("q")})
 		// The package writes bytes and nothing else, so a caller sets what the
 		// response has to say about itself and adds its own cache policy on top.
 		htmlupdate.ApplyTo(options.Headers(r, wrappers, leaf), w)
@@ -417,9 +417,9 @@ func TestManifestHeaderRoundTrips(t *testing.T) {
 // makes a key rotation force complete renders.
 func TestValidatorsAreKeyed(t *testing.T) {
 	render := func(key string) delta.Manifest {
-		wrappers := []htmlbind.Wrapper{htmlbind.BindWrapper(layoutPlan, layoutParams{Section: "Docs"},
+		wrappers := []htmlbind.Wrapper{layoutPlan.BindWrapper(layoutParams{Section: "Docs"},
 			func(target *layoutParams, children htmlbind.Fragment) { target.Children = children })}
-		diff, err := delta.RenderDelta([]byte(key), delta.Manifest{}, wrappers, htmlbind.Bind(pagePlan, pageParams{Query: "go"}))
+		diff, err := delta.RenderDelta([]byte(key), delta.Manifest{}, wrappers, pagePlan.Bind(pageParams{Query: "go"}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -516,13 +516,13 @@ func TestEndpointNamespaceIsConfigurable(t *testing.T) {
 // whenever the boundary above it happened to render identical markup.
 func TestDisappearingBoundaryIsNotLeftOnScreen(t *testing.T) {
 	deep := []htmlbind.Wrapper{
-		htmlbind.BindWrapper(layoutPlan, layoutParams{Section: "Docs"},
+		layoutPlan.BindWrapper(layoutParams{Section: "Docs"},
 			func(target *layoutParams, children htmlbind.Fragment) { target.Children = children }),
-		htmlbind.BindWrapper(layoutPlan, layoutParams{Section: "Docs"},
+		layoutPlan.BindWrapper(layoutParams{Section: "Docs"},
 			func(target *layoutParams, children htmlbind.Fragment) { target.Children = children }),
 	}
 	shallow := deep[:1]
-	leaf := htmlbind.Bind(pagePlan, pageParams{Query: "go"})
+	leaf := pagePlan.Bind(pageParams{Query: "go"})
 
 	first, err := delta.RenderDelta(options.Key, delta.Manifest{}, deep, leaf)
 	if err != nil {

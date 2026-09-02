@@ -52,17 +52,6 @@ func (h Handle) Load[T any, PT interface {
 	return out, nil
 }
 
-// LoadOn is Load taking its Handle as an argument.
-//
-// Deprecated: use the Load method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func LoadOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, key dynamodb.Key, opts ...dynamodb.GetOption) (T, error) {
-	return h.Load[T, PT](ctx, table, key, opts...)
-}
-
 // Store writes v as a whole item, replacing any item with the same key.
 //
 // It is PutItem, not a partial update: every attribute of the stored item comes
@@ -83,14 +72,6 @@ func (h Handle) Store[T ItemEncoder](ctx context.Context, table string, v T, opt
 	}
 	_, err = c.PutItem(ctx, name, v.EncodeItem(), opts...)
 	return err
-}
-
-// StoreOn is Store taking its Handle as an argument.
-//
-// Deprecated: use the Store method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func StoreOn[T ItemEncoder](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) error {
-	return h.Store(ctx, table, v, opts...)
 }
 
 // StoreReturning is Store, and also decodes the item it replaced.
@@ -133,17 +114,6 @@ func (h Handle) StoreReturning[T ItemEncoder, PT interface {
 	return old, true, nil
 }
 
-// StoreReturningOn is StoreReturning taking its Handle as an argument.
-//
-// Deprecated: use the StoreReturning method on Handle, which carries the body.
-// This function remains so no caller is forced to move.
-func StoreReturningOn[T ItemEncoder, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
-	return h.StoreReturning[T, PT](ctx, table, v, opts...)
-}
-
 // Remove deletes the item identified by v's key. Only the key of v is read.
 func Remove[T Keyer](ctx context.Context, table string, v T, opts ...dynamodb.WriteOption) error {
 	h, err := HandleFromContext(ctx)
@@ -161,14 +131,6 @@ func (h Handle) Remove[T Keyer](ctx context.Context, table string, v T, opts ...
 	}
 	_, err = c.DeleteItem(ctx, name, v.ItemKey(), opts...)
 	return err
-}
-
-// RemoveOn is Remove taking its Handle as an argument.
-//
-// Deprecated: use the Remove method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func RemoveOn[T Keyer](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) error {
-	return h.Remove(ctx, table, v, opts...)
 }
 
 // RemoveReturning is Remove, and also decodes the item it deleted.
@@ -209,17 +171,6 @@ func (h Handle) RemoveReturning[T Keyer, PT interface {
 	return old, true, nil
 }
 
-// RemoveReturningOn is RemoveReturning taking its Handle as an argument.
-//
-// Deprecated: use the RemoveReturning method on Handle, which carries the body.
-// This function remains so no caller is forced to move.
-func RemoveReturningOn[T Keyer, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, v T, opts ...dynamodb.WriteOption) (T, bool, error) {
-	return h.RemoveReturning[T, PT](ctx, table, v, opts...)
-}
-
 // Update applies a DynamoDB update expression to the item identified by v's key.
 //
 // The expression is passed to the driver verbatim; nothing here generates or
@@ -245,14 +196,6 @@ func (h Handle) Update[T Keyer](ctx context.Context, table string, v T, update s
 	}
 	_, err = c.UpdateItem(ctx, name, v.ItemKey(), update, opts...)
 	return err
-}
-
-// UpdateOn is Update taking its Handle as an argument.
-//
-// Deprecated: use the Update method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func UpdateOn[T Keyer](ctx context.Context, h Handle, table string, v T, update string, opts ...dynamodb.WriteOption) error {
-	return h.Update(ctx, table, v, update, opts...)
 }
 
 // withAllOld appends the ALL_OLD request. It is appended rather than prepended

@@ -28,7 +28,7 @@ func TestParseArray(t *testing.T) {
 			var p jsonbind.Parser
 			p.Reset([]byte(tc.doc))
 			got := tc.start
-			err := jsonbind.ParseArray(&p, "cells", "invalid int", got[:], (*jsonbind.Parser).Int)
+			err := p.ParseArray("cells", "invalid int", got[:], (*jsonbind.Parser).Int)
 			if tc.err != nil {
 				if !errors.Is(err, tc.err) {
 					t.Fatalf("err %v, want %v", err, tc.err)
@@ -51,7 +51,7 @@ func TestParseArrayNamesTheFieldAndTheLimit(t *testing.T) {
 	var p jsonbind.Parser
 	p.Reset([]byte(`[1,2,3,4]`))
 	var dst [3]int
-	err := jsonbind.ParseArray(&p, "cells", "invalid int", dst[:], (*jsonbind.Parser).Int)
+	err := p.ParseArray("cells", "invalid int", dst[:], (*jsonbind.Parser).Int)
 	je, ok := jsonbind.AsError(err)
 	if !ok {
 		t.Fatalf("not a jsonbind error: %v", err)

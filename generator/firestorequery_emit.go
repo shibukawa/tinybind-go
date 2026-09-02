@@ -220,19 +220,21 @@ func (e *firestoreQueryEmitter) query(b *bytes.Buffer, plan FirestoreQueryPlan) 
 		}
 		b.WriteString("\t}\n")
 	}
-	suffix, arg := "", ""
+	// With a Handle in hand the entry is a method on it; otherwise the Context
+	// form resolves one.
+	receiver := "firestorebind."
 	if e.opts.ParameterAPI || e.opts.resolves() {
-		suffix, arg = "On", "h, "
+		receiver = "h."
 	}
 	switch decl.Shape {
 	case FirestoreMany:
-		fmt.Fprintf(b, "\treturn firestorebind.Query%s[%s](ctx, %sq, opts...)\n", suffix, plan.Entity.Name, arg)
+		fmt.Fprintf(b, "\treturn %sQuery[%s](ctx, q, opts...)\n", receiver, plan.Entity.Name)
 	case FirestoreBatch:
-		fmt.Fprintf(b, "\treturn firestorebind.QueryPage%s[%s](ctx, %sq, opts...)\n", suffix, plan.Entity.Name, arg)
+		fmt.Fprintf(b, "\treturn %sQueryPage[%s](ctx, q, opts...)\n", receiver, plan.Entity.Name)
 	case FirestoreCount:
-		fmt.Fprintf(b, "\treturn firestorebind.Count%s(ctx, %sq, opts...)\n", suffix, arg)
+		fmt.Fprintf(b, "\treturn %sCount(ctx, q, opts...)\n", receiver)
 	case FirestoreKeys:
-		fmt.Fprintf(b, "\treturn firestorebind.QueryKeysPage%s(ctx, %sq, opts...)\n", suffix, arg)
+		fmt.Fprintf(b, "\treturn %sQueryKeysPage(ctx, q, opts...)\n", receiver)
 	}
 	b.WriteString("}\n\n")
 	e.endMapping(b, decl)
@@ -274,11 +276,11 @@ func (e *firestoreQueryEmitter) transactionForm(b *bytes.Buffer, plan FirestoreQ
 	}
 	switch decl.Shape {
 	case FirestoreBatch:
-		fmt.Fprintf(b, "\treturn firestorebind.QueryPageTx[%s](ctx, tx, q)\n", plan.Entity.Name)
+		fmt.Fprintf(b, "\treturn tx.QueryPage[%s](ctx, q)\n", plan.Entity.Name)
 	case FirestoreCount:
-		b.WriteString("\treturn firestorebind.CountTx(ctx, tx, q)\n")
+		b.WriteString("\treturn tx.Count(ctx, q)\n")
 	case FirestoreKeys:
-		b.WriteString("\treturn firestorebind.QueryKeysPageTx(ctx, tx, q)\n")
+		b.WriteString("\treturn tx.QueryKeysPage(ctx, q)\n")
 	}
 	b.WriteString("}\n\n")
 	e.endMapping(b, decl)

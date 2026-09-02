@@ -191,9 +191,6 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan, opts DynamoQueryOpti
 	if decl.Shape == DynamoPage {
 		entry = "QueryPage"
 	}
-	if opts.ParameterAPI || opts.resolves() {
-		entry += "On"
-	}
 	if opts.resolves() {
 		// The Handle comes from the framework's own Context value, so the
 		// resolver's error has to be reported in the shape this declaration
@@ -207,12 +204,14 @@ func emitDynamoQuery(b *bytes.Buffer, plan DynamoQueryPlan, opts DynamoQueryOpti
 		}
 		b.WriteString("\t}\n")
 	}
-	handleArg := ""
+	// With a Handle in hand the entry is a method on it; otherwise the Context
+	// form resolves one.
+	receiver := "dynamobind."
 	if opts.ParameterAPI || opts.resolves() {
-		handleArg = "h, "
+		receiver = "h."
 	}
-	fmt.Fprintf(b, "\treturn dynamobind.%s[%s](ctx, %s%sTable, %sKeyCondition, opts...)\n}\n\n",
-		entry, plan.Item.Name, handleArg, base, base)
+	fmt.Fprintf(b, "\treturn %s%s[%s](ctx, %sTable, %sKeyCondition, opts...)\n}\n\n",
+		receiver, entry, plan.Item.Name, base, base)
 	if opts.LineDirectives && decl.Line > 0 {
 		b.WriteString(linedirective.Restore() + "\n\n")
 	}

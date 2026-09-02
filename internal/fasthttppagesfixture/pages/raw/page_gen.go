@@ -35,4 +35,4 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }
