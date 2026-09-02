@@ -28,6 +28,7 @@ func formatBody(t *testing.T, tag, body string) string {
 }
 
 func TestRawTextBracesAreWrittenBackVerbatim(t *testing.T) {
+	t.Parallel()
 	css := []string{
 		".demo-badge { color: crimson }",
 		".demo-badge {\n  color: crimson;\n}",
@@ -57,6 +58,7 @@ func TestRawTextBracesAreWrittenBackVerbatim(t *testing.T) {
 }
 
 func TestRawTextInsertionStaysEscaped(t *testing.T) {
+	t.Parallel()
 	// {name} in a style body is an insertion by the parser's own rule, so its
 	// literal spelling cannot be written bare: it has to keep the escape.
 	source := "export component Page(color: string): html {\n<style>\n.a { color: {color} }\n</style>\n}\n"
@@ -79,6 +81,7 @@ func TestRawTextInsertionStaysEscaped(t *testing.T) {
 // TestRawTextBracesConverge searches short brace patterns for one that never
 // settles, which is the shape rule:template-format-fidelity forbids.
 func TestRawTextBracesConverge(t *testing.T) {
+	t.Parallel()
 	alphabet := []string{"{", "}", "a", " ", "$", "\n", ":", "."}
 	var build func(prefix string, depth int)
 	build = func(prefix string, depth int) {

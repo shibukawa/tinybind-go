@@ -13,7 +13,7 @@ security review asks every time.
 | Limit | Default | Change it with | Exceeded |
 |---|---|---|---|
 | JSON body | 1 MiB | `SetMaxJSONBodyBytes`, or `jsonbind.DecodeJSONLimit` per call | 413 |
-| JSON nesting depth | 10000 | fixed (`jsonbind.MaxNestingDepth`) | 400 |
+| JSON nesting depth | 90 | `jsonbind.SetMaxNestingDepth` | 400 |
 | CBOR body | 1 MiB | `SetMaxCBORBodyBytes` | 413 |
 | multipart body | 1 MiB | `SetMaxMultipartBodyBytes` | 413 |
 | multipart file part | the multipart body limit | same knob | 413 |
@@ -57,24 +57,29 @@ refused earlier.
 `jsonbind` returns a transport-neutral error; the generated binder maps it to
 413.
 
-### JSON nesting depth — 10000
+### JSON nesting depth — 90
 
-`jsonbind.MaxNestingDepth`. A constant, matching `encoding/json`.
+`jsonbind.DefaultMaxNestingDepth`, raised with `jsonbind.SetMaxNestingDepth`.
 
-Unlike the others this is not a size but a shape, and it is not configurable
-because it is not a policy. Reading is recursive — a nested value is a nested
-call, and a generated decoder calls the next one down — so the document's depth
-is the goroutine's stack depth. Without the bound a one-megabyte body of `[`
-would be half a million frames and tens of megabytes of stack per request, which
-is a body size limit doing nothing at all about memory.
+Unlike the others this is not a size but a shape. Reading is recursive — a
+nested value is a nested call, and a generated decoder calls the next one down —
+so the document's depth is the goroutine's stack depth. Without the bound a
+one-megabyte body of `[` would be half a million frames and tens of megabytes
+of stack per request, which is a body size limit doing nothing at all about
+memory.
 
-A document deeper than this is a parse error, which generated binders map to 400
-like any other malformed body. Nothing an application produces comes close;
-hand-written JSON does not nest ten thousand deep.
+The default is set by the smallest stack the parser runs on rather than by the
+host. TinyGo's goroutine stacks are fixed, and its wasm targets start at 64 KiB,
+on which the parser overflows at about a hundred open brackets — and a wasm
+overflow is detected only at exit, so the request that caused it gets a wrong
+answer, not an error. Ninety stays under that with room for the frames around
+the parser. Nothing an application produces comes close; hand-written JSON does
+not nest ninety deep.
 
-Under TinyGo the stack is fixed and small, so a target that has to survive
-hostile input wants a much lower ceiling than this one — enforce it on the body
-size, which is the knob that is configurable.
+A document deeper than the bound is a parse error, which generated binders map
+to 400 like any other malformed body. A host with a growable stack can raise the
+bound at startup — `jsonbind.SetMaxNestingDepth(10000)` is what `encoding/json`
+allows. A TinyGo target should raise it only together with `-stack-size`.
 
 ### CBOR — 1 MiB
 

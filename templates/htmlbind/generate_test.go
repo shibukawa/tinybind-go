@@ -13,6 +13,7 @@ import (
 )
 
 func TestGenerateFixtures(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "testdata", "templates", "htmlbind")
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -108,6 +109,7 @@ func runGeneratedTests(t *testing.T, generated, runtimeTest []byte) {
 }
 
 func TestGenerateDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, source, want string }{
 		{"unknown identifier", `component Bad(): html {<p>{missing}</p>}`, "unknown identifier missing"},
 		{"wrong condition", `component Bad(name: string): html {{if name}x{/if}}`, "if condition must be bool"},
@@ -146,6 +148,7 @@ func TestGenerateDiagnostics(t *testing.T) {
 }
 
 func TestGenerateManglesGoKeywords(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package type
 export component Keyword(type: string): html {<p>{type}</p>}`)
 	generated, err := htmlbind.Generate("keywords.txt", source, htmlbind.GenerateOptions{})
@@ -160,6 +163,7 @@ export component Keyword(type: string): html {<p>{type}</p>}`)
 }
 
 func TestGenerateDiagnosticIncludesPosition(t *testing.T) {
+	t.Parallel()
 	source := []byte("component Bad(): html {\n<p>\n{missing}\n</p>\n}")
 	_, err := htmlbind.Generate("position.txt", source, htmlbind.GenerateOptions{})
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("position.txt:3:2:")) {
@@ -168,6 +172,7 @@ func TestGenerateDiagnosticIncludesPosition(t *testing.T) {
 }
 
 func TestSlotDiagnostics(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source string
@@ -228,6 +233,7 @@ func TestSlotDiagnostics(t *testing.T) {
 }
 
 func TestSlotInBothIfBranchesIsAllowed(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 component A(wide: bool, children: html): html {
@@ -245,6 +251,7 @@ component A(wide: bool, children: html): html {
 // TestChainComposition renders a document, a layout, and a page as one chain,
 // which is the composition a handler assembles from several template files.
 func TestChainComposition(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Document(title: string, children: html): html {
@@ -278,6 +285,7 @@ import (
 )
 
 func TestRenderChain(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	wrappers := []htmlbind.Wrapper{
 		BindDocument(DocumentParams{Title: "Docs"}),
@@ -298,6 +306,7 @@ func TestRenderChain(t *testing.T) {
 }
 
 func TestRenderChainWithoutWrappers(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if err := htmlbind.Render(&out, Page(PageParams{Body: "solo"})); err != nil {
 		t.Fatal(err)
@@ -308,6 +317,7 @@ func TestRenderChainWithoutWrappers(t *testing.T) {
 }
 
 func TestRenderChainRejectsMissingLeaf(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	wrappers := []htmlbind.Wrapper{BindLayout(LayoutParams{})}
 	if err := htmlbind.RenderChain(&out, wrappers, htmlbind.Fragment{}); err != htmlbind.ErrNoLeaf {
@@ -325,6 +335,7 @@ func TestRenderChainRejectsMissingLeaf(t *testing.T) {
 // chain twice with different search parameters must identify the same
 // instances and mark only the boundary whose markup actually changed.
 func TestUpdateManifest(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Document(children: html): html {
@@ -377,6 +388,7 @@ func collect(t *testing.T, section, query string, page int) (delta.Manifest, str
 // The document shell owns the head and is retained across partial navigation,
 // so it is not an instance. The layout and the page are.
 func TestManifestCoversChainMembersExceptShell(t *testing.T) {
+	t.Parallel()
 	manifest, html := collect(t, "Docs", "go", 1)
 	if len(manifest.Instances) != 2 {
 		t.Fatalf("want 2 instances, got %d: %+v", len(manifest.Instances), manifest.Instances)
@@ -400,6 +412,7 @@ func TestManifestCoversChainMembersExceptShell(t *testing.T) {
 // The page's frame changes with its own parameters while the layout frame,
 // which excludes its child's output, stays comparable.
 func TestSearchParameterChangeMovesOnlyThePage(t *testing.T) {
+	t.Parallel()
 	before, _ := collect(t, "Docs", "go", 1)
 	after, _ := collect(t, "Docs", "go", 2)
 	changed := after.Changed(before)
@@ -426,6 +439,7 @@ func TestSearchParameterChangeMovesOnlyThePage(t *testing.T) {
 
 // A layout parameter changes the layout frame without disturbing the page.
 func TestLayoutParameterChangeMovesOnlyTheLayout(t *testing.T) {
+	t.Parallel()
 	before, _ := collect(t, "Docs", "go", 1)
 	after, _ := collect(t, "Guides", "go", 1)
 	changed := after.Changed(before)
@@ -437,6 +451,7 @@ func TestLayoutParameterChangeMovesOnlyTheLayout(t *testing.T) {
 // An unchanged render reports nothing, which is what lets a delta omit every
 // boundary.
 func TestIdenticalRenderReportsNoChange(t *testing.T) {
+	t.Parallel()
 	before, _ := collect(t, "Docs", "go", 1)
 	after, _ := collect(t, "Docs", "go", 1)
 	if changed := after.Changed(before); len(changed) != 0 {
@@ -447,6 +462,7 @@ func TestIdenticalRenderReportsNoChange(t *testing.T) {
 // Parent tracking is what later lets a delta replace an ancestor, and document
 // order is what lets a structural operation precede the operations it anchors.
 func TestNestingIsRecorded(t *testing.T) {
+	t.Parallel()
 	manifest, _ := collect(t, "Docs", "go", 1)
 	if manifest.Instances[0].ID != "c1" || manifest.Instances[1].ID != "c2" {
 		t.Fatalf("want document order, got %+v", manifest.Instances)
@@ -464,6 +480,7 @@ func TestNestingIsRecorded(t *testing.T) {
 // An ordinary render must be unaffected by update support, including the
 // instance attributes, so existing templates keep their exact bytes.
 func TestOrdinaryRenderEmitsNoUpdateMarkup(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	wrappers := []htmlbind.Wrapper{
 		BindDocument(DocumentParams{}),
@@ -485,6 +502,7 @@ func TestOrdinaryRenderEmitsNoUpdateMarkup(t *testing.T) {
 // attribute is silently excluded rather than failing generation; the error form
 // belongs with the explicit update flag.
 func TestBoundaryEligibility(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, source string
 		want         bool
@@ -521,6 +539,7 @@ func TestBoundaryEligibility(t *testing.T) {
 // baked into generated code rather than negotiated, because the browser runtime
 // hardcodes it.
 func TestDataAttributePrefix(t *testing.T) {
+	t.Parallel()
 	source := []byte("package pages\nexport component A(): html {<p>x</p>}")
 	generated, err := htmlbind.Generate("prefix.pw.html", source, htmlbind.GenerateOptions{DataAttributePrefix: "app"})
 	if err != nil {
@@ -546,6 +565,7 @@ func TestDataAttributePrefix(t *testing.T) {
 // edit; detecting that the page is stale is the build identity's job, and it
 // covers changes a per-component digest cannot see anyway.
 func TestComponentKindNamesRatherThanVersions(t *testing.T) {
+	t.Parallel()
 	kind := func(file, source string) []byte {
 		generated, err := htmlbind.Generate(file, []byte(source), htmlbind.GenerateOptions{})
 		if err != nil {
@@ -579,6 +599,7 @@ func TestComponentKindNamesRatherThanVersions(t *testing.T) {
 // styles live next to the markup, class names are scoped per component, and
 // every reachable component's head contributions land in the document shell.
 func TestScopedStyleAndHeadMerging(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Document(children: html): html {
@@ -623,6 +644,7 @@ import (
 )
 
 func TestScopedStyleReachesTheDocumentHead(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	wrappers := []htmlbind.Wrapper{BindDocument(DocumentParams{})}
 	if err := htmlbind.RenderChain(&out, wrappers, Card(CardParams{Label: "A&B"})); err != nil {
@@ -657,6 +679,7 @@ func TestScopedStyleReachesTheDocumentHead(t *testing.T) {
 }
 
 func TestShellRendersWithoutAChain(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if err := htmlbind.Render(&out, Document(DocumentParams{Children: Card(CardParams{Label: "x"})})); err != nil {
 		t.Fatal(err)
@@ -673,6 +696,7 @@ func TestShellRendersWithoutAChain(t *testing.T) {
 // a served endpoint: the modifier, the generated typed decoder, the id and kind
 // on the root element, and registration.
 func TestReloadableComponent(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 @reloadable
@@ -729,6 +753,7 @@ func serve(t *testing.T, query url.Values) *httptest.ResponseRecorder {
 // attribute, so the region stays addressable, redrawable, and comparable after
 // the first redraw replaced it.
 func TestRedrawRendersTheRegisteredComponent(t *testing.T) {
+	t.Parallel()
 	recorder := serve(t, url.Values{"page": {"7"}, "label": {"item"}})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", recorder.Code, recorder.Body)
@@ -767,6 +792,7 @@ func TestRedrawRendersTheRegisteredComponent(t *testing.T) {
 // An optional parameter may be absent; a present but undecodable one is still
 // an error, because these arguments come from the caller.
 func TestRedrawDecodesTypedParameters(t *testing.T) {
+	t.Parallel()
 	if code := serve(t, url.Values{"page": {"7"}}).Code; code != http.StatusOK {
 		t.Fatalf("an absent optional should be fine, got %d", code)
 	}
@@ -784,6 +810,7 @@ func TestRedrawDecodesTypedParameters(t *testing.T) {
 // The kind names the component rather than versioning it: package, file, and
 // declaration, readable in a URL and in a log line.
 func TestKindIsTheComponentIdentity(t *testing.T) {
+	t.Parallel()
 	if CounterKind != "pages.counter.Counter" {
 		t.Fatalf("kind = %q", CounterKind)
 	}
@@ -798,6 +825,7 @@ func TestKindIsTheComponentIdentity(t *testing.T) {
 // TestReloadableDiagnostics covers the rules an explicit opt-in must satisfy.
 // Unlike an automatic boundary these are errors, because the author asked.
 func TestReloadableDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, source, want string }{
 		{"not exported", `@reloadable
 component A(id: string): html {<p>x</p>}`, "must be exported"},
@@ -823,6 +851,7 @@ export component A(id: string, r: R): html {<p>x</p>}`, "query string"},
 // TestAsyncAndCacheDiagnostics covers the rules that keep an await boundary and
 // a cached component from producing output the runtime cannot stand behind.
 func TestAsyncAndCacheDiagnostics(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, source, want string }{
 		{
 			"async call outside await",
@@ -998,6 +1027,7 @@ component Bad(user: User): html {<script type="application/json">{JsonForScript(
 // implementation may take. The template declaration is the same either way; the
 // caller reports which functions accept a leading context.
 func TestAsyncExternalContextArgument(t *testing.T) {
+	t.Parallel()
 	source := []byte(`external async LoadUser(id: string): User
 external async LoadTags(id: string): string[]
 type User { name: string }
@@ -1030,6 +1060,7 @@ component Page(id: string): html {{await user = LoadUser(id), tags = LoadTags(id
 // <script> and <style>" section of docs/htmlbind.md, so the documented rules and
 // rule:raw-text-insertion-gate cannot drift apart.
 func TestDocumentedRawTextExamples(t *testing.T) {
+	t.Parallel()
 	t.Run("authored content survives byte for byte", func(t *testing.T) {
 		source := "export component Widget(): html {\n<script>\n" +
 			"class X {}\n" +

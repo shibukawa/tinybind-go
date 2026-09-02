@@ -59,6 +59,7 @@ func generateError(t *testing.T, source string, options htmlbind.GenerateOptions
 // whole reason it is a seam rather than sugar over a function call: an author
 // cannot interpolate the token elsewhere, because no name is bound to it.
 func TestBuiltinElementRendersAPerRequestValue(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(): html {\n" +
 		"<div><app-nonce /><app-nonce /></div>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
@@ -124,6 +125,7 @@ func render(t *testing.T) string {
 // The same page rendered twice produces two token values and identical
 // surrounding bytes.
 func TestTwoRendersDifferInTheTokenAlone(t *testing.T) {
+	t.Parallel()
 	hostile = "tok-a"
 	first := render(t)
 	hostile = "tok-b"
@@ -151,6 +153,7 @@ func TestTwoRendersDifferInTheTokenAlone(t *testing.T) {
 
 // A token carrying a quote cannot break out of the value attribute it sits in.
 func TestHostileTokenCannotEscapeTheAttribute(t *testing.T) {
+	t.Parallel()
 	hostile = `+"`"+`" onload="alert(1)`+"`"+`
 	out := render(t)
 	if strings.Contains(out, `+"`"+`onload="alert(1)"`+"`"+`) {
@@ -164,6 +167,7 @@ func TestHostileTokenCannotEscapeTheAttribute(t *testing.T) {
 // A provider failing during the initial pass ends the render, so a caller can
 // still choose an error status rather than writing a half document.
 func TestProviderFailureEndsTheRender(t *testing.T) {
+	t.Parallel()
 	failing = true
 	defer func() { failing = false }()
 	var out strings.Builder
@@ -181,6 +185,7 @@ func TestProviderFailureEndsTheRender(t *testing.T) {
 // missing: a test, a mail body, a static export. It has to say so rather than
 // render the absence.
 func TestNoContextIsReported(t *testing.T) {
+	t.Parallel()
 	var out strings.Builder
 	err := htmlbind.RenderChain(&out, nil, Page(PageParams{}))
 	if err == nil {
@@ -194,6 +199,7 @@ func TestNoContextIsReported(t *testing.T) {
 // The composed value reports the axis its element declared, so a caller can
 // build a Vary header for a dependency the template never shows.
 func TestVaryReachesTheBoundValue(t *testing.T) {
+	t.Parallel()
 	page := Page(PageParams{})
 	if got := page.Vary(); len(got) != 1 || got[0] != "Cookie" {
 		t.Fatalf("vary = %q", got)
@@ -208,6 +214,7 @@ func TestVaryReachesTheBoundValue(t *testing.T) {
 // A definition with no provider and no expression parameter reduces entirely to
 // static bytes, so the element costs nothing at render time.
 func TestParameterlessBuiltinElementFoldsAway(t *testing.T) {
+	t.Parallel()
 	static := htmlbind.BuiltinElement{
 		Name:   "app-banner",
 		Markup: `<div class="banner">beta</div>`,
@@ -227,6 +234,7 @@ func TestParameterlessBuiltinElementFoldsAway(t *testing.T) {
 // A parameterized element with no provider is still free of a provider call:
 // its hole is the call site's own expression.
 func TestParameterizedBuiltinElementReadsItsAttribute(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(name: string): html {\n" +
 		"<head><title>t</title></head><otel-tracing service-name={name} />\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
@@ -244,6 +252,7 @@ func TestParameterizedBuiltinElementReadsItsAttribute(t *testing.T) {
 // one is served to whoever asks next. For a token that is a security failure,
 // not a staleness bug.
 func TestPerRequestElementIsRefusedInsideACachedComponent(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(ttl: \"1m\")\ncomponent Panel(): html {\n<div><app-nonce /></div>\n}\n" +
 		"export component Page(): html {\n<main><Panel /></main>\n}\n"
 	message := generateError(t, source, htmlbind.GenerateOptions{
@@ -259,6 +268,7 @@ func TestPerRequestElementIsRefusedInsideACachedComponent(t *testing.T) {
 // The same exclusion one level up: a cached component that merely calls one
 // writing the element is the same mistake.
 func TestPerRequestExclusionFollowsTheCallGraph(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\ncomponent Field(): html {\n<span><app-nonce /></span>\n}\n" +
 		"@cache(ttl: \"1m\")\ncomponent Panel(): html {\n<div><Field /></div>\n}\n" +
 		"export component Page(): html {\n<main><Panel /></main>\n}\n"
@@ -273,6 +283,7 @@ func TestPerRequestExclusionFollowsTheCallGraph(t *testing.T) {
 // The typo case is the reason the space is closed. An unrecognized hyphenated
 // element emitted unchanged renders nothing and reports nothing.
 func TestUndeclaredHyphenatedElementIsRefused(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(): html {\n<form><app-noncc /></form>\n}\n"
 	message := generateError(t, source, htmlbind.GenerateOptions{
 		BuiltinElements: []htmlbind.BuiltinElement{appNonce()},
@@ -287,6 +298,7 @@ func TestUndeclaredHyphenatedElementIsRefused(t *testing.T) {
 // Registering nothing closes the space and empties it, which is the one behavior
 // change for an existing project. The diagnostic has to name the way out.
 func TestZeroRegistrationRefusesEveryHyphenatedElement(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(): html {\n<div><sl-button>ok</sl-button></div>\n}\n"
 	message := generateError(t, source, htmlbind.GenerateOptions{})
 	for _, want := range []string{"undeclared element <sl-button>", "passthrough entry"} {
@@ -299,6 +311,7 @@ func TestZeroRegistrationRefusesEveryHyphenatedElement(t *testing.T) {
 // Without the passthrough kind a closed space would ban Web Components outright.
 // A declared one is ordinary markup and produces no plan step.
 func TestPassthroughElementIsEmittedVerbatim(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(label: string): html {\n" +
 		"<div><sl-button variant=\"primary\">{label}</sl-button><my-widget /></div>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
@@ -318,6 +331,7 @@ func TestPassthroughElementIsEmittedVerbatim(t *testing.T) {
 // A hyphenated name inside SVG or MathML is a standard foreign-namespace element
 // rather than a custom one, so the whitelist does not reach into it.
 func TestForeignContentIsOutsideTheWhitelist(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(): html {\n" +
 		"<svg><color-profile /></svg>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
@@ -329,6 +343,7 @@ func TestForeignContentIsOutsideTheWhitelist(t *testing.T) {
 // A head-only contribution written in the body becomes a generation error rather
 // than a page that half works.
 func TestHeadOnlyElementInTheBodyIsRefused(t *testing.T) {
+	t.Parallel()
 	head := otelTracing()
 	head.Placement = htmlbind.PlaceHead
 	source := "package pages\n\nexport component Page(): html {\n<main><otel-tracing service-name=\"api\" /></main>\n}\n"
@@ -343,6 +358,7 @@ func TestHeadOnlyElementInTheBodyIsRefused(t *testing.T) {
 // An attribute expression is checked against the declared parameter type exactly
 // as on an ordinary element.
 func TestBuiltinElementAttributeDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, body, want string }{
 		{"unknown attribute", `<otel-tracing service-name="api" region="eu" />`, "has no attribute region"},
 		{"missing required", `<otel-tracing />`, "requires the attribute service-name"},
@@ -365,6 +381,7 @@ func TestBuiltinElementAttributeDiagnostics(t *testing.T) {
 // A registration mistake belongs to whoever wrote the generate command, so it is
 // reported there rather than waiting for a template that happens to use it.
 func TestRegistrationDiagnostics(t *testing.T) {
+	t.Parallel()
 	provider := &htmlbind.ElementProvider{Name: "NonceFor", Result: "Nonce"}
 	tests := []struct {
 		name    string
@@ -455,6 +472,7 @@ func TestRegistrationDiagnostics(t *testing.T) {
 // writes it, which is what lets a document carry them before a later swap needs
 // them.
 func TestBuiltinElementAssetsJoinTheRequiredSet(t *testing.T) {
+	t.Parallel()
 	widget := htmlbind.BuiltinElement{
 		Name:   "app-widget",
 		Markup: `<div class="widget"></div>`,
@@ -478,6 +496,7 @@ func TestBuiltinElementAssetsJoinTheRequiredSet(t *testing.T) {
 // A project registering nothing regenerates byte for byte, so neither field is
 // written when there is nothing to say.
 func TestNoBuiltinElementsLeavesOutputUnchanged(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(name: string): html {\n<p>{name}</p>\n}\n"
 	plain := generateWith(t, source, htmlbind.GenerateOptions{})
 	registered := generateWith(t, source, htmlbind.GenerateOptions{
@@ -498,6 +517,7 @@ func TestNoBuiltinElementsLeavesOutputUnchanged(t *testing.T) {
 // to match a parameter is read as a provider field, so the value comes silently
 // from the wrong place.
 func TestHoleNamesFindTheirParameterAcrossSpellings(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ param, hole string }{
 		{"id", "{{.ID}}"},
 		{"api-url", "{{.APIURL}}"},
@@ -529,6 +549,7 @@ func TestHoleNamesFindTheirParameterAcrossSpellings(t *testing.T) {
 // result already qualified is used as written. Both are exercised because the
 // two paths are the whole reason the input space had to be closed.
 func TestProviderResultQualification(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ name, result, want string }{
 		{"bare name takes the provider package", "Nonce", "v fw.Nonce"},
 		{"already qualified is verbatim", "other.Nonce", "v other.Nonce"},
@@ -561,6 +582,7 @@ func TestProviderResultQualification(t *testing.T) {
 // Every occurrence is its own plan step — the markup lands in two places — but
 // each names the same provider, which is what makes them share one value.
 func TestEveryOccurrenceNamesTheSameProvider(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Page(): html {\n" +
 		"<div><form><app-nonce /></form><form><app-nonce /></form></div>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
@@ -575,6 +597,7 @@ func TestEveryOccurrenceNamesTheSameProvider(t *testing.T) {
 // function cannot disagree. A token in a hidden input and the same token in a
 // meta tag is exactly that shape.
 func TestTwoElementsShareOneProviderKey(t *testing.T) {
+	t.Parallel()
 	meta := htmlbind.BuiltinElement{
 		Name:     "app-nonce-meta",
 		Markup:   `<meta name="nonce-2" content="{{.Token}}">`,

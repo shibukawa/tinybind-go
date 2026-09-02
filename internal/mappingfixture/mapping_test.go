@@ -461,8 +461,8 @@ func TestWriteError_ValidationProblem(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/problem+json") {
 		t.Fatalf("content-type: %q", ct)
 	}
-	// Avoid map[string]any + interface type asserts here: TinyGo's encoding/json
-	// can panic with reflect.AssignableTo when that path is linked with RawMessage bind.
+	// String checks rather than a decode into map[string]any, so the test
+	// links no encoding/json of its own.
 	raw := rec.Body.String()
 	if !strings.Contains(raw, `"status":400`) {
 		t.Fatalf("status missing in %s", raw)

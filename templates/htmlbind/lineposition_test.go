@@ -41,6 +41,7 @@ export component Page(rows: Row[]): html {
 const shoutLine = 10
 
 func TestLineDirectivesReportTheTemplateLine(t *testing.T) {
+	t.Parallel()
 	generated := generateWithPositions(t, true)
 	output := buildFixture(t, generated)
 	want := fmt.Sprintf("page.tb.html:%d:", shoutLine)
@@ -55,6 +56,7 @@ func TestLineDirectivesReportTheTemplateLine(t *testing.T) {
 // Without the option the same template reports against the generated file, so
 // the mapping is the option's doing and not something the emitter always did.
 func TestWithoutLineDirectivesTheGeneratedFileIsReported(t *testing.T) {
+	t.Parallel()
 	generated := generateWithPositions(t, false)
 	if strings.Contains(string(generated), "//line ") {
 		t.Fatalf("directives emitted with the option off:\n%s", generated)
@@ -69,6 +71,7 @@ func TestWithoutLineDirectivesTheGeneratedFileIsReported(t *testing.T) {
 // and the closing brace of the plan is scaffolding too. Both are reported
 // against the generated file, which only a restore per nested list achieves.
 func TestRestoreDirectivesNameTheirOwnLine(t *testing.T) {
+	t.Parallel()
 	generated := generateWithPositions(t, true)
 	restore := regexp.MustCompile(`^//line generated\.go:(\d+)$`)
 	found := 0
@@ -100,6 +103,7 @@ func TestRestoreDirectivesNameTheirOwnLine(t *testing.T) {
 // saying so. An Ops element is indented, so the directive above it has to be
 // pulled back to the margin and kept there by formatting.
 func TestDirectivesSurviveFormattingAtTheLeftMargin(t *testing.T) {
+	t.Parallel()
 	generated := generateWithPositions(t, true)
 	for index, line := range strings.Split(string(generated), "\n") {
 		if strings.Contains(line, "//line ") && !strings.HasPrefix(line, "//line ") {

@@ -14,6 +14,7 @@ import (
 )
 
 func TestParserFixtures(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "testdata", "templates", "htmlparser")
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -64,6 +65,7 @@ func TestParserFixtures(t *testing.T) {
 }
 
 func TestParserDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		source string
@@ -99,6 +101,7 @@ func TestParserDiagnostics(t *testing.T) {
 }
 
 func TestASTPositionsUseFileLinesAndRuneColumns(t *testing.T) {
+	t.Parallel()
 	source := "component Card(name: string): html {\n<p title={name}>あ{name}</p>\n}"
 	module, err := htmlbind.Parse("position.txt", []byte(source))
 	if err != nil {
@@ -131,6 +134,7 @@ func TestASTPositionsUseFileLinesAndRuneColumns(t *testing.T) {
 }
 
 func TestDiagnosticPositionUsesWholeFile(t *testing.T) {
+	t.Parallel()
 	source := "package demo\n\ncomponent Bad(): html {\n<div></span>\n}"
 	_, err := htmlbind.Parse("position.txt", []byte(source))
 	var parseErr *htmlbind.ParseError
@@ -146,6 +150,7 @@ func TestDiagnosticPositionUsesWholeFile(t *testing.T) {
 // brace inside script or style content belongs to the authored language unless
 // it opens one of the recognized insertion shapes.
 func TestRawTextBracesStayAuthoredContent(t *testing.T) {
+	t.Parallel()
 	authored := []struct {
 		name    string
 		open    string
@@ -183,6 +188,7 @@ func TestRawTextBracesStayAuthoredContent(t *testing.T) {
 // TestRawTextInsertionShapes covers the other side of the same rule: every shape
 // the gate recognizes still reaches the shared expression parser.
 func TestRawTextInsertionShapes(t *testing.T) {
+	t.Parallel()
 	shapes := []struct {
 		name string
 		body string

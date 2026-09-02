@@ -55,9 +55,8 @@ func WriteStatus[T any](w http.ResponseWriter, r *http.Request, status int, valu
 // WriteError writes err as an RFC 9457 Problem Details response.
 // Internal causes are not exposed in the client body.
 //
-// JSON is written without encoding/json for the problem document so TinyGo
-// does not hit unimplemented reflect.AssignableTo when binders also use
-// json.RawMessage (a known interaction in TinyGo's encoding/json).
+// JSON is written without encoding/json for the problem document, so the
+// runtime links no reflection-driven encoder for it.
 // The document itself is derived in bindcore, so the other transport runtime
 // writes the same bytes for the same error rather than reimplementing the rule.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {

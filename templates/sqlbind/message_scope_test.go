@@ -14,6 +14,7 @@ import (
 //
 // See .knowledge concept:template-message-surface scope.
 func TestMessageReferenceIsHTMLOnly(t *testing.T) {
+	t.Parallel()
 	source := "record R { id: int }\n\nexport statement S(id: int): sql.one<R> {\nSELECT id FROM t WHERE id = {t title}\n}\n"
 	_, err := sqlbind.Generate("q.tb.sql", []byte(source), sqlbind.GenerateOptions{})
 	if err == nil {

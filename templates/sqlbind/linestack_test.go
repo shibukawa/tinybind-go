@@ -17,6 +17,7 @@ import (
 // generated code moves a frame that is not in it. See
 // requirement:render-error-positions.
 func TestPanicInAStatementNamesTheTemplate(t *testing.T) {
+	t.Parallel()
 	skipWithoutToolchain(t)
 	source := []byte(`package queries
 type User { id: int, name: string }

@@ -42,6 +42,7 @@ func bindingError(t *testing.T, body string) string {
 // Normalize once in Go, use the result in several parameter positions. Without
 // a binding each mention emits its own call, exactly as in markup.
 func TestSQLValueBindingCallsItsExternalOnce(t *testing.T) {
+	t.Parallel()
 	generated := generateBinding(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE name = {key} OR alias = {key}")
 	if calls := strings.Count(generated, "Norm("); calls != 1 {
 		t.Fatalf("want one Norm call, got %d:\n%s", calls, generated)
@@ -54,6 +55,7 @@ func TestSQLValueBindingCallsItsExternalOnce(t *testing.T) {
 // Nothing is rewritten to give the binding a subtree: a control body is already
 // a Go block, so the local falls out of scope where the template says it does.
 func TestSQLBindingUsesTheGeneratedBlockAsItsScope(t *testing.T) {
+	t.Parallel()
 	generated := generateBinding(t, "SELECT id, name FROM users WHERE {if flag}{val key = Norm(name)}a = {key}{else}b = {name}{/if}")
 	inner := strings.Index(generated, "key := Norm(name)")
 	closing := strings.Index(generated, "} else {")
@@ -67,6 +69,7 @@ func TestSQLBindingUsesTheGeneratedBlockAsItsScope(t *testing.T) {
 // against a line of emitted code rather than the template line that caused it,
 // so the language says it first.
 func TestSQLUnreadBindingIsRefused(t *testing.T) {
+	t.Parallel()
 	message := bindingError(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {name}")
 	if !strings.Contains(message, "val binding key is never read") {
 		t.Fatalf("want the unread diagnostic, got %q", message)
@@ -78,6 +81,7 @@ func TestSQLUnreadBindingIsRefused(t *testing.T) {
 
 // Nothing silences an unread local any more, because none reaches emission.
 func TestSQLEmitsNoBlankAssignment(t *testing.T) {
+	t.Parallel()
 	generated := generateBinding(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}")
 	if strings.Contains(generated, "_ = ") {
 		t.Fatalf("a blank assignment survived:\n%s", generated)
@@ -87,6 +91,7 @@ func TestSQLEmitsNoBlankAssignment(t *testing.T) {
 // A value binding may not take a name already visible, here as in markup: the
 // rule is the language's rather than either lowering's.
 func TestSQLBindingCannotReuseAVisibleName(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"an earlier binding": "{val key = Norm(name)}{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}",
 		"a sibling binding":  "{val key = Norm(name), key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}",
@@ -106,6 +111,7 @@ func TestSQLBindingCannotReuseAVisibleName(t *testing.T) {
 // shared parser's rather than either lowering's. Written as two directives the
 // dependency is ordinary, and the locals come out in order.
 func TestSQLBindingsOfOneDirectiveCannotDependOnEachOther(t *testing.T) {
+	t.Parallel()
 	message := bindingError(t, "{val raw = Norm(name), key = Norm(raw)}\nSELECT id, name FROM users WHERE a = {key}")
 	if !strings.Contains(message, "the bindings of one directive are independent") {
 		t.Fatalf("want the independence diagnostic, got %q", message)
@@ -119,6 +125,7 @@ func TestSQLBindingsOfOneDirectiveCannotDependOnEachOther(t *testing.T) {
 // An unread binding beside a read one is still unread, which a comma list makes
 // easy to write by accident.
 func TestSQLUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
+	t.Parallel()
 	message := bindingError(t, "{val raw = Norm(name), key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}")
 	if !strings.Contains(message, "val binding raw is never read") {
 		t.Fatalf("want the unread sibling reported, got %q", message)
@@ -128,12 +135,14 @@ func TestSQLUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
 // A binding read on one branch alone is read, since a branch is where the
 // statement varies rather than where the binding stops existing.
 func TestSQLBindingReadOnOneBranchIsRead(t *testing.T) {
+	t.Parallel()
 	generateBinding(t, "{val key = Norm(name)}\nSELECT id, name FROM users WHERE {if flag}a = {key}{else}b = {name}{/if}")
 }
 
 // A Go keyword is a legal binding name in the template and has to survive
 // becoming a local, since a SQL binding reaches a Go identifier directly.
 func TestSQLBindingNamedAfterAGoKeywordIsEscaped(t *testing.T) {
+	t.Parallel()
 	generated := generateBinding(t, "{val type = Norm(name)}\nSELECT id, name FROM users WHERE a = {type}")
 	if !strings.Contains(generated, "_type := Norm(name)") {
 		t.Fatalf("the keyword-named binding was not escaped:\n%s", generated)
@@ -143,6 +152,7 @@ func TestSQLBindingNamedAfterAGoKeywordIsEscaped(t *testing.T) {
 // The builder already returns an error, so a failing external needs no new
 // plumbing: the statement stops being built and the caller sees why.
 func TestSQLFailingExternalIsCheckedAtTheBinding(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("users.tb.sql",
 		bindingSource("{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}"),
 		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{"Norm": true}})
@@ -159,6 +169,7 @@ func TestSQLFailingExternalIsCheckedAtTheBinding(t *testing.T) {
 // The placement rule is the same in both formats, since it is about where a
 // failure has somewhere to go rather than about either lowering.
 func TestSQLFailingExternalIsRefusedOutsideABinding(t *testing.T) {
+	t.Parallel()
 	_, err := sqlbind.Generate("users.tb.sql",
 		bindingSource("SELECT id, name FROM users WHERE a = {Norm(name)}"),
 		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{"Norm": true}})
@@ -170,6 +181,7 @@ func TestSQLFailingExternalIsRefusedOutsideABinding(t *testing.T) {
 // A project whose externals declare no error generates exactly what it
 // generated before this existed.
 func TestSQLATotalExternalIsUnchanged(t *testing.T) {
+	t.Parallel()
 	body := "{val key = Norm(name)}\nSELECT id, name FROM users WHERE a = {key}"
 	with, err := sqlbind.Generate("users.tb.sql", bindingSource(body),
 		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL, ErrorExternals: map[string]bool{}})

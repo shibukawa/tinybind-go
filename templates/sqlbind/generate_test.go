@@ -17,6 +17,7 @@ import (
 )
 
 func TestGenerateAndRunBuilder(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 export statement Find(id: int, names: string[], active: bool): sql.one<User> {
@@ -29,6 +30,7 @@ SELECT id, name FROM users WHERE id = {id} AND name IN ({names}) {if active}AND 
 	runtimeTest := []byte(`package queries
 import "testing"
 func TestBuilder(t *testing.T) {
+	t.Parallel()
 	statement, err := BuildFind(7, []string{"a", "b"}, true)
 	if err != nil { t.Fatal(err) }
 	if statement.SQL != "\nSELECT id, name FROM users WHERE id = $1 AND name IN ($2, $3) AND active = $4\n" { t.Fatalf("SQL = %q", statement.SQL) }
@@ -38,6 +40,7 @@ func TestBuilder(t *testing.T) {
 }
 
 func TestGenerateExecMutationAndQuestionPlaceholders(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 export statement Rename(id: int, name: string, enabled: bool): sql.exec {
 UPDATE users SET name = {name} WHERE id = {id} {if enabled}AND enabled{/if}
@@ -56,6 +59,7 @@ UPDATE users SET name = {name} WHERE id = {id} {if enabled}AND enabled{/if}
 // because containing the right constant is not the same as producing SQL the
 // engine accepts. Expanded value lists follow the selected style too.
 func TestGenerateEmitsEachDialectPlaceholderStyle(t *testing.T) {
+	t.Parallel()
 	for _, dialect := range []struct {
 		name string
 		want string
@@ -77,6 +81,7 @@ SELECT id, name FROM users WHERE id = {id} AND name IN ({names})
 			runtimeTest := []byte(`package queries
 import "testing"
 func TestBuilder(t *testing.T) {
+	t.Parallel()
 	statement, err := BuildFind(7, []string{"a", "b"})
 	if err != nil { t.Fatal(err) }
 	if statement.SQL != "` + dialect.want + `" { t.Fatalf("SQL = %q", statement.SQL) }
@@ -88,6 +93,7 @@ func TestBuilder(t *testing.T) {
 }
 
 func TestGenerateRequiresAKnownDialect(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 export statement Ping(): sql.exec {SELECT 1}`)
 	for name, dialect := range map[string]string{"missing": "", "unknown": "oracle"} {
@@ -105,6 +111,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 // internal mapping from drifting apart. A dialect present in only one of them
 // would either be rejected as unknown or emit uncompilable generated code.
 func TestEverySupportedDialectHasAPlaceholderStyle(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 export statement Ping(): sql.exec {SELECT 1}`)
 	for _, dialect := range sqlbind.SupportedDialects {
@@ -122,6 +129,7 @@ export statement Ping(): sql.exec {SELECT 1}`)
 // dialect: net/url.URL is neither a valid bind parameter nor a valid Scan
 // target, so a url column needs the runtime adapter at both ends.
 func TestGenerateScansURLThroughRuntimeAdapter(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type Site { id: int, link: url, backup: url? }
 export statement FindSite(link: url): sql.one<Site> {
@@ -141,6 +149,7 @@ import (
 	"testing"
 )
 func TestBuilder(t *testing.T) {
+	t.Parallel()
 	link, err := url.Parse("https://example.com/a")
 	if err != nil { t.Fatal(err) }
 	statement, err := BuildFindSite(*link)
@@ -152,6 +161,7 @@ func TestBuilder(t *testing.T) {
 }
 
 func TestPredicateAndRelationCompositionSharePlaceholderOrder(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 statement MinimumID(id: int): sql.predicate {id >= {id}}
@@ -177,6 +187,7 @@ import (
 type failingQuerier struct{}
 func (failingQuerier) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errors.New("query failed") }
 func TestRelations(t *testing.T) {
+	t.Parallel()
 	statement, err := BuildFind("Ada", 10)
 	if err != nil { t.Fatal(err) }
 	if !strings.Contains(statement.SQL, "FROM (SELECT id, name FROM users WHERE id >= $1) AS active_users") { t.Fatalf("SQL = %q", statement.SQL) }
@@ -194,6 +205,7 @@ func TestRelations(t *testing.T) {
 // for a pgxpool adapter — serves generated one, optional, and many statements
 // through RowsQuerier, and the generated body closes its cursor.
 func TestGeneratedStatementsRunOnRowsQuerier(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
@@ -226,6 +238,7 @@ type poolExecutor struct {
 }
 func (p poolExecutor) QueryRows(context.Context, string, ...any) (rootsql.Rows, error) { return p.rows, nil }
 func TestRowsQuerierExecutor(t *testing.T) {
+	t.Parallel()
     rows := &poolRows{data: []User{{Id: 1, Name: "Ada"}}}
     user, err := GetUser(context.Background(), poolExecutor{rows: rows}, 1)
     if err != nil { t.Fatal(err) }
@@ -247,6 +260,7 @@ func TestRowsQuerierExecutor(t *testing.T) {
 }
 
 func TestGenerateContextAPI(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
@@ -291,6 +305,7 @@ func (*oneRow) Columns() []string { return []string{"id", "name"} }
 func (*oneRow) Close() error { rowsClosed.Store(true); return nil }
 func (r *oneRow) Next(values []driver.Value) error { if r.sent { return io.EOF }; r.sent = true; values[0] = int64(1); values[1] = "Ada"; return nil }
 func TestContextAPIs(t *testing.T) {
+	t.Parallel()
     if _, err := GetUserContext(context.Background(), 1); !errors.Is(err, rootsql.ErrNoSQLExecutor) { t.Fatalf("missing executor error = %v", err) }
     if result, err := MaybeUserContext(context.Background(), 1); result != nil || !errors.Is(err, rootsql.ErrNoSQLExecutor) { t.Fatalf("missing optional result=%v error=%v", result, err) }
     missingSeq := ListUsersContext(context.Background())
@@ -316,6 +331,7 @@ func TestContextAPIs(t *testing.T) {
 }
 
 func TestGenerateCustomContextResolver(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int }
 export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id = {id}}`)
@@ -337,6 +353,7 @@ export statement GetUser(id: int): sql.one<User> {SELECT id FROM users WHERE id 
 }
 
 func TestGenerateDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ source, want string }{
 		{`statement bad(id: int): sql.exec { DELETE FROM users }`, "require a WHERE"},
 		{`statement bad(id: int): sql.exec { SELECT $1 }`, "manual SQL placeholders"},
@@ -361,6 +378,7 @@ func TestGenerateDiagnostics(t *testing.T) {
 }
 
 func TestSQLLiteralsAndCommentsAreLossless(t *testing.T) {
+	t.Parallel()
 	source := []byte("statement safe(): sql.exec { SELECT '{not_template}', $$ {also_not} $$/** {still_not} */ -- $1 {comment}\n }")
 	if _, err := sqlbind.Generate("safe.tb.sql", source, sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL}); err != nil {
 		t.Fatal(err)
@@ -406,6 +424,7 @@ func runGenerated(t *testing.T, generated, runtimeTest []byte) {
 }
 
 func TestGenerateContextOnlyAPI(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 export statement FindUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
@@ -453,6 +472,7 @@ type failingExecutor struct{}
 func (failingExecutor) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errQuery }
 func (failingExecutor) ExecContext(context.Context, string, ...any) (sql.Result, error) { return nil, errExec }
 func TestContextOnlyAPIs(t *testing.T) {
+	t.Parallel()
     if _, err := FindUser(context.Background(), 1); !errors.Is(err, rootsql.ErrNoSQLExecutor) { t.Fatalf("missing executor error = %v", err) }
     ctx := rootsql.WithSQLExecutor(context.Background(), failingExecutor{})
     if _, err := FindUser(ctx, 1); !errors.Is(err, errQuery) { t.Fatalf("query error = %v", err) }
@@ -467,6 +487,7 @@ func TestContextOnlyAPIs(t *testing.T) {
 }
 
 func TestGenerateContextOnlyKeepsDeclaredNameFree(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type Row { id: int }
 export statement Get(): sql.one<Row> {SELECT id FROM rows}
@@ -503,6 +524,7 @@ func exportedFuncSignatures(t *testing.T, generated []byte) []string {
 // A write statement must resolve its executor through the resolver that rejects
 // a read-only Context, and must fail before it reaches the database.
 func TestGenerateReadOnlyExecutorRejection(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 type User { id: int, name: string }
 export statement GetUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}
@@ -539,6 +561,7 @@ type failingExecutor struct{}
 func (failingExecutor) QueryContext(context.Context, string, ...any) (*sql.Rows, error) { return nil, errQuery }
 func (failingExecutor) ExecContext(context.Context, string, ...any) (sql.Result, error) { return nil, errExec }
 func TestReadOnlyContextRejectsWrites(t *testing.T) {
+	t.Parallel()
     ctx := rootsql.WithSQLExecutor(context.Background(), failingExecutor{}, rootsql.AsReadOnly())
 
     // Writes stop at the resolver, so the database is never reached.
@@ -571,6 +594,7 @@ func TestReadOnlyContextRejectsWrites(t *testing.T) {
 // the locals are syntactically legal; it says nothing about the statement they
 // build or the error check beside them.
 func TestGenerateAndRunAValueBinding(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 external Norm(s: string): string
 type User { id: int, name: string }
@@ -592,6 +616,7 @@ var calls int
 func Norm(s string) string { calls++; return strings.ToLower(s) }
 
 func TestBinding(t *testing.T) {
+	t.Parallel()
 	statement, err := BuildFind("ADA")
 	if err != nil { t.Fatal(err) }
 	// One call for two placeholders is the whole point of the binding.
@@ -606,6 +631,7 @@ func TestBinding(t *testing.T) {
 // A failing external emits an error check beside the assignment. Whether that
 // check actually stops the build and hands the error back is a runtime fact.
 func TestGenerateAndRunAFailingValueBinding(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 external Norm(s: string): string
 type User { id: int, name: string }
@@ -633,6 +659,7 @@ func Norm(s string) (string, error) {
 }
 
 func TestFailingBinding(t *testing.T) {
+	t.Parallel()
 	if _, err := BuildFind("ok"); err != nil { t.Fatalf("good input failed: %v", err) }
 	_, err := BuildFind("bad")
 	if !errors.Is(err, boom) { t.Fatalf("err = %v, want the loader's own error", err) }

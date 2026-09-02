@@ -15,6 +15,7 @@ func signatures(t *testing.T, source string) []Signature {
 }
 
 func TestSignaturesReportsGoTypes(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 type User { name: string }
 
@@ -49,6 +50,7 @@ export component Page(id: string, count: int, ratio: float, ok: bool, user: User
 }
 
 func TestSignaturesPreservesDeclarationOrder(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 export component First(a: string): html { <p>{a}</p> }
 export component Second(b: string): html { <p>{b}</p> }
@@ -68,6 +70,7 @@ component Third(c: string): html { <p>{c}</p> }
 }
 
 func TestSignaturesWrapsAsyncParameters(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 type Order { id: string }
 
@@ -97,6 +100,7 @@ export component Page(orders: async Order[]): html {
 }
 
 func TestSignaturesMarksSlotParameters(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 export component Layout(children: html): html {
   <main><slot required /></main>
@@ -115,6 +119,7 @@ export component Layout(children: html): html {
 }
 
 func TestSignaturesArrayAndOptional(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 type Order { id: string }
 
@@ -136,6 +141,7 @@ export component Page(orders: Order[], note: string?): html {
 }
 
 func TestSignaturesZeroParameterComponent(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `export component Page(): html { <p>hi</p> }`)
 	if len(got) != 1 {
 		t.Fatalf("signatures = %+v", got)
@@ -146,6 +152,7 @@ func TestSignaturesZeroParameterComponent(t *testing.T) {
 }
 
 func TestSignaturesFailsOnAnInvalidModule(t *testing.T) {
+	t.Parallel()
 	// Analysis runs in full, so a module that would not compile is reported
 	// here rather than yielding a partial signature.
 	if _, err := Signatures("page.tb.html", []byte(`export component Page(x: Missing): html { <p>{x}</p> }`)); err == nil {
@@ -154,12 +161,14 @@ func TestSignaturesFailsOnAnInvalidModule(t *testing.T) {
 }
 
 func TestSignaturesFailsOnAParseError(t *testing.T) {
+	t.Parallel()
 	if _, err := Signatures("page.tb.html", []byte(`export component Page(`)); err == nil {
 		t.Fatal("unparsable source accepted, want error")
 	}
 }
 
 func TestLookup(t *testing.T) {
+	t.Parallel()
 	got := signatures(t, `
 export component Page(a: string): html { <p>{a}</p> }
 export component Other(b: string): html { <p>{b}</p> }

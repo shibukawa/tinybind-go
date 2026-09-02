@@ -14,6 +14,7 @@ import (
 // unreachable for any comment following a line comment, and the two spellings
 // below parsed identically.
 func TestFormatKeepsTrailingCommentSpacing(t *testing.T) {
+	t.Parallel()
 	head := "package queries\n\nexport statement F(id: int): sql.one<E> {\n  SELECT id\n  FROM e\n  WHERE id = {id}\n}\n\n"
 	for _, tc := range []struct {
 		name   string
@@ -39,6 +40,7 @@ func TestFormatKeepsTrailingCommentSpacing(t *testing.T) {
 // The blank between two line comments has to reach the AST, or a printer has
 // nothing to preserve.
 func TestParseSeesBlankBetweenLineComments(t *testing.T) {
+	t.Parallel()
 	source := "package queries\n\n// group one\n\n// group two\n// group three\n"
 	module, err := sqlbind.Parse("x.tb.sql", []byte(source))
 	if err != nil {

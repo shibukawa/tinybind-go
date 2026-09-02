@@ -67,6 +67,7 @@ func parseComponent(t *testing.T, body string) *htmlbind.Module {
 // mentions t and means the parameter, and the message form must not claim any
 // of them. See .knowledge decision:message-reference-syntax recognizer.
 func TestMessageKeywordIsContextual(t *testing.T) {
+	t.Parallel()
 	expressions := []struct {
 		name string
 		body string
@@ -92,6 +93,7 @@ func TestMessageKeywordIsContextual(t *testing.T) {
 }
 
 func TestMessageReferenceForms(t *testing.T) {
+	t.Parallel()
 	references := []struct {
 		name string
 		body string
@@ -134,6 +136,7 @@ func TestMessageReferenceForms(t *testing.T) {
 // TestMessageArgumentDiagnostics covers the commit rule: once the id is valid
 // the reference is committed, so a bad argument is reported as what it is.
 func TestMessageArgumentDiagnostics(t *testing.T) {
+	t.Parallel()
 	bad := []struct {
 		name string
 		body string
@@ -158,6 +161,7 @@ func TestMessageArgumentDiagnostics(t *testing.T) {
 }
 
 func TestMessagesHeaderDeclaration(t *testing.T) {
+	t.Parallel()
 	module, err := htmlbind.Parse("message.txt", []byte("messages about\n\ncomponent W(): html {<p>{t title}</p>}"))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -171,6 +175,7 @@ func TestMessagesHeaderDeclaration(t *testing.T) {
 }
 
 func TestMessagesHeaderAcceptsADottedName(t *testing.T) {
+	t.Parallel()
 	module, err := htmlbind.Parse("message.txt", []byte("messages checkout.payment\n\ncomponent W(): html {<p>x</p>}"))
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -181,6 +186,7 @@ func TestMessagesHeaderAcceptsADottedName(t *testing.T) {
 }
 
 func TestSecondMessagesDeclarationIsAnError(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Parse("message.txt", []byte("messages about\nmessages other\n\ncomponent W(): html {<p>x</p>}"))
 	if err == nil {
 		t.Fatal("a second messages declaration parsed without error")
@@ -193,6 +199,7 @@ func TestSecondMessagesDeclarationIsAnError(t *testing.T) {
 // TestMessageReferencePrintsBackAsWritten keeps requirement:template-source-formatting
 // honest for the new form, including the id the author chose to qualify.
 func TestMessageReferencePrintsBackAsWritten(t *testing.T) {
+	t.Parallel()
 	sources := []string{
 		"messages about\n\ncomponent W(): html {\n  <p>{t title}</p>\n}\n",
 		"messages about\n\ncomponent W(): html {\n  <p>{t common.item-count, n: count}</p>\n}\n",
@@ -224,6 +231,7 @@ func TestMessageReferencePrintsBackAsWritten(t *testing.T) {
 // takes the file's scope, a dotted one leaves it, and a file with neither is an
 // error rather than something derived from the file name.
 func TestMessageResolution(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source string
@@ -268,6 +276,7 @@ func TestMessageResolution(t *testing.T) {
 }
 
 func TestMessageWithoutAScopeIsAnError(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("message.txt", []byte("component W(): html {<p>{t title}</p>}"), messageOptions())
 	if err == nil {
 		t.Fatal("a bare reference compiled with no messages declaration")
@@ -280,6 +289,7 @@ func TestMessageWithoutAScopeIsAnError(t *testing.T) {
 // TestQualifiedMessageNeedsNoScope is the other half: a dotted id is absolute,
 // so it compiles in a file that declares nothing.
 func TestQualifiedMessageNeedsNoScope(t *testing.T) {
+	t.Parallel()
 	if _, err := htmlbind.Generate("message.txt", []byte("component W(): html {<p>{t common.save}</p>}"), messageOptions()); err != nil {
 		t.Fatalf("a qualified reference needs no scope, but: %v", err)
 	}
@@ -306,6 +316,7 @@ func messageOptions() htmlbind.GenerateOptions {
 }
 
 func TestMessageEmission(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source string
@@ -352,6 +363,7 @@ func TestMessageEmission(t *testing.T) {
 }
 
 func TestUnresolvedMessageIsAnError(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("message.txt", []byte("messages about\n\ncomponent W(): html {<p>{t missing}</p>}"), messageOptions())
 	if err == nil {
 		t.Fatal("an unresolved message generated without error")
@@ -362,6 +374,7 @@ func TestUnresolvedMessageIsAnError(t *testing.T) {
 }
 
 func TestMessageArgumentChecking(t *testing.T) {
+	t.Parallel()
 	bad := []struct {
 		name   string
 		source string
@@ -400,6 +413,7 @@ func TestMessageArgumentChecking(t *testing.T) {
 // requirement:template-parse-introspection: a caller has to be able to ask what
 // a template needs before it can supply the table.
 func TestMessageRefsReportsBeforeAnySymbolTable(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent W(count: int): html {<p>{t title}</p><p>{t common.save}</p><p>{t item-count, n: count}</p>}"
 	refs, err := htmlbind.MessageRefs("message.txt", []byte(source))
 	if err != nil {
@@ -433,6 +447,7 @@ func TestMessageRefsReportsBeforeAnySymbolTable(t *testing.T) {
 // TestMessageRefsReportsAnUnresolvableReference keeps the report usable on a
 // tree that is not finished yet.
 func TestMessageRefsReportsAnUnresolvableReference(t *testing.T) {
+	t.Parallel()
 	refs, err := htmlbind.MessageRefs("message.txt", []byte("component W(): html {<p>{t title}</p>}"))
 	if err != nil {
 		t.Fatalf("MessageRefs failed: %v", err)
@@ -451,6 +466,7 @@ func TestMessageRefsReportsAnUnresolvableReference(t *testing.T) {
 // as a test so the downstream framework meets a diagnostic rather than a
 // surprise, and so the gate's amendment has something to change.
 func TestMessageInAURLAttributeIsRefused(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("message.txt",
 		[]byte(`messages about`+"\n\n"+`component W(): html {<a href="/{t title}/x">go</a>}`), messageOptions())
 	if err == nil {
@@ -465,6 +481,7 @@ func TestMessageInAURLAttributeIsRefused(t *testing.T) {
 // rule: outside the URL roster a message is ordinary text and this module
 // escapes it, which is what decision:message-reference-syntax claims.
 func TestMessageInAnOrdinaryAttributeIsEscapedHere(t *testing.T) {
+	t.Parallel()
 	out, err := htmlbind.Generate("message.txt",
 		[]byte(`messages about`+"\n\n"+`component W(): html {<p title={t title}>x</p>}`), messageOptions())
 	if err != nil {
@@ -480,6 +497,7 @@ func TestMessageInAnOrdinaryAttributeIsEscapedHere(t *testing.T) {
 // must be the source that produced the text, and replacing it must leave a file
 // that parses.
 func TestTextNodeByteRanges(t *testing.T) {
+	t.Parallel()
 	source := "component W(): html {\n  <p>Welcome home</p>\n}\n"
 	module, err := htmlbind.Parse("range.txt", []byte(source))
 	if err != nil {
@@ -528,6 +546,7 @@ func TestTextNodeByteRanges(t *testing.T) {
 // TestAttributeValueByteRanges is the attribute half of the same rule, which is
 // the case `pw i18n extract` needs for a placeholder.
 func TestAttributeValueByteRanges(t *testing.T) {
+	t.Parallel()
 	source := `component W(): html {<input placeholder="Your name">}`
 	module, err := htmlbind.Parse("range.txt", []byte(source))
 	if err != nil {
@@ -579,6 +598,7 @@ func TestAttributeValueByteRanges(t *testing.T) {
 // a message argument is an ordinary expression, so an argument that reaches a
 // context-taking external has to make its instruction carry the context.
 func TestMessageArgumentReachingAContextExternal(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\nexternal Count(): int\n\ncomponent W(): html {<p>{t item-count, n: Count()}</p>}"
 	options := messageOptions()
 	options.ContextExternals = map[string]bool{"Count": true}
@@ -601,6 +621,7 @@ func TestMessageArgumentReachingAContextExternal(t *testing.T) {
 //
 // See .knowledge decision:implicit-binding-cache-identity.
 func TestMessageReferenceKeysThroughItsContextBinding(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\n@cache(ttl: \"5m\")\ncomponent Page(): html {<p>{t title}</p>}"
 	out, err := htmlbind.Generate("message.txt", []byte(source), messageOptions())
 	if err != nil {
@@ -618,6 +639,7 @@ func TestMessageReferenceKeysThroughItsContextBinding(t *testing.T) {
 // TestMessageReferenceFoldsTheVaryAxis is the outside-the-component half of the
 // same property.
 func TestMessageReferenceFoldsTheVaryAxis(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent Page(): html {<p>{t title}</p>}"
 	out, err := htmlbind.Generate("message.txt", []byte(source), messageOptions())
 	if err != nil {
@@ -630,6 +652,7 @@ func TestMessageReferenceFoldsTheVaryAxis(t *testing.T) {
 
 // TestMessageContextBindingMustBeDeclared keeps the two options in step.
 func TestMessageContextBindingMustBeDeclared(t *testing.T) {
+	t.Parallel()
 	options := messageOptions()
 	options.MessageContextBinding = "missing"
 	_, err := htmlbind.Generate("message.txt",
@@ -646,6 +669,7 @@ func TestMessageContextBindingMustBeDeclared(t *testing.T) {
 // locale type: the binding carries a value this module has no escaping rule for,
 // so it is usable as a message context and nowhere else.
 func TestATypedBindingCannotBeWrittenIntoMarkup(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("message.txt",
 		[]byte("messages about\n\ncomponent Page(): html {<p>{locale}</p>}"), messageOptions())
 	if err == nil {

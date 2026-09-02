@@ -238,8 +238,8 @@ type RawEnvelope struct {
 
 ## 読み込み上限
 
-既定の上限は 1 MiB、オブジェクトと配列のネストは `jsonbind.MaxNestingDepth`
-（10000）段までです。このモジュールの上限は、トランスポート側が持つものも含めて
+既定の上限は 1 MiB、オブジェクトと配列のネストは `jsonbind.DefaultMaxNestingDepth`
+（90）段までで、`SetMaxNestingDepth` で引き上げられます。このモジュールの上限は、トランスポート側が持つものも含めて
 [サイズと形の上限](limits.ja.md)にまとめてあります。
 
 アプリ全体の上限を変更する例:

@@ -123,25 +123,20 @@ func TestSlotCtxRendersAFragment(t *testing.T) {
 // context: a boundary subtree renders under the boundary's context, so work a
 // context-taking external starts there is bounded by that boundary.
 func TestContextOpsInsideAnAwaitBoundary(t *testing.T) {
-	// Function-local parameter types need a package-unique name. TinyGo mangles a
-	// generic instantiation by the type's package-qualified name alone, so two
-	// local types sharing one name collapse to a single execOps[htmlbind.scope]
-	// while LLVM keeps their struct bodies apart, and the module fails
-	// verification. go test never sees it; only the TinyGo gate does.
-	type awaitScope struct {
+	type scope struct {
 		Outer ctxParams
 		Value string
 	}
-	inner := Builder[awaitScope]{}
+	inner := Builder[scope]{}
 	ops := Builder[ctxParams]{}
 	plan := &Plan[ctxParams]{Ops: []Op[ctxParams]{
 		Builder[ctxParams]{}.Await(
-			func(ctx context.Context, p ctxParams) (awaitScope, error) {
-				return awaitScope{Outer: p, Value: "settled"}, nil
+			func(ctx context.Context, p ctxParams) (scope, error) {
+				return scope{Outer: p, Value: "settled"}, nil
 			},
 			func(p ctxParams, err AsyncError) ctxParams { return p },
-			[]Op[awaitScope]{
-				inner.TextCtx(func(ctx context.Context, s awaitScope) string {
+			[]Op[scope]{
+				inner.TextCtx(func(ctx context.Context, s scope) string {
 					return s.Value + ":" + tokenFrom(ctx)
 				}),
 			},

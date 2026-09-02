@@ -36,6 +36,7 @@ func refuses(t *testing.T, source, want string) {
 // change request opens with: read with every condition true and the if wrappers
 // deleted, it is the statement it renders.
 func TestGroupElisionBranchMatrix(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type User { id: int, name: string, city: string, age: int }
 export statement SearchUsers(
@@ -64,6 +65,7 @@ func where(sql string) string {
 }
 
 func TestMatrix(t *testing.T) {
+	t.Parallel()
 	cases := []struct{
 		hasName, hasCity, hasAge, staffOnly bool
 		want string
@@ -114,6 +116,7 @@ func TestMatrix(t *testing.T) {
 // operator in the enclosing text; the two in-branch forms are what the
 // documentation and the existing tests contain, so they must keep working.
 func TestGroupElisionAcceptedOperatorPositions(t *testing.T) {
+	t.Parallel()
 	forms := map[string]string{
 		"enclosing": `{if flagA}x = {p}{/if} AND {if flagB}y = {q}{/if}`,
 		"leading":   `{if flagA}x = {p}{/if} {if flagB}AND y = {q}{/if}`,
@@ -122,6 +125,7 @@ func TestGroupElisionAcceptedOperatorPositions(t *testing.T) {
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestForm(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string; args int }{
 		{true, true, "SELECT id FROM t WHERE x = $1 AND y = $2", 2},
 		{true, false, "SELECT id FROM t WHERE x = $1", 1},
@@ -154,6 +158,7 @@ func TestForm(t *testing.T) {
 // parenthesis preceded by a word is a call or list paren rather than a group, so
 // an IN list keeps its parentheses in every branch.
 func TestGroupElisionLeavesDataParensAlone(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(names: string[], n: int, flagA: bool): sql.many<R> {
@@ -162,6 +167,7 @@ SELECT id FROM t WHERE name IN ({names}) {if flagA}AND n = {n}{/if}
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestParens(t *testing.T) {
+	t.Parallel()
 	on, err := BuildQ([]string{"a", "b"}, 5, true)
 	if err != nil { t.Fatal(err) }
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "SELECT id FROM t WHERE name IN ($1, $2) AND n = $3" {
@@ -181,6 +187,7 @@ func TestParens(t *testing.T) {
 // part of that two-operand form. A whole BETWEEN inside a condition renders
 // unchanged, and a BETWEEN split across a branch boundary is reported.
 func TestGroupElisionBetweenIsNotAJoiner(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(lo: int, hi: int, flagA: bool, flagB: bool): sql.many<R> {
@@ -189,6 +196,7 @@ SELECT id FROM t WHERE {if flagA}n BETWEEN {lo} AND {hi}{/if} {if flagB}AND flag
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestBetween(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t WHERE n BETWEEN $1 AND $2 AND flag"},
 		{true, false, "SELECT id FROM t WHERE n BETWEEN $1 AND $2"},
@@ -217,6 +225,7 @@ SELECT id FROM t WHERE n BETWEEN {lo} {if hasHi}AND {hi}{/if}
 // TestGroupElisionUnbalancedBranchParens checks that a parenthesis pair opening
 // inside one branch and closing outside it stays unresolvable rather than guessed.
 func TestGroupElisionUnbalancedBranchParens(t *testing.T) {
+	t.Parallel()
 	refuses(t, `package queries
 type R { id: int }
 export statement Q(p: int, flagA: bool): sql.many<R> {
@@ -228,6 +237,7 @@ SELECT id FROM t WHERE {if flagA}({/if}n = {p}
 // nothing fills the caller's group only when it emits, since the callee writes
 // into the caller's own Builder.
 func TestGroupElisionThroughPredicate(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 statement Active(on: bool): sql.predicate {{if on}active{/if}}
@@ -237,6 +247,7 @@ SELECT id FROM t WHERE {Active(flagA)} {if flagB}AND n = {p}{/if}
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestPredicate(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t WHERE active AND n = $1"},
 		{true, false, "SELECT id FROM t WHERE active"},
@@ -259,6 +270,7 @@ func TestPredicate(t *testing.T) {
 // predicate that can empty out is still a generation error, because dropping an
 // empty WHERE there would turn one false branch into a full-table delete.
 func TestGroupElisionKeepsMutationProof(t *testing.T) {
+	t.Parallel()
 	refused := []string{
 		`export statement A(id: int, flagA: bool): sql.exec {DELETE FROM users WHERE {if flagA}id = {id}{/if}}`,
 		`export statement A(id: int, flagA: bool): sql.exec {DELETE FROM users {if flagA}WHERE id = {id}{/if}}`,
@@ -285,6 +297,7 @@ func TestGroupElisionKeepsMutationProof(t *testing.T) {
 // takes its parentheses and the joiner that attached it, which falls out of the
 // frame protocol rather than needing a rule of its own.
 func TestGroupElisionNestedGroupTakesItsJoiner(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(p: int, q: int, flagA: bool, flagB: bool): sql.many<R> {
@@ -293,6 +306,7 @@ SELECT id FROM t WHERE n = {p} AND ({if flagA}x = {q}{/if} OR {if flagB}y{/if})
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestNested(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t WHERE n = $1 AND (x = $2 OR y)"},
 		{true, false, "SELECT id FROM t WHERE n = $1 AND (x = $2)"},
@@ -314,6 +328,7 @@ func TestNested(t *testing.T) {
 // bare ON is one of them: fmtclause.go already classifies it boolean, so the
 // opener this needs was already computed.
 func TestGroupElisionHavingAndJoinOn(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(n: int, m: int, flagA: bool, flagB: bool): sql.many<R> {
@@ -323,6 +338,7 @@ GROUP BY t.id HAVING {if flagB}count(*) > {m}{/if}
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestOnHaving(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT t.id FROM t JOIN u ON t.u = u.id AND u.n = $1 GROUP BY t.id HAVING count(*) > $2"},
 		{true, false, "SELECT t.id FROM t JOIN u ON t.u = u.id AND u.n = $1 GROUP BY t.id"},
@@ -345,6 +361,7 @@ func TestOnHaving(t *testing.T) {
 // closes the group at CONFLICT with nothing having filled it, and the keyword
 // vanishes with the group.
 func TestGroupElisionOnConflictKeepsItsOn(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 export statement Up(id: int, n: string, flagA: bool): sql.exec {
 INSERT INTO t (id, n) VALUES ({id}, {n})
@@ -353,6 +370,7 @@ ON CONFLICT (id) DO UPDATE SET n = {n} WHERE t.id = {id} {if flagA}AND t.n <> {n
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestOnConflict(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a bool; want string }{
 		{true, "INSERT INTO t (id, n) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET n = $3 WHERE t.id = $4 AND t.n <> $5"},
 		{false, "INSERT INTO t (id, n) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET n = $3 WHERE t.id = $4"},
@@ -373,6 +391,7 @@ func TestOnConflict(t *testing.T) {
 // existing documentation recommends, so it must keep rendering unchanged when the
 // condition holds and lose the operator with the condition when it does not.
 func TestGroupElisionDocumentedForm(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type User { id: int, name: string, active: bool }
 export statement SearchUsers(name: string, activeOnly: bool): sql.many<User> {
@@ -387,6 +406,7 @@ ORDER BY id
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestDocs(t *testing.T) {
+	t.Parallel()
 	on, err := BuildSearchUsers("a", true)
 	if err != nil { t.Fatal(err) }
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "SELECT id, name, active FROM users WHERE name = $1 AND active = $2 ORDER BY id" {
@@ -406,6 +426,7 @@ func TestDocs(t *testing.T) {
 // that a body with nothing elidable in it is emitted exactly as before, so no
 // group call reaches its generated code at all.
 func TestGroupElisionByteIdentityWithoutConditions(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(p: int): sql.many<R> {

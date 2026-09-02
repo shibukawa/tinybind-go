@@ -126,26 +126,19 @@ func MultipartParseError(err error, tooLarge bool) error {
 	return BadRequest(Problem{Code: "multipart_parse", Message: "invalid multipart body"}, err)
 }
 
-// IsMessageTooLarge reports the transport-neutral size-limit failures, without
-// errors.As so TinyGo does not need reflect.AssignableTo. A caller adds its own
-// transport's error type before consulting this.
+// IsMessageTooLarge reports the transport-neutral size-limit failures. A
+// caller adds its own transport's error type before consulting this. The text
+// checks read the outermost message, which carries every wrapped one.
 func IsMessageTooLarge(err error) bool {
-	for err != nil {
-		if err == multipart.ErrMessageTooLarge {
-			return true
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "request body too large") ||
-			strings.Contains(msg, "message too large") {
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
+	if err == nil {
+		return false
 	}
-	return false
+	if errors.Is(err, multipart.ErrMessageTooLarge) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "request body too large") ||
+		strings.Contains(msg, "message too large")
 }
 
 // RestFormAny builds map[string]any from leftover form keys not in exclude.

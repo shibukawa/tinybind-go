@@ -22,6 +22,7 @@ func formatSource(t *testing.T, source string) string {
 }
 
 func TestFormatShortStatementStaysOnOneLine(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export statement FindUser(id: int): sql.one<UserRow> {SELECT id, name FROM users WHERE id = {id}}")
 	want := "export statement FindUser(id: int): sql.one<UserRow> {\n" +
 		"  SELECT id, name\n" +
@@ -34,6 +35,7 @@ func TestFormatShortStatementStaysOnOneLine(t *testing.T) {
 }
 
 func TestFormatIsIdempotent(t *testing.T) {
+	t.Parallel()
 	sources := []string{
 		"package fixture\ntype UserRow { id: int, name: string }\nexport statement FindUser(id: int): sql.one<UserRow> {SELECT id, name FROM users WHERE id = {id}}",
 		"statement A(id: int, flag: bool): sql.exec {DELETE FROM users WHERE {if flag}id = {id}{else}name = 'x'{/if}}",
@@ -49,6 +51,7 @@ func TestFormatIsIdempotent(t *testing.T) {
 }
 
 func TestFormatShowsLayout(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export statement Report(low: int): sql.many<Row> {WITH recent AS (SELECT id, total FROM orders WHERE total > {low}) SELECT r.id, r.total, u.name FROM recent r JOIN users u ON u.id = r.id AND u.active WHERE r.total > 0 ORDER BY r.total DESC}")
 	t.Logf("\n%s", got)
 	if !strings.Contains(got, "WITH recent AS (") {
@@ -57,6 +60,7 @@ func TestFormatShowsLayout(t *testing.T) {
 }
 
 func TestFormatKeepsComments(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "// what this file is for\npackage fixture\n\n// find one user\nexport statement FindUser(id: int): sql.one<UserRow> {SELECT id FROM users WHERE id = {id}}")
 	if !strings.Contains(got, "// what this file is for") || !strings.Contains(got, "// find one user") {
 		t.Fatalf("comments lost:\n%s", got)
@@ -64,6 +68,7 @@ func TestFormatKeepsComments(t *testing.T) {
 }
 
 func TestFormatKeepsConflictActionOnOneClause(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export statement Upsert(id: int, name: string): sql.exec {INSERT INTO users (id, name) VALUES ({id}, {name}) ON CONFLICT(id) DO UPDATE SET name = {name}}")
 	// DO UPDATE SET is one conflict action, not an UPDATE statement followed by
 	// a SET clause, so it stays on the line its ON CONFLICT opened.
@@ -76,6 +81,7 @@ func TestFormatKeepsConflictActionOnOneClause(t *testing.T) {
 }
 
 func TestFormatEndsConflictClauseAtReturning(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export statement Upsert(id: int, name: string): sql.one<UserRow> {INSERT INTO users (id, name) VALUES ({id}, {name}) ON CONFLICT(id) DO UPDATE SET name = {name} RETURNING id, name}")
 	if !strings.Contains(got, "\n  RETURNING id, name\n") {
 		t.Fatalf("RETURNING did not open its own line:\n%s", got)

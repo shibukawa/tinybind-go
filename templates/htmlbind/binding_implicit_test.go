@@ -23,6 +23,7 @@ func bindingOptions() htmlbind.GenerateOptions {
 // TestImplicitBindingNeedsNoParameter is the point of the feature: a name in
 // scope in every template, with nothing threaded through a chain.
 func TestImplicitBindingNeedsNoParameter(t *testing.T) {
+	t.Parallel()
 	out, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(): html {<p>{lang}</p>}`), bindingOptions())
 	if err != nil {
@@ -46,6 +47,7 @@ func TestImplicitBindingNeedsNoParameter(t *testing.T) {
 // TestImplicitBindingCrossesAChainWithoutThreading covers the case the feature
 // exists for: a layout between the shell and the page carries nothing.
 func TestImplicitBindingCrossesAChainWithoutThreading(t *testing.T) {
+	t.Parallel()
 	source := `component Layout(children: html): html {<main><slot required/></main>}
 component Page(): html {<Layout><p>{lang}</p></Layout>}`
 	if _, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions()); err != nil {
@@ -54,6 +56,7 @@ component Page(): html {<Layout><p>{lang}</p></Layout>}`
 }
 
 func TestImplicitBindingInAnAttribute(t *testing.T) {
+	t.Parallel()
 	out, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(): html {<html lang={lang}><body>x</body></html>}`), bindingOptions())
 	if err != nil {
@@ -71,6 +74,7 @@ func TestImplicitBindingInAnAttribute(t *testing.T) {
 // list the request named: scope wins over the binding table by construction, so
 // any binder that could take the name has to refuse it.
 func TestShadowingABindingIsAnError(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source string
@@ -113,6 +117,7 @@ func TestShadowingABindingIsAnError(t *testing.T) {
 // TestDeclaringABindingNobodyReadsChangesNothing keeps the cost of declaring
 // one at zero, which is what lets a framework declare its whole set.
 func TestDeclaringABindingNobodyReadsChangesNothing(t *testing.T) {
+	t.Parallel()
 	source := `component Page(name: string): html {<p>{name}</p>}`
 	withBindings, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions())
 	if err != nil {
@@ -128,6 +133,7 @@ func TestDeclaringABindingNobodyReadsChangesNothing(t *testing.T) {
 }
 
 func TestBindingRegistrationMistakes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		binding htmlbind.ImplicitBinding
@@ -155,6 +161,7 @@ func TestBindingRegistrationMistakes(t *testing.T) {
 // body is now distinguished per binding value, which is what
 // decision:implicit-binding-cache-identity settles.
 func TestCachedComponentKeysOnTheBinding(t *testing.T) {
+	t.Parallel()
 	source := "@cache(ttl: \"5m\")\ncomponent Page(): html {<p>{lang}</p>}"
 	out, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions())
 	if err != nil {
@@ -172,6 +179,7 @@ func TestCachedComponentKeysOnTheBinding(t *testing.T) {
 // TestCachedComponentKeysOnABindingItReachesThroughACall covers the call graph:
 // a nested read makes the caller's output depend on the binding.
 func TestCachedComponentKeysOnABindingItReachesThroughACall(t *testing.T) {
+	t.Parallel()
 	source := "component Inner(): html {<p>{lang}</p>}\n\n@cache(ttl: \"5m\")\ncomponent Page(): html {<Inner/>}"
 	out, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions())
 	if err != nil {
@@ -185,6 +193,7 @@ func TestCachedComponentKeysOnABindingItReachesThroughACall(t *testing.T) {
 // TestCachedComponentReadingNoBindingIsUnchanged keeps the promise that a
 // project declaring none pays nothing.
 func TestCachedComponentReadingNoBindingIsUnchanged(t *testing.T) {
+	t.Parallel()
 	source := "@cache(ttl: \"5m\")\ncomponent Page(name: string): html {<p>{name}</p>}"
 	withBindings, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions())
 	if err != nil {
@@ -202,6 +211,7 @@ func TestCachedComponentReadingNoBindingIsUnchanged(t *testing.T) {
 // TestBindingVaryAxisFoldsIntoThePlan is the outside-the-component half: a
 // caller writing a Vary header has to see what a nested component depends on.
 func TestBindingVaryAxisFoldsIntoThePlan(t *testing.T) {
+	t.Parallel()
 	source := "component Inner(): html {<p>{lang}</p>}\n\ncomponent Page(): html {<Inner/>}"
 	out, err := htmlbind.Generate("b.txt", []byte(source), bindingOptions())
 	if err != nil {
@@ -216,6 +226,7 @@ func TestBindingVaryAxisFoldsIntoThePlan(t *testing.T) {
 // value in its URL declares: two languages are already two URLs, and an axis
 // would only fragment an intermediary's cache.
 func TestBindingWithNoVaryAxisContributesNone(t *testing.T) {
+	t.Parallel()
 	options := htmlbind.GenerateOptions{
 		ImplicitBindings: []htmlbind.ImplicitBinding{{
 			Name:     "lang",
@@ -247,6 +258,7 @@ func segmentOptions() htmlbind.GenerateOptions {
 // type gate, and the reason E is an amendment to
 // requirement:url-attribute-scheme-safety rather than an additive feature.
 func TestPathSegmentBindingReachesAURLAttribute(t *testing.T) {
+	t.Parallel()
 	out, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(): html {<a href="/{lang}/about">go</a>}`), segmentOptions())
 	if err != nil {
@@ -265,6 +277,7 @@ func TestPathSegmentBindingReachesAURLAttribute(t *testing.T) {
 // TestPathSegmentCollapseShapes covers the three forms the requirement names,
 // by reading the emitted arguments rather than by rendering.
 func TestPathSegmentCollapseShapes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		markup   string
@@ -293,6 +306,7 @@ func TestPathSegmentCollapseShapes(t *testing.T) {
 // the kind. A rule stated over emptiness, or over bindings in general, would
 // widen the gate the security review narrowed.
 func TestOrdinaryBindingStillCannotReachAURLAttribute(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(): html {<a href="/{lang}/about">go</a>}`), bindingOptions())
 	if err == nil {
@@ -306,6 +320,7 @@ func TestOrdinaryBindingStillCannotReachAURLAttribute(t *testing.T) {
 // TestAPlainStringStillCannotReachAURLAttribute is the property the gate exists
 // for, unchanged by the exception.
 func TestAPlainStringStillCannotReachAURLAttribute(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(q: string): html {<a href="/search/{q}">go</a>}`), segmentOptions())
 	if err == nil {
@@ -319,6 +334,7 @@ func TestAPlainStringStillCannotReachAURLAttribute(t *testing.T) {
 // TestPathSegmentIsNotCollapsedOutsideAURLContext scopes the collapse to URL
 // attributes, since collapsing in prose would be wrong.
 func TestPathSegmentIsNotCollapsedOutsideAURLContext(t *testing.T) {
+	t.Parallel()
 	out, err := htmlbind.Generate("b.txt",
 		[]byte(`component Page(): html {<p>/{lang}/ is a prefix</p>}`), segmentOptions())
 	if err != nil {
@@ -332,6 +348,7 @@ func TestPathSegmentIsNotCollapsedOutsideAURLContext(t *testing.T) {
 // TestPathSegmentBindingMustReturnAString keeps the registration honest: the
 // helper percent-encodes a string, so a typed provider has nothing to encode.
 func TestPathSegmentBindingMustReturnAString(t *testing.T) {
+	t.Parallel()
 	options := htmlbind.GenerateOptions{
 		ImplicitBindings: []htmlbind.ImplicitBinding{{
 			Name:        "lang",
@@ -353,6 +370,7 @@ func TestPathSegmentBindingMustReturnAString(t *testing.T) {
 // over has to come from the part before it, and a second segment must not
 // inherit the first one's.
 func TestPathSegmentInHarderPositions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		markup string

@@ -23,6 +23,7 @@ func generateHandlers(t *testing.T, source string, options GenerateOptions) (str
 }
 
 func TestClientHandlersLowerToOneMarker(t *testing.T) {
+	t.Parallel()
 	out, err := generateHandlers(t, blockComponent, GenerateOptions{
 		ClientHandlers: map[string]ClientHandlerSet{
 			"Counter": {Resolved: []string{"increment", "validate"}},
@@ -46,6 +47,7 @@ func TestClientHandlersLowerToOneMarker(t *testing.T) {
 }
 
 func TestClientHandlerNamespaceIsFreeOutsideAScriptBlock(t *testing.T) {
+	t.Parallel()
 	// rule:event-attribute-context assigns the hyphenated on- space to custom
 	// elements, and this feature takes it back only where a handler could resolve.
 	out, err := generateHandlers(t,
@@ -62,6 +64,7 @@ func TestClientHandlerNamespaceIsFreeOutsideAScriptBlock(t *testing.T) {
 }
 
 func TestUnknownClientHandlerFailsGeneration(t *testing.T) {
+	t.Parallel()
 	_, err := generateHandlers(t, blockComponent, GenerateOptions{
 		ClientHandlers: map[string]ClientHandlerSet{"Counter": {Resolved: []string{"increment"}}},
 	})
@@ -74,6 +77,7 @@ func TestUnknownClientHandlerFailsGeneration(t *testing.T) {
 }
 
 func TestUnresolvedClientHandlerReportsTheCallersReason(t *testing.T) {
+	t.Parallel()
 	// The position is the module's and the reason is the caller's, which is what
 	// lets the module diagnose a block it never read.
 	_, err := generateHandlers(t, blockComponent, GenerateOptions{
@@ -94,6 +98,7 @@ func TestUnresolvedClientHandlerReportsTheCallersReason(t *testing.T) {
 }
 
 func TestAComponentWithNoResolvedSetIsUnchecked(t *testing.T) {
+	t.Parallel()
 	// The reporting pass runs before the caller has anything to answer with, so
 	// an absent entry must compile rather than reject every name.
 	out, err := generateHandlers(t, blockComponent, GenerateOptions{})
@@ -106,6 +111,7 @@ func TestAComponentWithNoResolvedSetIsUnchecked(t *testing.T) {
 }
 
 func TestClientHandlerRejectsBadValues(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, attrs, want string }{
 		{"computed", `on-click={label}`, "must be a literal handler name"},
 		{"bare", `on-click`, "must name a function"},
@@ -132,6 +138,7 @@ export function setup(el) {}
 }
 
 func TestASecondHyphenIsNotAClientHandler(t *testing.T) {
+	t.Parallel()
 	// on-my-event keeps the custom-element reading rule:event-attribute-context
 	// gives it, so the two rosters divide the on- space along one line.
 	out, err := generateHandlers(t, `export component Counter(): html {

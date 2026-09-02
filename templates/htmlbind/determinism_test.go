@@ -15,6 +15,7 @@ import (
 // plans from a map range, so the same template produced two different files at
 // random and the golden comparison failed intermittently.
 func TestGenerationIsDeterministic(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join("..", "..", "testdata", "templates", "htmlbind")
 	entries, err := os.ReadDir(root)
 	if err != nil {

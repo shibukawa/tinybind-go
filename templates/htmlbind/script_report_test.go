@@ -18,6 +18,7 @@ export component Plain(): html { <p>nothing</p> }
 `
 
 func TestComponentScriptsReportsTheBlockVerbatim(t *testing.T) {
+	t.Parallel()
 	got, err := ComponentScripts("page.tb.html", []byte(reportSource))
 	if err != nil {
 		t.Fatalf("ComponentScripts: %v", err)
@@ -44,6 +45,7 @@ func TestComponentScriptsReportsTheBlockVerbatim(t *testing.T) {
 }
 
 func TestComponentScriptsReportsReferencedHandlers(t *testing.T) {
+	t.Parallel()
 	got, err := ComponentScripts("page.tb.html", []byte(reportSource))
 	if err != nil {
 		t.Fatalf("ComponentScripts: %v", err)
@@ -54,6 +56,7 @@ func TestComponentScriptsReportsReferencedHandlers(t *testing.T) {
 }
 
 func TestComponentScriptsReportsTheDeclaredParameters(t *testing.T) {
+	t.Parallel()
 	got, err := ComponentScripts("page.tb.html", []byte(reportSource))
 	if err != nil {
 		t.Fatalf("ComponentScripts: %v", err)
@@ -64,6 +67,7 @@ func TestComponentScriptsReportsTheDeclaredParameters(t *testing.T) {
 }
 
 func TestComponentScriptsOmitsAComponentWithNoBlock(t *testing.T) {
+	t.Parallel()
 	got, err := ComponentScripts("page.tb.html", []byte(reportSource))
 	if err != nil {
 		t.Fatalf("ComponentScripts: %v", err)
@@ -76,6 +80,7 @@ func TestComponentScriptsOmitsAComponentWithNoBlock(t *testing.T) {
 }
 
 func TestComponentScriptsFailsLikeGenerate(t *testing.T) {
+	t.Parallel()
 	// The reader runs the analysis Generate runs, so a broken module fails here
 	// with the same diagnostic rather than yielding a partial answer.
 	_, err := ComponentScripts("page.tb.html", []byte(
@@ -89,6 +94,7 @@ func TestComponentScriptsFailsLikeGenerate(t *testing.T) {
 }
 
 func TestComponentScriptsIsStableAcrossRuns(t *testing.T) {
+	t.Parallel()
 	first, err := ComponentScripts("page.tb.html", []byte(reportSource))
 	if err != nil {
 		t.Fatalf("ComponentScripts: %v", err)

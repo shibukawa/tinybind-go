@@ -9,6 +9,7 @@ import (
 
 // Every emitter-owned local, used as a template parameter name.
 func TestGeneratedIdentifierNamespace(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"b", "err", "statement", "rows", "result", "value", "executor", "yield"} {
 		t.Run(name, func(t *testing.T) {
 			source := "package queries\ntype U { id: int }\n" +
@@ -25,6 +26,7 @@ func TestGeneratedIdentifierNamespace(t *testing.T) {
 }
 
 func TestGeneratedIdentifierNamespaceRefusals(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"ctx param": `export statement Q(ctx: int): sql.exec {DELETE FROM t WHERE id = {ctx}}`,
 		"db param":  `export statement Q(db: int): sql.exec {DELETE FROM t WHERE id = {db}}`,

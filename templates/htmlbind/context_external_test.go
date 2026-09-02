@@ -35,6 +35,7 @@ export component Page(): html {
 `
 
 func TestSyncExternalReceivesTheRenderContext(t *testing.T) {
+	t.Parallel()
 	generated, err := htmlbind.Generate("ctx.pw.html", []byte(contextExternalSource), htmlbind.GenerateOptions{
 		ContextExternals: map[string]bool{"Token": true, "Field": true, "Enabled": true, "Tags": true},
 	})
@@ -64,6 +65,7 @@ func TestSyncExternalReceivesTheRenderContext(t *testing.T) {
 // template whose implementations take no context generates the instructions it
 // generated before the context forms existed.
 func TestExternalsWithoutContextAreUnchanged(t *testing.T) {
+	t.Parallel()
 	generated, err := htmlbind.Generate("plain.pw.html", []byte(contextExternalSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +91,7 @@ func TestExternalsWithoutContextAreUnchanged(t *testing.T) {
 // TestPartialContextExternals covers the per-function choice: one external takes
 // the context and the other does not, in the same template.
 func TestPartialContextExternals(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 external Token(): string
@@ -116,6 +119,7 @@ export component Page(): html {
 // TestAwaitBindingArgumentTakesContext covers an external called as an argument
 // of an await binding, where the generated closure already holds the context.
 func TestAwaitBindingArgumentTakesContext(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 external Token(): string
@@ -144,6 +148,7 @@ export component Page(): html {
 // context-carrying instruction: awaiting a value the caller started emits an
 // unset check that runs before anything is written, so it may not call out.
 func TestPendingBindingRejectsAContextExternal(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 type Row {

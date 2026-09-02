@@ -5,6 +5,7 @@ import "testing"
 // TestInsertItemAgreement checks that a column count which can disagree with its
 // value count is a generation error, and that a matched pair still generates.
 func TestInsertItemAgreement(t *testing.T) {
+	t.Parallel()
 	accepted := map[string]string{
 		"static": `export statement A(id: int, n: string): sql.exec {
 INSERT INTO users (id, name) VALUES ({id}, {n})}`,

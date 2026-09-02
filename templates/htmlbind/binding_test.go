@@ -22,6 +22,7 @@ func bindingSource(body string) string {
 // call. Without a binding each mention compiles to its own closure, which is
 // correct and is exactly what makes a component that fetches unaffordable.
 func TestValueBindingCallsItsExternalOnce(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>"), htmlbind.GenerateOptions{})
 	if calls := strings.Count(generated, "LoadData("); calls != 1 {
 		t.Fatalf("want one LoadData call, got %d:\n%s", calls, generated)
@@ -36,6 +37,7 @@ func TestValueBindingCallsItsExternalOnce(t *testing.T) {
 // The same template without the binding is the behaviour that has to stay
 // unchanged, so the repeat is still a repeat when nobody asked for a name.
 func TestWithoutABindingEveryMentionIsStillItsOwnCall(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("<h1>{LoadData(id).title}</h1>\n<p>{LoadData(id).summary}</p>"), htmlbind.GenerateOptions{})
 	if calls := strings.Count(generated, "LoadData("); calls != 2 {
 		t.Fatalf("want two LoadData calls, got %d:\n%s", calls, generated)
@@ -47,6 +49,7 @@ func TestWithoutABindingEveryMentionIsStillItsOwnCall(t *testing.T) {
 // to, because its bindings settle concurrently; letting this comma mean
 // something else would be one spelling with two meanings.
 func TestBindingsOfOneDirectiveCannotDependOnEachOther(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("{val raw = Norm(id), key = Norm(raw)}\n<p>{key}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "the bindings of one directive are independent") {
 		t.Fatalf("want the independence diagnostic, got %q", message)
@@ -59,6 +62,7 @@ func TestBindingsOfOneDirectiveCannotDependOnEachOther(t *testing.T) {
 // Written as two directives it is an ordinary enclosing binding, and the
 // generated scopes chain through Outer.
 func TestADependentBindingIsWrittenAsTwoDirectives(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("{val raw = Norm(id)}\n{val key = Norm(raw)}\n<p>{raw}/{key}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(generated, "Norm(p.Raw)") {
 		t.Fatalf("the second binding never read the first:\n%s", generated)
@@ -72,6 +76,7 @@ func TestADependentBindingIsWrittenAsTwoDirectives(t *testing.T) {
 // read: the lowering nests them, so the scan has to walk into a binding's body
 // to find the reader of the outer one.
 func TestIndependentBindingsShareOneDirective(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("{val a = Norm(id), b = Norm(id)}\n<p>{a}/{b}</p>"), htmlbind.GenerateOptions{})
 	if calls := strings.Count(generated, "Norm("); calls != 2 {
 		t.Fatalf("want one call per binding, got %d:\n%s", calls, generated)
@@ -86,6 +91,7 @@ func TestIndependentBindingsShareOneDirective(t *testing.T) {
 //
 // One check covers every source of a visible name, because the lowering nests.
 func TestBindingCannotReuseAVisibleName(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"an earlier binding": "{val a = Norm(id)}\n{val a = Norm(id)}\n<p>{a}</p>",
 		"a sibling binding":  "{val a = Norm(id), a = Norm(id)}\n<p>{a}</p>",
@@ -107,6 +113,7 @@ func TestBindingCannotReuseAVisibleName(t *testing.T) {
 // neither can move past a read, which is the whole reason the value binding is
 // the one that may not.
 func TestOtherBindersMayStillShadow(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"a loop variable":  "{val a = Norm(id)}\n<p>{a}</p>\n{for a in ids}<p>{a}</p>{/for}",
 		"an await binding": "{val s = Norm(id)}\n<p>{s}</p>\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}",
@@ -125,6 +132,7 @@ func TestOtherBindersMayStillShadow(t *testing.T) {
 // Generated Go accepts it, because the value becomes a struct field rather than
 // a local — which is exactly why the diagnostic has to come from here.
 func TestUnreadBindingIsRefused(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("{val a = Norm(id)}\n<p>hi</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "val binding a is never read") {
 		t.Fatalf("want the unread diagnostic, got %q", message)
@@ -134,6 +142,7 @@ func TestUnreadBindingIsRefused(t *testing.T) {
 // One unread binding beside a read one is still unread, which is the case a
 // comma list makes easy to write by accident.
 func TestUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("{val a = Norm(id), b = Norm(id)}\n<p>{b}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "val binding a is never read") {
 		t.Fatalf("want the unread diagnostic for the first binding, got %q", message)
@@ -145,6 +154,7 @@ func TestUnreadBindingBesideAReadOneIsRefused(t *testing.T) {
 // may still shadow can reach this; a value binding rebinding a name is refused
 // before the scan runs.
 func TestShadowedBindingCountsAsUnread(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"a loop variable":  "{val a = Norm(id)}\n{for a in ids}<p>{a}</p>{/for}",
 		"an await binding": "{val s = Norm(id)}\n{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}",
@@ -162,6 +172,7 @@ func TestShadowedBindingCountsAsUnread(t *testing.T) {
 // Every position a bound name can be read from has to count as a read, or a
 // working template is refused. These are the ones the walk had to learn.
 func TestABindingIsReadFromEveryValuePosition(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"text":              "{val a = Norm(id)}\n<p>{a}</p>",
 		"bare attribute":    "{val a = Norm(id)}\n<p class={a}>hi</p>",
@@ -192,11 +203,13 @@ func TestABindingIsReadFromEveryValuePosition(t *testing.T) {
 // is also what lets decision:value-binding-hoisting evaluate it before the div
 // opens.
 func TestMarkupNestingIsNotABlock(t *testing.T) {
+	t.Parallel()
 	generateWith(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
 }
 
 // A control construct is a block, so a binding inside one is unresolved after it.
 func TestBindingDoesNotEscapeAControlBlock(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"an if branch": "{if true}{val a = Norm(id)}<p>{a}</p>{/if}\n<p>{a}</p>",
 		"a for body":   "{for x in ids}{val a = Norm(x)}<p>{a}</p>{/for}\n<p>{a}</p>",
@@ -215,6 +228,7 @@ func TestBindingDoesNotEscapeAControlBlock(t *testing.T) {
 // directive is still a mistake even though the lowering has put it inside the
 // binding's subtree.
 func TestReadingABindingBeforeItIsWrittenIsRefused(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("<p>{a}</p>\n{val a = Norm(id)}\n<p>{a}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "is read before its val binding") {
 		t.Fatalf("want the read-before diagnostic, got %q", message)
@@ -224,6 +238,7 @@ func TestReadingABindingBeforeItIsWrittenIsRefused(t *testing.T) {
 // The point of the hoist: a binding written after markup is evaluated before it,
 // so a chain member's loader can still choose the response status.
 func TestBindingIsEvaluatedAtTheTopOfItsBlock(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("<div><p>hello</p></div>\n{val a = Norm(id)}\n<p>{a}</p>"), htmlbind.GenerateOptions{})
 	call := strings.Index(generated, "Norm(p.Id)")
 	markup := strings.Index(generated, "hello")
@@ -240,6 +255,7 @@ func TestBindingIsEvaluatedAtTheTopOfItsBlock(t *testing.T) {
 // A binding written inside an element is hoisted out of it, and the element is
 // left whole: hoisting moves the evaluation, never the markup.
 func TestHoistingOutOfAnElementLeavesItIntact(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("<div>{val a = Norm(id)}<p>{a}</p></div>\n<p>{a}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(generated, "<div><p>") || !strings.Contains(generated, "</p></div>") {
 		t.Fatalf("the element was split by the hoist:\n%s", generated)
@@ -252,6 +268,7 @@ func TestHoistingOutOfAnElementLeavesItIntact(t *testing.T) {
 // An await clause is the only place an async external can be called, so naming
 // one here points at that clause rather than reporting an unknown function.
 func TestAsyncExternalCannotBeBound(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("{val r = LoadSlow(id)}\n<p>{r.title}</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "await") {
 		t.Fatalf("want the diagnostic to name the await clause, got %q", message)
@@ -261,6 +278,7 @@ func TestAsyncExternalCannotBeBound(t *testing.T) {
 // An html result is a subtree rendered where it is written, not a value, so
 // binding it would promise an operand position it cannot fill.
 func TestHTMLResultCannotBeBound(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource("{val f = Fragment()}\n<p>x</p>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "renders where it is written") {
 		t.Fatalf("want the html diagnostic, got %q", message)
@@ -270,6 +288,7 @@ func TestHTMLResultCannotBeBound(t *testing.T) {
 // A binding has a body even without a closer, and an attribute value has no
 // later siblings for it to reach.
 func TestBindingIsRefusedInAnAttribute(t *testing.T) {
+	t.Parallel()
 	message := generateError(t, bindingSource(`<p class="{val a = Norm(id)}">x</p>`), htmlbind.GenerateOptions{})
 	if !strings.Contains(message, "forbidden in attributes") {
 		t.Fatalf("want the attribute diagnostic, got %q", message)
@@ -280,6 +299,7 @@ func TestBindingIsRefusedInAnAttribute(t *testing.T) {
 // owns a body is such a block. These are the traversals that had to learn the
 // node, so a miss shows up here rather than as a subtree quietly dropped.
 func TestBindingWorksInsideEveryBodyBearingBlock(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"for body":       "{for x in ids}{val r = LoadData(x)}<p>{r.title}{r.summary}</p>{/for}",
 		"if branch":      "{if flag}{val r = LoadData(id)}<p>{r.title}{r.summary}</p>{else}<p>no</p>{/if}",
@@ -302,6 +322,7 @@ func TestBindingWorksInsideEveryBodyBearingBlock(t *testing.T) {
 // parameter, so a hit skips the fetch as well as the markup — and none of that
 // needed a change to the cache.
 func TestCachedComponentCanLoadItsOwnData(t *testing.T) {
+	t.Parallel()
 	source := bindingHead + "@cache(ttl: \"5m\")\nexport component Card(id: string): html {\n" +
 		"{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
@@ -327,6 +348,7 @@ func TestCachedComponentCanLoadItsOwnData(t *testing.T) {
 // Without the keyword the shapes read `{val a = f()}` as content, because an
 // identifier followed by another one is neither a bare value nor a call.
 func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
+	t.Parallel()
 	source := bindingHead + "export component Card(id: string): html {\n" +
 		"<script>{val a = Norm(id)}const x = {JsonForScript(a)};</script>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
@@ -343,6 +365,7 @@ func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
 // binding is where the failure has a place to go: nothing else in the lowering
 // can carry an error out of a value expression.
 func TestFailingExternalIsBoundAsAWholeValue(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource("{val record = LoadData(id)}\n<h1>{record.title}</h1>"),
 		htmlbind.GenerateOptions{ErrorExternals: map[string]bool{"LoadData": true}})
 	if !strings.Contains(generated, ".ValErr(") {
@@ -356,6 +379,7 @@ func TestFailingExternalIsBoundAsAWholeValue(t *testing.T) {
 // The context and error variants compose, and generation names the instruction
 // by appending the suffix, so the runtime has to spell it the same way.
 func TestFailingExternalTakingTheContextComposes(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexternal Token(): string\n\nexport component Card(): html {\n{val t = Token()}\n<p>{t}</p>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{
 		ErrorExternals:   map[string]bool{"Token": true},
@@ -373,6 +397,7 @@ func TestFailingExternalTakingTheContextComposes(t *testing.T) {
 // confined to an await clause: there is nowhere for the failure to go. The
 // diagnostic says what to write instead.
 func TestFailingExternalIsRefusedOutsideABinding(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"interpolated":           "<h1>{LoadData(id).title}</h1>",
 		"nested in a bound call": "{val a = Norm(LoadData(id).title)}\n<p>{a}</p>",
@@ -392,6 +417,7 @@ func TestFailingExternalIsRefusedOutsideABinding(t *testing.T) {
 // An async external already returns an error and its failure is the boundary's,
 // recoverable at the clause, so the scan naming it changes nothing about it.
 func TestAsyncExternalIsUnaffectedByTheErrorScan(t *testing.T) {
+	t.Parallel()
 	source := bindingHead + "export component Card(id: string): html {\n" +
 		"{await s = LoadSlow(id)}<p>{s.title}</p>{fallback}...{/await}\n}\n"
 	if _, err := htmlbind.Generate("page.tb.html", []byte(source),
@@ -403,6 +429,7 @@ func TestAsyncExternalIsUnaffectedByTheErrorScan(t *testing.T) {
 // A project whose externals declare no error generates exactly what it
 // generated before this existed.
 func TestATotalExternalIsUnchanged(t *testing.T) {
+	t.Parallel()
 	body := "{val record = LoadData(id)}\n<h1>{record.title}</h1>"
 	with := generateWith(t, bindingSource(body), htmlbind.GenerateOptions{ErrorExternals: map[string]bool{}})
 	without := generateWith(t, bindingSource(body), htmlbind.GenerateOptions{})
@@ -423,6 +450,7 @@ func TestATotalExternalIsUnchanged(t *testing.T) {
 // being an update boundary, with no diagnostic. That is the shape the retired
 // typed page rung leaves behind, so it landed on every discovered page at once.
 func TestAValueBindingLeavesTheComponentItsBoundaryRoot(t *testing.T) {
+	t.Parallel()
 	plain := generateWith(t, bindingSource("<section><h1>{id}</h1></section>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(plain, "BoundaryAttr()") {
 		t.Fatalf("the component is not a boundary before a binding is added, so this test proves nothing:\n%s", plain)
@@ -441,6 +469,7 @@ func TestAValueBindingLeavesTheComponentItsBoundaryRoot(t *testing.T) {
 // a fix that steps over exactly one level would leave the second binding
 // failing the way the first one did.
 func TestTwoValueBindingsLeaveTheComponentItsBoundaryRoot(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource(
 		"{val one = Norm(id)}\n{val record = LoadData(one)}\n<section><h1>{record.title}</h1></section>"), htmlbind.GenerateOptions{})
 	if !strings.Contains(generated, "BoundaryAttr()") {
@@ -452,6 +481,7 @@ func TestTwoValueBindingsLeaveTheComponentItsBoundaryRoot(t *testing.T) {
 // no root to carry the attribute, binding or no binding, so seeing through the
 // binding must not turn into inventing a root.
 func TestAValueBindingDoesNotInventARootTheComponentLacks(t *testing.T) {
+	t.Parallel()
 	generated := generateWith(t, bindingSource(
 		"{val record = LoadData(id)}\n<h1>{record.title}</h1>\n<p>{record.summary}</p>"), htmlbind.GenerateOptions{})
 	if strings.Contains(generated, "BoundaryAttr()") {
@@ -463,6 +493,7 @@ func TestAValueBindingDoesNotInventARootTheComponentLacks(t *testing.T) {
 // element, so the same nil reads as "no single root" and refuses a component
 // that has one.
 func TestAValueBindingLeavesAScriptBlockItsRoot(t *testing.T) {
+	t.Parallel()
 	source := bindingHead + "export component Card(id: string): html {\n" +
 		"<script component>\nexport function setup(el) { return () => {} }\n</script>\n" +
 		"<section>{val record = LoadData(id)}<h1>{record.title}</h1></section>\n}\n"
@@ -474,6 +505,7 @@ func TestAValueBindingLeavesAScriptBlockItsRoot(t *testing.T) {
 // The third caller, which the report did not name: a reloadable component
 // carries its id and kind on that same root, and refuses generation without it.
 func TestAValueBindingLeavesAReloadableComponentItsRoot(t *testing.T) {
+	t.Parallel()
 	source := bindingHead + "@reloadable\nexport component Card(id: string): html {\n" +
 		"<section>{val record = LoadData(id)}<h1>{record.title}</h1></section>\n}\n"
 	if _, err := htmlbind.Generate("card.tb.html", []byte(source), htmlbind.GenerateOptions{}); err != nil {

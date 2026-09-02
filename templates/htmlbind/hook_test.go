@@ -47,6 +47,7 @@ export component Gallery(): html {
 // claimed reference is rewritten, an unclaimed one is untouched, and the
 // element tree is exactly what the author wrote.
 func TestValueRewriteLeavesStructureIntact(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	result, err := htmlbind.GenerateModule("gallery.tb.html", []byte(hookSource), htmlbind.GenerateOptions{
 		ReferenceHooks: []htmlbind.ReferenceHook{imageHook(&calls)},
@@ -94,6 +95,7 @@ func TestValueRewriteLeavesStructureIntact(t *testing.T) {
 // TestNoHooksLeavesOutputByteIdentical is the constraint every accepted seam in
 // this catalog carries: a project using none pays nothing.
 func TestNoHooksLeavesOutputByteIdentical(t *testing.T) {
+	t.Parallel()
 	plain, err := htmlbind.Generate("gallery.tb.html", []byte(hookSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -120,6 +122,7 @@ func TestNoHooksLeavesOutputByteIdentical(t *testing.T) {
 // such as an encode larger than its source. Declining is neither an error nor a
 // silent no-op.
 func TestSkipLeavesTheAttributeAndSaysWhy(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -152,6 +155,7 @@ export component Page(): html {
 // hook cannot see a runtime value, and saying nothing about it is the failure
 // this reporting exists to prevent.
 func TestExpressionValuedAttributeIsReported(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Card(image: url): html {
@@ -192,6 +196,7 @@ export component Card(image: url): html {
 // command happened to assemble its options, which `--check` compares bytes
 // against.
 func TestTwoHooksClaimingOneAttributeFail(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -225,6 +230,7 @@ export component Page(): html {
 // TestHooksMayShareAPairWhenTheirMatchesDoNot is the other half: two hooks on
 // one pair are legitimate as long as no value is claimed twice.
 func TestHooksMayShareAPairWhenTheirMatchesDoNot(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -258,6 +264,7 @@ export component Page(): html {
 // ordinarily named from a head declaration, which asset extraction otherwise
 // passes through untouched.
 func TestHookReachesHeadDeclaration(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -306,6 +313,7 @@ export component Page(): html {
 
 // TestForeignContentIsOutOfScope keeps a standard SVG name out of the seam.
 func TestForeignContentIsOutOfScope(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Icon(): html {
@@ -333,6 +341,7 @@ export component Icon(): html {
 // transform returning hostile bytes cannot break out of the attribute it
 // rewrites.
 func TestTransformValueCannotEscapeItsAttribute(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -362,6 +371,7 @@ export component Page(): html {
 // TestTransformErrorCarriesTheTemplatePosition keeps a diagnostic pointing at
 // the template the author wrote, not at generated markup.
 func TestTransformErrorCarriesTheTemplatePosition(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -389,6 +399,7 @@ export component Page(): html {
 // TestProducedFileCannotEscapeTheOutputRoot guards the caller, which writes
 // these files unexamined.
 func TestProducedFileCannotEscapeTheOutputRoot(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -416,6 +427,7 @@ export component Page(): html {
 // TestTwoSourcesOneOutputNameFail: this module owns the produced file list, so
 // it is the one place a collision can be seen at all.
 func TestTwoSourcesOneOutputNameFail(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -443,6 +455,7 @@ export component Page(): html {
 }
 
 func TestValidateReferenceHooks(t *testing.T) {
+	t.Parallel()
 	transform := func(htmlbind.ReferenceRequest) (htmlbind.ReferenceResult, error) {
 		return htmlbind.ReferenceResult{}, nil
 	}
@@ -487,6 +500,7 @@ func TestValidateReferenceHooks(t *testing.T) {
 
 // TestRewritingIsDeterministic guards the property `--check` depends on.
 func TestRewritingIsDeterministic(t *testing.T) {
+	t.Parallel()
 	first, err := htmlbind.Generate("gallery.tb.html", []byte(hookSource), htmlbind.GenerateOptions{
 		ReferenceHooks: []htmlbind.ReferenceHook{imageHook(nil)},
 	})
@@ -530,6 +544,7 @@ func stylesheetHook(entry, script, stylesheet string) htmlbind.ReferenceHook {
 // TestHookContributesHead covers the case the whole feature exists for: the
 // build produces a stylesheet, and without a contribution no page loads it.
 func TestHookContributesHead(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -564,6 +579,7 @@ export component Page(): html {
 // head of its own, which is the ordinary case for one that names its entry
 // point from the document shell.
 func TestHookContributesHeadWithoutADeclaration(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Widget(): html {
@@ -591,6 +607,7 @@ export component Widget(): html {
 // TestHookHeadContributionIsDeduplicated covers two entry points importing one
 // CSS module, which is one link and not two.
 func TestHookHeadContributionIsDeduplicated(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -629,6 +646,7 @@ export component Page(): html {
 // different attributes, which cannot both be right and must not be settled by
 // whichever template was walked first.
 func TestHookHeadContributionsDisagree(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -668,6 +686,7 @@ export component Page(): html {
 // TestHookSkipContributesNoHead covers a declined conversion, which produced no
 // file and so has nothing to load.
 func TestHookSkipContributesNoHead(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -690,6 +709,7 @@ export component Page(): html {
 // TestHookHeadContributionIsRestricted covers a hook reaching past loading what
 // it produced and into rewriting the document.
 func TestHookHeadContributionIsRestricted(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -720,6 +740,7 @@ export component Page(): html {
 // TestHookHeadContributionEscapes covers a transform handing over a value that
 // would break out of the attribute it lands in.
 func TestHookHeadContributionEscapes(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -751,6 +772,7 @@ export component Page(): html {
 // TestCollectReferencesCallsNoTransform covers the discovery pass: it must find
 // exactly what the rewrite would claim, and convert none of it.
 func TestCollectReferencesCallsNoTransform(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Page(): html {

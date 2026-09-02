@@ -2,6 +2,7 @@ package jsonbind
 
 import (
 	"strconv"
+	"sync/atomic"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -15,7 +16,7 @@ type Parser struct {
 	buf []byte
 	pos int
 	// depth counts the objects and arrays open at this position, so a document
-	// cannot drive the walk deeper than MaxNestingDepth.
+	// cannot drive the walk deeper than MaxNestingDepth allows.
 	depth int
 	// Keys and values get separate scratch buffers so a decoded key stays
 	// valid while the matching value is being decoded.
@@ -23,23 +24,49 @@ type Parser struct {
 	scratch    []byte
 }
 
-// MaxNestingDepth bounds how deeply objects and arrays may nest, matching
-// encoding/json's own limit.
+// DefaultMaxNestingDepth bounds how deeply objects and arrays may nest unless
+// SetMaxNestingDepth raises it.
 //
 // The walk is recursive — SkipValue and Any call themselves, and a generated
 // decoder calls the next one down — so without a bound the depth of the
-// document is the depth of the Go stack, and a request body decides it. A
-// megabyte of '[' is half a million frames: on a host that is tens of
-// megabytes of stack per request, and on a TinyGo target, whose stack is fixed
-// and small, it is an overflow rather than an error.
+// document is the depth of the Go stack, and a request body decides it. The
+// bound has to hold on the smallest stack this package runs on, and that is
+// not the host's: TinyGo's goroutine stacks are fixed, and its wasm targets
+// start with 64 KiB, on which SkipValue overflows at about a hundred open
+// brackets. Worse, a wasm overflow is detected only at exit, so the request
+// that caused it gets a wrong answer rather than an error. Ninety is under
+// that with room for the frames around the parser, and nothing legitimate
+// nests anywhere near it; encoding/json's ten thousand was the previous value
+// and is where a host with a growable stack may put it back.
 //
-// Nothing legitimate approaches this. A document that does is refused as a
-// parse failure, which generated binders already map to 400.
-const MaxNestingDepth = 10000
+// A document deeper than the bound is refused as a parse failure, which
+// generated binders already map to 400.
+const DefaultMaxNestingDepth = 90
+
+var maxNestingDepth atomic.Int32
+
+// SetMaxNestingDepth changes the process-wide nesting bound. Zero or a negative
+// value restores DefaultMaxNestingDepth. A host running on a growable stack can
+// raise it; a TinyGo target should raise it only together with -stack-size.
+func SetMaxNestingDepth(n int) {
+	if n <= 0 {
+		maxNestingDepth.Store(0)
+		return
+	}
+	maxNestingDepth.Store(int32(n))
+}
+
+// MaxNestingDepth returns the effective nesting bound.
+func MaxNestingDepth() int {
+	if n := maxNestingDepth.Load(); n > 0 {
+		return int(n)
+	}
+	return DefaultMaxNestingDepth
+}
 
 // enter counts one open object or array.
 func (p *Parser) enter() error {
-	if p.depth >= MaxNestingDepth {
+	if p.depth >= MaxNestingDepth() {
 		return p.fail("JSON value nested too deeply")
 	}
 	p.depth++

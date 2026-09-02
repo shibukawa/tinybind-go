@@ -21,6 +21,7 @@ const cachedAwaitHead = "package pages\n\n" +
 // between them, where a narrowed refusal that emitted the wrong plan would have
 // passed both.
 func TestACachedComponentMayAwait(t *testing.T) {
+	t.Parallel()
 	source := cachedAwaitHead + "@cache(ttl: \"5m\")\nexport component Card(id: string): html {\n" +
 		"{await record = LoadRecord(id)}<h1>{record.title}</h1>{fallback}<p>loading</p>{/await}\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
@@ -43,6 +44,7 @@ func TestACachedComponentMayAwait(t *testing.T) {
 // the whole eligibility test, and it has to still hold once the await half is
 // allowed.
 func TestACachedComponentMayNotWatch(t *testing.T) {
+	t.Parallel()
 	source := cachedAwaitHead + "@cache(ttl: \"5m\")\nexport component Card(id: string): html {\n" +
 		"{await record = Watch(id)}<h1>{record.title}</h1>{fallback}<p>loading</p>{/await}\n}\n"
 	message := generateError(t, source, htmlbind.GenerateOptions{})
