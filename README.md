@@ -504,20 +504,16 @@ table, is the flag's native equivalent.
 
 ### encoding/json/v2
 
-`encoding/json/v2` and `jsontext` are stable as of Go 1.27, but this module
-declares `go 1.26.0` and stays there — bumping it would raise the minimum Go
-version for every package this module exports, for every downstream consumer,
-just to build a benchmark measuring whether v2 is worth switching to. The
-comparison lives behind an opt-in build tag instead, and needs a locally bumped
-`go.mod` to compile at all, since Go resolves stdlib API availability from the
-module's own declared language version rather than from a flag:
+`encoding/json/v2` and `jsontext` are stable as of Go 1.27, which this module
+now declares, so the comparison compiles as it stands — the locally bumped
+`go.mod` it used to need is no longer part of the invocation. It still sits
+behind an opt-in build tag, because it measures whether v2 is worth switching
+to rather than being something an ordinary `go build` or `go test ./...`
+should reach:
 
 ```bash
 go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
 ```
-
-(with this module's own `go.mod` temporarily raised to `go 1.27.0`, or run from
-a throwaway module that imports this repo for its fixtures).
 
 | Path | v1, flag off | v1, flag on | v2 API | Generated |
 |------|--------------|-------------|--------|-----------|
@@ -556,7 +552,7 @@ TinyGo is a first-class target for generated binding code. The JSON runtime is
 kept independent of `net/http` so it can be used on js/wasm toolchains where
 TinyGo's standard-library HTTP path is unavailable.
 
-Verified with **TinyGo 0.41.1 + Go 1.26.x**.
+Verified with **TinyGo 0.42.0 + Go 1.27.x**.
 
 ```bash
 ./scripts/tinygo-check.sh
@@ -575,8 +571,8 @@ Verified with **TinyGo 0.41.1 + Go 1.26.x**.
 
 | Topic | Limitation |
 |-------|------------|
-| Toolchain | Project baseline is TinyGo 0.41.1 + Go 1.26.x |
-| js/wasm HTTP | TinyGo 0.41.1 + Go 1.26.x fails inside `net/http/roundtrip_js.go`; use `jsonbind` for HTTP-free WASM code |
+| Toolchain | Project baseline is TinyGo 0.42.0 + Go 1.27.x |
+| js/wasm HTTP | Builds on the current baseline; the `net/http/roundtrip_js.go` compile failure seen on TinyGo 0.41.1 + Go 1.26.x is gone. `jsonbind` is still the smaller choice for WASM code that needs no HTTP |
 | Streaming | Prefer host `go test` for `WriteStream`; not fully TinyGo-matrixed |
 | ServeMux | `DefaultOptions` discovers both `net/http.ServeMux` and `tinygodriver/httpmux.ServeMux`; use `httpmux` for Go 1.22 method and wildcard routing under TinyGo |
 | Multipart `File` | Supported via `httpbind.File` (`payload`); size/MIME `check` rules deferred. Body cap defaults to **1 MiB** (`SetMaxMultipartBodyBytes`) |

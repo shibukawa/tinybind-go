@@ -77,6 +77,7 @@ why_append_and_not_marshaljson:
 standard_interfaces_wait:
   decided: 2026-08-13, by the maintainer
   rule: recognize no standard JSON interface until encoding/json/v2 ships without the experiment, targeted at Go 1.27
+  wait_condition_met_2026_09_02: v2 is stable in Go 1.27 and the module now declares go 1.27.0, so the experiment gate this waited on is gone; what is deferred below is now a live question rather than a blocked one, and nothing here decides it
   why: an interface behind a GOEXPERIMENT is not a stable thing to write into a public API, and its exact spelling can still move
   what_is_deferred_with_it: whether a standard method is recognized at all, and which of the two v2 forms
   v1_and_v2_are_not_two_questions:

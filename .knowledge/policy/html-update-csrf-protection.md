@@ -31,7 +31,7 @@ server_validation:
   - compare secrets in constant time where applicable
   - reject missing or invalid token with 403 and record safe diagnostics
 defense_in_depth:
-  - wrap unsafe handlers with Go 1.25+ http.CrossOriginProtection on the repository Go 1.26 baseline
+  - wrap unsafe handlers with Go 1.25+ http.CrossOriginProtection on the repository Go 1.27 baseline
   - do not treat CrossOriginProtection as the token replacement when requests without Fetch Metadata or Origin must also be rejected
   - validate same-origin Origin and Fetch Metadata according to deployment proxy configuration
   - use Secure, HttpOnly, and appropriate SameSite session cookies; SameSite is not the only defense

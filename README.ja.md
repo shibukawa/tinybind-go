@@ -365,20 +365,15 @@ wasm とネイティブで strip のかかり方が違うのは、デバッグ�
 
 ### encoding/json/v2
 
-`encoding/json/v2` と `jsontext` は Go 1.27 で安定版になりましたが、このモジュール
-は `go 1.26.0` のままにしています。上げてしまうと、このモジュールが export する全パ
-ッケージについて、下流の消費者全員の Go の最低バージョンが上がってしまいます。「生成
-codec は v2 を対象にすべきではないか」という比較のためだけに、それは割に合いません。
-比較は opt-in の build tag の裏に置いていて、それだけでもビルドは通りません。Go は
-stdlib API が使えるかどうかをフラグではなくモジュール自身が宣言する言語バージョンか
-ら判断するので、コンパイルするには `go.mod` を手元で一時的に上げる必要があります。
+`encoding/json/v2` と `jsontext` は Go 1.27 で安定版になり、このモジュールも `go
+1.27.0` を宣言するようになったので、比較はそのままコンパイルできます。以前必要だった
+`go.mod` の一時的な引き上げはもう手順に含まれません。それでも opt-in の build tag の
+裏に置いてあります。これは「v2 に乗り換える価値があるか」を測るためのものであって、
+通常の `go build` や `go test ./...` が踏むべきものではないからです。
 
 ```bash
 go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
 ```
-
-(このモジュール自身の `go.mod` を一時的に `go 1.27.0` に上げるか、この repo を fixture
-として import する使い捨てモジュールから実行してください)
 
 | 経路 | v1・フラグなし | v1・フラグあり | v2 API | 生成コード |
 |------|----------------|----------------|--------|------------|
@@ -405,7 +400,7 @@ experiment を有効にした strip 済み wasm ビルドは、同じプログ�
 
 生成バインディングコードは TinyGo を第一級の対象とします。JSON runtime は `net/http` から独立しており、TinyGo の HTTP 標準ライブラリ経路が使えない js/wasm でも利用できます。
 
-検証済み: **TinyGo 0.41.1 + Go 1.26.x**。
+検証済み: **TinyGo 0.42.0 + Go 1.27.x**。
 
 ```bash
 ./scripts/tinygo-check.sh
@@ -424,8 +419,8 @@ experiment を有効にした strip 済み wasm ビルドは、同じプログ�
 
 | 項目 | 制限 |
 |------|------|
-| ツールチェイン | プロジェクト基準は TinyGo 0.41.1 + Go 1.26.x |
-| js/wasm HTTP | TinyGo 0.41.1 + Go 1.26.x は `net/http/roundtrip_js.go` 内で失敗するため、HTTP 不要の WASM では `jsonbind` を使う |
+| ツールチェイン | プロジェクト基準は TinyGo 0.42.0 + Go 1.27.x |
+| js/wasm HTTP | 現行基準ではビルドできる。TinyGo 0.41.1 + Go 1.26.x で見られた `net/http/roundtrip_js.go` のコンパイル失敗は解消された。HTTP 不要の WASM では依然として `jsonbind` の方が小さい |
 | ストリーミング | `WriteStream` はホストの `go test` を推奨。TinyGo 行列は未整備 |
 | ServeMux | `DefaultOptions` は `net/http.ServeMux` と `tinygodriver/httpmux.ServeMux` の両方を探索。TinyGo で Go 1.22 のメソッド・ワイルドカードルーティングを使う場合は `httpmux` を利用 |
 | Multipart `File` | `httpbind.File`（`payload`）で対応。サイズ/MIME の `check` は未対応。ボディ上限のデフォルトは **1 MiB**（`SetMaxMultipartBodyBytes`） |
