@@ -26,6 +26,7 @@ func parseBody(t *testing.T, body string) []Node {
 }
 
 func TestIsReadOnlyReadingStatements(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"SELECT id FROM users",
 		"select id from users",
@@ -43,6 +44,7 @@ func TestIsReadOnlyReadingStatements(t *testing.T) {
 }
 
 func TestIsReadOnlyWritingStatements(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"INSERT INTO users (id) VALUES ({id}) RETURNING id",
 		"UPDATE users SET flag = {flag} WHERE id = {id} RETURNING id",
@@ -64,6 +66,7 @@ func TestIsReadOnlyWritingStatements(t *testing.T) {
 
 // A keyword inside a comment is not SQL syntax. These bodies all read.
 func TestIsReadOnlyIgnoresComments(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"-- update users set flag = true\nSELECT id FROM users",
 		"-- delete from users\n-- insert into users\nSELECT id FROM users",
@@ -82,6 +85,7 @@ func TestIsReadOnlyIgnoresComments(t *testing.T) {
 // A keyword inside a literal or a quoted identifier is not SQL syntax. Backtick
 // and double-quote forms let a column be named after a statement verb.
 func TestIsReadOnlyIgnoresLiteralsAndQuotedIdentifiers(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"SELECT 'update users set flag = true' AS note FROM users",
 		"SELECT id FROM users WHERE note = 'delete from users'",
@@ -101,6 +105,7 @@ func TestIsReadOnlyIgnoresLiteralsAndQuotedIdentifiers(t *testing.T) {
 }
 
 func TestIsReadOnlyLockingClause(t *testing.T) {
+	t.Parallel()
 	writes := []string{
 		"SELECT id FROM users FOR UPDATE",
 		"SELECT id FROM users FOR NO KEY UPDATE",
@@ -127,6 +132,7 @@ func TestIsReadOnlyLockingClause(t *testing.T) {
 }
 
 func TestIsReadOnlyWithStatements(t *testing.T) {
+	t.Parallel()
 	reads := []string{
 		"WITH recent AS (SELECT id FROM users) SELECT id FROM recent",
 		"with recent as (select id from users) select id from recent",
@@ -160,6 +166,7 @@ func TestIsReadOnlyWithStatements(t *testing.T) {
 
 // The leading verb must not depend on a runtime branch.
 func TestIsReadOnlyConditionalLeadingVerb(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"{if flag}SELECT id FROM users{else}SELECT id FROM staged{/if}",
 		"{if flag}SELECT id FROM users{else}DELETE FROM users RETURNING id{/if}",
@@ -173,6 +180,7 @@ func TestIsReadOnlyConditionalLeadingVerb(t *testing.T) {
 // An unresolvable body is a write, so a scanner that loses its place cannot
 // report read-only.
 func TestScanSQLTokensUnterminated(t *testing.T) {
+	t.Parallel()
 	for _, sql := range []string{
 		"SELECT id FROM users WHERE note = 'unterminated",
 		`SELECT "unterminated FROM users`,
@@ -187,6 +195,7 @@ func TestScanSQLTokensUnterminated(t *testing.T) {
 }
 
 func TestScanSQLTokensSkipsPlaceholders(t *testing.T) {
+	t.Parallel()
 	tokens, ok := scanSQLTokens("SELECT id FROM users WHERE id = $1 AND flag = $2")
 	if !ok {
 		t.Fatal("scanSQLTokens ok = false")

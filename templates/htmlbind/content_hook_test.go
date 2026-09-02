@@ -42,6 +42,7 @@ func stubTypeScript(t *testing.T, seen *htmlbind.ContentRequest) htmlbind.Conten
 }
 
 func TestContentHookCompilesATypeScriptBlock(t *testing.T) {
+	t.Parallel()
 	var seen htmlbind.ContentRequest
 	result, err := htmlbind.GenerateModule("clock.tb.html", []byte(typescriptBlockSource), htmlbind.GenerateOptions{
 		ContentHooks: []htmlbind.ContentHook{stubTypeScript(t, &seen)},
@@ -83,6 +84,7 @@ func TestContentHookCompilesATypeScriptBlock(t *testing.T) {
 
 // The extension is the caller's: only it knows what its converter produces.
 func TestContentHookNamesTheProducedExtension(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("clock.tb.html", []byte(typescriptBlockSource), htmlbind.GenerateOptions{
 		ContentHooks: []htmlbind.ContentHook{{
 			Name: "typescript", Lang: "ts", Extension: "mjs",
@@ -105,6 +107,7 @@ func TestContentHookNamesTheProducedExtension(t *testing.T) {
 // A block marked for a language nobody compiles must not ship uncompiled: the
 // page would break in the browser with nothing in the build to point at.
 func TestUnregisteredLangFailsGeneration(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.GenerateModule("clock.tb.html", []byte(typescriptBlockSource), htmlbind.GenerateOptions{})
 	if err == nil {
 		t.Fatal("want an error for an unregistered lang, got none")
@@ -117,6 +120,7 @@ func TestUnregisteredLangFailsGeneration(t *testing.T) {
 }
 
 func TestTransformFailureNamesTheBlock(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.GenerateModule("clock.tb.html", []byte(typescriptBlockSource), htmlbind.GenerateOptions{
 		ContentHooks: []htmlbind.ContentHook{{
 			Name: "typescript", Lang: "ts",
@@ -136,6 +140,7 @@ func TestTransformFailureNamesTheBlock(t *testing.T) {
 }
 
 func TestContentHookRegistrationIsValidated(t *testing.T) {
+	t.Parallel()
 	for _, testcase := range []struct {
 		name  string
 		hooks []htmlbind.ContentHook
@@ -172,6 +177,7 @@ func TestContentHookRegistrationIsValidated(t *testing.T) {
 // A project registering hooks it never uses still regenerates what it did
 // before, which is what makes registration free.
 func TestUnmarkedBlockIgnoresRegisteredHooks(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 
 export component Counter(): html {

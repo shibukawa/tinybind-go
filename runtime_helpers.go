@@ -140,22 +140,13 @@ func multipartParseError(err error) error {
 	return bindcore.MultipartParseError(err, isRequestTooLarge(err))
 }
 
-// isRequestTooLarge reports body/message size limit errors without errors.As,
-// matching AsHTTPError's TinyGo-friendly unwrap style. The net/http-specific
-// MaxBytesError is checked here; the transport-neutral cases live in bindcore
-// so the other runtime reaches the same verdict for the same body.
+// isRequestTooLarge reports body/message size limit errors. The
+// net/http-specific MaxBytesError is checked here; the transport-neutral cases
+// live in bindcore so the other runtime reaches the same verdict for the same
+// body.
 func isRequestTooLarge(err error) bool {
-	for e := err; e != nil; {
-		if _, ok := e.(*http.MaxBytesError); ok {
-			return true
-		}
-		u, ok := e.(interface{ Unwrap() error })
-		if !ok {
-			break
-		}
-		e = u.Unwrap()
-	}
-	return bindcore.IsMessageTooLarge(err)
+	var tooLarge *http.MaxBytesError
+	return errors.As(err, &tooLarge) || bindcore.IsMessageTooLarge(err)
 }
 
 // ReadJSONBody reads the raw JSON body under MaxJSONBodyBytes. Generated

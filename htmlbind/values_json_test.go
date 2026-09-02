@@ -187,9 +187,9 @@ var allocSink []byte
 // allocated, and asserting on it would leave the tests below passing for no
 // reason.
 //
-// Callers log and return rather than calling t.Skip, because TinyGo's SkipNow
-// does not call runtime.Goexit: a test skipped there runs on to the assertion
-// it was skipping and is reported as a failure.
+// Callers log and return rather than calling t.Skip, because on TinyGo's wasm
+// targets SkipNow does not call runtime.Goexit: a test skipped there runs on to
+// the assertion it was skipping and is reported as a failure.
 func allocationsAreCounted() bool {
 	return testing.AllocsPerRun(10, func() { allocSink = make([]byte, 4096) }) > 0
 }

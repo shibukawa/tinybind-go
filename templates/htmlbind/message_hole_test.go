@@ -25,6 +25,7 @@ func holeOptions() htmlbind.GenerateOptions {
 //
 // See .knowledge requirement:message-hole-binding.
 func TestHoleNameComesFromTheTag(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent Page(): html {<p>{t agree}<a href=\"/start\"></a>{/t}</p>}"
 	out, err := htmlbind.Generate("h.txt", []byte(source), holeOptions())
 	if err != nil {
@@ -45,6 +46,7 @@ func TestHoleNameComesFromTheTag(t *testing.T) {
 // TestTwoHolesSharingATagNeedTheAttribute is the one case the tag-name rule
 // cannot answer, and the escape hatch it falls back to.
 func TestTwoHolesSharingATagNeedTheAttribute(t *testing.T) {
+	t.Parallel()
 	clashing := "messages about\n\ncomponent Page(): html {<p>{t links}<a href=\"/x\"></a><a href=\"/y\"></a>{/t}</p>}"
 	if _, err := htmlbind.Generate("h.txt", []byte(clashing), holeOptions()); err == nil {
 		t.Fatal("two holes sharing a tag were accepted with no way to tell them apart")
@@ -67,6 +69,7 @@ func TestTwoHolesSharingATagNeedTheAttribute(t *testing.T) {
 // TestTextInsideABlockBelongsToTheTranslation keeps the boundary: a sentence
 // written in the template would be a second copy of what the catalog holds.
 func TestTextInsideABlockBelongsToTheTranslation(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent Page(): html {<p>{t agree}please <a href=\"/x\"></a>{/t}</p>}"
 	_, err := htmlbind.Generate("h.txt", []byte(source), holeOptions())
 	if err == nil {
@@ -79,6 +82,7 @@ func TestTextInsideABlockBelongsToTheTranslation(t *testing.T) {
 
 // TestABlockBindingNoHoleIsAnError points an author at the plain form.
 func TestABlockBindingNoHoleIsAnError(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent Page(): html {<p>{t agree}{/t}</p>}"
 	_, err := htmlbind.Generate("h.txt", []byte(source), holeOptions())
 	if err == nil {
@@ -92,6 +96,7 @@ func TestABlockBindingNoHoleIsAnError(t *testing.T) {
 // TestACloserWithNoReferenceIsAnError covers the discovered-at-the-closer rule
 // from the other side.
 func TestACloserWithNoReferenceIsAnError(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Parse("h.txt", []byte("component Page(): html {<p>x{/t}</p>}"))
 	if err == nil {
 		t.Fatal("a stray closer parsed")
@@ -104,6 +109,7 @@ func TestACloserWithNoReferenceIsAnError(t *testing.T) {
 // TestThePlainFormIsUnaffected keeps the two forms separate: a reference with
 // no block is still a string expression.
 func TestThePlainFormIsUnaffected(t *testing.T) {
+	t.Parallel()
 	source := "messages about\n\ncomponent Page(): html {<p>{t title}</p>}"
 	out, err := htmlbind.Generate("h.txt", []byte(source), holeOptions())
 	if err != nil {
@@ -119,6 +125,7 @@ func TestThePlainFormIsUnaffected(t *testing.T) {
 // carrying rich text, which is a failure an author meets on their first save
 // rather than at generation.
 func TestAMessageBlockPrintsBackAsWritten(t *testing.T) {
+	t.Parallel()
 	sources := []string{
 		"messages terms\n\ncomponent Page(): html {\n  <p>{t agree}<a href=\"/start\"></a>{/t}</p>\n}\n",
 		"messages terms\n\ncomponent Page(): html {\n  <p>{t links}<a href=\"/x\" hole=\"first\"></a><a href=\"/y\" hole=\"second\"></a>{/t}</p>\n}\n",

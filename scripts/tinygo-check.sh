@@ -32,6 +32,13 @@ echo "==> tinygo test (runtime + generated mapping)"
 # covered by go test.
 tinygo test -run 'Test(Bind|Decode|Write|RoundTrip|GeneratedFile)' ./internal/mappingfixture
 tinygo test ./internal/tinycheck .
+# jsonbind is the runtime every TinyGo binary carries, and its nesting bound is
+# sized for TinyGo's stacks, so it runs on both schedulers: the wasm one is where
+# an overflow shows up as a wrong answer rather than a crash.
+tinygo test ./jsonbind
+tinygo test -target=wasip1 ./jsonbind
+# database/sql builds under TinyGo 0.42, so the SQL runtime is a target too.
+tinygo test ./sqlbind
 # The DynamoDB item codec. Only the codec tests build here: the ones beside them
 # drive the driver over an httptest server, and TinyGo has no net/http server,
 # so those carry a !tinygo tag.

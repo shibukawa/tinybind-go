@@ -18,6 +18,7 @@ func generateSQL(t *testing.T, source string) (string, error) {
 }
 
 func TestPrivateStatementIsCallableUnderItsOwnName(t *testing.T) {
+	t.Parallel()
 	source := "package store\ntype Row { id: int }\nstatement findUser(id: int): sql.one<Row> {SELECT id FROM users WHERE id = {id}}"
 	out, err := generateSQL(t, source)
 	if err != nil {
@@ -40,6 +41,7 @@ func TestPrivateStatementIsCallableUnderItsOwnName(t *testing.T) {
 }
 
 func TestExportedStatementKeepsItsDeclaredName(t *testing.T) {
+	t.Parallel()
 	source := "package store\ntype Row { id: int }\nexport statement FindUser(id: int): sql.one<Row> {SELECT id FROM users WHERE id = {id}}"
 	out, err := generateSQL(t, source)
 	if err != nil {
@@ -54,6 +56,7 @@ func TestExportedStatementKeepsItsDeclaredName(t *testing.T) {
 }
 
 func TestFragmentStatementKeepsAnyNameCase(t *testing.T) {
+	t.Parallel()
 	// A predicate is embedded into a caller's builder and never emitted under
 	// its own name, so its case reaches no Go identifier and is not constrained.
 	source := "package store\ntype Row { id: int }\nstatement Maybe(id: int): sql.predicate {id = {id}}\n" +
@@ -64,6 +67,7 @@ func TestFragmentStatementKeepsAnyNameCase(t *testing.T) {
 }
 
 func TestStatementNameCaseMustAgreeWithExport(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct{ source, want string }{
 		{
 			"package store\ntype Row { id: int }\nexport statement findUser(id: int): sql.one<Row> {SELECT id FROM users WHERE id = {id}}",
@@ -89,6 +93,7 @@ func TestStatementNameCaseMustAgreeWithExport(t *testing.T) {
 // a handler in the same package calls the statement by the name it was declared
 // under, and the generated code compiles with that call in it.
 func TestPrivateStatementCompilesAndRuns(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package fixture
 type User { id: int, name: string }
 statement findUser(id: int): sql.one<User> {SELECT id, name FROM users WHERE id = {id}}

@@ -53,6 +53,7 @@ func onlyBoundaryAttr(between string) bool {
 }
 
 func TestWhitespaceCollapsesToOneSpace(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Card(): html {
 <div class="card">
@@ -69,6 +70,7 @@ export component Card(): html {
 // A run between two inline boxes renders as one space, so it survives as one
 // space. Deleting it would silently join the two words.
 func TestWhitespaceKeepsInlineSeparation(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Line(): html {<p><span>a</span>
 <span>b</span></p>}`, htmlbind.GenerateOptions{})
@@ -78,6 +80,7 @@ export component Line(): html {<p><span>a</span>
 }
 
 func TestWhitespacePreservedInSignificantElements(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		element string
@@ -101,6 +104,7 @@ export component Block(): html {<` + test.element + `>  line one
 // A newline in a script body ends a line comment and drives automatic semicolon
 // insertion, so raw text is never rewritten.
 func TestWhitespacePreservedInRawText(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Boot(): html {<script>// note
 window.ready = true;</script>
@@ -116,6 +120,7 @@ p {{ color: blue; }}</style>}`, htmlbind.GenerateOptions{})
 }
 
 func TestWhitespaceEscapeAttribute(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Art(): html {<div preserve-whitespace>
   /\
@@ -133,6 +138,7 @@ export component Art(): html {<div preserve-whitespace>
 // A valued form is rejected rather than ignored: preserve-whitespace="false"
 // reads as a disable yet would enable preservation.
 func TestWhitespaceEscapeRejectsValue(t *testing.T) {
+	t.Parallel()
 	_, err := htmlbind.Generate("whitespace.txt", []byte(`package pages
 export component Bad(): html {<div preserve-whitespace="false">x</div>}`), htmlbind.GenerateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "preserve-whitespace must be a bare attribute") {
@@ -143,6 +149,7 @@ export component Bad(): html {<div preserve-whitespace="false">x</div>}`), htmlb
 // Character data scoped to a table is foster-parented out of it, so a
 // whitespace-only run there is removed rather than collapsed.
 func TestWhitespaceDroppedInTableScope(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Grid(): html {<table>
   <tbody>
@@ -162,6 +169,7 @@ export component Grid(): html {<table>
 // fragment body keeps them as one space, since its caller may place it between
 // two inline boxes.
 func TestWhitespaceAtBodyEdges(t *testing.T) {
+	t.Parallel()
 	document := generateStatics(t, `package pages
 export component Page(): html {
 <!doctype html>
@@ -183,6 +191,7 @@ export component Chip(): html {
 // position, so the line breaks around them are formatting for a construct with
 // no output and would otherwise emit two spaces where the source had one break.
 func TestWhitespaceAroundSilentSiblings(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 component Panel(header: html, children: html): html {<div>{header}{children}</div>}
 export component Page(): html {
@@ -199,6 +208,7 @@ export component Page(): html {
 }
 
 func TestWhitespaceAroundHeadContribution(t *testing.T) {
+	t.Parallel()
 	statics := generateStatics(t, `package pages
 export component Card(): html {
 <div>
@@ -217,6 +227,7 @@ export component Card(): html {
 // pre-existing golden files, so it must reproduce the source byte for byte -
 // except for the reserved attribute, which is never emitted either way.
 func TestPreserveWhitespaceOptionKeepsSourceBytes(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 export component Card(): html {
 <div class="card">

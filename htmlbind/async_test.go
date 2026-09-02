@@ -129,10 +129,10 @@ func TestConcurrentStopsWaitingWhenCancelled(t *testing.T) {
 
 func TestConcurrentTurnsPanicIntoError(t *testing.T) {
 	if !panicRecovery {
-		// Logged rather than skipped: TinyGo's testing package implements
-		// neither SkipNow nor the Goexit it needs, so calling Skip there fails
-		// the run. The return is what keeps the panic away from a runtime that
-		// cannot recover it.
+		// Logged rather than skipped: on TinyGo's wasm targets SkipNow has no
+		// Goexit to stop the test, so calling Skip there runs on and fails.
+		// The return is what keeps the panic away from a runtime that cannot
+		// recover it.
 		t.Log("recover does not run on this target, so a panicking external ends the program instead")
 		return
 	}

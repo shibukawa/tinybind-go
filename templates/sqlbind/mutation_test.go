@@ -35,6 +35,7 @@ func diagnoses(t *testing.T, declarations, want string) {
 const whereRequired = "require a WHERE clause"
 
 func TestMutationRequiresTopLevelWhere(t *testing.T) {
+	t.Parallel()
 	generates(t, `export statement A(id: int): sql.exec {DELETE FROM users WHERE id = {id}}`)
 	diagnoses(t, `export statement A(): sql.exec {DELETE FROM users}`, whereRequired)
 
@@ -51,6 +52,7 @@ func TestMutationRequiresTopLevelWhere(t *testing.T) {
 }
 
 func TestMutationWhereMustBeNonEmptyOnEveryBranch(t *testing.T) {
+	t.Parallel()
 	// The predicate disappears when the flag is false, leaving a bare DELETE.
 	diagnoses(t, `export statement A(id: int, flag: bool): sql.exec {DELETE FROM users {if flag}WHERE id = {id}{/if}}`, whereRequired)
 	diagnoses(t, `export statement A(id: int, flag: bool): sql.exec {DELETE FROM users WHERE {if flag}id = {id}{/if}}`, whereRequired)
@@ -66,6 +68,7 @@ func TestMutationWhereMustBeNonEmptyOnEveryBranch(t *testing.T) {
 }
 
 func TestMutationWhereThroughPredicate(t *testing.T) {
+	t.Parallel()
 	// A sql.predicate that always emits proves the clause.
 	generates(t, `statement ByID(id: int): sql.predicate {id = {id}}
 export statement A(id: int): sql.exec {DELETE FROM users WHERE {ByID(id)}}`)
@@ -82,6 +85,7 @@ export statement A(id: int, name: string, flag: bool): sql.exec {DELETE FROM use
 // The proof runs for every cardinality, not only sql.exec. A mutation with
 // RETURNING was previously unguarded.
 func TestMutationSafetyAppliesToEveryCardinality(t *testing.T) {
+	t.Parallel()
 	diagnoses(t, `export statement A(): sql.one<User> {DELETE FROM users RETURNING id, name}`, whereRequired)
 	diagnoses(t, `export statement A(): sql.optional<User> {DELETE FROM users RETURNING id, name}`, whereRequired)
 	diagnoses(t, `export statement A(): sql.many<User> {DELETE FROM users RETURNING id, name}`, whereRequired)
@@ -90,6 +94,7 @@ func TestMutationSafetyAppliesToEveryCardinality(t *testing.T) {
 }
 
 func TestUpdateSetListMustBeNonEmptyOnEveryBranch(t *testing.T) {
+	t.Parallel()
 	generates(t, `export statement A(id: int, name: string): sql.exec {UPDATE users SET name = {name} WHERE id = {id}}`)
 	diagnoses(t, `export statement A(id: int, name: string, flag: bool): sql.exec {UPDATE users SET {if flag}name = {name}{/if} WHERE id = {id}}`, "require a SET list")
 	generates(t, `export statement A(id: int, name: string, flag: bool): sql.exec {UPDATE users SET name = {name} {if flag}, id = {id}{/if} WHERE id = {id}}`)
@@ -97,6 +102,7 @@ func TestUpdateSetListMustBeNonEmptyOnEveryBranch(t *testing.T) {
 
 // A CTE body is its own nesting level: the outer statement is the WITH tail.
 func TestMutationSafetyThroughWith(t *testing.T) {
+	t.Parallel()
 	diagnoses(t, `export statement A(): sql.exec {WITH stale AS (SELECT id FROM users WHERE flag) DELETE FROM users}`, whereRequired)
 	generates(t, `export statement A(): sql.exec {WITH stale AS (SELECT id FROM users WHERE flag) DELETE FROM users WHERE id IN (SELECT id FROM stale)}`)
 	// The tail is a SELECT, so nothing to prove even though a CTE writes.
@@ -105,6 +111,7 @@ func TestMutationSafetyThroughWith(t *testing.T) {
 
 // Reads are untouched by the mutation proof.
 func TestNonMutationsAreNotChecked(t *testing.T) {
+	t.Parallel()
 	generates(t, `export statement A(): sql.many<User> {SELECT id, name FROM users}`)
 	generates(t, `export statement A(name: string): sql.exec {INSERT INTO users (name) VALUES ({name})}`)
 	generates(t, `export statement A(): sql.exec {TRUNCATE users}`)
@@ -112,6 +119,7 @@ func TestNonMutationsAreNotChecked(t *testing.T) {
 
 // No mutation guard reaches generated code; the proof is a generation-time one.
 func TestGeneratedCodeCarriesNoMutationGuard(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("mutation.tb.sql", mutationSource(
 		`export statement A(id: int, name: string): sql.exec {UPDATE users SET name = {name} WHERE id = {id}}`),
 		sqlbind.GenerateOptions{Dialect: sqlbind.DialectPostgreSQL})

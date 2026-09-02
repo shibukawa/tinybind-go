@@ -88,6 +88,7 @@ func formatBytes(t *testing.T, path string, source []byte) []byte {
 }
 
 func TestFormatKeepsGeneratedMarkup(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

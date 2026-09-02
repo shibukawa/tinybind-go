@@ -25,6 +25,7 @@ func wantCompileError(t *testing.T, source, fragment string) {
 }
 
 func TestLiveSourceBindsInAnOrdinaryAwaitClause(t *testing.T) {
+	t.Parallel()
 	// There is no second clause keyword. How often a value arrives is what its
 	// declaration says, not what the wait site asks for.
 	if err := compileLive(t, `
@@ -43,6 +44,7 @@ export component Gauge(id: string): html {
 }
 
 func TestOneClauseMixesSettleOnceAndLiveBindings(t *testing.T) {
+	t.Parallel()
 	// The settle-once binding delivers once and the live one keeps delivering;
 	// every render reads both. Forbidding this was the only thing a separate
 	// clause keyword bought, and it was not worth buying.
@@ -63,6 +65,7 @@ export component Gauge(id: string): html {
 }
 
 func TestAwaitClauseTakesSeveralLiveBindings(t *testing.T) {
+	t.Parallel()
 	// Each binding writes its own scope field and any of them moving re-renders
 	// the subtree, so nothing has to select between the sources.
 	if err := compileLive(t, `
@@ -82,6 +85,7 @@ export component Gauge(id: string): html {
 }
 
 func TestPlainExternalCannotBeAwaited(t *testing.T) {
+	t.Parallel()
 	wantCompileError(t, `
 external LoadUser(id: string): string
 
@@ -96,6 +100,7 @@ export component Gauge(id: string): html {
 }
 
 func TestLiveExternalCannotBeCalledOutsideAnAwaitBinding(t *testing.T) {
+	t.Parallel()
 	wantCompileError(t, `
 external live WatchMetrics(id: string): string
 
@@ -106,6 +111,7 @@ export component Gauge(id: string): html {
 }
 
 func TestAwaitClauseRejectsDuplicateBindingNames(t *testing.T) {
+	t.Parallel()
 	wantCompileError(t, `
 external live WatchMetrics(id: string): string
 
@@ -120,6 +126,7 @@ export component Gauge(id: string): html {
 }
 
 func TestExternalCannotBeBothAsyncAndLive(t *testing.T) {
+	t.Parallel()
 	wantCompileError(t, `
 external async live WatchMetrics(id: string): string
 
@@ -130,6 +137,7 @@ export component Gauge(id: string): html {
 }
 
 func TestFormControlsAreRejectedInsideALiveBoundary(t *testing.T) {
+	t.Parallel()
 	// A delivery replaces this subtree on the server's clock, so a control here
 	// loses what the user typed with no warning and no user action behind it.
 	// input is a void element, so each case carries its own markup rather than
@@ -152,6 +160,7 @@ export component Gauge(id: string): html {
 }
 
 func TestFormControlsAreRejectedInAMixedBoundary(t *testing.T) {
+	t.Parallel()
 	// One live binding makes the whole boundary re-render, so the rule follows
 	// the boundary rather than the individual binding.
 	wantCompileError(t, `
@@ -170,6 +179,7 @@ export component Gauge(id: string): html {
 }
 
 func TestFormControlsAreAllowedInFallbackAndRecover(t *testing.T) {
+	t.Parallel()
 	// Neither subtree is re-rendered by a delivery, so a control in one is as
 	// safe as a control outside the boundary.
 	if err := compileLive(t, `
@@ -190,6 +200,7 @@ export component Gauge(id: string): html {
 }
 
 func TestFormControlsAreStillAllowedInASettleOnceBoundary(t *testing.T) {
+	t.Parallel()
 	// A boundary with no live binding settles once, on a wait the page opened
 	// deliberately. The rule is about repetition on the server's clock, not
 	// about boundaries.

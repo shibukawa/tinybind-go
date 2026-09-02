@@ -24,6 +24,7 @@ func generateSource(t *testing.T, source string) string {
 // before the ampersands are encoded, so an Escape call in the closure would put
 // the check on the wrong side of the encoding.
 func TestURLAttributesRouteThroughThePolicyOp(t *testing.T) {
+	t.Parallel()
 	for _, testcase := range []struct{ name, markup, attr string }{
 		{"href", `<a href={link}>x</a>`, "href"},
 		{"src", `<img src={link}>`, "src"},
@@ -51,6 +52,7 @@ func TestURLAttributesRouteThroughThePolicyOp(t *testing.T) {
 // analyzed as text because neither is expressible as one url.URL, and still
 // reach the policy one entry at a time.
 func TestURLListAttributesCarryTheirGrammar(t *testing.T) {
+	t.Parallel()
 	for _, testcase := range []struct{ name, markup, want string }{
 		{"srcset", `<img srcset={candidates}>`, `URLListAttr("srcset", htmlbind.URLListSrcset`},
 		{"imagesrcset", `<link imagesrcset={candidates}>`, `URLListAttr("imagesrcset", htmlbind.URLListSrcset`},
@@ -68,6 +70,7 @@ func TestURLListAttributesCarryTheirGrammar(t *testing.T) {
 // TestOrdinaryAttributesAreUntouched is the other half of the scoping claim:
 // widening the roster must not move an attribute that was never a URL.
 func TestOrdinaryAttributesAreUntouched(t *testing.T) {
+	t.Parallel()
 	generated := generateSource(t, `component Page(title: string): html {<p title={title} data-x={title}>x</p>}`)
 	for _, attr := range []string{"title", "data-x"} {
 		line := opLine(t, generated, `Attr("`+attr+`"`)
@@ -97,6 +100,7 @@ func opLine(t *testing.T, generated, marker string) string {
 // points at, and the reason the rule makes the type honest rather than banning
 // the position outright.
 func TestEventAttributeAcceptsTrustedJavaScript(t *testing.T) {
+	t.Parallel()
 	generated := generateSource(t, `component Page(code: string): html {<button onclick={RawJavaScript(code)}>x</button>}`)
 	if !strings.Contains(generated, `Attr("onclick"`) {
 		t.Fatalf("a trusted_javascript handler did not emit an attribute:\n%s", generated)
@@ -113,6 +117,7 @@ func TestEventAttributeAcceptsTrustedJavaScript(t *testing.T) {
 // than about the attribute existing: authored markup with no expression in it
 // is not what the gate is for.
 func TestStaticEventAttributeStillCompiles(t *testing.T) {
+	t.Parallel()
 	generated := generateSource(t, `component Page(): html {<button onclick="doThing()">x</button>}`)
 	if !strings.Contains(generated, `onclick=\"doThing()\"`) {
 		t.Fatalf("a static handler was not emitted verbatim:\n%s", generated)
@@ -122,6 +127,7 @@ func TestStaticEventAttributeStillCompiles(t *testing.T) {
 // TestHyphenatedOnNameIsNotAHandler pins the matching rule: on-click belongs to
 // a custom element and is not an event handler content attribute.
 func TestHyphenatedOnNameIsNotAHandler(t *testing.T) {
+	t.Parallel()
 	generated := generateSource(t, `component Page(value: string): html {<p on-click={value}>x</p>}`)
 	if !strings.Contains(generated, `Attr("on-click"`) {
 		t.Fatalf("on-click was not emitted as an ordinary attribute:\n%s", generated)
@@ -134,6 +140,7 @@ func TestHyphenatedOnNameIsNotAHandler(t *testing.T) {
 // TestOnlyTheURLAttributeMovedInTheFixture guards the claim the decision makes
 // about blast radius, using the one fixture that has a URL attribute in it.
 func TestOnlyTheURLAttributeMovedInTheFixture(t *testing.T) {
+	t.Parallel()
 	generated := []byte(generateSource(t, `type User { profile: url; name: string }
 component Page(user: User): html {<a href={user.profile} title={user.name}>x</a>}`))
 	if !bytes.Contains(generated, []byte(`URLAttr("href"`)) {

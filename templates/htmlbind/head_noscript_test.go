@@ -11,6 +11,7 @@ import (
 // only contributed element with element children, and HTML permits it there
 // around a link, a style, or a meta.
 func TestHeadContributionAcceptsNoscript(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -31,6 +32,7 @@ export component Page(): html {
 }
 
 func TestHeadNoscriptRejectsBodyContent(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(): html {
@@ -50,6 +52,7 @@ export component Page(): html {
 }
 
 func TestHeadNoscriptKeepsAttributesStatic(t *testing.T) {
+	t.Parallel()
 	source := `package pages
 
 export component Page(url: string): html {

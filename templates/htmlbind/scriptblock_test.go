@@ -29,6 +29,7 @@ export function setup(el) {
 `
 
 func TestScriptBlockExtractsAndNamesItsOwner(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("counter.tb.html", []byte(scriptBlockSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +86,7 @@ func TestScriptBlockExtractsAndNamesItsOwner(t *testing.T) {
 // Scope says. Without this the feature would silently reclassify every script
 // that already ships.
 func TestHeadScriptCarriesNoOwner(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 
 export component Widget(label: string): html {
@@ -113,6 +115,7 @@ export component Widget(label: string): html {
 // is the reason the block needs a marker at all: position alone cannot tell the
 // two apart, because both sit at the top of a component body.
 func TestMarkupScriptWithInsertionStillCompiles(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 
 export component Document(javascript: string): html {
@@ -140,6 +143,7 @@ export component Document(javascript: string): html {
 // evaluates one URL once, which is what makes bundling unnecessary rather than
 // merely optional.
 func TestScriptBlockAcceptsAbsoluteImport(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 
 export component Counter(): html {
@@ -170,6 +174,7 @@ export function setup(el) { el.textContent = format(1) }
 // an element came from, not which instance it is. Telling two Rows apart is a
 // separate question.
 func TestScriptBlockMarksAnOrdinaryComponentCall(t *testing.T) {
+	t.Parallel()
 	const source = `package pages
 
 export component Row(text: string): html {
@@ -202,6 +207,7 @@ export component List(rows: string[]): html {
 }
 
 func TestScriptBlockDiagnostics(t *testing.T) {
+	t.Parallel()
 	for _, testcase := range []struct {
 		name   string
 		source string

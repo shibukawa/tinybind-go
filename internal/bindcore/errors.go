@@ -7,7 +7,10 @@
 // It imports no transport package.
 package bindcore
 
-import "strconv"
+import (
+	"errors"
+	"strconv"
+)
 
 // Problem is an application error payload carried by status helpers.
 type Problem struct {
@@ -234,19 +237,10 @@ func Validation(fields ...FieldError) error {
 }
 
 // AsHTTPError extracts *HTTPError from err if present.
-// Implemented without errors.As so TinyGo does not require reflect.AssignableTo
-// (unimplemented for interfaces in TinyGo 0.40), which otherwise panics when
-// Bind's json.RawMessage path is also linked into the same binary.
 func AsHTTPError(err error) (*HTTPError, bool) {
-	for err != nil {
-		if he, ok := err.(*HTTPError); ok {
-			return he, true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return nil, false
-		}
-		err = u.Unwrap()
+	var he *HTTPError
+	if errors.As(err, &he) {
+		return he, true
 	}
 	return nil, false
 }

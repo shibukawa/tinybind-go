@@ -22,6 +22,7 @@ func formatSource(t *testing.T, source string) string {
 }
 
 func TestFormatHeadIsOneTagPerLine(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export component Page(): html {<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>t</title></head><body><p>hi</p></body></html>}")
 	t.Logf("\n%s", got)
 	for _, want := range []string{"<head>", "<meta charset=\"utf-8\"/>", "<title>t</title>", "</head>"} {
@@ -35,6 +36,7 @@ func TestFormatHeadIsOneTagPerLine(t *testing.T) {
 }
 
 func TestFormatKeepsGluedInlineRunOnOneLine(t *testing.T) {
+	t.Parallel()
 	got := formatSource(t, "export component P(): html {<p><b>a</b><i>b</i></p>}")
 	if !strings.Contains(got, "<p><b>a</b><i>b</i></p>") {
 		t.Fatalf("glued run was split:\n%s", got)
@@ -42,6 +44,7 @@ func TestFormatKeepsGluedInlineRunOnOneLine(t *testing.T) {
 }
 
 func TestFormatBreaksSpacedChildren(t *testing.T) {
+	t.Parallel()
 	source := "export component P(): html {<div><section>first block of content here</section> <section>second block of content here</section> <section>third block of content goes here</section></div>}"
 	got := formatSource(t, source)
 	t.Logf("\n%s", got)
@@ -54,6 +57,7 @@ func TestFormatBreaksSpacedChildren(t *testing.T) {
 }
 
 func TestFormatIsIdempotent(t *testing.T) {
+	t.Parallel()
 	sources := []string{
 		"export component Page(name: string): html {<h1>user {name}</h1><button server-action=\"Rename\" data-target=\"#name\">rename</button>}",
 		"export component Page(): html {<!DOCTYPE html><html><head><title>x</title></head><body><ul><li><a href=\"/a\">a</a></li><li><a href=\"/b\">b</a></li></ul></body></html>}",
@@ -70,6 +74,7 @@ func TestFormatIsIdempotent(t *testing.T) {
 }
 
 func TestFormatWritesStyleBodyAsAuthoredCSS(t *testing.T) {
+	t.Parallel()
 	// A brace in a style body is CSS, so the canonical spelling is the bare one.
 	// The escaped form parses to the same text, and the AST cannot tell the two
 	// apart, so one of them has to win; the one that is real CSS does.

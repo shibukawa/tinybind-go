@@ -9,6 +9,7 @@ import (
 // operator leading a branch must carry away the space that separated it from its
 // operand, so the branch where it vanishes has no double space.
 func TestDroppedLeadingOperatorLeavesNoDoubleSpace(t *testing.T) {
+	t.Parallel()
 	forms := map[string]string{
 		"enclosing": `{if flagA}x = {p}{/if} AND {if flagB}y = {q}{/if}`,
 		"leading":   `{if flagA}x = {p}{/if} {if flagB}AND y = {q}{/if}`,
@@ -17,6 +18,7 @@ func TestDroppedLeadingOperatorLeavesNoDoubleSpace(t *testing.T) {
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestSpacing(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t WHERE x = $1 AND y = $2"},
 		{true, false, "SELECT id FROM t WHERE x = $1"},
@@ -50,12 +52,14 @@ func TestSpacing(t *testing.T) {
 // rule: an operator that survives keeps the newline and indent the author wrote, and
 // one that vanishes takes that whole run away rather than leaving a blank line.
 func TestDroppedOperatorKeepsAuthoredLayout(t *testing.T) {
+	t.Parallel()
 	source := "package queries\ntype R { id: int }\n" +
 		"export statement Q(p: int, q: int, flagA: bool, flagB: bool): sql.many<R> {\n" +
 		"SELECT id FROM t\nWHERE\n  {if flagA}x = {p}{/if}\n  AND {if flagB}y = {q}{/if}\n}"
 	buildSQL(t, source, `package queries
 import ("strings"; "testing")
 func TestLayout(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t\nWHERE\n  x = $1\n  AND y = $2"},
 		{true, false, "SELECT id FROM t\nWHERE\n  x = $1"},
@@ -76,6 +80,7 @@ func TestLayout(t *testing.T) {
 // clause nor a comma list, so nothing can be withheld with an absent fragment and
 // the template is reported instead of rendering CASE WHEN THEN.
 func TestCaseRejectsAnElidableFragment(t *testing.T) {
+	t.Parallel()
 	refused := map[string]string{
 		"empty when condition": `SELECT CASE WHEN {if flagA}a{/if} THEN 1 ELSE 0 END AS c FROM t`,
 		"empty then result":    `SELECT CASE WHEN a THEN {if flagA}1{/if} ELSE 0 END AS c FROM t`,
@@ -112,6 +117,7 @@ SELECT c FROM t WHERE CASE WHEN a THEN {if flagA}1{else}2{/if} ELSE 0 END = 1
 // TestCommaGroupRemainingClauses closes the last comma clauses: FROM, WITH, WINDOW,
 // USING, and PARTITION BY now manage their commas the way SET and ORDER BY do.
 func TestCommaGroupRemainingClauses(t *testing.T) {
+	t.Parallel()
 	t.Run("from", func(t *testing.T) {
 		buildSQL(t, `package queries
 type R { id: int }
@@ -120,6 +126,7 @@ SELECT a.id FROM a{if flagA}, b{/if} WHERE a.f
 }`, `package queries
 import ("strings"; "testing")
 func TestFrom(t *testing.T) {
+	t.Parallel()
 	on, _ := BuildQ(true)
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "SELECT a.id FROM a, b WHERE a.f" { t.Fatalf("true: %q", got) }
 	off, _ := BuildQ(false)
@@ -136,6 +143,7 @@ SELECT id FROM a
 }`, `package queries
 import ("strings"; "testing")
 func TestWith(t *testing.T) {
+	t.Parallel()
 	on, _ := BuildQ(true)
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "WITH a AS (SELECT id FROM x), b AS (SELECT id FROM y) SELECT id FROM a" { t.Fatalf("true: %q", got) }
 	off, _ := BuildQ(false)
@@ -154,6 +162,7 @@ SELECT id, row_number() OVER w AS n FROM t WINDOW w AS (PARTITION BY city{if fla
 }`, `package queries
 import ("strings"; "testing")
 func TestPartition(t *testing.T) {
+	t.Parallel()
 	on, _ := BuildQ(true)
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "SELECT id, row_number() OVER w AS n FROM t WINDOW w AS (PARTITION BY city, role)" { t.Fatalf("true: %q", got) }
 	off, _ := BuildQ(false)
@@ -168,6 +177,7 @@ DELETE FROM t USING a{if flagA}, b{/if} WHERE t.id = {id}
 }`, `package queries
 import ("strings"; "testing")
 func TestUsing(t *testing.T) {
+	t.Parallel()
 	on, _ := BuildD(1, true)
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "DELETE FROM t USING a, b WHERE t.id = $1" { t.Fatalf("true: %q", got) }
 	off, _ := BuildD(1, false)
@@ -180,6 +190,7 @@ func TestUsing(t *testing.T) {
 // is a closed set: a function call sits at a comma group's own depth, and eliding one
 // of its arguments would change the call's arity.
 func TestCommaGroupLeavesFunctionArgumentsAlone(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 export statement Up(id: int, n: string, flagA: bool): sql.exec {
 UPDATE t SET n = coalesce({n}, 'x'), seen = now() WHERE id = {id} {if flagA}AND f{/if}
@@ -187,6 +198,7 @@ UPDATE t SET n = coalesce({n}, 'x'), seen = now() WHERE id = {id} {if flagA}AND 
 	buildSQL(t, source, `package queries
 import ("strings"; "testing")
 func TestArgs(t *testing.T) {
+	t.Parallel()
 	off, err := BuildUp(1, "v", false)
 	if err != nil { t.Fatal(err) }
 	if got := strings.Join(strings.Fields(off.SQL), " "); got != "UPDATE t SET n = coalesce($1, 'x'), seen = now() WHERE id = $2" {

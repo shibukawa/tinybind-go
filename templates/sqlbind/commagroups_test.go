@@ -7,6 +7,7 @@ import (
 // TestCommaGroupOrderBy checks that an ORDER BY manages its commas and drops its
 // own keyword when every item is conditional.
 func TestCommaGroupOrderBy(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(flagA: bool, flagB: bool): sql.many<R> {
@@ -15,6 +16,7 @@ SELECT id FROM t ORDER BY {if flagA}name{/if}, {if flagB}city{/if}
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestOrderBy(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "SELECT id FROM t ORDER BY name, city"},
 		{true, false, "SELECT id FROM t ORDER BY name"},
@@ -35,6 +37,7 @@ func TestOrderBy(t *testing.T) {
 // TestCommaGroupGroupByAndTrailingComma covers a GROUP BY with a static leading
 // item, so the joiner survives, and a trailing conditional that must not leave one.
 func TestCommaGroupGroupByAndTrailingComma(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int }
 export statement Q(flagA: bool): sql.many<R> {
@@ -43,6 +46,7 @@ SELECT id FROM t GROUP BY id{if flagA}, city{/if} ORDER BY id
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestGroupBy(t *testing.T) {
+	t.Parallel()
 	on, _ := BuildQ(true)
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "SELECT id FROM t GROUP BY id, city ORDER BY id" {
 		t.Fatalf("true: %q", got)
@@ -58,6 +62,7 @@ func TestGroupBy(t *testing.T) {
 // TestCommaGroupSet checks that an UPDATE SET list manages its commas, and that
 // rule:sql-static-mutation-safety still refuses one whose items are all conditional.
 func TestCommaGroupSet(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 export statement Up(id: int, n: string, c: string, flagA: bool, flagB: bool): sql.exec {
 UPDATE users SET seen = now(){if flagA}, name = {n}{/if}{if flagB}, city = {c}{/if} WHERE id = {id}
@@ -65,6 +70,7 @@ UPDATE users SET seen = now(){if flagA}, name = {n}{/if}{if flagB}, city = {c}{/
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestSet(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ a, b bool; want string }{
 		{true, true, "UPDATE users SET seen = now(), name = $1, city = $2 WHERE id = $3"},
 		{true, false, "UPDATE users SET seen = now(), name = $1 WHERE id = $2"},
@@ -92,6 +98,7 @@ UPDATE users SET {if flagA}name = {n}{/if} WHERE id = {id}
 // TestCommaGroupInsert checks the VALUES tuple and the INSERT column list, which is
 // the one comma group with no keyword of its own to open it.
 func TestCommaGroupInsert(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 export statement Add(id: int, n: string, c: string, withCity: bool): sql.exec {
 INSERT INTO users (id, name{if withCity}, city{/if}) VALUES ({id}, {n}{if withCity}, {c}{/if})
@@ -99,6 +106,7 @@ INSERT INTO users (id, name{if withCity}, city{/if}) VALUES ({id}, {n}{if withCi
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestInsert(t *testing.T) {
+	t.Parallel()
 	on, err := BuildAdd(1, "n", "c", true)
 	if err != nil { t.Fatal(err) }
 	if got := strings.Join(strings.Fields(on.SQL), " "); got != "INSERT INTO users (id, name, city) VALUES ($1, $2, $3)" {
@@ -117,6 +125,7 @@ func TestInsert(t *testing.T) {
 // TestCommaGroupLeavesOtherListsAlone checks that a comma in a clause left as text
 // stays text, so a SELECT list and a function argument list are untouched.
 func TestCommaGroupLeavesOtherListsAlone(t *testing.T) {
+	t.Parallel()
 	source := `package queries
 type R { id: int, n: string }
 export statement Q(flagA: bool): sql.many<R> {
@@ -125,6 +134,7 @@ SELECT id, coalesce(n, 'x') AS n FROM a, b WHERE a.id = b.id {if flagA}AND a.f{/
 	runtimeTest := `package queries
 import ("strings"; "testing")
 func TestOther(t *testing.T) {
+	t.Parallel()
 	off, err := BuildQ(false)
 	if err != nil { t.Fatal(err) }
 	if got := strings.Join(strings.Fields(off.SQL), " "); got != "SELECT id, coalesce(n, 'x') AS n FROM a, b WHERE a.id = b.id" {

@@ -39,6 +39,7 @@ func checkError(t *testing.T, body string, options sqlbind.GenerateOptions) stri
 // The builder already returns an error, so a check needs no plumbing of its
 // own: the statement stops being built where the directive stands.
 func TestSQLCheckEmitsAnErrorCheckedCall(t *testing.T) {
+	t.Parallel()
 	generated := generateCheck(t, "{check Authorize(name)}\nSELECT id, name FROM users WHERE name = {name}", sqlbind.GenerateOptions{})
 	want := "if _err := Authorize(name); _err != nil {"
 	if !strings.Contains(generated, want) {
@@ -48,6 +49,7 @@ func TestSQLCheckEmitsAnErrorCheckedCall(t *testing.T) {
 
 // A checked call that also returns a value is asked only whether it failed.
 func TestSQLCheckDiscardsADeclaredResult(t *testing.T) {
+	t.Parallel()
 	generated := generateCheck(t, "{check Norm(name)}\nSELECT id, name FROM users WHERE name = {name}",
 		sqlbind.GenerateOptions{ErrorExternals: map[string]bool{"Norm": true}})
 	want := "if _, _err := Norm(name); _err != nil {"
@@ -59,6 +61,7 @@ func TestSQLCheckDiscardsADeclaredResult(t *testing.T) {
 // The directive contributes no bytes to the statement, so the text around it
 // carries the spacing unchanged.
 func TestSQLCheckEmitsNoSQL(t *testing.T) {
+	t.Parallel()
 	with := generateCheck(t, "SELECT id, name FROM users WHERE name = {check Authorize(name)}{name}", sqlbind.GenerateOptions{})
 	without := generateCheck(t, "SELECT id, name FROM users WHERE name = {name}", sqlbind.GenerateOptions{})
 	// Everything the builder is told to write, in order. The check sits between
@@ -84,6 +87,7 @@ func TestSQLCheckEmitsNoSQL(t *testing.T) {
 // A declaration with no result type is not a value, and a check directive is
 // the only position it has.
 func TestSQLValueLessExternalIsRefusedInEveryOtherPosition(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"SELECT id FROM users WHERE name = {Authorize(name)}",
 		"{val ok = Authorize(name)}\nSELECT id FROM users WHERE name = {ok}",
@@ -102,11 +106,13 @@ func TestSQLValueLessExternalIsRefusedInEveryOtherPosition(t *testing.T) {
 // A binding read by nothing but a check is read, so the loader the check exists
 // to inspect is not reported dead.
 func TestSQLBindingReadOnlyByACheckIsRead(t *testing.T) {
+	t.Parallel()
 	generateCheck(t, "{val key = Norm(name)}{check Authorize(key)}\nSELECT id, name FROM users WHERE flag = {flag}", sqlbind.GenerateOptions{})
 }
 
 // A call with no result and no error has no outcome anything can observe.
 func TestSQLCheckRefusesACallThatCannotFail(t *testing.T) {
+	t.Parallel()
 	message := checkError(t, "{check Authorize(name)}\nSELECT id FROM users WHERE name = {name}",
 		sqlbind.GenerateOptions{ErrorExternals: map[string]bool{"Norm": true}})
 	if !strings.Contains(message, "returns nothing at all") {
@@ -117,6 +123,7 @@ func TestSQLCheckRefusesACallThatCannotFail(t *testing.T) {
 // The other way to arrive at a call that cannot fail: one that answers a value
 // and only a value. That is a binding, and the diagnostic says so.
 func TestSQLCheckRefusesAValueThatCannotFail(t *testing.T) {
+	t.Parallel()
 	message := checkError(t, "{check Norm(name)}\nSELECT id, name FROM users WHERE name = {name}",
 		sqlbind.GenerateOptions{ErrorExternals: map[string]bool{}})
 	if !strings.Contains(message, "returns a value and no error") {
@@ -127,6 +134,7 @@ func TestSQLCheckRefusesAValueThatCannotFail(t *testing.T) {
 // A statement writing no check generates exactly what it generated before the
 // directive existed.
 func TestSQLUnusedIsFree(t *testing.T) {
+	t.Parallel()
 	generated := generateCheck(t, "SELECT id, name FROM users WHERE name = {name}", sqlbind.GenerateOptions{})
 	if strings.Contains(generated, "_err != nil { return _err }") {
 		t.Fatalf("a statement with no check emitted an error check:\n%s", generated)
@@ -136,6 +144,7 @@ func TestSQLUnusedIsFree(t *testing.T) {
 // Whether the emitted check actually stops the build and hands the caller its
 // own error is a runtime fact, so the generated package is compiled and run.
 func TestSQLGenerateAndRunACheck(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package queries
 external Authorize(s: string)
 type User { id: int, name: string }
@@ -163,6 +172,7 @@ func Authorize(s string) error {
 }
 
 func TestCheck(t *testing.T) {
+	t.Parallel()
 	statement, err := BuildFind("ok")
 	if err != nil { t.Fatalf("allowed input failed: %v", err) }
 	if len(statement.Args) != 1 || statement.Args[0] != "ok" { t.Fatalf("Args = %#v", statement.Args) }

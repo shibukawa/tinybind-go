@@ -25,6 +25,7 @@ func generateParams(t *testing.T, source string, options GenerateOptions) (strin
 }
 
 func TestComponentParametersAreEmittedOntoTheRoot(t *testing.T) {
+	t.Parallel()
 	out, err := generateParams(t, paramSource, GenerateOptions{
 		ComponentParameters: map[string][]string{"Card": {"label", "count", "row"}},
 	})
@@ -54,6 +55,7 @@ func TestComponentParametersAreEmittedOntoTheRoot(t *testing.T) {
 }
 
 func TestComponentParametersEmitNothingWhenUnnamed(t *testing.T) {
+	t.Parallel()
 	out, err := generateParams(t, paramSource, GenerateOptions{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -69,6 +71,7 @@ func TestComponentParametersEmitNothingWhenUnnamed(t *testing.T) {
 }
 
 func TestComponentParametersRejectAnUnrepresentableType(t *testing.T) {
+	t.Parallel()
 	source := `export component Card(body: html): html {
 <script component>
 export function setup({ body }) {}
@@ -87,6 +90,7 @@ export function setup({ body }) {}
 }
 
 func TestComponentParametersRejectAnUndeclaredName(t *testing.T) {
+	t.Parallel()
 	_, err := generateParams(t, paramSource, GenerateOptions{
 		ComponentParameters: map[string][]string{"Card": {"nope"}},
 	})
@@ -99,6 +103,7 @@ func TestComponentParametersRejectAnUndeclaredName(t *testing.T) {
 }
 
 func TestComponentParametersNeedAScriptBlock(t *testing.T) {
+	t.Parallel()
 	// Nothing would consume the object, and the single-root invariant it rides
 	// exists for the declaration marker of a component that declares a block.
 	_, err := generateParams(t, `export component Card(label: string): html { <div>{label}</div> }`,
@@ -112,6 +117,7 @@ func TestComponentParametersNeedAScriptBlock(t *testing.T) {
 }
 
 func TestComponentParametersRejectAnUnknownComponent(t *testing.T) {
+	t.Parallel()
 	_, err := generateParams(t, paramSource, GenerateOptions{
 		ComponentParameters: map[string][]string{"Nope": {"label"}},
 	})

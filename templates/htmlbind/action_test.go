@@ -15,6 +15,7 @@ func actionRefs(t *testing.T, source string) []ActionRef {
 }
 
 func TestActionRefsReportsEveryReference(t *testing.T) {
+	t.Parallel()
 	got := actionRefs(t, `
 export component Page(id: string): html {
   <form server-action="Rename" method="post">
@@ -41,6 +42,7 @@ export component Page(id: string): html {
 }
 
 func TestActionRefsFindsReferencesInsideControlFlow(t *testing.T) {
+	t.Parallel()
 	got := actionRefs(t, `
 export component Page(ids: string[], ok: bool): html {
   {for id in ids}
@@ -60,6 +62,7 @@ export component Page(ids: string[], ok: bool): html {
 }
 
 func TestServerActionRejectsBadValues(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		source string
@@ -110,6 +113,7 @@ func TestServerActionRejectsBadValues(t *testing.T) {
 }
 
 func TestGenerateLowersServerActionToTheURLAttribute(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename" data-target="#r">go</button> }`
 	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
 		Package:       "id_",
@@ -133,6 +137,7 @@ func TestGenerateLowersServerActionToTheURLAttribute(t *testing.T) {
 }
 
 func TestGenerateHonorsACustomActionAttribute(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename" hx-target="#r">go</button> }`
 	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
 		Package:          "id_",
@@ -148,6 +153,7 @@ func TestGenerateHonorsACustomActionAttribute(t *testing.T) {
 }
 
 func TestGenerateRejectsAnUnresolvedServerAction(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename">go</button> }`
 	_, err := Generate("page.tb.html", []byte(source), GenerateOptions{Package: "id_"})
 	if err == nil {
@@ -159,6 +165,7 @@ func TestGenerateRejectsAnUnresolvedServerAction(t *testing.T) {
 }
 
 func TestGenerateAsksTheResolverForAnUnknownAction(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename">go</button> }`
 	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
 		Package: "handlers",
@@ -177,6 +184,7 @@ func TestGenerateAsksTheResolverForAnUnknownAction(t *testing.T) {
 }
 
 func TestGenerateLetsADeclaredActionWinOverTheResolver(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename">go</button> }`
 	got, err := Generate("page.tb.html", []byte(source), GenerateOptions{
 		Package:              "id_",
@@ -197,6 +205,7 @@ func TestGenerateLetsADeclaredActionWinOverTheResolver(t *testing.T) {
 }
 
 func TestGenerateNamesBothSourcesWhenNothingResolves(t *testing.T) {
+	t.Parallel()
 	source := `export component Page(): html { <button server-action="Rename">go</button> }`
 	_, err := Generate("page.tb.html", []byte(source), GenerateOptions{
 		Package:              "id_",
@@ -228,6 +237,7 @@ func generateAction(t *testing.T, source string) string {
 }
 
 func TestFormCarriesBothLoweringsFromOneCompile(t *testing.T) {
+	t.Parallel()
 	out := generateAction(t, `export component Page(): html { <form server-action="Save"><input name="title" /></form> }`)
 	// The scripted half, which a browser runtime binds to.
 	if !strings.Contains(out, `data-tb-action=\"/_action/9f3c2ab1e4d7/Save\"`) {
@@ -247,6 +257,7 @@ func TestFormCarriesBothLoweringsFromOneCompile(t *testing.T) {
 }
 
 func TestActionFormWritesNoActionAttribute(t *testing.T) {
+	t.Parallel()
 	out := generateAction(t, `export component Page(): html { <form server-action="Save"></form> }`)
 	// A form declaring no action submits to the document URL, which is already
 	// the page pattern, and a POST keeps that URL's query rather than replacing
@@ -259,6 +270,7 @@ func TestActionFormWritesNoActionAttribute(t *testing.T) {
 }
 
 func TestAuthoredPostMethodIsNotDoubled(t *testing.T) {
+	t.Parallel()
 	out := generateAction(t, `export component Page(): html { <form server-action="Save" method="post"></form> }`)
 	if n := strings.Count(out, `method=\"post\"`); n != 1 {
 		t.Errorf("method written %d times, want 1:\n%s", n, out)
@@ -266,6 +278,7 @@ func TestAuthoredPostMethodIsNotDoubled(t *testing.T) {
 }
 
 func TestBareButtonKeepsTheScriptedLoweringAlone(t *testing.T) {
+	t.Parallel()
 	out := generateAction(t, `export component Page(): html { <button server-action="Save">go</button> }`)
 	if !strings.Contains(out, `data-tb-action=\"/_action/9f3c2ab1e4d7/Save\"`) {
 		t.Errorf("the URL attribute is missing:\n%s", out)
@@ -278,6 +291,7 @@ func TestBareButtonKeepsTheScriptedLoweringAlone(t *testing.T) {
 }
 
 func TestFormWithNoSelectorKeepsTheScriptedLoweringAlone(t *testing.T) {
+	t.Parallel()
 	// A framework resolving an address from its own route table owns the route a
 	// form would post to, so this module writes no form markup for it.
 	got, err := Generate("page.tb.html", []byte(
@@ -298,6 +312,7 @@ func TestFormWithNoSelectorKeepsTheScriptedLoweringAlone(t *testing.T) {
 }
 
 func TestFormWithNoSelectorStaysTokenFree(t *testing.T) {
+	t.Parallel()
 	// With no native channel the form is still a GET form, and a token in a GET
 	// form reaches history, logs, and referrers. Analysis and emission have to
 	// agree about which of the two this is.
@@ -319,6 +334,7 @@ func TestFormWithNoSelectorStaysTokenFree(t *testing.T) {
 // the case where a native submit is shown a JSON document does not arise
 // rather than being handled.
 func TestServerActionRefusedByName(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, source string }{
 		{"form", `export component Page(): html { <form server-action="GetUser"></form> }`},
 		{"bare button", `export component Page(): html { <button server-action="GetUser">go</button> }`},
@@ -345,6 +361,7 @@ func TestServerActionRefusedByName(t *testing.T) {
 // The refusal wins over a resolvable name, since a name is declined whether or
 // not something could have answered for it.
 func TestServerActionRefusalWinsOverAResolvedURL(t *testing.T) {
+	t.Parallel()
 	_, err := GenerateModule("page.tb.html", []byte(`export component Page(): html { <button server-action="GetUser">go</button> }`), GenerateOptions{
 		Package:              "page",
 		ServerActions:        map[string]string{"GetUser": "/_action/abc/GetUser"},
@@ -357,6 +374,7 @@ func TestServerActionRefusalWinsOverAResolvedURL(t *testing.T) {
 
 // A name nobody refused still resolves, so the shipped path is unchanged.
 func TestServerActionRefusalsLeaveOtherNamesAlone(t *testing.T) {
+	t.Parallel()
 	result, err := GenerateModule("page.tb.html", []byte(`export component Page(): html { <button server-action="Rename">go</button> }`), GenerateOptions{
 		Package:              "page",
 		ServerActions:        map[string]string{"Rename": "/_action/abc/Rename"},

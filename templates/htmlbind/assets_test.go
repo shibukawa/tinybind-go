@@ -23,6 +23,7 @@ export component Widget(label: string): html {
 // component shipping both a script and a style, and the passthrough case of a
 // script already naming an external URL.
 func TestExtractionProducesOneFilePerKind(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("widget.tb.html", []byte(assetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +65,7 @@ func TestExtractionProducesOneFilePerKind(t *testing.T) {
 // TestExtractionDefaultsToThePublicGeneratedBase covers a project configuring
 // neither public option.
 func TestExtractionDefaultsToThePublicGeneratedBase(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("widget.tb.html", []byte(assetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +86,7 @@ func TestExtractionDefaultsToThePublicGeneratedBase(t *testing.T) {
 // TestExtractionIsDeterministic covers cache validity: an unchanged project
 // regenerates identical names and bytes.
 func TestExtractionIsDeterministic(t *testing.T) {
+	t.Parallel()
 	first, err := htmlbind.GenerateModule("widget.tb.html", []byte(assetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +120,7 @@ func TestExtractionIsDeterministic(t *testing.T) {
 // TestExtractionUsesAFullURLBaseVerbatim covers the CDN case: the reference
 // changes, the file name does not.
 func TestExtractionUsesAFullURLBaseVerbatim(t *testing.T) {
+	t.Parallel()
 	local, err := htmlbind.GenerateModule("widget.tb.html", []byte(assetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +145,7 @@ func TestExtractionUsesAFullURLBaseVerbatim(t *testing.T) {
 // TestStylesBundlePerGenerationUnit checks that two components of one file share
 // one stylesheet and one link, while each script stays its own file.
 func TestStylesBundlePerGenerationUnit(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Left(): html {
@@ -181,6 +186,7 @@ export component Right(): html {
 // TestSharedStylesheetLinkIsMergedOnce covers the head-merging acceptance case:
 // two components declaring the same stylesheet emit one link.
 func TestSharedStylesheetLinkIsMergedOnce(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 component Inner(): html {
@@ -207,6 +213,7 @@ export component Outer(): html {
 // TestEmptyStyleBlockReferencesNothing keeps a component that declares no rules
 // from linking a stylesheet it does not contribute to.
 func TestEmptyStyleBlockReferencesNothing(t *testing.T) {
+	t.Parallel()
 	source := []byte(`package pages
 
 export component Blank(): html {
@@ -247,6 +254,7 @@ export component Page(title: string): html {
 // before rendering is the outer component, and what it needs includes whatever
 // the components it calls need.
 func TestRequiredAssetSetFollowsTheCallGraph(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("widget.tb.html", []byte(requiredSetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +281,7 @@ func TestRequiredAssetSetFollowsTheCallGraph(t *testing.T) {
 // A project extracting nothing regenerates byte for byte, so the field is absent
 // rather than empty.
 func TestAComponentRequiringNoAssetEmitsNoSet(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\nexport component Plain(label: string): html {\n<p>{label}</p>\n}\n"
 	result, err := htmlbind.GenerateModule("plain.tb.html", []byte(source), htmlbind.GenerateOptions{})
 	if err != nil {
@@ -296,6 +305,7 @@ export component Card(id: string, page: int): html {
 // contributes, which is what lets a caller put it in the document shell and
 // lets the response install it if the caller did not.
 func TestReloadableRegistrationPublishesItsHead(t *testing.T) {
+	t.Parallel()
 	result, err := htmlbind.GenerateModule("card.tb.html", []byte(reloadableAssetSource), htmlbind.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -327,6 +337,7 @@ func TestReloadableRegistrationPublishesItsHead(t *testing.T) {
 // A redraw endpoint whose component contributes nothing regenerates byte for
 // byte, so the fields are absent rather than empty.
 func TestReloadableWithoutHeadPublishesNothing(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n@reloadable\nexport component Card(id: string, page: int): html {\n<article>{page}</article>\n}\n"
 	result, err := htmlbind.GenerateModule("card.tb.html", []byte(source), htmlbind.GenerateOptions{})
 	if err != nil {

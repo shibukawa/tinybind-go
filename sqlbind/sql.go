@@ -1,5 +1,3 @@
-//go:build !tinygo
-
 // Package sqlbind provides generated, reflection-free database/sql row mapping.
 package sqlbind
 

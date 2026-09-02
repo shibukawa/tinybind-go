@@ -27,6 +27,7 @@ SELECT id, name FROM users WHERE name = {Norm(name)}
 }`
 
 func TestLineDirectivesReportTheTemplateLine(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("users.tb.sql", []byte(positionSource), sqlbind.GenerateOptions{
 		Dialect:        sqlbind.DialectPostgreSQL,
 		LineDirectives: true,
@@ -47,6 +48,7 @@ func TestLineDirectivesReportTheTemplateLine(t *testing.T) {
 // Without the option the same template reports against the generated file, so
 // the mapping is the option's doing and not something the emitter always did.
 func TestWithoutLineDirectivesTheGeneratedFileIsReported(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("users.tb.sql", []byte(positionSource), sqlbind.GenerateOptions{
 		Dialect: sqlbind.DialectPostgreSQL,
 	})
@@ -66,6 +68,7 @@ func TestWithoutLineDirectivesTheGeneratedFileIsReported(t *testing.T) {
 // written before formatting, so nothing but a check against the final bytes
 // proves the number survived go/format.
 func TestRestoreDirectivesNameTheirOwnLine(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("users.tb.sql", []byte(positionSource), sqlbind.GenerateOptions{
 		Dialect:        sqlbind.DialectPostgreSQL,
 		LineDirectives: true,
@@ -103,6 +106,7 @@ func TestRestoreDirectivesNameTheirOwnLine(t *testing.T) {
 // saying so, so the left margin is a correctness property rather than a style
 // one. Formatting has to leave it there.
 func TestDirectivesSurviveFormattingAtTheLeftMargin(t *testing.T) {
+	t.Parallel()
 	generated, err := sqlbind.Generate("users.tb.sql", []byte(positionSource), sqlbind.GenerateOptions{
 		Dialect:        sqlbind.DialectPostgreSQL,
 		LineDirectives: true,

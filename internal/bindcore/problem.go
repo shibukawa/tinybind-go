@@ -46,9 +46,8 @@ func ProblemResponse(err error) (status int, body []byte, ok bool) {
 	return status, encodeProblemJSON(title, detail, code, status, fields), true
 }
 
-// encodeProblemJSON writes the problem document without encoding/json so TinyGo
-// does not hit unimplemented reflect.AssignableTo when binders also use
-// json.RawMessage (a known interaction in TinyGo's encoding/json).
+// encodeProblemJSON writes the problem document without encoding/json, so the
+// runtime links no reflection-driven encoder for a document of five fields.
 func encodeProblemJSON(title, detail, code string, status int, fields []FieldError) []byte {
 	b := append([]byte(nil), `{"type":"about:blank","title":`...)
 	b = jsonbind.AppendString(b, title)

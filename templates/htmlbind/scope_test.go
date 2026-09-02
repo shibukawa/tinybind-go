@@ -12,6 +12,7 @@ import (
 // mistake is a miss and the cost of the other one is one reader's output served
 // to another.
 func TestBareCacheDeclaresPrivateAndScopesItsKey(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(ttl: \"5m\")\ncomponent Panel(id: string): html {\n<div>{id}</div>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
 	for _, want := range []string{"Scoped: true", "DeclaresPrivate: true", `PrivateSource:   "Panel"`} {
@@ -27,6 +28,7 @@ func TestBareCacheDeclaresPrivateAndScopesItsKey(t *testing.T) {
 // The opt-out keys on parameters alone, which is the behaviour every cached
 // component had before scoping existed.
 func TestPublicScopeLeavesTheKeyUnscoped(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(ttl: \"5m\", scope: \"public\")\ncomponent Panel(id: string): html {\n<div>{id}</div>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
 	if strings.Contains(generated, "Scoped: true") {
@@ -45,6 +47,7 @@ func TestPublicScopeLeavesTheKeyUnscoped(t *testing.T) {
 // not: asserting that a subtree is shared says nothing about the markup wrapped
 // around it.
 func TestPrivateFoldsUpwardAndPublicDoesNot(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(ttl: \"5m\")\ncomponent Panel(): html {\n<div>x</div>\n}\n" +
 		"component Middle(): html {\n<section><Panel /></section>\n}\n" +
 		"export component Page(): html {\n<main><Middle /></main>\n}\n"
@@ -69,6 +72,7 @@ func TestPrivateFoldsUpwardAndPublicDoesNot(t *testing.T) {
 // It stores nothing, so it emits no policy at all, and none of the eligibility
 // rules apply to it: each of them exists because bytes are stored.
 func TestLayoutDeclaresScopeAndStoresNothing(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(scope: \"private\")\nexport component Layout(children: html): html {\n" +
 		"<html><head><title>x</title></head><body><slot required /></body></html>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
@@ -87,6 +91,7 @@ func TestLayoutDeclaresScopeAndStoresNothing(t *testing.T) {
 // nothing is dead code, and the same walk reaches a declaring layout's html
 // parameter, which has no encoding at all.
 func TestDeclaringComponentEmitsNoKeyEncoder(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\ntype Plan {\n  name: string\n}\n\n" +
 		"@cache(scope: \"private\")\ncomponent Panel(plan: Plan): html {\n<div>{plan.name}</div>\n}\n" +
 		"export component Page(plan: Plan): html {\n<main><Panel plan={plan} /></main>\n}\n"
@@ -111,6 +116,7 @@ func TestDeclaringComponentEmitsNoKeyEncoder(t *testing.T) {
 // graph and reports the position the scope was written at, because an author who
 // wrote public and got private needs to know where to look.
 func TestPublicOverDeclaredPrivateIsRefused(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\n@cache(scope: \"private\")\ncomponent Account(): html {\n<div>x</div>\n}\n" +
 		"@cache(ttl: \"5m\", scope: \"public\")\ncomponent Panel(): html {\n<div><Account /></div>\n}\n" +
 		"export component Page(): html {\n<main><Panel /></main>\n}\n"
@@ -126,6 +132,7 @@ func TestPublicOverDeclaredPrivateIsRefused(t *testing.T) {
 // undeclared component inherits the assertion; if it contradicted one, nothing
 // could ever be declared public.
 func TestUndeclaredComponentDoesNotBlockAPublicAssertion(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\ncomponent Row(): html {\n<li>x</li>\n}\n" +
 		"@cache(ttl: \"5m\", scope: \"public\")\ncomponent Panel(): html {\n<ul><Row /></ul>\n}\n" +
 		"export component Page(): html {\n<main><Panel /></main>\n}\n"
@@ -139,6 +146,7 @@ func TestUndeclaredComponentDoesNotBlockAPublicAssertion(t *testing.T) {
 // closes the hole a ttl-always-required rule would leave: a page that awaits is
 // ineligible for storage and would otherwise be unable to assert anything.
 func TestAwaitingComponentMayDeclareScopeWithoutATTL(t *testing.T) {
+	t.Parallel()
 	source := "package pages\n\ntype User {\n  name: string\n}\n\nexternal async LoadUser(id: string): User\n\n" +
 		"@cache(scope: \"public\")\nexport component Page(id: string): html {\n<main>\n" +
 		"{await user = LoadUser(id)}\n<p>{user.name}</p>\n{fallback}\n<p>loading</p>\n{/await}\n</main>\n}\n"
@@ -152,6 +160,7 @@ func TestAwaitingComponentMayDeclareScopeWithoutATTL(t *testing.T) {
 }
 
 func TestScopeDiagnostics(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, source, want string }{
 		{
 			"an unknown scope value",
