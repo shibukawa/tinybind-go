@@ -1,21 +1,17 @@
 //go:build tinybind_jsonv2bench
 
-// encoding/json/v2 and jsontext are stable as of Go 1.27, but this module
-// declares "go 1.26.0" and stays there: raising it would raise the minimum Go
-// version for every package this module exports, for every downstream
-// consumer, just to build a benchmark that measures whether v2 is worth
-// switching to -- a question with no bearing on what those consumers import.
-// The tag is the opt-in that keeps this file out of an ordinary `go build` or
-// `go test ./...` the way GOEXPERIMENT=jsonv2 used to on Go 1.26, before the
-// experiment graduated and the build tag it was spelled with started matching
+// encoding/json/v2 and jsontext are stable as of Go 1.27, which this module
+// now declares, so the tag below is the only thing standing between these
+// benchmarks and an ordinary run. That is deliberate: they measure whether v2
+// is worth switching to, a question with no bearing on what a consumer of this
+// module imports, so they stay out of a plain `go build` or `go test ./...`
+// the way GOEXPERIMENT=jsonv2 used to on Go 1.26, before the experiment
+// graduated and the build tag it was spelled with started matching
 // unconditionally.
 //
-// Running these therefore needs two things together: the tag, and a Go
-// toolchain new enough to compile encoding/json/v2 under this module's
-// declared language version. Go resolves stdlib API availability from the
-// module's own go.mod "go" line, not from a flag or the installed toolchain,
-// so the tag alone is not enough -- bump go.mod locally to try this, or run it
-// from a throwaway module that imports this package's parent for its fixtures.
+// The local go.mod bump this file used to require is gone with the module's
+// move to go 1.27.0 -- Go resolves stdlib API availability from the module's
+// own go.mod "go" line, and that line now admits v2. The tag alone runs them:
 //
 //	go test ./internal/benchfixture -tags tinybind_jsonv2bench -run xxx -bench JSON -benchmem
 //

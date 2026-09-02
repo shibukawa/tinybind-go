@@ -7,7 +7,13 @@ internal/benchfixture's encoding/json/v2 comparison stays behind an explicit bui
 
 ```yaml
 decided: 2026-08-24, by the maintainer
-status: implemented 2026-08-24
+status: implemented 2026-08-24; half superseded 2026-09-02
+superseded_in_part_2026_09_02:
+  what_moved: the module's go line went to 1.27.0 with the toolchain baseline, so the half of this decision that kept it at 1.26.0 no longer holds
+  by: the TinyGo 0.42.0 + Go 1.27.x baseline bump, which is the "reasons unrelated to this benchmark" the open question below named
+  what_survives: the opt-in tag, and the reason for it -- these benchmarks measure whether v2 is worth switching to, which is not a question an ordinary go test ./... should pay for, and the 3.5x stripped-wasm-size finding still rules v2 out as a dependency
+  what_lapses: the local go.mod bump in the invocation; the tag alone now runs them, and the file header and both READMEs no longer instruct otherwise
+  not_folded_back: the file stays a tagged _test.go rather than becoming an ordinary one, because the tag was never only about the language version
 found_by: go test ./... failing to build internal/benchfixture under a Go 1.27 host toolchain
 the_defect_that_surfaced_it:
   what: 'jsonv2_bench_test.go called Token.Int() and Token.Float() as single-value, from before Go 1.27 changed both to (value, error)'
@@ -40,6 +46,7 @@ not_reopened: whether encoding/json/v2 is worth targeting at all; the 3.5x strip
 related:
   - requirement:sized-integer-field-kinds
   - decision:byte-slices-are-base64
-open_questions:
-  - whether the project's minimum Go version should move to 1.27 for reasons unrelated to this benchmark, at which point this file's gate becomes moot and could fold back into an ordinary _test.go
+answered_questions:
+  - question: whether the project's minimum Go version should move to 1.27 for reasons unrelated to this benchmark, at which point this file's gate becomes moot and could fold back into an ordinary _test.go
+    answered: 2026-09-02 -- it moved, with the toolchain baseline; the gate did not become moot, because the tag guards against paying for the benchmark, not against the language version
 ```

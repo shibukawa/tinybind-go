@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify tinybind runtimes and generated code under TinyGo.
-# Project baseline: TinyGo 0.41.
+# Project baseline: TinyGo 0.42.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -15,19 +15,21 @@ tinygo version
 
 TINYGO_VERSION="$(tinygo version | awk '{print $3}')"
 GO_VERSION="$(go env GOVERSION)"
-if [[ "$TINYGO_VERSION" != "0.41.1" ]]; then
-  echo "expected TinyGo 0.41.1, got $TINYGO_VERSION" >&2
+if [[ "$TINYGO_VERSION" != "0.42.0" ]]; then
+  echo "expected TinyGo 0.42.0, got $TINYGO_VERSION" >&2
   exit 1
 fi
-if [[ "$GO_VERSION" != go1.26.* ]]; then
-  echo "expected Go 1.26.x, got $GO_VERSION" >&2
+if [[ "$GO_VERSION" != go1.27.* ]]; then
+  echo "expected Go 1.27.x, got $GO_VERSION" >&2
   exit 1
 fi
 echo "validated toolchain: TinyGo $TINYGO_VERSION + $GO_VERSION"
 
 echo "==> tinygo test (runtime + generated mapping)"
-# mappingfixture also contains host-generator tests that invoke os/exec; those
-# remain covered by go test and are intentionally excluded from TinyGo runtime.
+# mappingfixture also contains host-generator tests that shell out to the Go
+# toolchain; they carry a !tinygo tag, because -run selects at run time and this
+# binary still has to compile whatever the excluded tests import. They remain
+# covered by go test.
 tinygo test -run 'Test(Bind|Decode|Write|RoundTrip|GeneratedFile)' ./internal/mappingfixture
 tinygo test ./internal/tinycheck .
 # The DynamoDB item codec. Only the codec tests build here: the ones beside them

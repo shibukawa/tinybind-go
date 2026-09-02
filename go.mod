@@ -1,6 +1,6 @@
 module github.com/shibukawa/tinybind-go
 
-go 1.26.0
+go 1.27.0
 
 require golang.org/x/tools v0.48.0
 

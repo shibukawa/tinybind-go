@@ -32,6 +32,11 @@ deferred:
   trigger: a Go release permitting a method to declare its own type parameters, and a TinyGo release carrying it, both
   why_both: the reporter targets TinyGo and WebAssembly, so a conversion available only on upstream Go splits their build rather than tidying it
   expected: Go 1.27 with TinyGo 0.42, to be re-filed against the releases that actually ship it
+  trigger_fired_2026_09_02:
+    what: both halves shipped and the project moved onto them; requirement:tinygo-wasm now reads TinyGo 0.42.0 + Go 1.27.x
+    verified_directly: a method declaring its own type parameter compiles on Go 1.27 and builds under tinygo -target=wasip1 on 0.42.0, so the split build the why_both clause guarded against does not happen
+    gated_on_the_module_line: go 1.26.0 refuses it with "generic method requires go1.27 or later"; the module now declares go 1.27.0, so the gate is open
+    still_deferred: the priority_order entries themselves; this records that the instruction's trigger is met, not that the migration ran
   priority_order:
     - what: firestorebind.Tx typed reads
       entries: [LoadTx, LoadAllTx, QueryPageTx]
