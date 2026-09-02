@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
 )
 
@@ -167,7 +166,7 @@ func TestPrefixReachesTheWholeDocument(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/page", nil)
-	page := htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 2})
+	page := badgePlan.Bind(badgeParams{ID: "cart", Count: 2})
 	if err := custom.Render(recorder, request, nil, page); err != nil {
 		t.Fatal(err)
 	}

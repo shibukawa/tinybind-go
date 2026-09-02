@@ -62,17 +62,6 @@ func (h Handle) QueryPage[T any, PT interface {
 	return decodeBatch[T, PT](batch)
 }
 
-// QueryPageOn is QueryPage taking its Handle as an argument.
-//
-// Deprecated: use the QueryPage method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryPageOn[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (Page[T], error) {
-	return h.QueryPage[T, PT](ctx, q, opts...)
-}
-
 // Query iterates every entity a query matches, requesting batches as the range
 // advances.
 //
@@ -129,17 +118,6 @@ func (h Handle) Query[T any, PT interface {
 	}
 }
 
-// QueryOn is Query taking its Handle as an argument.
-//
-// Deprecated: use the Query method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryOn[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) iter.Seq2[T, error] {
-	return h.Query[T, PT](ctx, q, opts...)
-}
-
 // KeyPage is one batch of a keys-only query.
 //
 // A keys-only query reads no properties, which is the cheap way to test
@@ -186,14 +164,6 @@ func (h Handle) QueryKeysPage(ctx context.Context, q *datastore.Query, opts ...d
 	return keysFromBatch(batch)
 }
 
-// QueryKeysPageOn is QueryKeysPage taking its Handle as an argument.
-//
-// Deprecated: use the QueryKeysPage method on Handle, which carries the body.
-// This function remains so no caller is forced to move.
-func QueryKeysPageOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (KeyPage, error) {
-	return h.QueryKeysPage(ctx, q, opts...)
-}
-
 func keysFromBatch(batch *datastore.Batch) (KeyPage, error) {
 	if batch == nil {
 		return KeyPage{}, nil
@@ -235,14 +205,6 @@ func (h Handle) Count(ctx context.Context, q *datastore.Query, opts ...datastore
 		return 0, err
 	}
 	return c.Count(ctx, q, opts...)
-}
-
-// CountOn is Count taking its Handle as an argument.
-//
-// Deprecated: use the Count method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func CountOn(ctx context.Context, h Handle, q *datastore.Query, opts ...datastore.ReadOption) (int64, error) {
-	return h.Count(ctx, q, opts...)
 }
 
 func decodeBatch[T any, PT interface {

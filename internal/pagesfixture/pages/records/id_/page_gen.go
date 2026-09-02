@@ -47,7 +47,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Boundary: planPageBoundary,
 	Ops: []htmlbind.Op[PageParams]{
 		planPageOps.Require(func(p PageParams) error { return RequireVisible(p.Id) }),
-		htmlbind.ValErrCtx(
+		planPageOps.ValErrCtx(
 			func(ctx context.Context, p PageParams) (Record, error) { return LoadRecord(ctx, p.Id) },
 			func(p PageParams, value Record) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Record: value} },
 			[]htmlbind.Op[planPageOpsVal1]{
@@ -63,4 +63,4 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }

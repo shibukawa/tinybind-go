@@ -134,7 +134,7 @@ var planGaugePlan = &htmlbind.Plan[GaugeParams]{
 		planGaugeOps.Static(" <section"),
 		planGaugeOps.BoundaryAttr(),
 		planGaugeOps.Static("> "),
-		htmlbind.Live(
+		planGaugeOps.Live(
 			func(ctx context.Context, p GaugeParams) []htmlbind.LiveBinding[planGaugeOpsAwait1] {
 				return []htmlbind.LiveBinding[planGaugeOpsAwait1]{
 					func(deliver func(func(*planGaugeOpsAwait1), error) bool) error {
@@ -171,7 +171,7 @@ var planGaugePlan = &htmlbind.Plan[GaugeParams]{
 }
 
 // Gauge binds Gauge to its parameters, producing a renderable fragment.
-func Gauge(params GaugeParams) htmlbind.Fragment { return htmlbind.Bind(planGaugePlan, params) }
+func Gauge(params GaugeParams) htmlbind.Fragment { return planGaugePlan.Bind(params) }
 
 var planChatOps = htmlbind.Builder[ChatParams]{}
 
@@ -181,7 +181,7 @@ var planChatPlan = &htmlbind.Plan[ChatParams]{
 	HasLiveBlock:  true,
 	Ops: []htmlbind.Op[ChatParams]{
 		planChatOps.Static(" "),
-		htmlbind.Live(
+		planChatOps.Live(
 			func(ctx context.Context, p ChatParams) []htmlbind.LiveBinding[planChatOpsAwait2] {
 				return []htmlbind.LiveBinding[planChatOpsAwait2]{
 					func(deliver func(func(*planChatOpsAwait2), error) bool) error {
@@ -200,7 +200,7 @@ var planChatPlan = &htmlbind.Plan[ChatParams]{
 			},
 			[]htmlbind.Op[planChatOpsAwait2]{
 				planChatOpsAwait2Ops.Static(" <ul> "),
-				htmlbind.For(
+				planChatOpsAwait2Ops.For(
 					func(p planChatOpsAwait2) []string { return p.Messages },
 					func(p planChatOpsAwait2, item string, index int) planChatOpsAwait2OpsScope3 {
 						return planChatOpsAwait2OpsScope3{Outer: p, Item: item, Index: index}
@@ -221,7 +221,7 @@ var planChatPlan = &htmlbind.Plan[ChatParams]{
 }
 
 // Chat binds Chat to its parameters, producing a renderable fragment.
-func Chat(params ChatParams) htmlbind.Fragment { return htmlbind.Bind(planChatPlan, params) }
+func Chat(params ChatParams) htmlbind.Fragment { return planChatPlan.Bind(params) }
 
 var planDashboardOps = htmlbind.Builder[DashboardParams]{}
 
@@ -231,7 +231,7 @@ var planDashboardPlan = &htmlbind.Plan[DashboardParams]{
 	HasLiveBlock:  true,
 	Ops: []htmlbind.Op[DashboardParams]{
 		planDashboardOps.Static(" "),
-		htmlbind.Live(
+		planDashboardOps.Live(
 			func(ctx context.Context, p DashboardParams) []htmlbind.LiveBinding[planDashboardOpsAwait4] {
 				return []htmlbind.LiveBinding[planDashboardOpsAwait4]{
 					func(deliver func(func(*planDashboardOpsAwait4), error) bool) error {
@@ -262,7 +262,7 @@ var planDashboardPlan = &htmlbind.Plan[DashboardParams]{
 				planDashboardOpsAwait4Ops.Static(": "),
 				planDashboardOpsAwait4Ops.Raw(func(p planDashboardOpsAwait4) string { return htmlbind.FormatInt(p.Point.Value) }),
 				planDashboardOpsAwait4Ops.Static("</p> <ul> "),
-				htmlbind.For(
+				planDashboardOpsAwait4Ops.For(
 					func(p planDashboardOpsAwait4) []string { return p.Messages },
 					func(p planDashboardOpsAwait4, item string, index int) planDashboardOpsAwait4OpsScope5 {
 						return planDashboardOpsAwait4OpsScope5{Outer: p, Item: item, Index: index}
@@ -287,9 +287,7 @@ var planDashboardPlan = &htmlbind.Plan[DashboardParams]{
 }
 
 // Dashboard binds Dashboard to its parameters, producing a renderable fragment.
-func Dashboard(params DashboardParams) htmlbind.Fragment {
-	return htmlbind.Bind(planDashboardPlan, params)
-}
+func Dashboard(params DashboardParams) htmlbind.Fragment { return planDashboardPlan.Bind(params) }
 
 var planMixedOps = htmlbind.Builder[MixedParams]{}
 
@@ -299,7 +297,7 @@ var planMixedPlan = &htmlbind.Plan[MixedParams]{
 	HasLiveBlock:  true,
 	Ops: []htmlbind.Op[MixedParams]{
 		planMixedOps.Static(" "),
-		htmlbind.Live(
+		planMixedOps.Live(
 			func(ctx context.Context, p MixedParams) []htmlbind.LiveBinding[planMixedOpsAwait6] {
 				return []htmlbind.LiveBinding[planMixedOpsAwait6]{
 					func(deliver func(func(*planMixedOpsAwait6), error) bool) error {
@@ -343,7 +341,7 @@ var planMixedPlan = &htmlbind.Plan[MixedParams]{
 }
 
 // Mixed binds Mixed to its parameters, producing a renderable fragment.
-func Mixed(params MixedParams) htmlbind.Fragment { return htmlbind.Bind(planMixedPlan, params) }
+func Mixed(params MixedParams) htmlbind.Fragment { return planMixedPlan.Bind(params) }
 
 var planStaticOps = htmlbind.Builder[StaticParams]{}
 
@@ -375,4 +373,4 @@ var planStaticPlan = &htmlbind.Plan[StaticParams]{
 }
 
 // Static binds Static to its parameters, producing a renderable fragment.
-func Static(params StaticParams) htmlbind.Fragment { return htmlbind.Bind(planStaticPlan, params) }
+func Static(params StaticParams) htmlbind.Fragment { return planStaticPlan.Bind(params) }

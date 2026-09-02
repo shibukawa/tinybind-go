@@ -78,7 +78,7 @@ func BenchmarkParseSliceString(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var p Parser
 		p.Reset(raw)
-		v, err := ParseSlice(&p, "tags", "invalid string", (*Parser).String)
+		v, err := p.ParseSlice("tags", "invalid string", (*Parser).String)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -92,7 +92,7 @@ func BenchmarkParseMapInt(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var p Parser
 		p.Reset(raw)
-		v, err := ParseMap(&p, "counts", "invalid int", (*Parser).Int)
+		v, err := p.ParseMap("counts", "invalid int", (*Parser).Int)
 		if err != nil {
 			b.Fatal(err)
 		}

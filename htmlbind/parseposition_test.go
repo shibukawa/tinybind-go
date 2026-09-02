@@ -30,7 +30,7 @@ func tableAwaitPlan() *Plan[struct{}] {
 	builder := Builder[struct{}]{}
 	return &Plan[struct{}]{Ops: []Op[struct{}]{
 		builder.Static("<table><tbody>"),
-		Await(
+		Builder[struct{}]{}.Await(
 			func(ctx context.Context, _ struct{}) (string, error) {
 				var value string
 				return value, Concurrent(ctx, func() error { value = "settled"; return nil })
@@ -50,7 +50,7 @@ func initialPass(t *testing.T, plan *Plan[struct{}]) string {
 	t.Helper()
 	var output bytes.Buffer
 	var initial string
-	for _, err := range RenderAsync(context.Background(), &output, Bind(plan, struct{}{})) {
+	for _, err := range RenderAsync(context.Background(), &output, plan.Bind(struct{}{})) {
 		if err != nil {
 			t.Fatal(err)
 		}

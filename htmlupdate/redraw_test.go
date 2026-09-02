@@ -59,7 +59,7 @@ func cardRegistry(t *testing.T) *htmlupdate.Registry {
 			if page > 10 {
 				return htmlbind.Fragment{}, errors.New("forbidden page")
 			}
-			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID, Count: page}), nil
+			return badgePlan.Bind(badgeParams{ID: instanceID, Count: page}), nil
 		},
 	})
 	return registry
@@ -392,7 +392,7 @@ func styledRegistry(t *testing.T) *htmlupdate.Registry {
 		Head:   styledHead,
 		Assets: []htmlbind.Asset{styledAsset},
 		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
-			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID, Count: 1}), nil
+			return badgePlan.Bind(badgeParams{ID: instanceID, Count: 1}), nil
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -442,7 +442,7 @@ func TestRegistryPublishesWhatARedrawRequires(t *testing.T) {
 		Head:   styledHead,
 		Assets: []htmlbind.Asset{styledAsset},
 		Render: func(_ context.Context, instanceID string, values url.Values) (htmlbind.Fragment, error) {
-			return htmlbind.Bind(badgePlan, badgeParams{ID: instanceID}), nil
+			return badgePlan.Bind(badgeParams{ID: instanceID}), nil
 		},
 	}); err != nil {
 		t.Fatal(err)

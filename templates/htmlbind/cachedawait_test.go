@@ -28,7 +28,7 @@ func TestACachedComponentMayAwait(t *testing.T) {
 		// The cache survives the boundary,
 		"CachePolicy[CardParams]",
 		// the boundary survives the cache,
-		"htmlbind.Await(",
+		".Await(",
 		// and the plan still declares that it opens one, which is what a
 		// framework reads to choose the streaming path.
 		"HasAwaitBlock",

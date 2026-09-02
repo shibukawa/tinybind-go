@@ -51,9 +51,7 @@ var planPanelPlan = &htmlbind.Plan[renderPanelParams]{
 }
 
 // renderPanel binds Panel to its parameters, producing a renderable fragment.
-func renderPanel(params renderPanelParams) htmlbind.Fragment {
-	return htmlbind.Bind(planPanelPlan, params)
-}
+func renderPanel(params renderPanelParams) htmlbind.Fragment { return planPanelPlan.Bind(params) }
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
@@ -62,11 +60,11 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 	Ops: []htmlbind.Op[PageParams]{
 		planPageOps.Static(" "),
 		planPageOps.Component(func(p PageParams) htmlbind.Fragment {
-			return renderPanel(renderPanelParams{Title: p.Caption, Header: htmlbind.Bind(planPageOpsFill1Plan, p), Children: htmlbind.Bind(planPageOpsFill2Plan, p)})
+			return renderPanel(renderPanelParams{Title: p.Caption, Header: planPageOpsFill1Plan.Bind(p), Children: planPageOpsFill2Plan.Bind(p)})
 		}),
 		planPageOps.Static(" "),
 	},
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }

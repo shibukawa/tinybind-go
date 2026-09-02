@@ -100,9 +100,7 @@ var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
 }
 
 // renderBadge binds Badge to its parameters, producing a renderable fragment.
-func renderBadge(params renderBadgeParams) htmlbind.Fragment {
-	return htmlbind.Bind(planBadgePlan, params)
-}
+func renderBadge(params renderBadgeParams) htmlbind.Fragment { return planBadgePlan.Bind(params) }
 
 var planProfileOps = htmlbind.Builder[ProfileParams]{}
 
@@ -131,7 +129,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 		planProfileOps.Static(" <section"),
 		planProfileOps.BoundaryAttr(),
 		planProfileOps.Static("> "),
-		htmlbind.Await(
+		planProfileOps.Await(
 			func(ctx context.Context, p ProfileParams) (planProfileOpsAwait1, error) {
 				scope := planProfileOpsAwait1{Outer: p}
 				if err := htmlbind.Concurrent(ctx,
@@ -152,7 +150,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 					return renderBadge(renderBadgeParams{User: p.User, Tone: "solid"})
 				}),
 				planProfileOpsAwait1Ops.Static(" <ul> "),
-				htmlbind.For(
+				planProfileOpsAwait1Ops.For(
 					func(p planProfileOpsAwait1) []string { return p.Tags },
 					func(p planProfileOpsAwait1, item string, index int) planProfileOpsAwait1OpsScope2 {
 						return planProfileOpsAwait1OpsScope2{Outer: p, Item: item, Index: index}
@@ -179,7 +177,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 }
 
 // Profile binds Profile to its parameters, producing a renderable fragment.
-func Profile(params ProfileParams) htmlbind.Fragment { return htmlbind.Bind(planProfilePlan, params) }
+func Profile(params ProfileParams) htmlbind.Fragment { return planProfilePlan.Bind(params) }
 
 var planPageOps = htmlbind.Builder[PageParams]{}
 
@@ -214,7 +212,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }
 
 var planShellOps = htmlbind.Builder[ShellParams]{}
 
@@ -247,11 +245,11 @@ var planShellPlan = &htmlbind.Plan[ShellParams]{
 }
 
 // Shell binds Shell to its parameters, producing a renderable fragment.
-func Shell(params ShellParams) htmlbind.Fragment { return htmlbind.Bind(planShellPlan, params) }
+func Shell(params ShellParams) htmlbind.Fragment { return planShellPlan.Bind(params) }
 
 // BindShell binds Shell as a chain wrapper filling its unnamed slot.
 func BindShell(params ShellParams) htmlbind.Wrapper {
-	return htmlbind.BindWrapper(planShellPlan, params, func(target *ShellParams, children htmlbind.Fragment) { target.Children = children })
+	return planShellPlan.BindWrapper(params, func(target *ShellParams, children htmlbind.Fragment) { target.Children = children })
 }
 
 var planSilentOps = htmlbind.Builder[SilentParams]{}
@@ -261,7 +259,7 @@ var planSilentPlan = &htmlbind.Plan[SilentParams]{
 	HasAwaitBlock: true,
 	Ops: []htmlbind.Op[SilentParams]{
 		planSilentOps.Static(" "),
-		htmlbind.Await(
+		planSilentOps.Await(
 			func(ctx context.Context, p SilentParams) (planSilentOpsAwait3, error) {
 				scope := planSilentOpsAwait3{Outer: p}
 				if err := htmlbind.Concurrent(ctx,
@@ -289,4 +287,4 @@ var planSilentPlan = &htmlbind.Plan[SilentParams]{
 }
 
 // Silent binds Silent to its parameters, producing a renderable fragment.
-func Silent(params SilentParams) htmlbind.Fragment { return htmlbind.Bind(planSilentPlan, params) }
+func Silent(params SilentParams) htmlbind.Fragment { return planSilentPlan.Bind(params) }

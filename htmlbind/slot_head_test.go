@@ -31,7 +31,7 @@ func cardPlan(head []string, sources []string) *Plan[cardParams] {
 // handed in through a parameter contributed nothing.
 func TestSlotFragmentHeadIsMerged(t *testing.T) {
 	inner := bodyFragment([]string{`<link rel="stylesheet" href="/library.css">`}, "inner")
-	card := Bind(cardPlan([]string{`<link rel="stylesheet" href="/card.css">`}, []string{"Card"}), cardParams{Body: inner})
+	card := (cardPlan([]string{`<link rel="stylesheet" href="/card.css">`}, []string{"Card"})).Bind(cardParams{Body: inner})
 
 	head := card.Head()
 	if len(head) != 2 {
@@ -62,7 +62,7 @@ func TestSlotFragmentHeadIsMerged(t *testing.T) {
 // the cross-file composition case it exists for.
 func TestSlotFragmentHeadIsVisibleToAGuard(t *testing.T) {
 	inner := bodyFragment([]string{`<link rel="stylesheet" href="/library.css">`}, "inner")
-	card := Bind(cardPlan(nil, nil), cardParams{Body: inner})
+	card := (cardPlan(nil, nil)).Bind(cardParams{Body: inner})
 	if len(card.Head()) == 0 {
 		t.Fatal("a caller refusing a fragment response that carries head has nothing to refuse")
 	}
@@ -72,7 +72,7 @@ func TestSlotFragmentHeadIsVisibleToAGuard(t *testing.T) {
 // rule applied where a slot brought the duplicate.
 func TestSlotFragmentHeadDeduplicates(t *testing.T) {
 	tag := `<link rel="stylesheet" href="/shared.css">`
-	card := Bind(cardPlan([]string{tag}, []string{"Card"}), cardParams{Body: bodyFragment([]string{tag}, "inner")})
+	card := (cardPlan([]string{tag}, []string{"Card"})).Bind(cardParams{Body: bodyFragment([]string{tag}, "inner")})
 	if got := card.Head(); len(got) != 1 {
 		t.Fatalf("head = %q, want one tag", got)
 	}
@@ -82,12 +82,12 @@ func TestSlotFragmentHeadDeduplicates(t *testing.T) {
 // the plan holds.
 func TestSlotFoldLeavesThePlanAlone(t *testing.T) {
 	plan := cardPlan([]string{`<link rel="stylesheet" href="/card.css">`}, []string{"Card"})
-	Bind(plan, cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/a.css">`}, "a")})
-	Bind(plan, cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/b.css">`}, "b")})
+	plan.Bind(cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/a.css">`}, "a")})
+	plan.Bind(cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/b.css">`}, "b")})
 	if len(plan.Head) != 1 {
 		t.Fatalf("the plan's own head grew to %q", plan.Head)
 	}
-	second := Bind(plan, cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/b.css">`}, "b")})
+	second := plan.Bind(cardParams{Body: bodyFragment([]string{`<link rel="stylesheet" href="/b.css">`}, "b")})
 	if strings.Join(second.Head(), "") != `<link rel="stylesheet" href="/card.css"><link rel="stylesheet" href="/b.css">` {
 		t.Fatalf("one bind leaked into the next: %q", second.Head())
 	}
@@ -95,7 +95,7 @@ func TestSlotFoldLeavesThePlanAlone(t *testing.T) {
 
 // An absent optional slot contributes nothing and costs nothing.
 func TestAbsentSlotContributesNothing(t *testing.T) {
-	card := Bind(cardPlan([]string{`<link rel="stylesheet" href="/card.css">`}, []string{"Card"}), cardParams{})
+	card := (cardPlan([]string{`<link rel="stylesheet" href="/card.css">`}, []string{"Card"})).Bind(cardParams{})
 	if got := card.Head(); len(got) != 1 {
 		t.Fatalf("head = %q, want only the component's own tag", got)
 	}
@@ -105,8 +105,8 @@ func TestAbsentSlotContributesNothing(t *testing.T) {
 // whether the response needs the runtime that applies boundaries at all.
 func TestSlotFragmentCapabilitiesFold(t *testing.T) {
 	ops := Builder[struct{}]{}
-	awaiting := Bind(&Plan[struct{}]{HasAwaitBlock: true, Ops: []Op[struct{}]{ops.Static("x")}}, struct{}{})
-	card := Bind(cardPlan(nil, nil), cardParams{Body: awaiting})
+	awaiting := (&Plan[struct{}]{HasAwaitBlock: true, Ops: []Op[struct{}]{ops.Static("x")}}).Bind(struct{}{})
+	card := (cardPlan(nil, nil)).Bind(cardParams{Body: awaiting})
 	if !card.HasAwaitBlock() {
 		t.Error("a slot holding an await boundary must be counted")
 	}
@@ -114,8 +114,8 @@ func TestSlotFragmentCapabilitiesFold(t *testing.T) {
 		t.Error("nothing here owns a live boundary")
 	}
 
-	living := Bind(&Plan[struct{}]{HasAwaitBlock: true, HasLiveBlock: true, Ops: []Op[struct{}]{ops.Static("x")}}, struct{}{})
-	if !Bind(cardPlan(nil, nil), cardParams{Body: living}).HasLiveBlock() {
+	living := (&Plan[struct{}]{HasAwaitBlock: true, HasLiveBlock: true, Ops: []Op[struct{}]{ops.Static("x")}}).Bind(struct{}{})
+	if !(cardPlan(nil, nil)).Bind(cardParams{Body: living}).HasLiveBlock() {
 		t.Error("a slot holding a live boundary must be counted")
 	}
 }
@@ -139,7 +139,7 @@ func TestWrapperSlotHeadIsMerged(t *testing.T) {
 			ops.Static("</section>"),
 		},
 	}
-	wrapper := BindWrapper(plan, panelParams{
+	wrapper := plan.BindWrapper(panelParams{
 		Header: bodyFragment([]string{`<link rel="stylesheet" href="/header.css">`}, "h"),
 	}, func(p *panelParams, children Fragment) { p.Children = children })
 
@@ -160,11 +160,11 @@ func TestAssetsFoldThroughSlotsAndTheChain(t *testing.T) {
 	sheet := Asset{ID: "unit.style.def456", Type: AssetTypeStyle, URL: "/public/unit.style.def456.css"}
 
 	ops := Builder[struct{}]{}
-	inner := Bind(&Plan[struct{}]{Assets: []Asset{library}, Ops: []Op[struct{}]{ops.Static("inner")}}, struct{}{})
+	inner := (&Plan[struct{}]{Assets: []Asset{library}, Ops: []Op[struct{}]{ops.Static("inner")}}).Bind(struct{}{})
 
 	plan := cardPlan(nil, nil)
 	plan.Assets = []Asset{sheet}
-	card := Bind(plan, cardParams{Body: inner})
+	card := plan.Bind(cardParams{Body: inner})
 
 	got := card.Assets()
 	if len(got) != 2 || got[0] != sheet || got[1] != library {
@@ -178,7 +178,7 @@ func TestAssetsFoldThroughSlotsAndTheChain(t *testing.T) {
 	// The chain aggregate answers the question a document shell asks: what does
 	// this whole page need, before anything is rendered.
 	shell, _ := shellPlan(nil)
-	wrapper := BindWrapper(shell, struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
+	wrapper := shell.BindWrapper(struct{ Children Fragment }{}, func(p *struct{ Children Fragment }, children Fragment) {
 		p.Children = children
 	})
 	merged := MergeAssets([]Wrapper{wrapper}, card)
@@ -192,10 +192,10 @@ func TestAssetsFoldThroughSlotsAndTheChain(t *testing.T) {
 func TestAssetsDeduplicateByIdentity(t *testing.T) {
 	shared := Asset{ID: "unit.style.def456", Type: AssetTypeStyle, URL: "/public/unit.style.def456.css"}
 	ops := Builder[struct{}]{}
-	inner := Bind(&Plan[struct{}]{Assets: []Asset{shared}, Ops: []Op[struct{}]{ops.Static("inner")}}, struct{}{})
+	inner := (&Plan[struct{}]{Assets: []Asset{shared}, Ops: []Op[struct{}]{ops.Static("inner")}}).Bind(struct{}{})
 	plan := cardPlan(nil, nil)
 	plan.Assets = []Asset{shared}
-	if got := Bind(plan, cardParams{Body: inner}).Assets(); len(got) != 1 {
+	if got := plan.Bind(cardParams{Body: inner}).Assets(); len(got) != 1 {
 		t.Fatalf("assets = %+v, want one", got)
 	}
 }

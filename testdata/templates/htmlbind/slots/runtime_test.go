@@ -11,9 +11,9 @@ import (
 // text builds a fragment holding literal markup, standing in for content a
 // caller would normally write in a template.
 func text(value string) htmlbind.Fragment {
-	return htmlbind.Bind(&htmlbind.Plan[struct{}]{
+	return (&htmlbind.Plan[struct{}]{
 		Ops: []htmlbind.Op[struct{}]{htmlbind.Builder[struct{}]{}.Static(value)},
-	}, struct{}{})
+	}).Bind(struct{}{})
 }
 
 func TestNamedAndUnnamedSlots(t *testing.T) {

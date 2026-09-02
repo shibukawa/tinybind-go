@@ -32,7 +32,7 @@ var signalPlan = &htmlbind.Plan[liveParams]{
 		liveOps.Static("<section"),
 		liveOps.BoundaryAttr(),
 		liveOps.Static(">"),
-		htmlbind.Live(
+		htmlbind.Builder[liveParams]{}.Live(
 			func(ctx context.Context, p liveParams) []htmlbind.LiveBinding[string] {
 				return []htmlbind.LiveBinding[string]{
 					func(deliver func(func(*string), error) bool) error {

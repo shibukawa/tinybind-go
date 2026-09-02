@@ -40,9 +40,7 @@ var planBadgePlan = &htmlbind.Plan[renderBadgeParams]{
 }
 
 // renderBadge binds Badge to its parameters, producing a renderable fragment.
-func renderBadge(params renderBadgeParams) htmlbind.Fragment {
-	return htmlbind.Bind(planBadgePlan, params)
-}
+func renderBadge(params renderBadgeParams) htmlbind.Fragment { return planBadgePlan.Bind(params) }
 
 var planCardOps = htmlbind.Builder[CardParams]{}
 
@@ -51,11 +49,11 @@ var planCardPlan = &htmlbind.Plan[CardParams]{
 	Ops: []htmlbind.Op[CardParams]{
 		planCardOps.Static(" "),
 		planCardOps.Component(func(p CardParams) htmlbind.Fragment {
-			return renderBadge(renderBadgeParams{Label: p.User.Name, Children: htmlbind.Bind(planCardOpsFill1Plan, p)})
+			return renderBadge(renderBadgeParams{Label: p.User.Name, Children: planCardOpsFill1Plan.Bind(p)})
 		}),
 		planCardOps.Static(" "),
 	},
 }
 
 // Card binds Card to its parameters, producing a renderable fragment.
-func Card(params CardParams) htmlbind.Fragment { return htmlbind.Bind(planCardPlan, params) }
+func Card(params CardParams) htmlbind.Fragment { return planCardPlan.Bind(params) }

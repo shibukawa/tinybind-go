@@ -77,7 +77,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 		planProfileOps.If(func(p ProfileParams) bool { return p.User.Active },
 			[]htmlbind.Op[ProfileParams]{
 				planProfileOps.Static(" <ul>"),
-				htmlbind.For(
+				planProfileOps.For(
 					func(p ProfileParams) []string { return p.User.Tags },
 					func(p ProfileParams, item string, index int) planProfileOpsScope1 {
 						return planProfileOpsScope1{Outer: p, Item: item, Index: index}
@@ -99,4 +99,4 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 }
 
 // Profile binds Profile to its parameters, producing a renderable fragment.
-func Profile(params ProfileParams) htmlbind.Fragment { return htmlbind.Bind(planProfilePlan, params) }
+func Profile(params ProfileParams) htmlbind.Fragment { return planProfilePlan.Bind(params) }

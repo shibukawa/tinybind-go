@@ -31,7 +31,7 @@ func plan() *htmlbind.Plan[struct{}] {
 		HasAwaitBlock: true,
 		HasLiveBlock:  true,
 		Ops: []htmlbind.Op[struct{}]{
-			htmlbind.Live(
+			htmlbind.Builder[struct{}]{}.Live(
 				func(ctx context.Context, _ struct{}) []htmlbind.LiveBinding[string] {
 					return []htmlbind.LiveBinding[string]{
 						func(deliver func(func(*string), error) bool) error {
@@ -55,7 +55,7 @@ func plan() *htmlbind.Plan[struct{}] {
 }
 
 func main() {
-	fragment := htmlbind.Bind(plan(), struct{}{})
+	fragment := plan().Bind(struct{}{})
 
 	// The synchronous entry: what a client with no JavaScript receives.
 	var page bytes.Buffer

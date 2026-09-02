@@ -22,7 +22,7 @@ var planPageOps = htmlbind.Builder[PageParams]{}
 var planPagePlan = &htmlbind.Plan[PageParams]{
 	Head: nil,
 	Ops: []htmlbind.Op[PageParams]{
-		htmlbind.ValCtx(
+		planPageOps.ValCtx(
 			func(ctx context.Context, p PageParams) string { return LatestMemo(ctx) },
 			func(p PageParams, value string) planPageOpsVal1 { return planPageOpsVal1{Outer: p, Latest: value} },
 			[]htmlbind.Op[planPageOpsVal1]{
@@ -36,4 +36,4 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }

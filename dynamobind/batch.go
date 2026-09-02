@@ -86,14 +86,6 @@ func (h Handle) StoreAll[T ItemEncoder](ctx context.Context, table string, vs []
 	return unprocessed, nil
 }
 
-// StoreAllOn is StoreAll taking its Handle as an argument.
-//
-// Deprecated: use the StoreAll method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func StoreAllOn[T ItemEncoder](ctx context.Context, h Handle, table string, vs []T) ([]T, error) {
-	return h.StoreAll(ctx, table, vs)
-}
-
 // LoadAll reads every key, splitting the input into requests of at most
 // MaxBatchGet keys.
 //
@@ -150,17 +142,6 @@ func (h Handle) LoadAll[T any, PT interface {
 		unprocessed = append(unprocessed, result.UnprocessedKeys[name]...)
 	}
 	return items, unprocessed, nil
-}
-
-// LoadAllOn is LoadAll taking its Handle as an argument.
-//
-// Deprecated: use the LoadAll method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func LoadAllOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
-	return h.LoadAll[T, PT](ctx, table, keys, opts...)
 }
 
 // equalItem compares two items attribute by attribute. It exists because

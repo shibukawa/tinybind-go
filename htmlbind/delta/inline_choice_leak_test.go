@@ -35,14 +35,14 @@ var outerPlan = &htmlbind.Plan[outer]{
 	},
 	Ops: []htmlbind.Op[outer]{
 		outerOps.Static("<div"), outerOps.BoundaryAttr(), outerOps.Static(">"),
-		outerOps.Component(func(p outer) htmlbind.Fragment { return htmlbind.Bind(innerPlan, true) }),
+		outerOps.Component(func(p outer) htmlbind.Fragment { return innerPlan.Bind(true) }),
 		outerOps.Static("</div>"),
 	},
 }
 
 func TestInlineComponentInteriorChoiceDoesNotLeak(t *testing.T) {
 	result, err := delta.RenderDelta([]byte("k"), delta.Manifest{}, nil,
-		htmlbind.Bind(outerPlan, outer{ID: "o"}))
+		outerPlan.Bind(outer{ID: "o"}))
 	if err != nil {
 		t.Fatal(err)
 	}

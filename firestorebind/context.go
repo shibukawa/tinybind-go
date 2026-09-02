@@ -182,25 +182,9 @@ func (h Handle) KeyFor(ctx context.Context, key datastore.Key) datastore.Key {
 	return applyNamespace(ctx, h.namespace, key)
 }
 
-// KeyForOn is KeyFor taking its Handle as an argument.
-//
-// Deprecated: use the KeyFor method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func KeyForOn(ctx context.Context, h Handle, key datastore.Key) datastore.Key {
-	return h.KeyFor(ctx, key)
-}
-
 // KeysFor is KeysFor on a Handle the caller already holds.
 func (h Handle) KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key {
 	return applyNamespaceAll(ctx, h.namespace, keys)
-}
-
-// KeysForOn is KeysFor taking its Handle as an argument.
-//
-// Deprecated: use the KeysFor method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func KeysForOn(ctx context.Context, h Handle, keys []datastore.Key) []datastore.Key {
-	return h.KeysFor(ctx, keys)
 }
 
 // applyNamespace stamps the resolved namespace onto a key. A key that already

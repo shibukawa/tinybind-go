@@ -76,7 +76,7 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 				planPageOps.Static("</p> "),
 			}),
 		planPageOps.Static(" <ul>"),
-		htmlbind.For(
+		planPageOps.For(
 			func(p PageParams) []string { return p.Tag },
 			func(p PageParams, item string, index int) planPageOpsScope1 {
 				return planPageOpsScope1{Outer: p, Item: item, Index: index}
@@ -91,4 +91,4 @@ var planPagePlan = &htmlbind.Plan[PageParams]{
 }
 
 // Page binds Page to its parameters, producing a renderable fragment.
-func Page(params PageParams) htmlbind.Fragment { return htmlbind.Bind(planPagePlan, params) }
+func Page(params PageParams) htmlbind.Fragment { return planPagePlan.Bind(params) }

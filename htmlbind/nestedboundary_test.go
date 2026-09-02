@@ -50,11 +50,11 @@ func pagePlan(rows *htmlbind.Plan[rowParams]) *htmlbind.Plan[pageParams] {
 	return &htmlbind.Plan[pageParams]{
 		Ops: []htmlbind.Op[pageParams]{
 			pageOps.Static("<ul>"),
-			htmlbind.For(
+			pageOps.For(
 				func(p pageParams) []rowParams { return p.Rows },
 				func(_ pageParams, item rowParams, _ int) rowParams { return item },
 				[]htmlbind.Op[rowParams]{
-					rowOps.Component(func(p rowParams) htmlbind.Fragment { return htmlbind.Bind(rows, p) }),
+					rowOps.Component(func(p rowParams) htmlbind.Fragment { return rows.Bind(p) }),
 				}),
 			pageOps.Static("</ul>"),
 		},
@@ -71,7 +71,7 @@ func collectPage(t *testing.T, plan *htmlbind.Plan[pageParams]) (string, delta.M
 	t.Helper()
 	var out strings.Builder
 	manifest, err := delta.CollectChain(&out, []byte("k"), nil,
-		htmlbind.Bind(plan, pageParams{Rows: []rowParams{
+		plan.Bind(pageParams{Rows: []rowParams{
 			{ID: "row-a", Text: "alpha"},
 			{ID: "row-b", Text: "beta"},
 		}}))
@@ -125,14 +125,14 @@ func TestUnnamedComponentStaysOutOfTheManifest(t *testing.T) {
 func TestOneChangedRowLeavesTheOtherFrameAlone(t *testing.T) {
 	var before, after strings.Builder
 	first, err := delta.CollectChain(&before, []byte("k"), nil,
-		htmlbind.Bind(namedRows, pageParams{Rows: []rowParams{
+		namedRows.Bind(pageParams{Rows: []rowParams{
 			{ID: "row-a", Text: "alpha"}, {ID: "row-b", Text: "beta"},
 		}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := delta.CollectChain(&after, []byte("k"), nil,
-		htmlbind.Bind(namedRows, pageParams{Rows: []rowParams{
+		namedRows.Bind(pageParams{Rows: []rowParams{
 			{ID: "row-a", Text: "alpha"}, {ID: "row-b", Text: "gamma"},
 		}}))
 	if err != nil {
@@ -148,7 +148,7 @@ func TestOneChangedRowLeavesTheOtherFrameAlone(t *testing.T) {
 // byte-identical: the boundary machinery exists for a render that collects.
 func TestNamedComponentWritesNothingExtraWhenNotCollecting(t *testing.T) {
 	var out strings.Builder
-	if err := htmlbind.Render(&out, htmlbind.Bind(namedRows, pageParams{
+	if err := htmlbind.Render(&out, namedRows.Bind(pageParams{
 		Rows: []rowParams{{ID: "row-a", Text: "alpha"}},
 	})); err != nil {
 		t.Fatal(err)

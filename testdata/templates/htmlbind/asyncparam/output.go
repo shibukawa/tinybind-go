@@ -154,7 +154,7 @@ var planLayoutPlan = &htmlbind.Plan[LayoutParams]{
 	},
 	Ops: []htmlbind.Op[LayoutParams]{
 		planLayoutOps.Static(" <header> "),
-		htmlbind.Await(
+		planLayoutOps.Await(
 			func(ctx context.Context, p LayoutParams) (planLayoutOpsAwait1, error) {
 				scope := planLayoutOpsAwait1{Outer: p}
 				if err := htmlbind.Concurrent(ctx,
@@ -170,7 +170,7 @@ var planLayoutPlan = &htmlbind.Plan[LayoutParams]{
 			},
 			[]htmlbind.Op[planLayoutOpsAwait1]{
 				planLayoutOpsAwait1Ops.Static(" <span class=\"count\">"),
-				htmlbind.For(
+				planLayoutOpsAwait1Ops.For(
 					func(p planLayoutOpsAwait1) []Order { return p.Orders },
 					func(p planLayoutOpsAwait1, item Order, index int) planLayoutOpsAwait1OpsScope2 {
 						return planLayoutOpsAwait1OpsScope2{Outer: p, Item: item, Index: index}
@@ -193,11 +193,11 @@ var planLayoutPlan = &htmlbind.Plan[LayoutParams]{
 }
 
 // Layout binds Layout to its parameters, producing a renderable fragment.
-func Layout(params LayoutParams) htmlbind.Fragment { return htmlbind.Bind(planLayoutPlan, params) }
+func Layout(params LayoutParams) htmlbind.Fragment { return planLayoutPlan.Bind(params) }
 
 // BindLayout binds Layout as a chain wrapper filling its unnamed slot.
 func BindLayout(params LayoutParams) htmlbind.Wrapper {
-	return htmlbind.BindWrapper(planLayoutPlan, params, func(target *LayoutParams, children htmlbind.Fragment) { target.Children = children })
+	return planLayoutPlan.BindWrapper(params, func(target *LayoutParams, children htmlbind.Fragment) { target.Children = children })
 }
 
 var planProfileOps = htmlbind.Builder[ProfileParams]{}
@@ -233,7 +233,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 		planProfileOps.Static("> <h1>"),
 		planProfileOps.Text(func(p ProfileParams) string { return p.Customer.Name }),
 		planProfileOps.Static("</h1> "),
-		htmlbind.Await(
+		planProfileOps.Await(
 			func(ctx context.Context, p ProfileParams) (planProfileOpsAwait3, error) {
 				scope := planProfileOpsAwait3{Outer: p}
 				if err := htmlbind.Concurrent(ctx,
@@ -252,7 +252,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 				planProfileOpsAwait3Ops.Static(" <p class=\"badge\">"),
 				planProfileOpsAwait3Ops.Text(func(p planProfileOpsAwait3) string { return p.Badge }),
 				planProfileOpsAwait3Ops.Static("</p> <ul>"),
-				htmlbind.For(
+				planProfileOpsAwait3Ops.For(
 					func(p planProfileOpsAwait3) []Order { return p.Orders },
 					func(p planProfileOpsAwait3, item Order, index int) planProfileOpsAwait3OpsScope4 {
 						return planProfileOpsAwait3OpsScope4{Outer: p, Item: item, Index: index}
@@ -277,7 +277,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 				planProfileOpsAwait3RecoverOps.Static("</p> "),
 			}),
 		planProfileOps.Static(" "),
-		htmlbind.Await(
+		planProfileOps.Await(
 			func(ctx context.Context, p ProfileParams) (planProfileOpsAwait5, error) {
 				scope := planProfileOpsAwait5{Outer: p}
 				if err := htmlbind.Concurrent(ctx,
@@ -310,7 +310,7 @@ var planProfilePlan = &htmlbind.Plan[ProfileParams]{
 }
 
 // Profile binds Profile to its parameters, producing a renderable fragment.
-func Profile(params ProfileParams) htmlbind.Fragment { return htmlbind.Bind(planProfilePlan, params) }
+func Profile(params ProfileParams) htmlbind.Fragment { return planProfilePlan.Bind(params) }
 
 var planRowsOps = htmlbind.Builder[RowsParams]{}
 
@@ -337,20 +337,20 @@ var planRowsPlan = &htmlbind.Plan[RowsParams]{
 		planRowsOps.Static(" <ul"),
 		planRowsOps.BoundaryAttr(),
 		planRowsOps.Static("> "),
-		htmlbind.For(
+		planRowsOps.For(
 			func(p RowsParams) []Row { return p.Rows },
 			func(p RowsParams, item Row, index int) planRowsOpsScope6 {
 				return planRowsOpsScope6{Outer: p, Item: item, Index: index}
 			},
 			[]htmlbind.Op[planRowsOpsScope6]{
 				planRowsOpsScope6Ops.Static(" "),
-				htmlbind.Require(func(p planRowsOpsScope6) error {
+				planRowsOpsScope6Ops.Require(func(p planRowsOpsScope6) error {
 					if !p.Item.Count.IsSet() {
 						return htmlbind.ErrUnsetPending("row.count")
 					}
 					return nil
 				}),
-				htmlbind.Await(
+				planRowsOpsScope6Ops.Await(
 					func(ctx context.Context, p planRowsOpsScope6) (planRowsOpsScope6OpsAwait7, error) {
 						scope := planRowsOpsScope6OpsAwait7{Outer: p}
 						if err := htmlbind.Concurrent(ctx,
@@ -384,4 +384,4 @@ var planRowsPlan = &htmlbind.Plan[RowsParams]{
 }
 
 // Rows binds Rows to its parameters, producing a renderable fragment.
-func Rows(params RowsParams) htmlbind.Fragment { return htmlbind.Bind(planRowsPlan, params) }
+func Rows(params RowsParams) htmlbind.Fragment { return planRowsPlan.Bind(params) }

@@ -61,7 +61,7 @@ func cachedAwaitPlan(resolve func(context.Context, cgParams) (cgScope, error)) *
 		},
 		Ops: []Op[cgParams]{
 			outer.Static("<article>"),
-			Await(resolve,
+			Builder[cgParams]{}.Await(resolve,
 				func(p cgParams, _ AsyncError) cgParams { return p },
 				[]Op[cgScope]{body.Static("<h1>"), body.Text(func(p cgScope) string { return p.Value }), body.Static("</h1>")},
 				[]Op[cgParams]{outer.Static("<p>loading</p>")},
@@ -83,7 +83,7 @@ func drain(t *testing.T, plan *Plan[cgParams], params cgParams, options ...Optio
 	t.Helper()
 	var out strings.Builder
 	var settled []Content
-	for content, err := range RenderAsync(context.Background(), &out, Bind(plan, params), options...) {
+	for content, err := range RenderAsync(context.Background(), &out, plan.Bind(params), options...) {
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -162,7 +162,7 @@ func TestAFailedBoundaryStoresNothing(t *testing.T) {
 	failing := cachedAwaitPlan(func(_ context.Context, _ cgParams) (cgScope, error) {
 		return cgScope{}, errors.New("upstream is down")
 	})
-	for range RenderAsync(context.Background(), io.Discard, Bind(failing, cgParams{ID: "7"}), WithCache(store)) {
+	for range RenderAsync(context.Background(), io.Discard, failing.Bind(cgParams{ID: "7"}), WithCache(store)) {
 	}
 	if store.len() != 0 {
 		t.Fatalf("stored %d entries after a failure, want none", store.len())
@@ -191,7 +191,7 @@ func TestNestedBoundariesAreSplicedIntoTheStoredForm(t *testing.T) {
 		},
 		Ops: []Op[cgParams]{
 			outer.Static("<article>"),
-			Await(
+			Builder[cgParams]{}.Await(
 				func(_ context.Context, p cgParams) (cgScope, error) {
 					return cgScope{Outer: p, Value: "outer"}, nil
 				},
@@ -200,7 +200,7 @@ func TestNestedBoundariesAreSplicedIntoTheStoredForm(t *testing.T) {
 					outerBody.Static("<h1>"),
 					outerBody.Text(func(p cgScope) string { return p.Value }),
 					outerBody.Static("</h1>"),
-					Await(
+					Builder[cgScope]{}.Await(
 						func(_ context.Context, p cgScope) (cgInner, error) {
 							return cgInner{Outer: p, Extra: "inner"}, nil
 						},
@@ -265,7 +265,7 @@ func TestASettledRecoverIsNotStored(t *testing.T) {
 			Key: func(p cgParams) string { return KeyString(p.ID) },
 		},
 		Ops: []Op[cgParams]{
-			Await(
+			Builder[cgParams]{}.Await(
 				func(_ context.Context, p cgParams) (cgScope, error) {
 					attempts++
 					return cgScope{}, errors.New("upstream is down")
@@ -314,14 +314,14 @@ func TestANestedCachedComponentDoesNotStoreAPlaceholder(t *testing.T) {
 		},
 		Ops: []Op[cgOuterParams]{
 			outerBuilder.Static("<section>"),
-			outerBuilder.Component(func(p cgOuterParams) Fragment { return Bind(inner, cgParams{ID: p.ID}) }),
+			outerBuilder.Component(func(p cgOuterParams) Fragment { return inner.Bind(cgParams{ID: p.ID}) }),
 			outerBuilder.Static("</section>"),
 		},
 	}
 
 	store := newRecordingStore()
 	var out strings.Builder
-	for content, err := range RenderAsync(context.Background(), &out, Bind(outer, cgOuterParams{ID: "7"}), WithCache(store)) {
+	for content, err := range RenderAsync(context.Background(), &out, outer.Bind(cgOuterParams{ID: "7"}), WithCache(store)) {
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -348,7 +348,7 @@ func TestACachedComponentsLoaderDoesNotRunOnAHit(t *testing.T) {
 			Key: func(p cgParams) string { return KeyString(p.ID) },
 		},
 		Ops: []Op[cgParams]{
-			Val(
+			Builder[cgParams]{}.Val(
 				func(p cgParams) string { calls++; return "loaded-" + p.ID },
 				func(p cgParams, v string) cgScope { return cgScope{Outer: p, Value: v} },
 				[]Op[cgScope]{body.Static("<h1>"), body.Text(func(p cgScope) string { return p.Value }), body.Static("</h1>")}),
@@ -357,14 +357,14 @@ func TestACachedComponentsLoaderDoesNotRunOnAHit(t *testing.T) {
 
 	store := newRecordingStore()
 	var first strings.Builder
-	if err := Render(&first, Bind(plan, cgParams{ID: "7"}), WithCache(store)); err != nil {
+	if err := Render(&first, plan.Bind(cgParams{ID: "7"}), WithCache(store)); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("the miss ran the loader %d times, want once", calls)
 	}
 	var second strings.Builder
-	if err := Render(&second, Bind(plan, cgParams{ID: "7"}), WithCache(store)); err != nil {
+	if err := Render(&second, plan.Bind(cgParams{ID: "7"}), WithCache(store)); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if calls != 1 {
@@ -403,14 +403,14 @@ func TestALoopOfBoundariesStoresEveryIteration(t *testing.T) {
 		},
 		Ops: []Op[cgParams]{
 			outer.Static("<ul>"),
-			For(
+			Builder[cgParams]{}.For(
 				func(p cgParams) []string { return []string{"a", "b", "c"} },
 				func(p cgParams, item string, index int) cgLoop {
 					return cgLoop{Outer: p, Item: item, Index: index}
 				},
 				[]Op[cgLoop]{
 					loop.Static("<li>"),
-					Await(
+					Builder[cgLoop]{}.Await(
 						func(_ context.Context, p cgLoop) (cgLoopScope, error) {
 							return cgLoopScope{Outer: p, Value: "row-" + p.Item}, nil
 						},

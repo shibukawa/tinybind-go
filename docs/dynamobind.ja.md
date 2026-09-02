@@ -513,7 +513,7 @@ go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir .
 ます。`.tb.dynamo` の宣言も結果型の使用として数えるので、DynamoDB の利用が宣言だけの
 package でも、生成されたクエリが必要とする decoder は出ます。
 
-client の渡し方はどちらでも数えます。`h.Store` も `StoreOn` も `Store` と同じように発見されるので、
+client の渡し方はどちらでも数えます。`h.Store` は `Store` と同じように発見されるので、
 呼び出しごとに `Handle` を渡す package でも Context 版と同じものが生成されますし、宣言済み
 クエリは Context・item 操作は `Handle` という混在も、設定なしでそのまま見つかります。
 

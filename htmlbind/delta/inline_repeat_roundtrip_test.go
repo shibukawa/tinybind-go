@@ -29,7 +29,7 @@ var wrapPlan = &htmlbind.Plan[wrap]{
 	Ops: []htmlbind.Op[wrap]{
 		wrapOps.Static("<section"), wrapOps.BoundaryAttr(), wrapOps.Static(">"),
 		wrapOps.Require(func(p wrap) error { return nil }),
-		htmlbind.Val(
+		wrapOps.Val(
 			func(p wrap) string { return p.Title },
 			func(p wrap, v string) string { return v },
 			[]htmlbind.Op[string]{
@@ -38,7 +38,7 @@ var wrapPlan = &htmlbind.Plan[wrap]{
 				htmlbind.Builder[string]{}.Static("</h1>"),
 			}),
 		wrapOps.Static("<ul>"),
-		htmlbind.ForCtx(
+		wrapOps.ForCtx(
 			func(_ context.Context, p wrap) []int { return make([]int, p.N) },
 			func(_ wrap, _ int, i int) int { return i },
 			[]htmlbind.Op[int]{
@@ -50,7 +50,7 @@ var wrapPlan = &htmlbind.Plan[wrap]{
 
 func TestValRequireForCtxRoundTrip(t *testing.T) {
 	result, err := delta.RenderDelta([]byte("k"), delta.Manifest{}, nil,
-		htmlbind.Bind(wrapPlan, wrap{ID: "w", Title: "Hi", N: 2}))
+		wrapPlan.Bind(wrap{ID: "w", Title: "Hi", N: 2}))
 	if err != nil {
 		t.Fatal(err)
 	}

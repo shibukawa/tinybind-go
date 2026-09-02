@@ -35,7 +35,7 @@ what_differs_from_dynamodb:
 runtime_entries:
   rule: one parameter-taking twin per entry of api:firestorebind-operations, with the Handle after ctx
   suffix: "On", matching requirement:dynamo-parameter-api
-  method_form: since 2026-09-02 each On twin is a method on Handle carrying the body, h.Load[T](ctx, key), and the On function forwards to it as a deprecated wrapper, per decision:generic-method-migration; the transactional entries became methods on Tx the same day
+  method_form: since 2026-09-02 each On twin is a method on Handle, h.Load[T](ctx, key), and the On function is gone, per decision:generic-method-migration; the transactional entries became methods on Tx the same day
   item: "LoadOn[T, PT](ctx, h Handle, key datastore.Key) (T, error)", and the same shift for the rest
   keys: KeyForOn and KeysForOn, which return the key unchanged for a zero Handle exactly as the Context forms do for a Context carrying no client
   direction: these hold the implementation and the Context entries delegate to them

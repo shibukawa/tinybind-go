@@ -145,7 +145,7 @@ func TestBothBranchesShareOneAddress(t *testing.T) {
 	seen := map[string]bool{}
 	for _, title := range []string{"Inbox", "Archive"} {
 		result, err := delta.RenderDelta([]byte("k"), delta.Manifest{}, nil,
-			htmlbind.Bind(plan, panel{ID: "sw", Title: title}))
+			plan.Bind(panel{ID: "sw", Title: title}))
 		if err != nil {
 			t.Fatal(err)
 		}

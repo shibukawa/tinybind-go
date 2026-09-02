@@ -54,17 +54,6 @@ func (h Handle) QueryPage[T any, PT interface {
 	return decodePage[T, PT](page)
 }
 
-// QueryPageOn is QueryPage taking its Handle as an argument.
-//
-// Deprecated: use the QueryPage method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryPageOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
-	return h.QueryPage[T, PT](ctx, table, keyCond, opts...)
-}
-
 // ScanPage runs one Scan and decodes its page.
 func ScanPage[T any, PT interface {
 	*T
@@ -91,17 +80,6 @@ func (h Handle) ScanPage[T any, PT interface {
 		return Page[T]{}, err
 	}
 	return decodePage[T, PT](page)
-}
-
-// ScanPageOn is ScanPage taking its Handle as an argument.
-//
-// Deprecated: use the ScanPage method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func ScanPageOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
-	return h.ScanPage[T, PT](ctx, table, opts...)
 }
 
 // Query iterates every item of a query, requesting pages as the range advances.
@@ -165,17 +143,6 @@ func (h Handle) Query[T any, PT interface {
 	}
 }
 
-// QueryOn is Query taking its Handle as an argument.
-//
-// Deprecated: use the Query method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func QueryOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
-	return h.Query[T, PT](ctx, table, keyCond, opts...)
-}
-
 // Scan iterates every item of a table or index scan.
 //
 // An unfiltered scan walks the whole table, one page per request. Everything
@@ -230,17 +197,6 @@ func (h Handle) Scan[T any, PT interface {
 			start = page.LastEvaluatedKey
 		}
 	}
-}
-
-// ScanOn is Scan taking its Handle as an argument.
-//
-// Deprecated: use the Scan method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func ScanOn[T any, PT interface {
-	*T
-	ItemDecoder
-}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
-	return h.Scan[T, PT](ctx, table, opts...)
 }
 
 func decodePage[T any, PT interface {

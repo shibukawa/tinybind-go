@@ -62,11 +62,11 @@ var gridPlan = &htmlbind.Plan[grid]{
 	},
 	Ops: []htmlbind.Op[grid]{
 		gridOps.Static("<table"), gridOps.BoundaryAttr(), gridOps.Static("><tbody>"),
-		htmlbind.For(
+		htmlbind.Builder[grid]{}.For(
 			func(p grid) []cell { return p.Cells },
 			func(_ grid, item cell, _ int) cell { return item },
 			[]htmlbind.Op[cell]{
-				cellOps.Component(func(p cell) htmlbind.Fragment { return htmlbind.Bind(cellPlan, p) }),
+				cellOps.Component(func(p cell) htmlbind.Fragment { return cellPlan.Bind(p) }),
 			}),
 		gridOps.Static("</tbody></table>"),
 	},
@@ -100,7 +100,7 @@ func parsedHoles(t *testing.T, fragment string) map[string]string {
 
 func TestAHoleInsideATableStaysInsideTheTable(t *testing.T) {
 	result, err := delta.RenderDelta([]byte("k"), delta.Manifest{}, nil,
-		htmlbind.Bind(gridPlan, grid{ID: "grid", Cells: []cell{{ID: "c-1", Text: "a"}, {ID: "c-2", Text: "b"}}}))
+		gridPlan.Bind(grid{ID: "grid", Cells: []cell{{ID: "c-1", Text: "a"}, {ID: "c-2", Text: "b"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestAHoleInsideATableStaysInsideTheTable(t *testing.T) {
 // this asserts the fragment the server sends survives it.
 func TestAFilledRowSurvivesBeingParsed(t *testing.T) {
 	result, err := delta.RenderDelta([]byte("k"), delta.Manifest{}, nil,
-		htmlbind.Bind(gridPlan, grid{ID: "grid", Cells: []cell{{ID: "c-1", Text: "a"}}}))
+		gridPlan.Bind(grid{ID: "grid", Cells: []cell{{ID: "c-1", Text: "a"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -86,8 +86,8 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 	opts.EnableCBORHTTP = true
 	_, source := emitFixedArray(t, fixedArraySource, opts)
 	for _, want := range []string{
-		`jsonbind.ParseArray(p, "cells", "invalid int", out.Cells[:], (*jsonbind.Parser).Int)`,
-		`jsonbind.ParseArray(p, "marks", "", out.Marks[:], decodeMarkJSON)`,
+		`p.ParseArray("cells", "invalid int", out.Cells[:], (*jsonbind.Parser).Int)`,
+		`p.ParseArray("marks", "", out.Marks[:], decodeMarkJSON)`,
 		"out.Seats = [seatCount]uint16{}",
 		"if n > len(out.Cells) {",
 	} {
@@ -99,7 +99,7 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 	if strings.Contains(source, "out.Cells = v") || strings.Contains(source, "out.Cells = slice") {
 		t.Error("a fixed-length field is still assigned a slice")
 	}
-	if !strings.Contains(source, `jsonbind.ParseSlice(p, "tags"`) {
+	if !strings.Contains(source, `p.ParseSlice("tags"`) {
 		t.Error("a slice field no longer decodes through ParseSlice")
 	}
 }

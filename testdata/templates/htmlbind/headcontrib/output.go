@@ -58,7 +58,7 @@ var planBadgePlan = &htmlbind.Plan[BadgeParams]{
 }
 
 // Badge binds Badge to its parameters, producing a renderable fragment.
-func Badge(params BadgeParams) htmlbind.Fragment { return htmlbind.Bind(planBadgePlan, params) }
+func Badge(params BadgeParams) htmlbind.Fragment { return planBadgePlan.Bind(params) }
 
 var planNoteOps = htmlbind.Builder[NoteParams]{}
 
@@ -92,7 +92,7 @@ var planNotePlan = &htmlbind.Plan[NoteParams]{
 }
 
 // Note binds Note to its parameters, producing a renderable fragment.
-func Note(params NoteParams) htmlbind.Fragment { return htmlbind.Bind(planNotePlan, params) }
+func Note(params NoteParams) htmlbind.Fragment { return planNotePlan.Bind(params) }
 
 var planPanelOps = htmlbind.Builder[PanelParams]{}
 
@@ -128,7 +128,7 @@ var planPanelPlan = &htmlbind.Plan[PanelParams]{
 }
 
 // Panel binds Panel to its parameters, producing a renderable fragment.
-func Panel(params PanelParams) htmlbind.Fragment { return htmlbind.Bind(planPanelPlan, params) }
+func Panel(params PanelParams) htmlbind.Fragment { return planPanelPlan.Bind(params) }
 
 var planDocumentOps = htmlbind.Builder[DocumentParams]{}
 
@@ -148,11 +148,9 @@ var planDocumentPlan = &htmlbind.Plan[DocumentParams]{
 }
 
 // Document binds Document to its parameters, producing a renderable fragment.
-func Document(params DocumentParams) htmlbind.Fragment {
-	return htmlbind.Bind(planDocumentPlan, params)
-}
+func Document(params DocumentParams) htmlbind.Fragment { return planDocumentPlan.Bind(params) }
 
 // BindDocument binds Document as a chain wrapper filling its unnamed slot.
 func BindDocument(params DocumentParams) htmlbind.Wrapper {
-	return htmlbind.BindWrapper(planDocumentPlan, params, func(target *DocumentParams, children htmlbind.Fragment) { target.Children = children })
+	return planDocumentPlan.BindWrapper(params, func(target *DocumentParams, children htmlbind.Fragment) { target.Children = children })
 }

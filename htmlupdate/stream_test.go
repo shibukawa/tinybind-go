@@ -18,14 +18,14 @@ import (
 func streamServer() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrappers := []htmlbind.Wrapper{
-			htmlbind.BindWrapper(documentPlan, documentParams{}, func(target *documentParams, children htmlbind.Fragment) {
+			documentPlan.BindWrapper(documentParams{}, func(target *documentParams, children htmlbind.Fragment) {
 				target.Children = children
 			}),
-			htmlbind.BindWrapper(layoutPlan, layoutParams{Section: r.URL.Query().Get("section")}, func(target *layoutParams, children htmlbind.Fragment) {
+			layoutPlan.BindWrapper(layoutParams{Section: r.URL.Query().Get("section")}, func(target *layoutParams, children htmlbind.Fragment) {
 				target.Children = children
 			}),
 		}
-		leaf := htmlbind.Bind(pagePlan, pageParams{Query: r.URL.Query().Get("q")})
+		leaf := pagePlan.Bind(pageParams{Query: r.URL.Query().Get("q")})
 		htmlupdate.ApplyTo(options.StreamHeaders(r, wrappers, leaf), w)
 		w.Header().Set("Cache-Control", "no-store")
 		if err := options.RenderStream(w, r, wrappers, leaf); err != nil {
@@ -240,7 +240,7 @@ var asyncPlan = &htmlbind.Plan[asyncParams]{
 		asyncOps.Static("<section"),
 		asyncOps.BoundaryAttr(),
 		asyncOps.Static(">"),
-		htmlbind.Await(
+		htmlbind.Builder[asyncParams]{}.Await(
 			func(ctx context.Context, p asyncParams) (asyncScope, error) {
 				return asyncScope{Value: "settled " + p.Query}, nil
 			},
@@ -257,7 +257,7 @@ var asyncPlan = &htmlbind.Plan[asyncParams]{
 // follows on the same stream, so one dependency delays only itself.
 func TestStreamCarriesAwaitCompletions(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		leaf := htmlbind.Bind(asyncPlan, asyncParams{Query: r.URL.Query().Get("q")})
+		leaf := asyncPlan.Bind(asyncParams{Query: r.URL.Query().Get("q")})
 		htmlupdate.ApplyTo(options.StreamHeaders(r, nil, leaf), w)
 		if err := options.RenderStreamAsync(r.Context(), w, r, nil, leaf); err != nil {
 			http.Error(w, "render failed", http.StatusInternalServerError)

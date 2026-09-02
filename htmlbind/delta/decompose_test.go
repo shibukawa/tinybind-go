@@ -55,11 +55,11 @@ var panelPlan = &htmlbind.Plan[panel]{
 		panelOps.Static("<section"), panelOps.BoundaryAttr(), panelOps.Static("><h1>"),
 		panelOps.Text(func(p panel) string { return p.Title }),
 		panelOps.Static("</h1><ul>"),
-		htmlbind.For(
+		htmlbind.Builder[panel]{}.For(
 			func(p panel) []row { return p.Rows },
 			func(_ panel, item row, _ int) row { return item },
 			[]htmlbind.Op[row]{
-				rowOps.Component(func(p row) htmlbind.Fragment { return htmlbind.Bind(rowPlan, p) }),
+				rowOps.Component(func(p row) htmlbind.Fragment { return rowPlan.Bind(p) }),
 			}),
 		panelOps.Static("</ul></section>"),
 	},
@@ -67,7 +67,7 @@ var panelPlan = &htmlbind.Plan[panel]{
 
 func render(t *testing.T, known delta.Manifest, p panel) delta.Delta {
 	t.Helper()
-	result, err := delta.RenderDelta([]byte("k"), known, nil, htmlbind.Bind(panelPlan, p))
+	result, err := delta.RenderDelta([]byte("k"), known, nil, panelPlan.Bind(p))
 	if err != nil {
 		t.Fatal(err)
 	}

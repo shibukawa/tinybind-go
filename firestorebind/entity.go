@@ -61,17 +61,6 @@ func (h Handle) Load[T any, PT interface {
 	return out, nil
 }
 
-// LoadOn is Load taking its Handle as an argument.
-//
-// Deprecated: use the Load method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func LoadOn[T any, PT interface {
-	*T
-	EntityDecoder
-}](ctx context.Context, h Handle, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
-	return h.Load[T, PT](ctx, key, opts...)
-}
-
 // Store writes v as a whole entity, replacing any entity with the same key.
 //
 // It is an upsert. The returned key is the stored one, which differs from v's
@@ -91,14 +80,6 @@ func (h Handle) Store[T EntityEncoder](ctx context.Context, v T, opts ...datasto
 	return writeOne(ctx, h, v, withBaseVersion(v, opts), (*datastore.Client).Put)
 }
 
-// StoreOn is Store taking its Handle as an argument.
-//
-// Deprecated: use the Store method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func StoreOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
-	return h.Store(ctx, v, opts...)
-}
-
 // Insert writes v and fails if its key already exists.
 //
 // This is put-if-absent, and it is a precondition the wire evaluates rather than
@@ -115,14 +96,6 @@ func Insert[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOp
 // Insert is Insert on a Handle the caller already holds.
 func (h Handle) Insert[T EntityEncoder](ctx context.Context, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
 	return writeOne(ctx, h, v, opts, (*datastore.Client).Insert)
-}
-
-// InsertOn is Insert taking its Handle as an argument.
-//
-// Deprecated: use the Insert method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func InsertOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) (datastore.Key, error) {
-	return h.Insert(ctx, v, opts...)
 }
 
 // Update writes v and fails if its key does not exist.
@@ -146,14 +119,6 @@ func (h Handle) Update[T EntityEncoder](ctx context.Context, v T, opts ...datast
 	return c.Update(ctx, withNamespace(ctx, ns, v.EncodeEntity()), withBaseVersion(v, opts)...)
 }
 
-// UpdateOn is Update taking its Handle as an argument.
-//
-// Deprecated: use the Update method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func UpdateOn[T EntityEncoder](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) error {
-	return h.Update(ctx, v, opts...)
-}
-
 // Remove deletes the entity identified by v's key. Only the key of v is read.
 func Remove[T Keyer](ctx context.Context, v T, opts ...datastore.WriteOption) error {
 	h, err := HandleFromContext(ctx)
@@ -174,14 +139,6 @@ func (h Handle) Remove[T Keyer](ctx context.Context, v T, opts ...datastore.Writ
 		return KeyError("cannot remove an entity whose key is incomplete")
 	}
 	return c.Delete(ctx, key, opts...)
-}
-
-// RemoveOn is Remove taking its Handle as an argument.
-//
-// Deprecated: use the Remove method on Handle, which carries the body. This
-// function remains so no caller is forced to move.
-func RemoveOn[T Keyer](ctx context.Context, h Handle, v T, opts ...datastore.WriteOption) error {
-	return h.Remove(ctx, v, opts...)
 }
 
 // writeOne is the shared body of StoreOn and InsertOn, which differ only in the

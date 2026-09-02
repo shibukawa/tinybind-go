@@ -50,4 +50,4 @@ var planLabelPlan = &htmlbind.Plan[LabelParams]{
 }
 
 // Label binds Label to its parameters, producing a renderable fragment.
-func Label(params LabelParams) htmlbind.Fragment { return htmlbind.Bind(planLabelPlan, params) }
+func Label(params LabelParams) htmlbind.Fragment { return planLabelPlan.Bind(params) }

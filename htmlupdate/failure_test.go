@@ -184,7 +184,7 @@ func TestFailureNamesTheRefusedParameter(t *testing.T) {
 			if err := htmlupdate.QueryInt(values, "page", &page); err != nil {
 				return htmlbind.Fragment{}, err
 			}
-			return htmlbind.Bind(badgePlan, badgeParams{ID: id, Count: page}), nil
+			return badgePlan.Bind(badgeParams{ID: id, Count: page}), nil
 		},
 	}); err != nil {
 		t.Fatal(err)

@@ -26,7 +26,7 @@ func TestValueBindingCallsItsExternalOnce(t *testing.T) {
 	if calls := strings.Count(generated, "LoadData("); calls != 1 {
 		t.Fatalf("want one LoadData call, got %d:\n%s", calls, generated)
 	}
-	for _, want := range []string{"htmlbind.Val(", "p.Record.Title", "p.Record.Summary"} {
+	for _, want := range []string{".Val(", "p.Record.Title", "p.Record.Summary"} {
 		if !strings.Contains(generated, want) {
 			t.Fatalf("generated code is missing %q:\n%s", want, generated)
 		}
@@ -330,7 +330,7 @@ func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
 	source := bindingHead + "export component Card(id: string): html {\n" +
 		"<script>{val a = Norm(id)}const x = {JsonForScript(a)};</script>\n}\n"
 	generated := generateWith(t, source, htmlbind.GenerateOptions{})
-	if !strings.Contains(generated, "htmlbind.Val(") {
+	if !strings.Contains(generated, ".Val(") {
 		t.Fatalf("the binding never became an instruction:\n%s", generated)
 	}
 	if calls := strings.Count(generated, "Norm("); calls != 1 {
@@ -345,7 +345,7 @@ func TestBindingIsRecognizedInsideAScriptBody(t *testing.T) {
 func TestFailingExternalIsBoundAsAWholeValue(t *testing.T) {
 	generated := generateWith(t, bindingSource("{val record = LoadData(id)}\n<h1>{record.title}</h1>"),
 		htmlbind.GenerateOptions{ErrorExternals: map[string]bool{"LoadData": true}})
-	if !strings.Contains(generated, "htmlbind.ValErr(") {
+	if !strings.Contains(generated, ".ValErr(") {
 		t.Fatalf("the failing call did not become an error-carrying instruction:\n%s", generated)
 	}
 	if !strings.Contains(generated, "(Record, error) { return LoadData(p.Id) }") {
@@ -361,7 +361,7 @@ func TestFailingExternalTakingTheContextComposes(t *testing.T) {
 		ErrorExternals:   map[string]bool{"Token": true},
 		ContextExternals: map[string]bool{"Token": true},
 	})
-	if !strings.Contains(generated, "htmlbind.ValErrCtx(") {
+	if !strings.Contains(generated, ".ValErrCtx(") {
 		t.Fatalf("want the context-carrying error instruction:\n%s", generated)
 	}
 	if !strings.Contains(generated, "(string, error) { return Token(ctx) }") {

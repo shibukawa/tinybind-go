@@ -752,8 +752,8 @@ func (e *goEmitter) emitProvidedElement(p *planEmitter, node *ElementNode, built
 	// The memo key is the provider rather than the element, so two elements
 	// backed by one function — a hidden input and a meta tag carrying the same
 	// token — cannot disagree with each other.
-	p.raw(fmt.Sprintf("htmlbind.Provide(%s, %s, %s, []%s{\n%s\n})",
-		strconv.Quote(builtin.Name), strconv.Quote(providerKey(provider)), call, segmentType, strings.Join(parts, "\n")))
+	p.raw(fmt.Sprintf("%s.Provide(%s, %s, %s, []%s{\n%s\n})",
+		p.scope.builder, strconv.Quote(builtin.Name), strconv.Quote(providerKey(provider)), call, segmentType, strings.Join(parts, "\n")))
 	return nil
 }
 

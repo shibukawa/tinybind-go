@@ -58,10 +58,10 @@ var styledPlan = &htmlbind.Plan[badgeParams]{
 func TestActionResponseCarriesHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
-		htmlupdate.Replace("cart", htmlbind.Bind(styledPlan, badgeParams{ID: "cart", Count: 1})),
+		htmlupdate.Replace("cart", styledPlan.Bind(badgeParams{ID: "cart", Count: 1})),
 		// A second region declaring the same sheet emits one tag, which is the
 		// htmlbind.MergeHead rule applied across the written set.
-		htmlupdate.Replace("mini", htmlbind.Bind(styledPlan, badgeParams{ID: "mini", Count: 1})),
+		htmlupdate.Replace("mini", styledPlan.Bind(badgeParams{ID: "mini", Count: 1})),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestActionResponseCarriesHead(t *testing.T) {
 func TestActionResponseOmitsAnEmptyHead(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	answer, err := options.WriteUpdate(actionRequest(), []htmlupdate.Update{
-		htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: 1}))})
+		htmlupdate.Replace("cart", badgePlan.Bind(badgeParams{ID: "cart", Count: 1}))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func api(count int, status int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if options.WantsUpdate(r) {
 			answer, _ := options.WriteUpdateStatus(r, status, []htmlupdate.Update{
-				htmlupdate.Replace("cart", htmlbind.Bind(badgePlan, badgeParams{ID: "cart", Count: count}))})
+				htmlupdate.Replace("cart", badgePlan.Bind(badgeParams{ID: "cart", Count: count}))})
 			// The cache policy is the caller's: this package sets none.
 			w.Header().Set("Cache-Control", "no-store")
 			_, _ = answer.WriteTo(w)
