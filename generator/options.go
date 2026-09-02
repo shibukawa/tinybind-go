@@ -621,6 +621,22 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		ItemKeyCall(Function(path, "RemoveOn"), ArgumentType("item", 3)),
 		ItemKeyCall(Function(path, "UpdateOn"), ArgumentType("item", 3)),
 		ItemKeyDecodeCall(Function(path, "RemoveReturningOn"), ArgumentType("item", 3)),
+		// The same entries as methods on Handle, which carry the bodies since Go
+		// 1.27 let a method declare its own type parameter. The receiver is not
+		// an argument, so the write side reads its value where the Context form
+		// does, at index 2.
+		ItemDecodeCall(Method(path, "Load", path, "Handle"), GenericType("item", 0)),
+		ItemDecodeCall(Method(path, "LoadAll", path, "Handle"), GenericType("item", 0)),
+		ItemDecodeCall(Method(path, "Query", path, "Handle"), GenericType("item", 0)),
+		ItemDecodeCall(Method(path, "QueryPage", path, "Handle"), GenericType("item", 0)),
+		ItemDecodeCall(Method(path, "Scan", path, "Handle"), GenericType("item", 0)),
+		ItemDecodeCall(Method(path, "ScanPage", path, "Handle"), GenericType("item", 0)),
+		ItemEncodeCall(Method(path, "Store", path, "Handle"), ArgumentType("item", 2)),
+		ItemEncodeCall(Method(path, "StoreAll", path, "Handle"), ArgumentType("item", 2)),
+		ItemEncodeDecodeCall(Method(path, "StoreReturning", path, "Handle"), ArgumentType("item", 2)),
+		ItemKeyCall(Method(path, "Remove", path, "Handle"), ArgumentType("item", 2)),
+		ItemKeyCall(Method(path, "Update", path, "Handle"), ArgumentType("item", 2)),
+		ItemKeyDecodeCall(Method(path, "RemoveReturning", path, "Handle"), ArgumentType("item", 2)),
 	}
 	statuses := map[string]int{
 		"BadRequest": 400, "Validation": 400, "Unauthorized": 401, "Forbidden": 403,
@@ -665,7 +681,9 @@ func canonicalCBORBindCalls() []CallPattern {
 //
 // The Handle-taking twins of requirement:firestore-parameter-api follow the
 // same rule one place later, and the *Tx entries have no twin because the
-// receiver already carries the handle.
+// receiver already carries the handle. Since Go 1.27 the twins and the
+// transactional reads are methods, whose receiver is not an argument, so a
+// method reads its value where the Context form does.
 func canonicalFirestoreCalls(path string) []CallPattern {
 	return []CallPattern{
 		EntityDecodeCall(Function(path, "Load"), GenericType("entity", 0)),
@@ -693,6 +711,25 @@ func canonicalFirestoreCalls(path string) []CallPattern {
 		EntityEncodeCall(Function(path, "InsertAllOn"), ArgumentType("entity", 2)),
 		EntityKeyCall(Function(path, "RemoveOn"), ArgumentType("entity", 2)),
 		EntityKeyCall(Function(path, "RemoveAllOn"), ArgumentType("entity", 2)),
+		// The same entries as methods on Handle, the receiver carrying what the
+		// On twins took as an argument, so the value is back at index 1.
+		EntityDecodeCall(Method(path, "Load", path, "Handle"), GenericType("entity", 0)),
+		EntityDecodeCall(Method(path, "LoadAll", path, "Handle"), GenericType("entity", 0)),
+		EntityDecodeCall(Method(path, "Query", path, "Handle"), GenericType("entity", 0)),
+		EntityDecodeCall(Method(path, "QueryPage", path, "Handle"), GenericType("entity", 0)),
+		EntityEncodeCall(Method(path, "Store", path, "Handle"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Method(path, "Insert", path, "Handle"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Method(path, "Update", path, "Handle"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Method(path, "StoreAll", path, "Handle"), ArgumentType("entity", 1)),
+		EntityEncodeCall(Method(path, "InsertAll", path, "Handle"), ArgumentType("entity", 1)),
+		EntityKeyCall(Method(path, "Remove", path, "Handle"), ArgumentType("entity", 1)),
+		EntityKeyCall(Method(path, "RemoveAll", path, "Handle"), ArgumentType("entity", 1)),
+		// The transaction reads as methods on Tx, beside the writes below; the
+		// type is still the first type argument, since T appears only in the
+		// result.
+		EntityDecodeCall(Method(path, "Load", path, "Tx"), GenericType("entity", 0)),
+		EntityDecodeCall(Method(path, "LoadAll", path, "Tx"), GenericType("entity", 0)),
+		EntityDecodeCall(Method(path, "QueryPage", path, "Tx"), GenericType("entity", 0)),
 		// The transaction writes are methods, and their value is the first
 		// argument because the receiver carries the handle.
 		EntityEncodeCall(Method(path, "Store", path, "Tx"), ArgumentType("entity", 0)),

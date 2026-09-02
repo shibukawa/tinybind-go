@@ -572,35 +572,35 @@ HandleFromContext(ctx context.Context) (Handle, error)
 func (h Handle) Client() *datastore.Client
 ```
 
-ランタイムの入口にはそれぞれ `On` を付けた双子があり、`Handle` を引数に取ります。上の key の
-配置も同じです。
+ランタイムの入口はそれぞれ `Handle` のメソッドとしても呼べます。上の key の配置も同じです。
 
 ```go
 h := firestorebind.NewHandle(client, firestorebind.WithNamespace(tenantOf))
 
-reading, err := firestorebind.LoadOn[Reading](ctx, h, key)
-key, err := firestorebind.StoreOn(ctx, h, reading)
-err = firestorebind.RunOn(ctx, h, func(tx *firestorebind.Tx) error { ... })
+reading, err := h.Load[Reading](ctx, key)
+key, err := h.Store(ctx, reading)
+err = h.Run(ctx, func(tx *firestorebind.Tx) error { ... })
 
-placed := firestorebind.KeyForOn(ctx, h, key)
+placed := h.KeyFor(ctx, key)
 ```
 
-`Run` の内側の入口 — `LoadTx`、`LoadAllTx`、`QueryPageTx`、`QueryKeysPageTx`、`CountTx` — は
-client とテナントをすでに持っている `*Tx` を取ります。何も参照しないので、双子はありませんし
-必要もありません。
+`Run` の内側の入口は、client とテナントをすでに持っている `*Tx` のメソッドです。何も参照
+しないので、Context 版はありませんし必要もありません。
 
-実装を持っているのは `On` の側で、Context 版はそこへ委譲します。2 つがずれることはありません。
+実装を持っているのはメソッドの側で、Context 版はそこへ委譲します。2 つがずれることはありません。
 
 **`Context` は両方とも第 1 引数のままです。** deadline を運ぶのは Context であり、driver が
-それを要求するからです。`On` 版が落とすのは `ctx.Value` の参照であって、`Context` では
+それを要求するからです。メソッド版が落とすのは `ctx.Value` の参照であって、`Context` では
 ありません。`NamespaceResolver` はどちらの形でも `Context` を取ります。client がそうでなくても、
 リクエストごとのテナントは Context から読むからです。
 
 zero 値の `Handle` は `ErrNoClient` です。client の無い Context とまったく同じ扱いで、
-`KeyForOn` は key をそのまま返します。
+`h.KeyFor` は key をそのまま返します。
 
-メソッド形式はありません。Go はメソッドに型パラメータを許さず、entity 系の入口はすべて
-entity の型でジェネリックなので、`h.Load[Reading](...)` は存在しえません。
+メソッドが使えるのは Go 1.27 からです。メソッドが自前の型パラメータを宣言できる最初の
+リリースだからです。それ以前は各入口に `Handle` を引数に取る `On` 付きの双子 —
+`firestorebind.LoadOn[Reading](ctx, h, key)` — があり、それらの関数は deprecated として
+残って、それぞれ対応するメソッドへ転送します。呼び出し側が移行を強いられることはありません。
 
 ## ランタイム操作
 
@@ -673,7 +673,7 @@ filter や ancestor も使いたい呼び出し側から tag が何も奪いま�
 
 ```go
 err := firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
-	task, err := firestorebind.LoadTx[Task](ctx, tx, key)
+	task, err := tx.Load[Task](ctx, key)
 	if err != nil {
 		return err
 	}
@@ -687,17 +687,22 @@ err := firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
 Run(ctx, fn func(*Tx) error, opts ...datastore.TxOption) error
 RunReadOnly(ctx, fn func(*Tx) error, opts ...datastore.TxOption) error
 
-LoadTx[T](ctx, tx, key, opts...) (T, error)
-LoadAllTx[T](ctx, tx, keys) (values []T, missing, deferred []datastore.Key, err error)
-QueryPageTx[T](ctx, tx, q) (Page[T], error)
-QueryKeysPageTx(ctx, tx, q) (KeyPage, error)
-CountTx(ctx, tx, q) (int64, error)
+func (tx *Tx) Load[T](ctx, key, opts...) (T, error)
+func (tx *Tx) LoadAll[T](ctx, keys) (values []T, missing, deferred []datastore.Key, err error)
+func (tx *Tx) QueryPage[T](ctx, q) (Page[T], error)
+func (tx *Tx) QueryKeysPage(ctx, q) (KeyPage, error)
+func (tx *Tx) Count(ctx, q) (int64, error)
 
 func (tx *Tx) Store(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Insert(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Update(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Remove(v Keyer, opts ...datastore.WriteOption)
 ```
+
+読みも書きも `*Tx` のメソッドなので、1 つの transaction は 1 つの書き方で済みます。Go 1.27
+より前は、読みは `ctx` の次に `*Tx` を取る package 関数 — `LoadTx`、`LoadAllTx`、
+`QueryPageTx`、`QueryKeysPageTx`、`CountTx` — で、これらは deprecated として残り、それぞれ
+対応するメソッドへ転送します。生成される `<Name>Tx` の双子は今もこれらを呼びます。
 
 `dynamobind` は transaction を提供しません。DynamoDB の driver が宣言していないからです。
 あちらで除外した理由が、こちらでは採用する理由になります。read-modify-write を表現できる
@@ -836,8 +841,8 @@ decoder、どこからも名指されない型からは何も出ません。ネ�
 宣言は結果型の使用としてカウントされるので、Firestore の使用が宣言だけのパッケージでも、
 生成されたクエリが必要とする decoder は出ます。
 
-client の渡し方はどちらでもカウントされます。`StoreOn` は `Store` と同じように発見される
-ので、呼び出しごとに `Handle` を渡すパッケージでも Context 版と同じものが生成されますし、
+client の渡し方はどちらでもカウントされます。`h.Store` も `StoreOn` も `Store` と同じように
+発見され、`tx.Load` も `LoadTx` と同じように発見されるので、呼び出しごとに `Handle` を渡すパッケージでも Context 版と同じものが生成されますし、
 宣言済みクエリは Context・entity 操作は `Handle` という混在も、設定なしで見つかります。
 
 例外が 3 つあり、呼び出しの発見ではなく tag から生成されます。`Kind`、`EntityKey`、

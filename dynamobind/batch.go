@@ -33,11 +33,11 @@ func StoreAll[T ItemEncoder](ctx context.Context, table string, vs []T) ([]T, er
 	if err != nil {
 		return nil, err
 	}
-	return StoreAllOn(ctx, h, table, vs)
+	return h.StoreAll(ctx, table, vs)
 }
 
-// StoreAllOn is StoreAll taking its Handle as an argument.
-func StoreAllOn[T ItemEncoder](ctx context.Context, h Handle, table string, vs []T) ([]T, error) {
+// StoreAll is StoreAll on a Handle the caller already holds.
+func (h Handle) StoreAll[T ItemEncoder](ctx context.Context, table string, vs []T) ([]T, error) {
 	var unprocessed []T
 	if len(vs) == 0 {
 		return nil, nil
@@ -86,6 +86,14 @@ func StoreAllOn[T ItemEncoder](ctx context.Context, h Handle, table string, vs [
 	return unprocessed, nil
 }
 
+// StoreAllOn is StoreAll taking its Handle as an argument.
+//
+// Deprecated: use the StoreAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func StoreAllOn[T ItemEncoder](ctx context.Context, h Handle, table string, vs []T) ([]T, error) {
+	return h.StoreAll(ctx, table, vs)
+}
+
 // LoadAll reads every key, splitting the input into requests of at most
 // MaxBatchGet keys.
 //
@@ -104,14 +112,14 @@ func LoadAll[T any, PT interface {
 	if err != nil {
 		return nil, nil, err
 	}
-	return LoadAllOn[T, PT](ctx, h, table, keys, opts...)
+	return h.LoadAll[T, PT](ctx, table, keys, opts...)
 }
 
-// LoadAllOn is LoadAll taking its Handle as an argument.
-func LoadAllOn[T any, PT interface {
+// LoadAll is LoadAll on a Handle the caller already holds.
+func (h Handle) LoadAll[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, h Handle, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
+}](ctx context.Context, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
 	var (
 		items       []T
 		unprocessed []dynamodb.Key
@@ -142,6 +150,17 @@ func LoadAllOn[T any, PT interface {
 		unprocessed = append(unprocessed, result.UnprocessedKeys[name]...)
 	}
 	return items, unprocessed, nil
+}
+
+// LoadAllOn is LoadAll taking its Handle as an argument.
+//
+// Deprecated: use the LoadAll method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func LoadAllOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, keys []dynamodb.Key, opts ...dynamodb.BatchOption) ([]T, []dynamodb.Key, error) {
+	return h.LoadAll[T, PT](ctx, table, keys, opts...)
 }
 
 // equalItem compares two items attribute by attribute. It exists because

@@ -16,6 +16,12 @@ import (
 //
 // Writes queue and return nothing, matching the driver. Nothing has happened
 // yet, and a signature that returned an error would be inventing one.
+//
+// Reads are methods too, so one transaction is written one way: tx.Load[Task]
+// beside tx.Store(task). They became methods with Go 1.27, which is the first
+// release letting a method declare its own type parameter; LoadTx, LoadAllTx,
+// QueryPageTx, QueryKeysPageTx and CountTx are the earlier spelling and remain
+// as deprecated wrappers.
 type Tx struct {
 	tx        *datastore.Tx
 	namespace NamespaceResolver
@@ -40,12 +46,13 @@ func Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) er
 	if err != nil {
 		return err
 	}
-	return RunOn(ctx, h, fn, opts...)
+	return h.Run(ctx, fn, opts...)
 }
 
-// RunOn is Run taking its Handle as an argument. The entries inside the closure
-// take the *Tx, which already carries the tenancy, so they have no second form.
-func RunOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+// Run is Run on a Handle the caller already holds. The entries inside the
+// closure are methods on the *Tx, which already carries the tenancy, so they
+// have no second form.
+func (h Handle) Run(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error {
 	c, ns, err := h.resolve()
 	if err != nil {
 		return err
@@ -53,6 +60,14 @@ func RunOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.
 	return c.RunInTransaction(ctx, func(tx *datastore.Tx) error {
 		return fn(&Tx{tx: tx, namespace: ns, ctx: ctx})
 	}, opts...)
+}
+
+// RunOn is Run taking its Handle as an argument.
+//
+// Deprecated: use the Run method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func RunOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+	return h.Run(ctx, fn, opts...)
 }
 
 // RunReadOnly executes fn against a consistent snapshot.
@@ -65,11 +80,11 @@ func RunReadOnly(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOp
 	if err != nil {
 		return err
 	}
-	return RunReadOnlyOn(ctx, h, fn, opts...)
+	return h.RunReadOnly(ctx, fn, opts...)
 }
 
-// RunReadOnlyOn is RunReadOnly taking its Handle as an argument.
-func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+// RunReadOnly is RunReadOnly on a Handle the caller already holds.
+func (h Handle) RunReadOnly(ctx context.Context, fn func(*Tx) error, opts ...datastore.TxOption) error {
 	c, ns, err := h.resolve()
 	if err != nil {
 		return err
@@ -77,6 +92,14 @@ func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...da
 	return c.RunReadOnly(ctx, func(tx *datastore.Tx) error {
 		return fn(&Tx{tx: tx, namespace: ns, ctx: ctx})
 	}, opts...)
+}
+
+// RunReadOnlyOn is RunReadOnly taking its Handle as an argument.
+//
+// Deprecated: use the RunReadOnly method on Handle, which carries the body.
+// This function remains so no caller is forced to move.
+func RunReadOnlyOn(ctx context.Context, h Handle, fn func(*Tx) error, opts ...datastore.TxOption) error {
+	return h.RunReadOnly(ctx, fn, opts...)
 }
 
 // Store queues an upsert of v.
@@ -104,19 +127,18 @@ func (t *Tx) encode(v EntityEncoder) datastore.Entity {
 	return withNamespace(t.ctx, t.namespace, v.EncodeEntity())
 }
 
-// LoadTx reads one entity by key inside a transaction.
+// Load reads one entity by key inside the transaction.
 //
-// It is a separate function from Load rather than a method on Tx because Go
-// methods cannot take type parameters, and separate from Load itself because a
-// transactional read has to travel through the transaction handle. A Context
-// carrying the handle instead would make one call site mean two different things
-// depending on which Context reached it.
-func LoadTx[T any, PT interface {
+// It is reached through the transaction value rather than through Load itself
+// because a transactional read has to travel through the transaction handle. A
+// Context carrying the handle instead would make one call site mean two
+// different things depending on which Context reached it.
+func (t *Tx) Load[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, tx *Tx, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
+}](ctx context.Context, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
 	var out T
-	entity, err := tx.tx.Get(ctx, applyNamespace(tx.ctx, tx.namespace, key))
+	entity, err := t.tx.Get(ctx, applyNamespace(t.ctx, t.namespace, key))
 	if err != nil {
 		return out, err
 	}
@@ -129,16 +151,27 @@ func LoadTx[T any, PT interface {
 	return out, nil
 }
 
-// LoadAllTx reads many entities by key inside a transaction. The three results
-// mean what they do in LoadAll.
-func LoadAllTx[T any, PT interface {
+// LoadTx reads one entity by key inside a transaction.
+//
+// Deprecated: use the Load method on Tx, which carries the body. This function
+// remains so no caller is forced to move.
+func LoadTx[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, tx *Tx, keys []datastore.Key) (values []T, missing, deferred []datastore.Key, err error) {
-	keys = applyNamespaceAll(tx.ctx, tx.namespace, keys)
+}](ctx context.Context, tx *Tx, key datastore.Key, opts ...datastore.ReadOption) (T, error) {
+	return tx.Load[T, PT](ctx, key, opts...)
+}
+
+// LoadAll reads many entities by key inside the transaction. The three results
+// mean what they do in the package-level LoadAll.
+func (t *Tx) LoadAll[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, keys []datastore.Key) (values []T, missing, deferred []datastore.Key, err error) {
+	keys = applyNamespaceAll(t.ctx, t.namespace, keys)
 	values = make([]T, 0, len(keys))
 	for chunk := range chunksOf(keys, datastore.MaxLookupKeys) {
-		result, err := tx.tx.GetMulti(ctx, chunk)
+		result, err := t.tx.GetMulti(ctx, chunk)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -158,30 +191,68 @@ func LoadAllTx[T any, PT interface {
 	return values, missing, deferred, nil
 }
 
-// QueryPageTx runs one query inside a transaction and decodes its batch.
-func QueryPageTx[T any, PT interface {
+// LoadAllTx reads many entities by key inside a transaction.
+//
+// Deprecated: use the LoadAll method on Tx, which carries the body. This
+// function remains so no caller is forced to move.
+func LoadAllTx[T any, PT interface {
 	*T
 	EntityDecoder
-}](ctx context.Context, tx *Tx, q *datastore.Query) (Page[T], error) {
-	batch, err := tx.tx.Run(ctx, q)
+}](ctx context.Context, tx *Tx, keys []datastore.Key) (values []T, missing, deferred []datastore.Key, err error) {
+	return tx.LoadAll[T, PT](ctx, keys)
+}
+
+// QueryPage runs one query inside the transaction and decodes its batch.
+func (t *Tx) QueryPage[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, q *datastore.Query) (Page[T], error) {
+	batch, err := t.tx.Run(ctx, q)
 	if err != nil {
 		return Page[T]{}, err
 	}
 	return decodeBatch[T, PT](batch)
 }
 
-// QueryKeysPageTx runs one keys-only query inside a transaction.
+// QueryPageTx runs one query inside a transaction and decodes its batch.
+//
+// Deprecated: use the QueryPage method on Tx, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryPageTx[T any, PT interface {
+	*T
+	EntityDecoder
+}](ctx context.Context, tx *Tx, q *datastore.Query) (Page[T], error) {
+	return tx.QueryPage[T, PT](ctx, q)
+}
+
+// QueryKeysPage runs one keys-only query inside the transaction.
 //
 // As outside a transaction, the query must already be keys-only.
-func QueryKeysPageTx(ctx context.Context, tx *Tx, q *datastore.Query) (KeyPage, error) {
-	batch, err := tx.tx.Run(ctx, q)
+func (t *Tx) QueryKeysPage(ctx context.Context, q *datastore.Query) (KeyPage, error) {
+	batch, err := t.tx.Run(ctx, q)
 	if err != nil {
 		return KeyPage{}, err
 	}
 	return keysFromBatch(batch)
 }
 
+// QueryKeysPageTx runs one keys-only query inside a transaction.
+//
+// Deprecated: use the QueryKeysPage method on Tx, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryKeysPageTx(ctx context.Context, tx *Tx, q *datastore.Query) (KeyPage, error) {
+	return tx.QueryKeysPage(ctx, q)
+}
+
+// Count counts matching entities inside the transaction.
+func (t *Tx) Count(ctx context.Context, q *datastore.Query) (int64, error) {
+	return t.tx.Count(ctx, q)
+}
+
 // CountTx counts matching entities inside a transaction.
+//
+// Deprecated: use the Count method on Tx, which carries the body. This function
+// remains so no caller is forced to move.
 func CountTx(ctx context.Context, tx *Tx, q *datastore.Query) (int64, error) {
-	return tx.tx.Count(ctx, q)
+	return tx.Count(ctx, q)
 }

@@ -602,36 +602,38 @@ HandleFromContext(ctx context.Context) (Handle, error)
 func (h Handle) Client() *datastore.Client
 ```
 
-Every runtime entry has a twin suffixed `On` that takes the `Handle`, including
-the key placement above:
+Every runtime entry is also a method on the `Handle`, including the key
+placement above:
 
 ```go
 h := firestorebind.NewHandle(client, firestorebind.WithNamespace(tenantOf))
 
-reading, err := firestorebind.LoadOn[Reading](ctx, h, key)
-key, err := firestorebind.StoreOn(ctx, h, reading)
-err = firestorebind.RunOn(ctx, h, func(tx *firestorebind.Tx) error { ... })
+reading, err := h.Load[Reading](ctx, key)
+key, err := h.Store(ctx, reading)
+err = h.Run(ctx, func(tx *firestorebind.Tx) error { ... })
 
-placed := firestorebind.KeyForOn(ctx, h, key)
+placed := h.KeyFor(ctx, key)
 ```
 
-The transactional entries inside a `Run` — `LoadTx`, `LoadAllTx`, `QueryPageTx`,
-`QueryKeysPageTx`, `CountTx` — take a `*Tx` that already carries the client and
-the tenancy. They look nothing up, so they have no twin and need none.
+The transactional entries inside a `Run` are methods on the `*Tx`, which already
+carries the client and the tenancy. They look nothing up, so they have no
+Context form and need none.
 
-The `On` forms hold the implementation and the Context forms delegate to them, so
+The methods hold the implementation and the Context forms delegate to them, so
 the two cannot drift. The `Context` is still the first argument in both: it
-carries the deadline, and the driver needs it. What the `On` form drops is the
+carries the deadline, and the driver needs it. What the method drops is the
 `ctx.Value` lookup, not the `Context`. `NamespaceResolver` still takes a
 `Context` in both forms, because a per-request tenant is read from one even when
 the client is not.
 
 The zero `Handle` is `ErrNoClient`, exactly as a Context carrying no client is,
-and `KeyForOn` returns the key untouched for it.
+and `h.KeyFor` returns the key untouched for it.
 
-There is no method form. Go does not allow type parameters on methods, and every
-entity entry is generic in the entity type, so `h.Load[Reading](...)` cannot
-exist.
+The methods need Go 1.27, the first release that lets a method declare its own
+type parameter. Before it every entry had a twin suffixed `On` taking the
+`Handle` as an argument — `firestorebind.LoadOn[Reading](ctx, h, key)` — and
+those functions remain, deprecated, each forwarding to its method, so no caller
+is forced to move.
 
 ## Runtime operations
 
@@ -707,7 +709,7 @@ Go is not a fallback — it is the only path.
 
 ```go
 err := firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
-	task, err := firestorebind.LoadTx[Task](ctx, tx, key)
+	task, err := tx.Load[Task](ctx, key)
 	if err != nil {
 		return err
 	}
@@ -721,17 +723,23 @@ err := firestorebind.Run(ctx, func(tx *firestorebind.Tx) error {
 Run(ctx, fn func(*Tx) error, opts ...datastore.TxOption) error
 RunReadOnly(ctx, fn func(*Tx) error, opts ...datastore.TxOption) error
 
-LoadTx[T](ctx, tx, key, opts...) (T, error)
-LoadAllTx[T](ctx, tx, keys) (values []T, missing, deferred []datastore.Key, err error)
-QueryPageTx[T](ctx, tx, q) (Page[T], error)
-QueryKeysPageTx(ctx, tx, q) (KeyPage, error)
-CountTx(ctx, tx, q) (int64, error)
+func (tx *Tx) Load[T](ctx, key, opts...) (T, error)
+func (tx *Tx) LoadAll[T](ctx, keys) (values []T, missing, deferred []datastore.Key, err error)
+func (tx *Tx) QueryPage[T](ctx, q) (Page[T], error)
+func (tx *Tx) QueryKeysPage(ctx, q) (KeyPage, error)
+func (tx *Tx) Count(ctx, q) (int64, error)
 
 func (tx *Tx) Store(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Insert(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Update(v EntityEncoder, opts ...datastore.WriteOption)
 func (tx *Tx) Remove(v Keyer, opts ...datastore.WriteOption)
 ```
+
+Reads and writes are both methods on the `*Tx`, so one transaction is written
+one way. Before Go 1.27 the reads were package functions taking the `*Tx` after
+the `ctx` — `LoadTx`, `LoadAllTx`, `QueryPageTx`, `QueryKeysPageTx`, `CountTx` —
+and those remain, deprecated, each forwarding to its method. A generated
+`<Name>Tx` twin still calls them.
 
 `dynamobind` offers no transactions, because the DynamoDB driver declares none.
 The reasoning that excluded them there includes them here: they are the only way
@@ -876,10 +884,11 @@ carries none. A `.tb.firestore` declaration counts as a use of its result type,
 so a package whose only Firestore use is a declaration still gets the decoder its
 generated query needs.
 
-Either client form counts. `StoreOn` is discovered exactly as `Store` is, so a
-package that passes its `Handle` at every call site generates what the Context
-form generates, and a package mixing the two — declared queries on the Context,
-entity operations on a `Handle` — needs no setting to be seen.
+Either client form counts. `h.Store` and `StoreOn` are discovered exactly as
+`Store` is, and `tx.Load` as `LoadTx` is, so a package that passes its `Handle`
+at every call site generates what the Context form generates, and a package
+mixing the two — declared queries on the Context, entity operations on a
+`Handle` — needs no setting to be seen.
 
 Three methods are the exception, emitted from the tag rather than from a
 discovered call: `Kind`, `EntityKey` and `EntityVersion`. The documented way to

@@ -333,13 +333,33 @@ func execBranch[P any](r *Renderer, taken bool, then, otherwise []Op[P], params 
 // For repeats body once per item. scope builds the body's parameter value from
 // the enclosing parameters, the item, and its index, so the loop variable stays
 // statically typed instead of becoming an untyped lookup.
-func For[P, E, S any](items func(P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
+//
+// The item and scope types are the method's own type parameters, which is what
+// kept it a package function before Go 1.27. Both are inferred from items and
+// scope, so a caller spells neither.
+func (Builder[P]) For[E, S any](items func(P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
 	return forOp[P, E, S]{items: items, scope: scope, body: body}
 }
 
 // ForCtx is For for an item list that needs the render context.
-func ForCtx[P, E, S any](items func(context.Context, P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
+func (Builder[P]) ForCtx[E, S any](items func(context.Context, P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
 	return forCtxOp[P, E, S]{items: items, scope: scope, body: body}
+}
+
+// For repeats body once per item.
+//
+// Deprecated: use the For method on Builder, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func For[P, E, S any](items func(P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
+	return Builder[P]{}.For(items, scope, body)
+}
+
+// ForCtx is For for an item list that needs the render context.
+//
+// Deprecated: use the ForCtx method on Builder, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func ForCtx[P, E, S any](items func(context.Context, P) []E, scope func(P, E, int) S, body []Op[S]) Op[P] {
+	return Builder[P]{}.ForCtx(items, scope, body)
 }
 
 type forCtxOp[P, E, S any] struct {
@@ -558,9 +578,10 @@ func (o requireCtxOp[P]) Exec(r *Renderer, params P) error {
 // declared no recover subtree, and then a failure becomes an UnrecoveredError
 // for the caller instead of anything on the page.
 //
-// It is a free function rather than a Builder method because the primary and
-// recover subtrees each read their own generated scope type.
-func Await[P, S, R any](
+// The primary and recover subtrees each read their own generated scope type,
+// so S and R are the method's own type parameters, which is what kept it a
+// package function before Go 1.27. Both are inferred from resolve and recovery.
+func (Builder[P]) Await[S, R any](
 	resolve func(context.Context, P) (S, error),
 	recovery func(P, AsyncError) R,
 	primary []Op[S],
@@ -568,6 +589,20 @@ func Await[P, S, R any](
 	handler []Op[R],
 ) Op[P] {
 	return awaitOp[P, S, R]{resolve: resolve, recovery: recovery, primary: primary, fallback: fallback, handler: handler}
+}
+
+// Await opens an await boundary.
+//
+// Deprecated: use the Await method on Builder, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func Await[P, S, R any](
+	resolve func(context.Context, P) (S, error),
+	recovery func(P, AsyncError) R,
+	primary []Op[S],
+	fallback []Op[P],
+	handler []Op[R],
+) Op[P] {
+	return Builder[P]{}.Await(resolve, recovery, primary, fallback, handler)
 }
 
 type awaitOp[P, S, R any] struct {
@@ -900,7 +935,10 @@ type LiveBinding[S any] func(deliver func(assign func(*S), err error) bool) erro
 // unsubscribes, so the first paint shows real content rather than a loading
 // state and the response still finishes. Only the live entries keep the
 // subscription open.
-func Live[P, S, R any](
+//
+// S and R are the method's own type parameters, as on Await, and are inferred
+// from bindings and recovery.
+func (Builder[P]) Live[S, R any](
 	bindings func(context.Context, P) []LiveBinding[S],
 	scope func(P) S,
 	recovery func(P, AsyncError) R,
@@ -916,6 +954,21 @@ func Live[P, S, R any](
 		fallback: fallback,
 		handler:  handler,
 	}
+}
+
+// Live opens a live boundary.
+//
+// Deprecated: use the Live method on Builder, which carries the body. This
+// function remains so no generated or hand-written caller is forced to move.
+func Live[P, S, R any](
+	bindings func(context.Context, P) []LiveBinding[S],
+	scope func(P) S,
+	recovery func(P, AsyncError) R,
+	primary []Op[S],
+	fallback []Op[P],
+	handler []Op[R],
+) Op[P] {
+	return Builder[P]{}.Live(bindings, scope, recovery, primary, fallback, handler)
 }
 
 type liveOp[P, S, R any] struct {

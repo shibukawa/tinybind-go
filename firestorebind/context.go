@@ -50,14 +50,14 @@ type Handle struct {
 	namespace NamespaceResolver
 }
 
-// NewHandle binds a client to the tenancy of one deployment, for the entries
-// suffixed On.
+// NewHandle binds a client to the tenancy of one deployment, for the methods on
+// it.
 //
 // It takes the same ClientOption list as WithClient, so a program moving between
 // the two forms rewrites the call and not the configuration:
 //
 //	h := firestorebind.NewHandle(client, firestorebind.WithNamespace(tenantOf))
-//	r, err := firestorebind.LoadOn[Reading](ctx, h, key)
+//	r, err := h.Load[Reading](ctx, key)
 func NewHandle(c *datastore.Client, options ...ClientOption) Handle {
 	h := Handle{client: c}
 	for _, option := range options {
@@ -68,12 +68,12 @@ func NewHandle(c *datastore.Client, options ...ClientOption) Handle {
 
 // Client returns the driver client this Handle carries, or nil for the zero
 // Handle. It is the escape hatch for reaching the driver directly, and it
-// applies no namespace; KeyForOn is what places a key.
+// applies no namespace; KeyFor on the Handle is what places a key.
 func (h Handle) Client() *datastore.Client { return h.client }
 
-// resolve returns the client and the namespace resolver together. Every entry
-// suffixed On calls it, and so does clientFor once it has read the Handle out of
-// a Context.
+// resolve returns the client and the namespace resolver together. Every method
+// on Handle calls it, and so does clientFor once it has read the Handle out of a
+// Context.
 func (h Handle) resolve() (*datastore.Client, NamespaceResolver, error) {
 	if h.client == nil {
 		return nil, nil, ErrNoClient
@@ -118,8 +118,8 @@ func WithHandle(ctx context.Context, h Handle) context.Context {
 // HandleFromContext returns the Handle installed by WithClient or WithHandle.
 //
 // It is the one lookup a caller needs: a framework reading it once in middleware
-// has the client and the tenancy in hand, and can then call the entries suffixed
-// On with no further Context lookup on the operation path.
+// has the client and the tenancy in hand, and can then call the Handle's methods
+// with no further Context lookup on the operation path.
 func HandleFromContext(ctx context.Context) (Handle, error) {
 	h, ok := ctx.Value(clientContextKey{}).(Handle)
 	if !ok || h.client == nil {
@@ -163,7 +163,7 @@ func KeyFor(ctx context.Context, key datastore.Key) datastore.Key {
 	if !ok {
 		return key
 	}
-	return KeyForOn(ctx, h, key)
+	return h.KeyFor(ctx, key)
 }
 
 // KeysFor is KeyFor over a slice. It allocates only when the resolver would
@@ -173,18 +173,34 @@ func KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key {
 	if !ok {
 		return keys
 	}
-	return KeysForOn(ctx, h, keys)
+	return h.KeysFor(ctx, keys)
 }
 
-// KeyForOn is KeyFor taking its Handle as an argument. A zero Handle returns the
-// key unchanged, as a Context carrying no client does.
-func KeyForOn(ctx context.Context, h Handle, key datastore.Key) datastore.Key {
+// KeyFor is KeyFor on a Handle the caller already holds. A zero Handle returns
+// the key unchanged, as a Context carrying no client does.
+func (h Handle) KeyFor(ctx context.Context, key datastore.Key) datastore.Key {
 	return applyNamespace(ctx, h.namespace, key)
 }
 
-// KeysForOn is KeysFor taking its Handle as an argument.
-func KeysForOn(ctx context.Context, h Handle, keys []datastore.Key) []datastore.Key {
+// KeyForOn is KeyFor taking its Handle as an argument.
+//
+// Deprecated: use the KeyFor method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func KeyForOn(ctx context.Context, h Handle, key datastore.Key) datastore.Key {
+	return h.KeyFor(ctx, key)
+}
+
+// KeysFor is KeysFor on a Handle the caller already holds.
+func (h Handle) KeysFor(ctx context.Context, keys []datastore.Key) []datastore.Key {
 	return applyNamespaceAll(ctx, h.namespace, keys)
+}
+
+// KeysForOn is KeysFor taking its Handle as an argument.
+//
+// Deprecated: use the KeysFor method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func KeysForOn(ctx context.Context, h Handle, keys []datastore.Key) []datastore.Key {
+	return h.KeysFor(ctx, keys)
 }
 
 // applyNamespace stamps the resolved namespace onto a key. A key that already

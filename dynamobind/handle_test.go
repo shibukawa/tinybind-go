@@ -163,3 +163,78 @@ func BenchmarkContextDepth(b *testing.B) {
 		}
 	})
 }
+
+// item is the minimal type every entry accepts: it encodes, decodes and carries
+// a key. Nothing here is sent, so each of those does nothing.
+type item struct{}
+
+func (item) EncodeItem() dynamodb.Item       { return dynamodb.Item{} }
+func (item) ItemKey() dynamodb.Key           { return dynamodb.Key{} }
+func (*item) DecodeItem(dynamodb.Item) error { return nil }
+
+// TestHandleMethodsAreTheOnForms pins that each method and its deprecated On
+// function are one operation, on the path every case here can reach without a
+// server: the zero Handle answers ErrNoClient through either spelling, and the
+// iterators yield it once. The wire-level agreement is checked in the
+// dynamofixture tests.
+func TestHandleMethodsAreTheOnForms(t *testing.T) {
+	var zero dynamobind.Handle
+	ctx := context.Background()
+	key := dynamodb.Key{}
+	noClient := func(name string, err error) {
+		t.Helper()
+		if !errors.Is(err, dynamobind.ErrNoClient) {
+			t.Errorf("%s: error = %v, want ErrNoClient", name, err)
+		}
+	}
+	once := func(name string, seq func(func(item, error) bool)) {
+		t.Helper()
+		calls := 0
+		for _, err := range seq {
+			calls++
+			noClient(name, err)
+		}
+		if calls != 1 {
+			t.Errorf("%s yielded %d times, want 1", name, calls)
+		}
+	}
+
+	_, err := zero.Load[item](ctx, "t", key)
+	noClient("Load", err)
+	_, err = dynamobind.LoadOn[item](ctx, zero, "t", key)
+	noClient("LoadOn", err)
+	_, _, err = zero.LoadAll[item](ctx, "t", []dynamodb.Key{key})
+	noClient("LoadAll", err)
+	_, _, err = dynamobind.LoadAllOn[item](ctx, zero, "t", []dynamodb.Key{key})
+	noClient("LoadAllOn", err)
+	noClient("Store", zero.Store(ctx, "t", item{}))
+	noClient("StoreOn", dynamobind.StoreOn(ctx, zero, "t", item{}))
+	_, err = zero.StoreAll(ctx, "t", []item{{}})
+	noClient("StoreAll", err)
+	_, err = dynamobind.StoreAllOn(ctx, zero, "t", []item{{}})
+	noClient("StoreAllOn", err)
+	_, _, err = zero.StoreReturning(ctx, "t", item{})
+	noClient("StoreReturning", err)
+	_, _, err = dynamobind.StoreReturningOn(ctx, zero, "t", item{})
+	noClient("StoreReturningOn", err)
+	noClient("Remove", zero.Remove(ctx, "t", item{}))
+	noClient("RemoveOn", dynamobind.RemoveOn(ctx, zero, "t", item{}))
+	_, _, err = zero.RemoveReturning(ctx, "t", item{})
+	noClient("RemoveReturning", err)
+	_, _, err = dynamobind.RemoveReturningOn(ctx, zero, "t", item{})
+	noClient("RemoveReturningOn", err)
+	noClient("Update", zero.Update(ctx, "t", item{}, "SET a = :a"))
+	noClient("UpdateOn", dynamobind.UpdateOn(ctx, zero, "t", item{}, "SET a = :a"))
+	_, err = zero.QueryPage[item](ctx, "t", "k = :k")
+	noClient("QueryPage", err)
+	_, err = dynamobind.QueryPageOn[item](ctx, zero, "t", "k = :k")
+	noClient("QueryPageOn", err)
+	_, err = zero.ScanPage[item](ctx, "t")
+	noClient("ScanPage", err)
+	_, err = dynamobind.ScanPageOn[item](ctx, zero, "t")
+	noClient("ScanPageOn", err)
+	once("Query", zero.Query[item](ctx, "t", "k = :k"))
+	once("QueryOn", dynamobind.QueryOn[item](ctx, zero, "t", "k = :k"))
+	once("Scan", zero.Scan[item](ctx, "t"))
+	once("ScanOn", dynamobind.ScanOn[item](ctx, zero, "t"))
+}

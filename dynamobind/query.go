@@ -35,14 +35,14 @@ func QueryPage[T any, PT interface {
 	if err != nil {
 		return Page[T]{}, err
 	}
-	return QueryPageOn[T, PT](ctx, h, table, keyCond, opts...)
+	return h.QueryPage[T, PT](ctx, table, keyCond, opts...)
 }
 
-// QueryPageOn is QueryPage taking its Handle as an argument.
-func QueryPageOn[T any, PT interface {
+// QueryPage is QueryPage on a Handle the caller already holds.
+func (h Handle) QueryPage[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
+}](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
 	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return Page[T]{}, err
@@ -54,6 +54,17 @@ func QueryPageOn[T any, PT interface {
 	return decodePage[T, PT](page)
 }
 
+// QueryPageOn is QueryPage taking its Handle as an argument.
+//
+// Deprecated: use the QueryPage method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryPageOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) (Page[T], error) {
+	return h.QueryPage[T, PT](ctx, table, keyCond, opts...)
+}
+
 // ScanPage runs one Scan and decodes its page.
 func ScanPage[T any, PT interface {
 	*T
@@ -63,14 +74,14 @@ func ScanPage[T any, PT interface {
 	if err != nil {
 		return Page[T]{}, err
 	}
-	return ScanPageOn[T, PT](ctx, h, table, opts...)
+	return h.ScanPage[T, PT](ctx, table, opts...)
 }
 
-// ScanPageOn is ScanPage taking its Handle as an argument.
-func ScanPageOn[T any, PT interface {
+// ScanPage is ScanPage on a Handle the caller already holds.
+func (h Handle) ScanPage[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
+}](ctx context.Context, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
 	c, name, err := h.Table(ctx, table)
 	if err != nil {
 		return Page[T]{}, err
@@ -80,6 +91,17 @@ func ScanPageOn[T any, PT interface {
 		return Page[T]{}, err
 	}
 	return decodePage[T, PT](page)
+}
+
+// ScanPageOn is ScanPage taking its Handle as an argument.
+//
+// Deprecated: use the ScanPage method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func ScanPageOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) (Page[T], error) {
+	return h.ScanPage[T, PT](ctx, table, opts...)
 }
 
 // Query iterates every item of a query, requesting pages as the range advances.
@@ -102,16 +124,16 @@ func Query[T any, PT interface {
 			yield(zero, err)
 			return
 		}
-		QueryOn[T, PT](ctx, h, table, keyCond, opts...)(yield)
+		h.Query[T, PT](ctx, table, keyCond, opts...)(yield)
 	}
 }
 
-// QueryOn is Query taking its Handle as an argument. The Handle is resolved once
-// for the whole range rather than once per page.
-func QueryOn[T any, PT interface {
+// Query is Query on a Handle the caller already holds. The Handle is resolved
+// once for the whole range rather than once per page.
+func (h Handle) Query[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
+}](ctx context.Context, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		var contOpts []dynamodb.QueryOption
@@ -127,7 +149,7 @@ func QueryOn[T any, PT interface {
 				contOpts[len(opts)] = dynamodb.WithExclusiveStartKey(start)
 				pageOpts = contOpts
 			}
-			page, err := QueryPageOn[T, PT](ctx, h, table, keyCond, pageOpts...)
+			page, err := h.QueryPage[T, PT](ctx, table, keyCond, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -141,6 +163,17 @@ func QueryOn[T any, PT interface {
 			start = page.LastEvaluatedKey
 		}
 	}
+}
+
+// QueryOn is Query taking its Handle as an argument.
+//
+// Deprecated: use the Query method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func QueryOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table, keyCond string, opts ...dynamodb.QueryOption) iter.Seq2[T, error] {
+	return h.Query[T, PT](ctx, table, keyCond, opts...)
 }
 
 // Scan iterates every item of a table or index scan.
@@ -158,16 +191,16 @@ func Scan[T any, PT interface {
 			yield(zero, err)
 			return
 		}
-		ScanOn[T, PT](ctx, h, table, opts...)(yield)
+		h.Scan[T, PT](ctx, table, opts...)(yield)
 	}
 }
 
-// ScanOn is Scan taking its Handle as an argument. The Handle is resolved once
-// for the whole range rather than once per page.
-func ScanOn[T any, PT interface {
+// Scan is Scan on a Handle the caller already holds. The Handle is resolved
+// once for the whole range rather than once per page.
+func (h Handle) Scan[T any, PT interface {
 	*T
 	ItemDecoder
-}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
+}](ctx context.Context, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		var start dynamodb.Key
 		var contOpts []dynamodb.ScanOption
@@ -183,7 +216,7 @@ func ScanOn[T any, PT interface {
 				contOpts[len(opts)] = dynamodb.WithExclusiveStartKey(start)
 				pageOpts = contOpts
 			}
-			page, err := ScanPageOn[T, PT](ctx, h, table, pageOpts...)
+			page, err := h.ScanPage[T, PT](ctx, table, pageOpts...)
 			if err != nil {
 				var zero T
 				yield(zero, err)
@@ -197,6 +230,17 @@ func ScanOn[T any, PT interface {
 			start = page.LastEvaluatedKey
 		}
 	}
+}
+
+// ScanOn is Scan taking its Handle as an argument.
+//
+// Deprecated: use the Scan method on Handle, which carries the body. This
+// function remains so no caller is forced to move.
+func ScanOn[T any, PT interface {
+	*T
+	ItemDecoder
+}](ctx context.Context, h Handle, table string, opts ...dynamodb.ScanOption) iter.Seq2[T, error] {
+	return h.Scan[T, PT](ctx, table, opts...)
 }
 
 func decodePage[T any, PT interface {

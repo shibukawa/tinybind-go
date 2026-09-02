@@ -256,9 +256,11 @@ func (b *Builder) Statement() Statement {
 	return Statement{SQL: b.String(), Args: b.args}
 }
 
-// AppendValues expands a slice into a comma-separated placeholder list. It is a
-// package function because a Go method cannot introduce its own type parameter.
-func AppendValues[T any](b *Builder, values []T) error {
+// AppendValues expands a slice into a comma-separated placeholder list.
+//
+// The element type is the method's own type parameter, which is what kept it a
+// package function before Go 1.27; it is inferred from values.
+func (b *Builder) AppendValues[T any](values []T) error {
 	if len(values) == 0 {
 		return ErrEmptyValueList
 	}
@@ -269,4 +271,13 @@ func AppendValues[T any](b *Builder, values []T) error {
 		b.Arg(value)
 	}
 	return nil
+}
+
+// AppendValues expands a slice into a comma-separated placeholder list.
+//
+// Deprecated: use the AppendValues method on Builder, which carries the body.
+// This function remains so no generated caller is forced to move; generated SQL
+// still names it as _tinybindSQLArgs.
+func AppendValues[T any](b *Builder, values []T) error {
+	return b.AppendValues(values)
 }
