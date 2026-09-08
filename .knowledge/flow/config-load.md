@@ -68,15 +68,27 @@ flow:
           array-of-tables elements through the same merge recursion
         - an undefined ${NAME} aborts the load instead of writing an empty value
         - expanded values keep place file_toml, so later layers still override them
+    - id: compose-environ
+      action: read LoadOptions.EnvFiles in order, lay Environ over them, and record which file supplied each winning name
+      refs:
+        - rule:env-file-composition
+        - api:configbind-env-files
+        - decision:env-file-parser
+        - requirement:env-file-input
+      notes:
+        - a missing file is skipped; an unreadable or unparseable one aborts the load
+        - LoadResult.EnvFiles lists the files read
+        - runs before the TOML step so ${NAME} sees file-supplied names
     - id: parse-env
-      action: reusable env reader yields map; generated known-key filter merges as env
+      action: reusable env reader yields map; generated known-key filter merges as env, or as file_env:<file> when a dotenv file supplied the name
       refs:
         - concept:reusable-source-parsers
         - concept:config-overlay
         - requirement:config-env-interpolation
+        - rule:env-file-composition
         - api:configbind-bind
       notes:
-        - the same environment set feeds the file interpolation step
+        - the same composed environment set feeds the file interpolation step
         - env values are merged literally; ${...} inside them is not expanded
     - id: parse-cli
       action: generic CLI map machinery plus generated flag names merge Bind keys as cli; dispatch SubCommand to *T or nil

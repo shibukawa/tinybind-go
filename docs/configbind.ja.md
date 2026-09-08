@@ -446,6 +446,7 @@ result, err := configbind.Load(configbind.LoadOptions{
 | `Environ` | `KEY=value` 形式の環境 | `nil` なら `os.Environ()` |
 | `ExplicitConfigPath` | 強制的に使う file path | 空なら `--config-path`、extras、directory 探索 |
 | `ExtraConfigReadPaths` | 配列順に探索する任意の file path | 存在しない項目は skip |
+| `EnvFiles` | `Environ` の下に敷く dotenv file。配列順に読む | 存在しない項目は skip。[dotenv file を読む](#dotenv-file-を読む) を参照 |
 
 `nil` と空 slice の違いは test で効いてきます。`nil` は「process にフォールバックする」という意味だからです。CLI や環境の入力を完全に止めたいときは空 slice を渡します。
 
@@ -494,6 +495,62 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 | 環境変数 | `OTEL_SERVICE_NAME=checkout` |
 
 `env` の値は大文字・小文字を含めてそのまま利用され、英字または `_` で始まる環境変数名を指定します。同じ環境変数名を複数 field に割り当てると生成 error になります。環境変数から設定されたくない field には `env:"-"` を指定できます。
+
+### dotenv file を読む
+
+開発者の local な secret を置く場所として、dotenv file はごく普通の選択です。
+`EnvFiles` に path を渡すと、環境変数 layer の前にそれらを読み込みます。
+
+```go
+result, err := configbind.Load(configbind.LoadOptions{
+	Vendor:   "acme",
+	Tool:     "myserver",
+	EnvFiles: []string{".env", ".env." + appEnv},
+})
+```
+
+file は配列順に読まれ、process の環境変数の「下」に敷かれます。同じ名前なら
+後の file が前の file に勝ち、`Environ`（`nil` なら `os.Environ()`）は
+すべての file に勝ちます。存在しない file は skip します。存在するのに読めない
+file は load error になり、parser が受け付けない行も file 名と行番号つきの
+error になります。
+
+```text
+configbind: read env file ".env.stg" line 12: missing =
+```
+
+`NAME=` は「設定済み」として扱われます。export された空の環境変数と同じ扱いです。
+どの file をどの順で読むかは呼び出し側が決めます。configbind は `APP_ENV` の
+ような環境変数から file 名を導きません。
+
+合成された環境は、環境変数 layer と TOML 内の `${NAME}` 参照の両方に使われます。
+つまり file 内の `${DATABASE_URL}` は、shell から export した場合とまったく同じ
+ように `.env` から解決されます。dotenv file 自体は展開されません。file 内に
+書いた `${NAME}` はそのままの文字列になります。
+
+parser には [go-envparse](https://github.com/hashicorp/go-envparse) を使って
+います。`regexp` や `os/exec` を使わず TinyGo で build できるのが選定理由です。
+`export` prefix、`#` comment、1 つの値に unquoted / single-quoted /
+double-quoted のテキストが混在する形、double quote 内の JSON escape を
+受け付けます。同じ file 内で重複した名前は後の行が勝ちます。YAML 形式は
+受け付けません。
+
+dotenv file が設定した key は、その file を `Place` として報告します。起動時の
+summary で値の出所を示せます。
+
+```go
+for _, entry := range result.Provenance() {
+	if file, ok := configbind.EnvFileOf(entry.Place); ok {
+		log.Printf("%s = %s (from %s)", entry.Key, entry.Value, file)
+	}
+}
+```
+
+`LoadResult.EnvFiles` には実際に読まれた file が順番どおりに入ります。
+`ConfigPath` と `FoundFile` が TOML について報告するのと同じ関係です。
+`configbind.EnvVariable(key)` は key を設定する環境変数名を返し、環境変数を
+持たない key（`env:"-"` や repeated table の要素）では `""` を返します。
+doctor command が「どの名前を export すればよいか」を案内するための API です。
 
 ### 設定 file の中で環境変数を参照する
 
@@ -851,6 +908,7 @@ if ok {
 - `configbind.PlaceDefault`
 - `configbind.PlaceFile`
 - `configbind.PlaceEnv`
+- `configbind.PlaceEnvFile` に file 名が続く形。`EnvFiles` の dotenv file が値を設定した場合で、`configbind.EnvFileOf(place)` で file 名を取り出せます
 - `configbind.PlaceCLI`
 
 table 全体を走査したい場合は `Overlay.All()` が key の辞書順で entry を返します。

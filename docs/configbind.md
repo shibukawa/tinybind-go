@@ -451,6 +451,7 @@ If `./config.test.toml` exists, it is the only TOML file read. Otherwise
 | `Environ` | Environment as `KEY=value` entries | `os.Environ()` when nil |
 | `ExplicitConfigPath` | File path that must be used | Empty uses `--config-path`, extras, or directory discovery |
 | `ExtraConfigReadPaths` | Optional file paths searched in slice order | Missing entries are skipped |
+| `EnvFiles` | dotenv files laid under `Environ`, in slice order | Missing entries are skipped; see [Reading dotenv files](#reading-dotenv-files) |
 
 The distinction between nil and empty matters in tests, because nil means "fall back to the process." Pass an empty slice to shut CLI or environment input off entirely:
 
@@ -499,6 +500,61 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 | Environment | `OTEL_SERVICE_NAME=checkout` |
 
 The `env` value is used exactly as written and must begin with a letter or `_`. Assigning the same environment name to multiple fields is a generation error. Use `env:"-"` for a field that must not accept environment input.
+
+### Reading dotenv files
+
+A dotenv file is the ordinary place for a developer's local secrets. Pass the
+paths through `EnvFiles` and the load reads them before the environment layer:
+
+```go
+result, err := configbind.Load(configbind.LoadOptions{
+	Vendor:   "acme",
+	Tool:     "myserver",
+	EnvFiles: []string{".env", ".env." + appEnv},
+})
+```
+
+The files are read in slice order and laid *under* the process environment. On
+the same name a later file wins over an earlier one, and `Environ` (or
+`os.Environ()` when `Environ` is nil) wins over every file. A missing file is
+skipped; a file that exists but cannot be read is a load error, as is a line
+the parser rejects, which is reported with the file and line:
+
+```text
+configbind: read env file ".env.stg" line 12: missing =
+```
+
+`NAME=` counts as set, exactly as an exported empty variable does. Which files
+to read, and in which order, is the caller's decision: configbind does not
+derive a file name from an environment token such as `APP_ENV`.
+
+The composed environment feeds both the environment layer and the `${NAME}`
+references in TOML, so a `${DATABASE_URL}` in the file resolves from `.env`
+exactly as it would from the shell. The dotenv files themselves are not
+expanded: `${NAME}` written inside one stays literal.
+
+The parser is [go-envparse](https://github.com/hashicorp/go-envparse), chosen
+because it builds under TinyGo without `regexp` or `os/exec`. It accepts an
+`export` prefix, `#` comments, and unquoted, single-quoted, and double-quoted
+text mixed in one value, with JSON escapes inside double quotes. A later
+duplicate in the same file wins. YAML-style forms are not accepted.
+
+A key a dotenv file set reports the file as its `Place`, so a startup summary
+can say where a value came from:
+
+```go
+for _, entry := range result.Provenance() {
+	if file, ok := configbind.EnvFileOf(entry.Place); ok {
+		log.Printf("%s = %s (from %s)", entry.Key, entry.Value, file)
+	}
+}
+```
+
+`LoadResult.EnvFiles` lists the files that were actually read, in order, the
+way `ConfigPath` and `FoundFile` report the TOML. `configbind.EnvVariable(key)`
+returns the environment variable that sets a key, or `""` when the key has none
+(`env:"-"`, or a repeated-table element), so a doctor command can tell the
+operator which name to export.
 
 ### Referencing the environment from a configuration file
 
@@ -869,6 +925,7 @@ if ok {
 - `configbind.PlaceDefault`
 - `configbind.PlaceFile`
 - `configbind.PlaceEnv`
+- `configbind.PlaceEnvFile` followed by the file name, when a dotenv file from `EnvFiles` set the value; `configbind.EnvFileOf(place)` returns the name
 - `configbind.PlaceCLI`
 
 `Overlay.All()` iterates every entry in sorted key order when you want the whole table.

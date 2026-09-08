@@ -28,6 +28,14 @@ type LoadOptions struct {
 	// after ExplicitConfigPath/--config-path and before user/system config dirs.
 	// Missing or unreadable entries are skipped; only the first found file is read.
 	ExtraConfigReadPaths []string
+	// EnvFiles are dotenv files read in slice order and laid under Environ:
+	// a later file wins over an earlier one on the same name, and Environ
+	// (or os.Environ() when Environ is nil) wins over every file. A missing
+	// file is skipped; a file that exists and cannot be read is a load error,
+	// as is a line the parser rejects. Paths are used as given. A key a file
+	// set reports PlaceEnvFile plus the file as its Place; the TOML layer's
+	// ${NAME} expansion reads the same composed environment.
+	EnvFiles []string
 }
 
 // LoadResult holds the overlay after load (for tests/provenance).
@@ -35,6 +43,9 @@ type LoadResult struct {
 	Overlay    *Overlay
 	ConfigPath string
 	FoundFile  bool
+	// EnvFiles lists the LoadOptions.EnvFiles entries that existed and were
+	// read, in order, the way ConfigPath and FoundFile report the TOML.
+	EnvFiles []string
 	// definitions keeps the bound definitions in Bind registration order so
 	// Provenance can report keys in registration then declaration order even
 	// after the process registry is reset.
@@ -132,8 +143,12 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 	}
 
 	// One environment for both the file layer's ${NAME} expansion and the env
-	// layer below it.
-	environ := environMap(opts.Environ)
+	// layer below it: the dotenv files in order, then the process over them.
+	env, err := composeEnviron(opts.EnvFiles, opts.Environ)
+	if err != nil {
+		return nil, err
+	}
+	environ := env.values
 
 	// TOML file.
 	if found {
@@ -150,9 +165,9 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		}
 	}
 
-	// Env (names from CLI long options, e.g. opt port -> PORT).
-	envMap := readEnvMap(fieldDefs, environ)
-	o.MergeMap(envMap, PlaceEnv)
+	// Env (names from CLI long options, e.g. opt port -> PORT). A name a dotenv
+	// file supplied is placed as file_env:<file> rather than env.
+	mergeEnv(o, fieldDefs, env)
 
 	// CLI (highest).
 	o.MergeMap(cliRes.Values, PlaceCLI)
@@ -204,7 +219,7 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 	for _, t := range ts {
 		bound = append(bound, t.meta)
 	}
-	return &LoadResult{Overlay: o, ConfigPath: cfgPath, FoundFile: found, definitions: bound}, nil
+	return &LoadResult{Overlay: o, ConfigPath: cfgPath, FoundFile: found, EnvFiles: env.read, definitions: bound}, nil
 }
 
 func applySubcommand(name string, args []string, definition SubCommandDefinition) error {

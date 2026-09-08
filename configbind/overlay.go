@@ -14,7 +14,19 @@ const (
 	PlaceFile    Place = "file_toml"
 	PlaceEnv     Place = "env"
 	PlaceCLI     Place = "cli"
+	// PlaceEnvFile marks a value one of LoadOptions.EnvFiles set. The place
+	// carries the file so a summary can name it: PlaceEnvFile + name. Use
+	// EnvFileOf to read the name back.
+	PlaceEnvFile Place = "file_env:"
 )
+
+// EnvFileOf returns the file a PlaceEnvFile place names, and whether place is one.
+func EnvFileOf(place Place) (string, bool) {
+	if !strings.HasPrefix(string(place), string(PlaceEnvFile)) {
+		return "", false
+	}
+	return strings.TrimPrefix(string(place), string(PlaceEnvFile)), true
+}
 
 // Entry is one winning raw value in the overlay.
 type Entry struct {

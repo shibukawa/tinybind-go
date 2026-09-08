@@ -9,7 +9,7 @@ Ordered sources feed a shared overlay; later sources override earlier ones per k
 sources:
   - default
   - file_toml
-  - env
+  - env, composed from optional dotenv files then the process per rule:env-file-composition
   - cli
 merge_model: key-wise overlay Set; not whole-tree replace
 intermediate: concept:config-overlay

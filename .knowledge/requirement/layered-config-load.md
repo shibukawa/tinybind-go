@@ -23,6 +23,7 @@ layers:
   - id: env
     description: reusable env map filtered by generated known keys
     parser: concept:reusable-source-parsers
+    files: requirement:env-file-input lays dotenv files under the process environment
   - id: cli
     description: CLI key/value map for Bind fields via generated names plus generic machinery
     parser: concept:reusable-source-parsers

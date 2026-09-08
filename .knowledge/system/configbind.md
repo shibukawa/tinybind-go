@@ -29,6 +29,7 @@ primary_inputs:
   - optional --config-path process flag (error if unreadable)
   - optional ExtraConfigReadPaths direct file candidates (missing entries ignored)
   - process environment for Bind fields only
+  - optional EnvFiles dotenv paths laid under the environment via api:configbind-env-files
   - CLI args including subcommand name
 config_path: decision:config-file-path-resolution
 config_dirs: system:configdir
@@ -57,11 +58,13 @@ public_api:
   - api:configbind-bind
   - api:configbind-subcommand
   - api:configbind-provenance
+  - api:configbind-env-files
 related:
   - vision:configbind
   - requirement:configbind-product-goals
   - requirement:struct-registration
   - requirement:layered-config-load
+  - requirement:env-file-input
   - requirement:cli-option-codegen
   - requirement:source-provenance-logging
   - requirement:configbind-tinygo
