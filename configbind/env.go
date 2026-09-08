@@ -107,45 +107,153 @@ type composedEnviron struct {
 	// files maps a variable name to the file that supplied its winning value.
 	// A name the process supplied has no entry.
 	files map[string]string
-	// read lists the files that existed and were parsed, in order.
-	read []string
+	// secret holds the names whose winning value a secret source supplied: an
+	// EnvSecretFiles entry or a file under an EnvSecretDirs entry. A name the
+	// process supplied is never here, even when a secret source also set it.
+	secret map[string]bool
+	// read lists the EnvFiles entries that existed and were parsed, in order;
+	// readSecret and readDirs do the same for the two secret inputs.
+	read       []string
+	readSecret []string
+	readDirs   []string
 }
 
-// composeEnviron reads envFiles in slice order and lays environ (or the
-// process environment when environ is nil) over them. A missing file is
-// skipped; one that exists but cannot be read or parsed is an error.
-func composeEnviron(envFiles []string, environ []string) (composedEnviron, error) {
+// envSources is the ordered set of inputs composeEnviron lays under the
+// process environment, lowest first.
+type envSources struct {
+	files       []string
+	secretFiles []string
+	secretDirs  []string
+}
+
+// composeEnviron reads the plain files, then the secret files, then the secret
+// directories, each in slice order, and lays environ (or the process environment
+// when environ is nil) over them. A missing file or directory is skipped; one
+// that exists but cannot be read or parsed is an error.
+func composeEnviron(src envSources, environ []string) (composedEnviron, error) {
 	c := composedEnviron{values: make(map[string]string)}
-	if len(envFiles) > 0 {
+	if len(src.files)+len(src.secretFiles)+len(src.secretDirs) > 0 {
 		c.files = make(map[string]string)
+		c.secret = make(map[string]bool)
 	}
-	for _, path := range envFiles {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return composedEnviron{}, fmt.Errorf("configbind: read env file %q: %w", path, err)
+	set := func(name, value, path string, secret bool) {
+		c.values[name] = value
+		c.files[name] = path
+		if secret {
+			c.secret[name] = true
+		} else {
+			delete(c.secret, name)
 		}
-		parsed, err := envparse.Parse(bytes.NewReader(data))
+	}
+	for _, path := range src.files {
+		parsed, ok, err := readEnvFile(path)
 		if err != nil {
-			var pe *envparse.ParseError
-			if errors.As(err, &pe) {
-				return composedEnviron{}, fmt.Errorf("configbind: read env file %q line %d: %v", path, pe.Line, pe.Err)
-			}
-			return composedEnviron{}, fmt.Errorf("configbind: read env file %q: %w", path, err)
+			return composedEnviron{}, err
+		}
+		if !ok {
+			continue
 		}
 		for name, value := range parsed {
-			c.values[name] = value
-			c.files[name] = path
+			set(name, value, path, false)
 		}
 		c.read = append(c.read, path)
+	}
+	for _, path := range src.secretFiles {
+		parsed, ok, err := readEnvFile(path)
+		if err != nil {
+			return composedEnviron{}, err
+		}
+		if !ok {
+			continue
+		}
+		for name, value := range parsed {
+			set(name, value, path, true)
+		}
+		c.readSecret = append(c.readSecret, path)
+	}
+	for _, dir := range src.secretDirs {
+		entries, ok, err := readEnvDir(dir)
+		if err != nil {
+			return composedEnviron{}, err
+		}
+		if !ok {
+			continue
+		}
+		for name, e := range entries {
+			set(name, e.value, e.path, true)
+		}
+		c.readDirs = append(c.readDirs, dir)
 	}
 	for name, value := range environMap(environ) {
 		c.values[name] = value
 		delete(c.files, name)
+		delete(c.secret, name)
 	}
 	return c, nil
+}
+
+// readEnvFile parses one dotenv file. ok is false when the file does not exist.
+func readEnvFile(path string) (map[string]string, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("configbind: read env file %q: %w", path, err)
+	}
+	parsed, err := envparse.Parse(bytes.NewReader(data))
+	if err != nil {
+		var pe *envparse.ParseError
+		if errors.As(err, &pe) {
+			return nil, false, fmt.Errorf("configbind: read env file %q line %d: %v", path, pe.Line, pe.Err)
+		}
+		return nil, false, fmt.Errorf("configbind: read env file %q: %w", path, err)
+	}
+	return parsed, true, nil
+}
+
+// envDirEntry is one variable read from a secret directory.
+type envDirEntry struct {
+	path  string
+	value string
+}
+
+// readEnvDir reads a Docker-secret style directory: each regular file is one
+// variable, its name the variable name exactly as spelled and its content the
+// value with trailing line endings stripped. Names starting with a dot,
+// directories, and anything that is not a regular file after following
+// symlinks are skipped, which is what a Kubernetes secret mount needs: every
+// key is a symlink into a ..data snapshot directory. ok is false when dir does
+// not exist.
+func readEnvDir(dir string) (map[string]envDirEntry, bool, error) {
+	list, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("configbind: read env dir %q: %w", dir, err)
+	}
+	out := make(map[string]envDirEntry, len(list))
+	for _, d := range list {
+		name := d.Name()
+		if strings.HasPrefix(name, ".") || d.IsDir() {
+			continue
+		}
+		path := dir + string(os.PathSeparator) + name
+		info, err := os.Stat(path) // follows a symlink
+		if err != nil {
+			return nil, false, fmt.Errorf("configbind: read env dir %q entry %q: %w", dir, name, err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, false, fmt.Errorf("configbind: read env dir %q entry %q: %w", dir, name, err)
+		}
+		out[name] = envDirEntry{path: path, value: strings.TrimRight(string(data), "\r\n")}
+	}
+	return out, true, nil
 }
 
 // mergeEnv sets each def's config key from the composed environment. A name a
@@ -167,5 +275,8 @@ func mergeEnv(o *Overlay, defs []cliparser.Def, env composedEnviron) {
 			place = PlaceEnvFile + Place(file)
 		}
 		o.Set(d.ConfigKey, v, place)
+		if env.secret[name] {
+			o.MarkSecret(d.ConfigKey)
+		}
 	}
 }

@@ -30,6 +30,7 @@ primary_inputs:
   - optional ExtraConfigReadPaths direct file candidates (missing entries ignored)
   - process environment for Bind fields only
   - optional EnvFiles dotenv paths laid under the environment via api:configbind-env-files
+  - optional EnvSecretFiles and EnvSecretDirs secret-origin inputs via api:configbind-env-secret-sources
   - CLI args including subcommand name
 config_path: decision:config-file-path-resolution
 config_dirs: system:configdir
@@ -65,6 +66,7 @@ related:
   - requirement:struct-registration
   - requirement:layered-config-load
   - requirement:env-file-input
+  - requirement:secret-env-sources
   - requirement:cli-option-codegen
   - requirement:source-provenance-logging
   - requirement:configbind-tinygo

@@ -36,6 +36,20 @@ type LoadOptions struct {
 	// set reports PlaceEnvFile plus the file as its Place; the TOML layer's
 	// ${NAME} expansion reads the same composed environment.
 	EnvFiles []string
+	// EnvSecretFiles are dotenv files read like EnvFiles and laid over every
+	// EnvFiles entry, whose values are secret by origin: Provenance masks a key
+	// they set, and a TOML string that expands a ${NAME} they set, whatever the
+	// key name or secret tag says (hide still drops the entry). Put .env.local
+	// and its per-environment variants here.
+	EnvSecretFiles []string
+	// EnvSecretDirs are Docker-secret style directories laid over
+	// EnvSecretFiles: each regular file is one variable, its name the variable
+	// name exactly as spelled and its content the value with trailing line
+	// endings stripped. Dot-prefixed names and directories are skipped and
+	// symlinks are followed, so a Kubernetes secret mount reads as is. Values
+	// are secret by origin as with EnvSecretFiles. A missing directory is
+	// skipped; one that exists and cannot be read is a load error.
+	EnvSecretDirs []string
 }
 
 // LoadResult holds the overlay after load (for tests/provenance).
@@ -46,6 +60,10 @@ type LoadResult struct {
 	// EnvFiles lists the LoadOptions.EnvFiles entries that existed and were
 	// read, in order, the way ConfigPath and FoundFile report the TOML.
 	EnvFiles []string
+	// EnvSecretFiles and EnvSecretDirs list the LoadOptions entries of the same
+	// names that existed and were read, in order.
+	EnvSecretFiles []string
+	EnvSecretDirs  []string
 	// definitions keeps the bound definitions in Bind registration order so
 	// Provenance can report keys in registration then declaration order even
 	// after the process registry is reset.
@@ -144,11 +162,14 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 
 	// One environment for both the file layer's ${NAME} expansion and the env
 	// layer below it: the dotenv files in order, then the process over them.
-	env, err := composeEnviron(opts.EnvFiles, opts.Environ)
+	env, err := composeEnviron(envSources{
+		files:       opts.EnvFiles,
+		secretFiles: opts.EnvSecretFiles,
+		secretDirs:  opts.EnvSecretDirs,
+	}, opts.Environ)
 	if err != nil {
 		return nil, err
 	}
-	environ := env.values
 
 	// TOML file.
 	if found {
@@ -160,7 +181,7 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("configbind: parse toml %q: %w", cfgPath, err)
 		}
-		if err := mergeDocument(o, doc, PlaceFile, environ, ""); err != nil {
+		if err := mergeDocument(o, doc, PlaceFile, env, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -219,7 +240,15 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 	for _, t := range ts {
 		bound = append(bound, t.meta)
 	}
-	return &LoadResult{Overlay: o, ConfigPath: cfgPath, FoundFile: found, EnvFiles: env.read, definitions: bound}, nil
+	return &LoadResult{
+		Overlay:        o,
+		ConfigPath:     cfgPath,
+		FoundFile:      found,
+		EnvFiles:       env.read,
+		EnvSecretFiles: env.readSecret,
+		EnvSecretDirs:  env.readDirs,
+		definitions:    bound,
+	}, nil
 }
 
 func applySubcommand(name string, args []string, definition SubCommandDefinition) error {
@@ -304,7 +333,7 @@ func applySubcommandValues(name string, args []string, definition SubCommandDefi
 // string values on the way. diagPrefix carries the path of the enclosing
 // table-array element so an error inside [[db]] can name the element it came
 // from; it is empty at the top level, where the document keys are already full.
-func mergeDocument(o *Overlay, doc minitoml.Document, place Place, environ map[string]string, diagPrefix string) error {
+func mergeDocument(o *Overlay, doc minitoml.Document, place Place, environ composedEnviron, diagPrefix string) error {
 	diagKey := func(key string) string {
 		if diagPrefix == "" {
 			return key
@@ -324,17 +353,22 @@ func mergeDocument(o *Overlay, doc minitoml.Document, place Place, environ map[s
 			}
 			// Only elements written as strings can carry a reference; a number
 			// or bool has no ${} form to expand.
+			secret := false
 			for i := range sl {
 				if v.Array[i].Kind != minitoml.KindString {
 					continue
 				}
-				expanded, err := expandEnvRefs(sl[i], environ, diagKey(k))
+				expanded, fromSecret, err := expandEnvRefsFrom(sl[i], environ, diagKey(k))
 				if err != nil {
 					return err
 				}
 				sl[i] = expanded
+				secret = secret || fromSecret
 			}
 			o.SetMulti(k, sl, place)
+			if secret {
+				o.MarkSecret(k)
+			}
 		case minitoml.KindTableArray:
 			// Each [[k]] element becomes its own overlay, keyed relative to k.
 			tables := make([]*Overlay, 0, len(v.Tables))
@@ -352,13 +386,17 @@ func mergeDocument(o *Overlay, doc minitoml.Document, place Place, environ map[s
 			if err != nil {
 				return err
 			}
+			secret := false
 			if v.Kind == minitoml.KindString {
-				s, err = expandEnvRefs(s, environ, diagKey(k))
+				s, secret, err = expandEnvRefsFrom(s, environ, diagKey(k))
 				if err != nil {
 					return err
 				}
 			}
 			o.Set(k, s, place)
+			if secret {
+				o.MarkSecret(k)
+			}
 		}
 	}
 	return nil

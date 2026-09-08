@@ -55,6 +55,7 @@ scope:
   - SubCommand fields may use the same helper if logged, but no TOML/env layers
 priority:
   - explicit secret tag wins over auto policy
+  - a secret-origin value masks regardless of tag or key, below hide only, per rule:secret-origin-masking
 array_of_tables:
   state: implemented; an element field's secret tag reaches the generated map
   array_field_mode: a mode on the array covers every field of every element
@@ -63,6 +64,8 @@ array_of_tables:
     path under the array key and expansion applies it at every index
   detail: requirement:array-of-tables-provenance
 related:
+  - rule:secret-origin-masking
+  - requirement:secret-env-sources
   - requirement:array-of-tables-provenance
   - decision:struct-field-tags
   - requirement:source-provenance-logging

@@ -447,6 +447,8 @@ result, err := configbind.Load(configbind.LoadOptions{
 | `ExplicitConfigPath` | 強制的に使う file path | 空なら `--config-path`、extras、directory 探索 |
 | `ExtraConfigReadPaths` | 配列順に探索する任意の file path | 存在しない項目は skip |
 | `EnvFiles` | `Environ` の下に敷く dotenv file。配列順に読む | 存在しない項目は skip。[dotenv file を読む](#dotenv-file-を読む) を参照 |
+| `EnvSecretFiles` | `EnvFiles` の上に敷く dotenv file。値は出所により secret 扱い | 存在しない項目は skip。[secret の入力元](#secret-の入力元) を参照 |
+| `EnvSecretDirs` | `EnvSecretFiles` の上に敷く Docker secret 形式の directory | 存在しない項目は skip。[secret の入力元](#secret-の入力元) を参照 |
 
 `nil` と空 slice の違いは test で効いてきます。`nil` は「process にフォールバックする」という意味だからです。CLI や環境の入力を完全に止めたいときは空 slice を渡します。
 
@@ -551,6 +553,52 @@ for _, entry := range result.Provenance() {
 `configbind.EnvVariable(key)` は key を設定する環境変数名を返し、環境変数を
 持たない key（`env:"-"` や repeated table の要素）では `""` を返します。
 doctor command が「どの名前を export すればよいか」を案内するための API です。
+
+### secret の入力元
+
+provenance は key 名か `secret` tag で値を mask します。どちらも「その値が
+secret store から来た」ことは知らないので、`webhook.url` のような無害な名前の
+key に入った secret はそのまま出力されてしまいます。それを伝えるための入力が
+2 つあります。
+
+```go
+result, err := configbind.Load(configbind.LoadOptions{
+	Vendor:         "acme",
+	Tool:           "myserver",
+	EnvFiles:       []string{".env", ".env." + appEnv},
+	EnvSecretFiles: []string{".env.local", ".env." + appEnv + ".local"},
+	EnvSecretDirs:  []string{"/run/secrets"},
+})
+```
+
+`EnvSecretFiles` は `EnvFiles` とまったく同じ読み方をする dotenv file です。
+`EnvSecretDirs` は Docker secrets 形式の directory で、各 regular file が
+1 つの変数、file 名がそのまま変数名、内容が値（末尾の改行は除去）になります。
+dot 始まりの名前と directory は skip し、symlink は辿ります。Kubernetes の
+secret mount は各 key が `..data` snapshot への symlink なので、そのまま読めます。
+secret は変数名どおりに命名してください。`DB_PASSWORD` 用の Docker secret は
+`db_password` ではなく `DB_PASSWORD` として作ります。
+
+合成順は低い方から `EnvFiles`、`EnvSecretFiles`、`EnvSecretDirs`、`Environ`
+です。dotenv-flow の慣習どおり `.local` file は commit される file より常に上、
+mount された secret store はさらに上、process が最上位になります。どの file が
+secret かは呼び出し側が決めます。configbind は file 名から推測しません。
+
+secret 入力元から来た値は struct にはそのまま入り、`Provenance()` では出所だけを
+理由に mask されます。key 名がどうであれ、`secret:"show"` tag があっても mask
+されます。`secret:"hide"` は従来どおり entry を落とします。秘匿性は TOML にも
+伝播します。secret 入力元が設定した `${NAME}` を展開した文字列も mask される
+ので、`hook = "https://h/${HOOK_TOKEN}"` のような heuristic に引っかからない
+key でも token は出力されません。`Environ` が設定した値は従来どおり表示されます。
+secret 入力元が同じ名前を設定していても、表示されるのは process の値であり、
+secret store から読んだものではないからです。意図して表示したい値は
+`EnvSecretFiles` ではなく `EnvFiles` に渡してください。
+
+secret 値の `Place` は file 名、directory の場合は `/run/secrets/DB_PASSWORD`
+のような entry の path になるので、`EnvFileOf` はどちらにも使えます。
+`LoadResult.EnvSecretFiles` と `LoadResult.EnvSecretDirs` には実際に読んだものが
+`LoadResult.EnvFiles` とは別に入ります。存在しない file や directory は skip
+され、存在するのに読めないものは名前つきの load error になります。
 
 ### 設定 file の中で環境変数を参照する
 

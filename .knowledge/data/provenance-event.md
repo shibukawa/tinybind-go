@@ -22,7 +22,8 @@ fields:
     type: bool
     description: >
       Value is the redaction placeholder rather than the configured value, so a
-      caller re-rendering these records never compares against the mask text
+      caller re-rendering these records never compares against the mask text;
+      also true for a value a secret source supplied, per rule:secret-origin-masking
   - name: Omittable
     type: bool
     ref: rule:summary-key-omission

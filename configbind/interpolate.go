@@ -18,9 +18,18 @@ import (
 //
 // key names the config key under expansion and only appears in errors.
 func expandEnvRefs(raw string, env map[string]string, key string) (string, error) {
+	s, _, err := expandEnvRefsFrom(raw, composedEnviron{values: env}, key)
+	return s, err
+}
+
+// expandEnvRefsFrom is expandEnvRefs over a composed environment. The second
+// result reports that at least one reference resolved to a name a secret source
+// supplied, so the expanded value is a secret as well.
+func expandEnvRefsFrom(raw string, env composedEnviron, key string) (string, bool, error) {
 	if !strings.ContainsRune(raw, '$') {
-		return raw, nil
+		return raw, false, nil
 	}
+	secret := false
 	var b strings.Builder
 	b.Grow(len(raw))
 	for i := 0; i < len(raw); {
@@ -41,20 +50,23 @@ func expandEnvRefs(raw string, env map[string]string, key string) (string, error
 		}
 		end := strings.IndexByte(raw[i+2:], '}')
 		if end < 0 {
-			return "", fmt.Errorf("configbind: %s: unterminated %q in value", key, "${")
+			return "", false, fmt.Errorf("configbind: %s: unterminated %q in value", key, "${")
 		}
 		name := raw[i+2 : i+2+end]
 		if err := checkEnvRefName(name, key); err != nil {
-			return "", err
+			return "", false, err
 		}
-		value, ok := env[name]
+		value, ok := env.values[name]
 		if !ok {
-			return "", fmt.Errorf("configbind: %s: undefined environment variable ${%s}", key, name)
+			return "", false, fmt.Errorf("configbind: %s: undefined environment variable ${%s}", key, name)
+		}
+		if env.secret[name] {
+			secret = true
 		}
 		b.WriteString(value)
 		i += 2 + end + 1
 	}
-	return b.String(), nil
+	return b.String(), secret, nil
 }
 
 // checkEnvRefName enforces the [A-Za-z_][A-Za-z0-9_]* name shape. A typo such as

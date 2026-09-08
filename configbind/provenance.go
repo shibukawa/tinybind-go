@@ -103,7 +103,7 @@ func (r *LoadResult) Provenance() []ProvenanceEntry {
 			out = append(out, expandTables(key, key, entry.Tables, elements[key], modes)...)
 			return
 		}
-		value, masked := displayValue(key, entry.Raw, modes.secrets[key])
+		value, masked := displayValue(key, entry.Raw, modes.secrets[key], entry.Secret)
 		out = append(out, ProvenanceEntry{
 			Key:       key,
 			Value:     value,
@@ -219,7 +219,7 @@ func expandTables(displayKey, stableKey string, tables []*Overlay, fields []Scaf
 			if !ok {
 				continue
 			}
-			value, masked := displayValue(fullKey, entry.Raw, mode)
+			value, masked := displayValue(fullKey, entry.Raw, mode, entry.Secret)
 			out = append(out, ProvenanceEntry{
 				Key:       fullKey,
 				Value:     value,
@@ -404,7 +404,16 @@ const SummaryOmit = "omit"
 // displayValue applies the disclosure policy for one key and reports whether
 // the returned text is the mask. An explicit secret tag decides on its own; a
 // key with no tag is masked when its path contains a sensitive token.
-func displayValue(key, raw, mode string) (string, bool) {
+func displayValue(key, raw, mode string, secretOrigin bool) (string, bool) {
+	// A value a secret source supplied is masked on that alone, ahead of a show
+	// tag: the tag is the author's statement at generation time, the mount is
+	// the operator's about this deployment, and over-masking is the safe side.
+	if secretOrigin {
+		if raw == "" {
+			return raw, false
+		}
+		return maskedValue, true
+	}
 	switch mode {
 	case secretMask:
 		if raw == "" {

@@ -75,6 +75,8 @@ flow:
         - api:configbind-env-files
         - decision:env-file-parser
         - requirement:env-file-input
+        - requirement:secret-env-sources
+        - rule:secret-dir-layout
       notes:
         - a missing file is skipped; an unreadable or unparseable one aborts the load
         - LoadResult.EnvFiles lists the files read

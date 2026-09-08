@@ -9,6 +9,8 @@ Load composes one environment from the dotenv files then Environ, feeds it to bo
 order_low_to_high:
   - EnvFiles[0]
   - EnvFiles[n-1]
+  - EnvSecretFiles in slice order, per requirement:secret-env-sources
+  - EnvSecretDirs in slice order, entries per rule:secret-dir-layout
   - Environ, or os.Environ() when nil
 composition:
   - build the map once at the environMap site in Load; later entries overwrite earlier on the same name
@@ -16,6 +18,7 @@ composition:
   - a nil EnvFiles leaves the map identical to today
 winner_record:
   - per variable name, the file that supplied the winning value, or the process
+  - also whether that supplier was a secret source, feeding rule:secret-origin-masking
   - when the env layer sets a term:config-key from a file-supplied name, the overlay place is PlaceEnvFile plus that file instead of env
   - multi-valued keys through MergeMultiMap get the same place
   - a name supplied by a file and by Environ records the process, so the key reports env

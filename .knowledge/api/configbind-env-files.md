@@ -37,6 +37,7 @@ semantics: rule:env-file-composition
 parser: decision:env-file-parser
 related:
   - requirement:env-file-input
+  - api:configbind-env-secret-sources
   - api:configbind-bind
   - term:config-source
   - data:provenance-event

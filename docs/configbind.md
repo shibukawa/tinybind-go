@@ -452,6 +452,8 @@ If `./config.test.toml` exists, it is the only TOML file read. Otherwise
 | `ExplicitConfigPath` | File path that must be used | Empty uses `--config-path`, extras, or directory discovery |
 | `ExtraConfigReadPaths` | Optional file paths searched in slice order | Missing entries are skipped |
 | `EnvFiles` | dotenv files laid under `Environ`, in slice order | Missing entries are skipped; see [Reading dotenv files](#reading-dotenv-files) |
+| `EnvSecretFiles` | dotenv files laid over `EnvFiles`, whose values are secret by origin | Missing entries are skipped; see [Secret sources](#secret-sources) |
+| `EnvSecretDirs` | Docker-secret style directories laid over `EnvSecretFiles` | Missing entries are skipped; see [Secret sources](#secret-sources) |
 
 The distinction between nil and empty matters in tests, because nil means "fall back to the process." Pass an empty slice to shut CLI or environment input off entirely:
 
@@ -555,6 +557,53 @@ way `ConfigPath` and `FoundFile` report the TOML. `configbind.EnvVariable(key)`
 returns the environment variable that sets a key, or `""` when the key has none
 (`env:"-"`, or a repeated-table element), so a doctor command can tell the
 operator which name to export.
+
+### Secret sources
+
+Provenance masks a value by its key name or its `secret` tag. Neither knows
+that a value came out of a secret store, so a secret under an innocent key
+such as `webhook.url` would be printed. Two more inputs carry that knowledge:
+
+```go
+result, err := configbind.Load(configbind.LoadOptions{
+	Vendor:         "acme",
+	Tool:           "myserver",
+	EnvFiles:       []string{".env", ".env." + appEnv},
+	EnvSecretFiles: []string{".env.local", ".env." + appEnv + ".local"},
+	EnvSecretDirs:  []string{"/run/secrets"},
+})
+```
+
+`EnvSecretFiles` are dotenv files read exactly like `EnvFiles`, and
+`EnvSecretDirs` are directories in the Docker secrets layout: each regular
+file is one variable, the file name is the variable name exactly as spelled,
+and the content is the value with trailing line endings stripped. A name
+starting with a dot and a directory are skipped and symlinks are followed, so
+a Kubernetes secret mount, whose keys are symlinks into a `..data` snapshot,
+reads as is. Name the secret as the variable is named: a Docker secret for
+`DB_PASSWORD` is created under `DB_PASSWORD`, not `db_password`.
+
+The composition order, lowest first, is `EnvFiles`, `EnvSecretFiles`,
+`EnvSecretDirs`, then `Environ`. This matches the dotenv-flow convention where
+every `.local` file sits above every committed one, puts a mounted secret store
+above both, and keeps the process on top. Which files are secret is the
+caller's decision; configbind never infers it from a file name.
+
+A value a secret source supplied reaches the struct unchanged and is masked in
+`Provenance()` on its origin alone, whatever the key name says and even over a
+`secret:"show"` tag. `secret:"hide"` still drops the entry. The secrecy follows
+the value into TOML: a string that expanded a `${NAME}` a secret source set is
+masked too, so `hook = "https://h/${HOOK_TOKEN}"` does not print the token
+under a key no heuristic catches. A value `Environ` supplied is shown as today,
+even when a secret source also set the name, because the value printed is the
+process's and was not read from a secret store. To print such a value on
+purpose, pass the file through `EnvFiles` instead.
+
+The `Place` of a secret value names the file, or for a directory the entry
+path such as `/run/secrets/DB_PASSWORD`, so `EnvFileOf` works for both.
+`LoadResult.EnvSecretFiles` and `LoadResult.EnvSecretDirs` list what was read,
+apart from `LoadResult.EnvFiles`. A missing file or directory is skipped; one
+that exists and cannot be read is a load error naming it.
 
 ### Referencing the environment from a configuration file
 

@@ -56,6 +56,7 @@ release:
   tag: v0.5.29
   consumer_follow_up: bump the pin, pass EnvFiles, replace the interim dotenv: place prefix with EnvFileOf, keep file selection and doctor checks on its side
 related:
+  - requirement:secret-env-sources
   - requirement:layered-config-load
   - requirement:config-env-interpolation
   - requirement:source-provenance-logging

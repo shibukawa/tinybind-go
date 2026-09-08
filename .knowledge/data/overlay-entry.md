@@ -25,6 +25,9 @@ fields:
     type: enum
     ref: term:config-source
     description: winning source layer
+  - name: secret
+    type: bool
+    description: a secret source supplied the value, or a ${NAME} it set was expanded into it; masks in provenance per rule:secret-origin-masking
 operations:
   - Set(key, raw, place): overwrite prior entry for key
 ordering:

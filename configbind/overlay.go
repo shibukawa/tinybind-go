@@ -39,6 +39,11 @@ type Entry struct {
 	Tables   []*Overlay
 	IsTables bool
 	Place    Place
+	// Secret reports that a secret-origin source supplied the value: an
+	// EnvSecretFiles or EnvSecretDirs entry, or a TOML string that expanded a
+	// ${NAME} such a source set. Provenance masks the value on that alone. A
+	// later Set from another layer clears it, since that value has another origin.
+	Secret bool
 }
 
 // Overlay is a key-wise multi-source merge buffer (later Set wins).
@@ -57,6 +62,15 @@ func (o *Overlay) Set(key, raw string, place Place) {
 		o.entries = make(map[string]Entry)
 	}
 	o.entries[key] = Entry{Raw: raw, Place: place}
+}
+
+// MarkSecret flags the entry for key as secret by origin. It is a no-op when
+// key is absent.
+func (o *Overlay) MarkSecret(key string) {
+	if e, ok := o.entries[key]; ok {
+		e.Secret = true
+		o.entries[key] = e
+	}
 }
 
 // SetMulti stores a multi-value for key from place.
