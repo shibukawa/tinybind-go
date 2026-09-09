@@ -7,7 +7,7 @@ A value a secret source supplied is masked in provenance because of where it cam
 
 ```yaml
 origin_secret_sources:
-  - EnvSecretFiles entries
+  - EnvFiles entries whose Secret flag is set
   - EnvSecretDirs entries
 not_origin_secret:
   - EnvFiles entries
@@ -24,7 +24,7 @@ mode_resolution:
       operator mounting the value from a secret store is a statement about this
       deployment, and over-masking is the safe direction rule:secret-redaction
       already chose
-    escape: pass the file through EnvFiles instead of EnvSecretFiles
+    escape: leave the Secret flag off that EnvFiles entry
   empty_value: an empty secret-origin value renders empty and unmasked, matching displayValue today
 taint_through_interpolation:
   rule: a file_toml string whose ${NAME} references resolved at least one secret-origin name is masked

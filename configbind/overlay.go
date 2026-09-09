@@ -39,8 +39,8 @@ type Entry struct {
 	Tables   []*Overlay
 	IsTables bool
 	Place    Place
-	// Secret reports that a secret-origin source supplied the value: an
-	// EnvSecretFiles or EnvSecretDirs entry, or a TOML string that expanded a
+	// Secret reports that a secret-origin source supplied the value: a Secret
+	// EnvFiles entry, an EnvSecretDirs entry, or a TOML string that expanded a
 	// ${NAME} such a source set. Provenance masks the value on that alone. A
 	// later Set from another layer clears it, since that value has another origin.
 	Secret bool

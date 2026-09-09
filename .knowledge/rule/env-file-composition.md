@@ -8,8 +8,7 @@ Load composes one environment from the dotenv files then Environ, feeds it to bo
 ```yaml
 order_low_to_high:
   - EnvFiles[0]
-  - EnvFiles[n-1]
-  - EnvSecretFiles in slice order, per requirement:secret-env-sources
+  - EnvFiles[n-1], plain and Secret entries in the one slice order, per requirement:secret-env-sources
   - EnvSecretDirs in slice order, entries per rule:secret-dir-layout
   - Environ, or os.Environ() when nil
 composition:

@@ -66,7 +66,7 @@ func TestEnvSecretFilesMaskByOriginAndKeepTheStructValue(t *testing.T) {
 	dir := t.TempDir()
 	local := writeEnvFile(t, dir, ".env.local", "WEBHOOK_HOOK=https://h/abc123\n")
 	opts := baseOptions(t)
-	opts.EnvSecretFiles = []string{local}
+	opts.EnvFiles = []configbind.EnvFile{{Path: local, Secret: true}}
 	result, err := configbind.Load(opts)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -81,8 +81,8 @@ func TestEnvSecretFilesMaskByOriginAndKeepTheStructValue(t *testing.T) {
 	if e.Place != configbind.PlaceEnvFile+configbind.Place(local) {
 		t.Fatalf("place=%q", e.Place)
 	}
-	if len(result.EnvSecretFiles) != 1 || result.EnvSecretFiles[0] != local || len(result.EnvFiles) != 0 {
-		t.Fatalf("EnvFiles=%v EnvSecretFiles=%v", result.EnvFiles, result.EnvSecretFiles)
+	if len(result.EnvFiles) != 1 || result.EnvFiles[0] != (configbind.EnvFile{Path: local, Secret: true}) {
+		t.Fatalf("EnvFiles=%v", result.EnvFiles)
 	}
 }
 
@@ -142,21 +142,57 @@ func TestEnvSecretDirsUnreadableIsAnError(t *testing.T) {
 	}
 }
 
-func TestEnvSecretSourcesOrderAndProcessWins(t *testing.T) {
+func TestEnvFilesReadInGivenOrderWithSecretsInterleaved(t *testing.T) {
+	// dotenv-flow order: .env < .env.local < .env.stg < .env.stg.local, so a
+	// plain per-environment file outranks the shared local secrets.
 	cfg := registerSecretProbe(t, nil)
 	dir := t.TempDir()
-	plain := writeEnvFile(t, dir, ".env", "WEBHOOK_HOOK=plain\nWEBHOOK_NOTE=plain\n")
+	base := writeEnvFile(t, dir, ".env", "WEBHOOK_HOOK=base\nWEBHOOK_NOTE=base\n")
+	local := writeEnvFile(t, dir, ".env.local", "WEBHOOK_HOOK=local\nWEBHOOK_NOTE=local\n")
+	stg := writeEnvFile(t, dir, ".env.stg", "WEBHOOK_NOTE=stg\n")
+	stgLocal := writeEnvFile(t, dir, ".env.stg.local", "WEBHOOK_HOOK=stg-local\n")
+	opts := baseOptions(t)
+	opts.EnvFiles = []configbind.EnvFile{
+		{Path: base},
+		{Path: local, Secret: true},
+		{Path: stg},
+		{Path: stgLocal, Secret: true},
+	}
+	result, err := configbind.Load(opts)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hook != "stg-local" || cfg.Note != "stg" {
+		t.Fatalf("cfg=%+v want slice order, not plain-then-secret", cfg)
+	}
+	hook := provenanceOf(t, result, "webhook.hook")
+	if !hook.Masked || hook.Place != configbind.PlaceEnvFile+configbind.Place(stgLocal) {
+		t.Fatalf("hook=%+v want masked from .env.stg.local", hook)
+	}
+	note := provenanceOf(t, result, "webhook.note")
+	if note.Masked || note.Value != "stg" || note.Place != configbind.PlaceEnvFile+configbind.Place(stg) {
+		t.Fatalf("note=%+v; a plain file above a secret one is not secret", note)
+	}
+	if len(result.EnvFiles) != 4 || !result.EnvFiles[1].Secret || result.EnvFiles[2].Secret {
+		t.Fatalf("EnvFiles=%v", result.EnvFiles)
+	}
+}
+
+func TestEnvSecretDirsSitAboveFilesAndBelowProcess(t *testing.T) {
+	cfg := registerSecretProbe(t, nil)
+	dir := t.TempDir()
 	local := writeEnvFile(t, dir, ".env.local", "WEBHOOK_HOOK=local\nWEBHOOK_NOTE=local\n")
 	secrets := filepath.Join(dir, "secrets")
 	if err := os.Mkdir(secrets, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(secrets, "WEBHOOK_HOOK"), []byte("mounted"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"WEBHOOK_HOOK", "WEBHOOK_NOTE"} {
+		if err := os.WriteFile(filepath.Join(secrets, name), []byte("mounted"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	opts := baseOptions(t)
-	opts.EnvFiles = []string{plain}
-	opts.EnvSecretFiles = []string{local}
+	opts.EnvFiles = []configbind.EnvFile{{Path: local, Secret: true}}
 	opts.EnvSecretDirs = []string{secrets}
 	opts.Environ = []string{"WEBHOOK_NOTE=process"}
 	result, err := configbind.Load(opts)
@@ -164,10 +200,9 @@ func TestEnvSecretSourcesOrderAndProcessWins(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Hook != "mounted" || cfg.Note != "process" {
-		t.Fatalf("cfg=%+v want dir over secret file over plain, and process over all", cfg)
+		t.Fatalf("cfg=%+v want dir over file, and process over all", cfg)
 	}
-	hook := provenanceOf(t, result, "webhook.hook")
-	if !hook.Masked {
+	if hook := provenanceOf(t, result, "webhook.hook"); !hook.Masked {
 		t.Fatalf("hook=%+v want masked", hook)
 	}
 	note := provenanceOf(t, result, "webhook.note")
@@ -176,30 +211,12 @@ func TestEnvSecretSourcesOrderAndProcessWins(t *testing.T) {
 	}
 }
 
-func TestEnvSecretFilesLoseToPlainFilesOnlyByOrder(t *testing.T) {
-	// A secret file always sits above a plain file, whatever the slice contents.
-	cfg := registerSecretProbe(t, nil)
-	dir := t.TempDir()
-	plain := writeEnvFile(t, dir, ".env", "WEBHOOK_NOTE=plain\n")
-	local := writeEnvFile(t, dir, ".env.local", "WEBHOOK_NOTE=local\n")
-	opts := baseOptions(t)
-	opts.EnvFiles = []string{plain}
-	opts.EnvSecretFiles = []string{local}
-	result, err := configbind.Load(opts)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Note != "local" || !provenanceOf(t, result, "webhook.note").Masked {
-		t.Fatalf("cfg=%+v", cfg)
-	}
-}
-
 func TestEnvSecretOriginOutranksShowTagButNotHide(t *testing.T) {
 	dir := t.TempDir()
 	local := writeEnvFile(t, dir, ".env.local", "WEBHOOK_HOOK=shown?\nWEBHOOK_NOTE=hidden?\n")
 	registerSecretProbe(t, map[string]string{"webhook.hook": "show", "webhook.note": "hide"})
 	opts := baseOptions(t)
-	opts.EnvSecretFiles = []string{local}
+	opts.EnvFiles = []configbind.EnvFile{{Path: local, Secret: true}}
 	result, err := configbind.Load(opts)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -225,8 +242,7 @@ func TestEnvSecretOriginTaintsTOMLInterpolation(t *testing.T) {
 	}
 	opts := baseOptions(t)
 	opts.ExplicitConfigPath = tomlPath
-	opts.EnvFiles = []string{plain}
-	opts.EnvSecretFiles = []string{local}
+	opts.EnvFiles = []configbind.EnvFile{{Path: plain}, {Path: local, Secret: true}}
 	result, err := configbind.Load(opts)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -248,7 +264,7 @@ func TestEnvSecretOriginClearsWhenCLIOverrides(t *testing.T) {
 	registerSecretProbe(t, nil)
 	local := writeEnvFile(t, t.TempDir(), ".env.local", "WEBHOOK_HOOK=from-secret\n")
 	opts := baseOptions(t)
-	opts.EnvSecretFiles = []string{local}
+	opts.EnvFiles = []configbind.EnvFile{{Path: local, Secret: true}}
 	opts.Args = []string{"--webhook-hook", "from-cli"}
 	result, err := configbind.Load(opts)
 	if err != nil {

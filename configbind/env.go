@@ -107,32 +107,23 @@ type composedEnviron struct {
 	// files maps a variable name to the file that supplied its winning value.
 	// A name the process supplied has no entry.
 	files map[string]string
-	// secret holds the names whose winning value a secret source supplied: an
-	// EnvSecretFiles entry or a file under an EnvSecretDirs entry. A name the
+	// secret holds the names whose winning value a secret source supplied: a
+	// Secret EnvFiles entry or a file under an EnvSecretDirs entry. A name the
 	// process supplied is never here, even when a secret source also set it.
 	secret map[string]bool
 	// read lists the EnvFiles entries that existed and were parsed, in order;
-	// readSecret and readDirs do the same for the two secret inputs.
-	read       []string
-	readSecret []string
-	readDirs   []string
+	// readDirs does the same for the directories.
+	read     []EnvFile
+	readDirs []string
 }
 
-// envSources is the ordered set of inputs composeEnviron lays under the
-// process environment, lowest first.
-type envSources struct {
-	files       []string
-	secretFiles []string
-	secretDirs  []string
-}
-
-// composeEnviron reads the plain files, then the secret files, then the secret
-// directories, each in slice order, and lays environ (or the process environment
-// when environ is nil) over them. A missing file or directory is skipped; one
-// that exists but cannot be read or parsed is an error.
-func composeEnviron(src envSources, environ []string) (composedEnviron, error) {
+// composeEnviron reads the files in slice order, then the secret directories in
+// slice order, and lays environ (or the process environment when environ is
+// nil) over them. A missing file or directory is skipped; one that exists but
+// cannot be read or parsed is an error.
+func composeEnviron(files []EnvFile, secretDirs []string, environ []string) (composedEnviron, error) {
 	c := composedEnviron{values: make(map[string]string)}
-	if len(src.files)+len(src.secretFiles)+len(src.secretDirs) > 0 {
+	if len(files)+len(secretDirs) > 0 {
 		c.files = make(map[string]string)
 		c.secret = make(map[string]bool)
 	}
@@ -145,8 +136,8 @@ func composeEnviron(src envSources, environ []string) (composedEnviron, error) {
 			delete(c.secret, name)
 		}
 	}
-	for _, path := range src.files {
-		parsed, ok, err := readEnvFile(path)
+	for _, file := range files {
+		parsed, ok, err := readEnvFile(file.Path)
 		if err != nil {
 			return composedEnviron{}, err
 		}
@@ -154,24 +145,11 @@ func composeEnviron(src envSources, environ []string) (composedEnviron, error) {
 			continue
 		}
 		for name, value := range parsed {
-			set(name, value, path, false)
+			set(name, value, file.Path, file.Secret)
 		}
-		c.read = append(c.read, path)
+		c.read = append(c.read, file)
 	}
-	for _, path := range src.secretFiles {
-		parsed, ok, err := readEnvFile(path)
-		if err != nil {
-			return composedEnviron{}, err
-		}
-		if !ok {
-			continue
-		}
-		for name, value := range parsed {
-			set(name, value, path, true)
-		}
-		c.readSecret = append(c.readSecret, path)
-	}
-	for _, dir := range src.secretDirs {
+	for _, dir := range secretDirs {
 		entries, ok, err := readEnvDir(dir)
 		if err != nil {
 			return composedEnviron{}, err

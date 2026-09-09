@@ -53,7 +53,7 @@ acceptance:
   - a subcommand definition still reads no environment
   - the existing env and ExtraConfigReadPaths tests pass unchanged
 release:
-  tag: v0.5.29
+  tag: v0.5.29, with EnvFiles []string; v0.5.31 changed it to []EnvFile per decision:env-secret-source-shape
   consumer_follow_up: bump the pin, pass EnvFiles, replace the interim dotenv: place prefix with EnvFileOf, keep file selection and doctor checks on its side
 related:
   - requirement:secret-env-sources

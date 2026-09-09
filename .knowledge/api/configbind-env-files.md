@@ -7,18 +7,21 @@ LoadOptions takes dotenv paths, LoadResult reports which were read, and two help
 
 ```yaml
 option:
-  field: 'EnvFiles []string'
+  field: 'EnvFiles []EnvFile'
+  entry: 'EnvFile{Path string, Secret bool}'
+  since: v0.5.31; v0.5.29 and v0.5.30 took []string, replaced without compatibility per decision:env-secret-source-shape
   doc: >
     dotenv files read in slice order and laid under Environ: a later file wins
     over an earlier one on the same name, and Environ, or os.Environ() when
     Environ is nil, wins over every file
+  secret_flag: marks the entry's values secret by origin per rule:secret-origin-masking; reading and order are unaffected
   paths: used as given; no directory search, no token-derived names
   missing_file: skipped
   unreadable_present_file: load error
   rejected_line: 'load error, configbind: read env file %q line %d: %v'
 result:
-  field: 'EnvFiles []string'
-  meaning: the files actually read, in order, the way ConfigPath and FoundFile report the TOML
+  field: 'EnvFiles []EnvFile'
+  meaning: the entries actually read, in order and with their Secret flag, the way ConfigPath and FoundFile report the TOML
 place:
   const: 'PlaceEnvFile Place = "file_env:"'
   form: PlaceEnvFile + file name

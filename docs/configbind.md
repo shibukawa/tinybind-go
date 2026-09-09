@@ -451,9 +451,8 @@ If `./config.test.toml` exists, it is the only TOML file read. Otherwise
 | `Environ` | Environment as `KEY=value` entries | `os.Environ()` when nil |
 | `ExplicitConfigPath` | File path that must be used | Empty uses `--config-path`, extras, or directory discovery |
 | `ExtraConfigReadPaths` | Optional file paths searched in slice order | Missing entries are skipped |
-| `EnvFiles` | dotenv files laid under `Environ`, in slice order | Missing entries are skipped; see [Reading dotenv files](#reading-dotenv-files) |
-| `EnvSecretFiles` | dotenv files laid over `EnvFiles`, whose values are secret by origin | Missing entries are skipped; see [Secret sources](#secret-sources) |
-| `EnvSecretDirs` | Docker-secret style directories laid over `EnvSecretFiles` | Missing entries are skipped; see [Secret sources](#secret-sources) |
+| `EnvFiles` | dotenv files laid under `Environ`, in slice order, each with a `Secret` flag | Missing entries are skipped; see [Reading dotenv files](#reading-dotenv-files) |
+| `EnvSecretDirs` | Docker-secret style directories laid over every `EnvFiles` entry | Missing entries are skipped; see [Secret sources](#secret-sources) |
 
 The distinction between nil and empty matters in tests, because nil means "fall back to the process." Pass an empty slice to shut CLI or environment input off entirely:
 
@@ -505,16 +504,26 @@ The `env` value is used exactly as written and must begin with a letter or `_`. 
 
 ### Reading dotenv files
 
-A dotenv file is the ordinary place for a developer's local secrets. Pass the
-paths through `EnvFiles` and the load reads them before the environment layer:
+A dotenv file is the ordinary place for a developer's local settings. Pass
+the paths through `EnvFiles` and the load reads them before the environment
+layer:
 
 ```go
 result, err := configbind.Load(configbind.LoadOptions{
-	Vendor:   "acme",
-	Tool:     "myserver",
-	EnvFiles: []string{".env", ".env." + appEnv},
+	Vendor: "acme",
+	Tool:   "myserver",
+	EnvFiles: []configbind.EnvFile{
+		{Path: ".env"},
+		{Path: ".env.local", Secret: true},
+		{Path: ".env." + appEnv},
+		{Path: ".env." + appEnv + ".local", Secret: true},
+	},
 })
 ```
+
+Each entry is a path and a `Secret` flag; the flag is explained under
+[Secret sources](#secret-sources) and changes nothing about how the file is
+read or where it sits in the order.
 
 The files are read in slice order and laid *under* the process environment. On
 the same name a later file wins over an earlier one, and `Environ` (or
@@ -562,20 +571,26 @@ operator which name to export.
 
 Provenance masks a value by its key name or its `secret` tag. Neither knows
 that a value came out of a secret store, so a secret under an innocent key
-such as `webhook.url` would be printed. Two more inputs carry that knowledge:
+such as `webhook.url` would be printed. Two inputs carry that knowledge: the `Secret` flag on an `EnvFiles` entry,
+and `EnvSecretDirs`.
 
 ```go
 result, err := configbind.Load(configbind.LoadOptions{
-	Vendor:         "acme",
-	Tool:           "myserver",
-	EnvFiles:       []string{".env", ".env." + appEnv},
-	EnvSecretFiles: []string{".env.local", ".env." + appEnv + ".local"},
-	EnvSecretDirs:  []string{"/run/secrets"},
+	Vendor: "acme",
+	Tool:   "myserver",
+	EnvFiles: []configbind.EnvFile{
+		{Path: ".env"},
+		{Path: ".env.local", Secret: true},
+		{Path: ".env." + appEnv},
+		{Path: ".env." + appEnv + ".local", Secret: true},
+	},
+	EnvSecretDirs: []string{"/run/secrets"},
 })
 ```
 
-`EnvSecretFiles` are dotenv files read exactly like `EnvFiles`, and
-`EnvSecretDirs` are directories in the Docker secrets layout: each regular
+A `Secret` file is read exactly like any other; only what provenance does with
+its values differs. `EnvSecretDirs` are directories in the Docker secrets
+layout: each regular
 file is one variable, the file name is the variable name exactly as spelled,
 and the content is the value with trailing line endings stripped. A name
 starting with a dot and a directory are skipped and symlinks are followed, so
@@ -583,11 +598,13 @@ a Kubernetes secret mount, whose keys are symlinks into a `..data` snapshot,
 reads as is. Name the secret as the variable is named: a Docker secret for
 `DB_PASSWORD` is created under `DB_PASSWORD`, not `db_password`.
 
-The composition order, lowest first, is `EnvFiles`, `EnvSecretFiles`,
-`EnvSecretDirs`, then `Environ`. This matches the dotenv-flow convention where
-every `.local` file sits above every committed one, puts a mounted secret store
-above both, and keeps the process on top. Which files are secret is the
-caller's decision; configbind never infers it from a file name.
+The composition order, lowest first, is every `EnvFiles` entry in slice
+order, then `EnvSecretDirs` in slice order, then `Environ`. Secret and plain
+files interleave freely, which is what the dotenv-flow convention above needs:
+`.env.local` sits below the per-environment `.env.staging`, and only
+`.env.staging.local` sits above it. A mounted secret store outranks every file
+and the process outranks all. Which files are secret is the caller's decision;
+configbind never infers it from a file name.
 
 A value a secret source supplied reaches the struct unchanged and is masked in
 `Provenance()` on its origin alone, whatever the key name says and even over a
@@ -597,13 +614,13 @@ masked too, so `hook = "https://h/${HOOK_TOKEN}"` does not print the token
 under a key no heuristic catches. A value `Environ` supplied is shown as today,
 even when a secret source also set the name, because the value printed is the
 process's and was not read from a secret store. To print such a value on
-purpose, pass the file through `EnvFiles` instead.
+purpose, leave the file's `Secret` flag off.
 
 The `Place` of a secret value names the file, or for a directory the entry
 path such as `/run/secrets/DB_PASSWORD`, so `EnvFileOf` works for both.
-`LoadResult.EnvSecretFiles` and `LoadResult.EnvSecretDirs` list what was read,
-apart from `LoadResult.EnvFiles`. A missing file or directory is skipped; one
-that exists and cannot be read is a load error naming it.
+`LoadResult.EnvFiles` lists the files read with their `Secret` flag, and
+`LoadResult.EnvSecretDirs` the directories. A missing file or directory is
+skipped; one that exists and cannot be read is a load error naming it.
 
 ### Referencing the environment from a configuration file
 

@@ -34,22 +34,29 @@ type LoadOptions struct {
 	// file is skipped; a file that exists and cannot be read is a load error,
 	// as is a line the parser rejects. Paths are used as given. A key a file
 	// set reports PlaceEnvFile plus the file as its Place; the TOML layer's
-	// ${NAME} expansion reads the same composed environment.
-	EnvFiles []string
-	// EnvSecretFiles are dotenv files read like EnvFiles and laid over every
-	// EnvFiles entry, whose values are secret by origin: Provenance masks a key
-	// they set, and a TOML string that expands a ${NAME} they set, whatever the
-	// key name or secret tag says (hide still drops the entry). Put .env.local
-	// and its per-environment variants here.
-	EnvSecretFiles []string
-	// EnvSecretDirs are Docker-secret style directories laid over
-	// EnvSecretFiles: each regular file is one variable, its name the variable
+	// ${NAME} expansion reads the same composed environment. An entry marked
+	// Secret is secret by origin; see EnvFile.
+	EnvFiles []EnvFile
+	// EnvSecretDirs are Docker-secret style directories laid over every
+	// EnvFiles entry: each regular file is one variable, its name the variable
 	// name exactly as spelled and its content the value with trailing line
 	// endings stripped. Dot-prefixed names and directories are skipped and
 	// symlinks are followed, so a Kubernetes secret mount reads as is. Values
-	// are secret by origin as with EnvSecretFiles. A missing directory is
+	// are secret by origin as with a Secret EnvFile. A missing directory is
 	// skipped; one that exists and cannot be read is a load error.
 	EnvSecretDirs []string
+}
+
+// EnvFile is one dotenv file in LoadOptions.EnvFiles.
+type EnvFile struct {
+	// Path is used as given: no directory search, no token-derived names.
+	Path string
+	// Secret marks the file's values as secret by origin: Provenance masks a
+	// key the file set, and a TOML string that expands a ${NAME} the file set,
+	// whatever the key name or secret tag says (hide still drops the entry).
+	// The struct itself receives the real value. Mark .env.local and its
+	// per-environment variants, which hold what a developer must not commit.
+	Secret bool
 }
 
 // LoadResult holds the overlay after load (for tests/provenance).
@@ -58,12 +65,10 @@ type LoadResult struct {
 	ConfigPath string
 	FoundFile  bool
 	// EnvFiles lists the LoadOptions.EnvFiles entries that existed and were
-	// read, in order, the way ConfigPath and FoundFile report the TOML.
-	EnvFiles []string
-	// EnvSecretFiles and EnvSecretDirs list the LoadOptions entries of the same
-	// names that existed and were read, in order.
-	EnvSecretFiles []string
-	EnvSecretDirs  []string
+	// read, in order and with their Secret flag, the way ConfigPath and
+	// FoundFile report the TOML. EnvSecretDirs does the same for directories.
+	EnvFiles      []EnvFile
+	EnvSecretDirs []string
 	// definitions keeps the bound definitions in Bind registration order so
 	// Provenance can report keys in registration then declaration order even
 	// after the process registry is reset.
@@ -162,11 +167,7 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 
 	// One environment for both the file layer's ${NAME} expansion and the env
 	// layer below it: the dotenv files in order, then the process over them.
-	env, err := composeEnviron(envSources{
-		files:       opts.EnvFiles,
-		secretFiles: opts.EnvSecretFiles,
-		secretDirs:  opts.EnvSecretDirs,
-	}, opts.Environ)
+	env, err := composeEnviron(opts.EnvFiles, opts.EnvSecretDirs, opts.Environ)
 	if err != nil {
 		return nil, err
 	}
@@ -241,13 +242,12 @@ func Load(opts LoadOptions) (*LoadResult, error) {
 		bound = append(bound, t.meta)
 	}
 	return &LoadResult{
-		Overlay:        o,
-		ConfigPath:     cfgPath,
-		FoundFile:      found,
-		EnvFiles:       env.read,
-		EnvSecretFiles: env.readSecret,
-		EnvSecretDirs:  env.readDirs,
-		definitions:    bound,
+		Overlay:       o,
+		ConfigPath:    cfgPath,
+		FoundFile:     found,
+		EnvFiles:      env.read,
+		EnvSecretDirs: env.readDirs,
+		definitions:   bound,
 	}, nil
 }
 

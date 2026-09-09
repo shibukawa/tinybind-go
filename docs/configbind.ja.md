@@ -446,9 +446,8 @@ result, err := configbind.Load(configbind.LoadOptions{
 | `Environ` | `KEY=value` 形式の環境 | `nil` なら `os.Environ()` |
 | `ExplicitConfigPath` | 強制的に使う file path | 空なら `--config-path`、extras、directory 探索 |
 | `ExtraConfigReadPaths` | 配列順に探索する任意の file path | 存在しない項目は skip |
-| `EnvFiles` | `Environ` の下に敷く dotenv file。配列順に読む | 存在しない項目は skip。[dotenv file を読む](#dotenv-file-を読む) を参照 |
-| `EnvSecretFiles` | `EnvFiles` の上に敷く dotenv file。値は出所により secret 扱い | 存在しない項目は skip。[secret の入力元](#secret-の入力元) を参照 |
-| `EnvSecretDirs` | `EnvSecretFiles` の上に敷く Docker secret 形式の directory | 存在しない項目は skip。[secret の入力元](#secret-の入力元) を参照 |
+| `EnvFiles` | `Environ` の下に敷く dotenv file。配列順に読み、各項目に `Secret` flag を持つ | 存在しない項目は skip。[dotenv file を読む](#dotenv-file-を読む) を参照 |
+| `EnvSecretDirs` | すべての `EnvFiles` の上に敷く Docker secret 形式の directory | 存在しない項目は skip。[secret の入力元](#secret-の入力元) を参照 |
 
 `nil` と空 slice の違いは test で効いてきます。`nil` は「process にフォールバックする」という意味だからです。CLI や環境の入力を完全に止めたいときは空 slice を渡します。
 
@@ -500,16 +499,25 @@ observability := configbind.Bind[ObservabilityConfig]("observability")
 
 ### dotenv file を読む
 
-開発者の local な secret を置く場所として、dotenv file はごく普通の選択です。
+開発者の local な設定を置く場所として、dotenv file はごく普通の選択です。
 `EnvFiles` に path を渡すと、環境変数 layer の前にそれらを読み込みます。
 
 ```go
 result, err := configbind.Load(configbind.LoadOptions{
-	Vendor:   "acme",
-	Tool:     "myserver",
-	EnvFiles: []string{".env", ".env." + appEnv},
+	Vendor: "acme",
+	Tool:   "myserver",
+	EnvFiles: []configbind.EnvFile{
+		{Path: ".env"},
+		{Path: ".env.local", Secret: true},
+		{Path: ".env." + appEnv},
+		{Path: ".env." + appEnv + ".local", Secret: true},
+	},
 })
 ```
+
+各項目は path と `Secret` flag です。flag の意味は
+[secret の入力元](#secret-の入力元) で説明します。file の読み方と順序には
+影響しません。
 
 file は配列順に読まれ、process の環境変数の「下」に敷かれます。同じ名前なら
 後の file が前の file に勝ち、`Environ`（`nil` なら `os.Environ()`）は
@@ -559,30 +567,37 @@ doctor command が「どの名前を export すればよいか」を案内する
 provenance は key 名か `secret` tag で値を mask します。どちらも「その値が
 secret store から来た」ことは知らないので、`webhook.url` のような無害な名前の
 key に入った secret はそのまま出力されてしまいます。それを伝えるための入力が
-2 つあります。
+2 つあります。`EnvFiles` 各項目の `Secret` flag と、`EnvSecretDirs` です。
 
 ```go
 result, err := configbind.Load(configbind.LoadOptions{
-	Vendor:         "acme",
-	Tool:           "myserver",
-	EnvFiles:       []string{".env", ".env." + appEnv},
-	EnvSecretFiles: []string{".env.local", ".env." + appEnv + ".local"},
-	EnvSecretDirs:  []string{"/run/secrets"},
+	Vendor: "acme",
+	Tool:   "myserver",
+	EnvFiles: []configbind.EnvFile{
+		{Path: ".env"},
+		{Path: ".env.local", Secret: true},
+		{Path: ".env." + appEnv},
+		{Path: ".env." + appEnv + ".local", Secret: true},
+	},
+	EnvSecretDirs: []string{"/run/secrets"},
 })
 ```
 
-`EnvSecretFiles` は `EnvFiles` とまったく同じ読み方をする dotenv file です。
-`EnvSecretDirs` は Docker secrets 形式の directory で、各 regular file が
+`Secret` な file も読み方は他の file と同じで、provenance での扱いだけが
+変わります。`EnvSecretDirs` は Docker secrets 形式の directory で、各 regular file が
 1 つの変数、file 名がそのまま変数名、内容が値（末尾の改行は除去）になります。
 dot 始まりの名前と directory は skip し、symlink は辿ります。Kubernetes の
 secret mount は各 key が `..data` snapshot への symlink なので、そのまま読めます。
 secret は変数名どおりに命名してください。`DB_PASSWORD` 用の Docker secret は
 `db_password` ではなく `DB_PASSWORD` として作ります。
 
-合成順は低い方から `EnvFiles`、`EnvSecretFiles`、`EnvSecretDirs`、`Environ`
-です。dotenv-flow の慣習どおり `.local` file は commit される file より常に上、
-mount された secret store はさらに上、process が最上位になります。どの file が
-secret かは呼び出し側が決めます。configbind は file 名から推測しません。
+合成順は低い方から `EnvFiles` の全項目を配列順に、次に `EnvSecretDirs` を
+配列順に、最後に `Environ` です。secret な file と plain な file は自由に
+交互に並べられます。上の dotenv-flow の慣習ではそれが必要で、`.env.local` は
+環境別の `.env.staging` より下、`.env.staging.local` だけがその上に来ます。
+mount された secret store はすべての file より上、process が最上位です。
+どの file が secret かは呼び出し側が決めます。configbind は file 名から
+推測しません。
 
 secret 入力元から来た値は struct にはそのまま入り、`Provenance()` では出所だけを
 理由に mask されます。key 名がどうであれ、`secret:"show"` tag があっても mask
@@ -591,14 +606,15 @@ secret 入力元から来た値は struct にはそのまま入り、`Provenance
 ので、`hook = "https://h/${HOOK_TOKEN}"` のような heuristic に引っかからない
 key でも token は出力されません。`Environ` が設定した値は従来どおり表示されます。
 secret 入力元が同じ名前を設定していても、表示されるのは process の値であり、
-secret store から読んだものではないからです。意図して表示したい値は
-`EnvSecretFiles` ではなく `EnvFiles` に渡してください。
+secret store から読んだものではないからです。意図して表示したい値は、その
+file の `Secret` flag を付けずに渡してください。
 
 secret 値の `Place` は file 名、directory の場合は `/run/secrets/DB_PASSWORD`
 のような entry の path になるので、`EnvFileOf` はどちらにも使えます。
-`LoadResult.EnvSecretFiles` と `LoadResult.EnvSecretDirs` には実際に読んだものが
-`LoadResult.EnvFiles` とは別に入ります。存在しない file や directory は skip
-され、存在するのに読めないものは名前つきの load error になります。
+`LoadResult.EnvFiles` には実際に読んだ file が `Secret` flag つきで、
+`LoadResult.EnvSecretDirs` には directory が入ります。存在しない file や
+directory は skip され、存在するのに読めないものは名前つきの load error に
+なります。
 
 ### 設定 file の中で環境変数を参照する
 

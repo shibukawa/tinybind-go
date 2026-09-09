@@ -29,8 +29,8 @@ primary_inputs:
   - optional --config-path process flag (error if unreadable)
   - optional ExtraConfigReadPaths direct file candidates (missing entries ignored)
   - process environment for Bind fields only
-  - optional EnvFiles dotenv paths laid under the environment via api:configbind-env-files
-  - optional EnvSecretFiles and EnvSecretDirs secret-origin inputs via api:configbind-env-secret-sources
+  - optional EnvFiles dotenv entries, each a path with a Secret flag, laid under the environment via api:configbind-env-files
+  - optional EnvSecretDirs secret-origin directories via api:configbind-env-secret-sources
   - CLI args including subcommand name
 config_path: decision:config-file-path-resolution
 config_dirs: system:configdir

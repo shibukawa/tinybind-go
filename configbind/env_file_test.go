@@ -41,7 +41,7 @@ func TestEnvFilesLaterFileWinsAndEnvironWinsOverEveryFile(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{"WEBSERVER_HOST=from-process"},
-		EnvFiles: []string{first, second},
+		EnvFiles: []configbind.EnvFile{{Path: first}, {Path: second}},
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -72,7 +72,7 @@ func TestEnvFilesPlaceNamesTheFile(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{},
-		EnvFiles: []string{stg},
+		EnvFiles: []configbind.EnvFile{{Path: stg}},
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -108,7 +108,7 @@ func TestEnvFilesFeedTOMLInterpolation(t *testing.T) {
 		ExplicitConfigPath: tomlPath,
 		Args:               []string{},
 		Environ:            []string{},
-		EnvFiles:           []string{envFile},
+		EnvFiles:           []configbind.EnvFile{{Path: envFile}},
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -134,7 +134,7 @@ func TestEnvFilesSkipMissingAndReportRead(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{},
-		EnvFiles: []string{missing, present},
+		EnvFiles: []configbind.EnvFile{{Path: missing}, {Path: present}},
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -142,7 +142,7 @@ func TestEnvFilesSkipMissingAndReportRead(t *testing.T) {
 	if cfg.Port != 7 {
 		t.Fatalf("Port=%d", cfg.Port)
 	}
-	if len(result.EnvFiles) != 1 || result.EnvFiles[0] != present {
+	if len(result.EnvFiles) != 1 || result.EnvFiles[0].Path != present {
 		t.Fatalf("EnvFiles=%v want only the present file", result.EnvFiles)
 	}
 }
@@ -157,7 +157,7 @@ func TestEnvFilesUnreadablePresentFileIsAnError(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{},
-		EnvFiles: []string{dir}, // exists, is a directory
+		EnvFiles: []configbind.EnvFile{{Path: dir}}, // exists, is a directory
 	})
 	if err == nil || !strings.Contains(err.Error(), "read env file") {
 		t.Fatalf("err=%v want a read error", err)
@@ -175,7 +175,7 @@ func TestEnvFilesParseErrorNamesFileAndLine(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{},
-		EnvFiles: []string{bad},
+		EnvFiles: []configbind.EnvFile{{Path: bad}},
 	})
 	if err == nil {
 		t.Fatal("want a parse error")
@@ -197,7 +197,7 @@ func TestEnvFilesEmptyAssignmentCountsAsSet(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     []string{},
 		Environ:  []string{},
-		EnvFiles: []string{envFile},
+		EnvFiles: []configbind.EnvFile{{Path: envFile}},
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -249,7 +249,7 @@ func TestEnvFilesNeverReachSubcommands(t *testing.T) {
 		Tool:     "tool-missing-xyz",
 		Args:     os.Args[1:],
 		Environ:  []string{},
-		EnvFiles: []string{envFile},
+		EnvFiles: []configbind.EnvFile{{Path: envFile}},
 	})
 	if err != nil {
 		t.Fatal(err)

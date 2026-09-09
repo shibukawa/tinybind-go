@@ -1,29 +1,27 @@
 ---
 id: api:configbind-env-secret-sources
 type: api
-title: LoadOptions EnvSecretFiles and EnvSecretDirs
+title: EnvFile Secret and EnvSecretDirs
 ---
-Two LoadOptions slices add secret-origin inputs above EnvFiles, LoadResult reports what was read, and the existing file place names the entry.
+A Secret flag on each EnvFiles entry and one LoadOptions slice of directories add secret-origin inputs, LoadResult reports what was read, and the existing file place names the entry.
 
 ```yaml
 status: implemented
 options:
-  - field: 'EnvSecretFiles []string'
-    doc: dotenv files read like EnvFiles, laid over every EnvFiles entry, whose values are secret by origin
+  - field: 'EnvFile.Secret bool'
+    doc: marks one EnvFiles entry's values secret by origin; the entry keeps its slice position, so secret and plain files interleave
     parser: decision:env-file-parser, unchanged
-    missing: skipped
-    unreadable_or_rejected_line: load error, same messages as EnvFiles
+    replaced: 'EnvSecretFiles []string of v0.5.30, which forced every secret file above every plain one'
   - field: 'EnvSecretDirs []string'
-    doc: directories where each regular file is one variable, the file name the variable name and the content the value, laid over EnvSecretFiles
+    doc: directories where each regular file is one variable, the file name the variable name and the content the value, laid over every EnvFiles entry
     layout: rule:secret-dir-layout
     missing: skipped
     unreadable_dir_or_entry: load error, 'configbind: read env dir %q: %v' and 'configbind: read env dir %q entry %q: %v'
 result:
-  - field: 'EnvSecretFiles []string'
-    meaning: the secret files actually read, in order
+  - field: 'EnvFiles []EnvFile'
+    meaning: the entries actually read with their Secret flag, so a summary filters plain from secret without a second list
   - field: 'EnvSecretDirs []string'
     meaning: the directories actually read, in order
-  - note: EnvFiles keeps listing only plain files, so a summary can print the three groups apart
 place:
   reuse: PlaceEnvFile + path for both, per decision:env-secret-source-shape
   file: 'file_env:.env.local'
