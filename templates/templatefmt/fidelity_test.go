@@ -26,7 +26,7 @@ func repoTemplates(t *testing.T) []string {
 			return nil
 		}
 		name := info.Name()
-		if strings.HasSuffix(name, ".tb.html") || strings.HasSuffix(name, ".tb.sql") || strings.HasSuffix(name, ".tb.dynamo") {
+		if strings.HasSuffix(name, ".tb.html") || strings.HasSuffix(name, ".tb.sql") || strings.HasSuffix(name, ".tb.dynamo") || strings.HasSuffix(name, ".tb.firestore") {
 			paths = append(paths, path)
 		}
 		return nil
@@ -127,7 +127,9 @@ func astJSON(path string, source []byte) (string, error) {
 }
 
 // stripVolatile removes what a formatter is allowed to move: source positions,
-// and the comments whose own placement is the thing being formatted.
+// the comments whose own placement is the thing being formatted, and the
+// whitespace between SQL tokens, which is the layout itself. Without the last
+// the comparison held only for a source that was already formatted.
 func stripVolatile(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
@@ -136,6 +138,12 @@ func stripVolatile(value any) any {
 			switch key {
 			case "pos", "errorPos", "comments":
 				continue
+			}
+			if key == "text" && v["kind"] == "sql:text" {
+				if text, ok := item.(string); ok {
+					out[key] = strings.Join(strings.Fields(text), " ")
+					continue
+				}
 			}
 			out[key] = stripVolatile(item)
 		}

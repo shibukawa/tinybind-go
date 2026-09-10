@@ -55,7 +55,7 @@ whitespace_boundaries:
     forbidden_delete: a run is reshaped, never removed, so the collapsed space always survives
   preserve_option:
     condition: PreserveTemplateWhitespace in data:generator-options turns collapse off and keeps authoring whitespace byte for byte
-    consequence: reshaping is neutral only because collapse follows it, so under that option reshaping is disabled and only the droppable positions are laid out
+    consequence: reshaping is neutral only because collapse follows it, so under that option no run is touched at all, the droppable positions included, because the generator then emits those too and generation_equality would break
     surface: api:template-format-command carries the same flag, because the formatter cannot read the generator's configuration
   sql_regions:
     allowed: any whitespace between two scanned tokens, which is what makes clause, join, and subquery layout possible

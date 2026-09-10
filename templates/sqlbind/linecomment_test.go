@@ -52,9 +52,14 @@ func TestFormatLineCommentOwnsItsLine(t *testing.T) {
 			head + "  SELECT id\n  FROM rows\n  WHERE\n    1 = 1 {if name != \"\"}\n      -- by name\n      AND name = {name}\n    {/if}\n}\n",
 		},
 		{
-			"a trailing comment stays where it was",
+			"a trailing comment keeps its clause on one line",
 			head + "SELECT id, name\nFROM rows\nWHERE id = {id} -- done\n}\n",
-			head + "  SELECT id, name\n  FROM rows\n  WHERE\n    id = {id} -- done\n}\n",
+			head + "  SELECT id, name\n  FROM rows\n  WHERE id = {id} -- done\n}\n",
+		},
+		{
+			"a trailing comment inside a subquery keeps the closer off its line",
+			head + "SELECT id FROM rows WHERE id IN (SELECT id FROM other -- inner\n)\n}\n",
+			head + "  SELECT id\n  FROM rows\n  WHERE\n    id IN (\n      SELECT id\n      FROM other -- inner\n    )\n}\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

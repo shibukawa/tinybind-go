@@ -12,9 +12,10 @@ type sqlDoc interface {
 	// the source had one. Leading spaces are trimmed at each line start, which
 	// is what lets concatenation stay this simple.
 	flat() string
-	// hasLineComment reports content that ends its own line, which forbids the
-	// flat form no matter how short it is.
-	hasLineComment() bool
+	// forbidsFlat reports content that cannot share a line: a line comment,
+	// which owns the rest of its own, or a control block laid out as clauses.
+	// Neither takes the flat form however short it is.
+	forbidsFlat() bool
 }
 
 // atomsDoc is a run with no break point of its own.
@@ -31,7 +32,7 @@ func (d *atomsDoc) flat() string {
 	return b.String()
 }
 
-func (d *atomsDoc) hasLineComment() bool {
+func (d *atomsDoc) forbidsFlat() bool {
 	for _, a := range d.atoms {
 		if a.lineComment {
 			return true
@@ -51,9 +52,9 @@ func (d *seqDoc) flat() string {
 	return b.String()
 }
 
-func (d *seqDoc) hasLineComment() bool {
+func (d *seqDoc) forbidsFlat() bool {
 	for _, part := range d.parts {
-		if part.hasLineComment() {
+		if part.forbidsFlat() {
 			return true
 		}
 	}
@@ -81,8 +82,8 @@ func (d *parenDoc) flat() string {
 	return lead + "(" + inner + ")"
 }
 
-func (d *parenDoc) hasLineComment() bool {
-	return d.inner != nil && d.inner.hasLineComment()
+func (d *parenDoc) forbidsFlat() bool {
+	return d.inner != nil && d.inner.forbidsFlat()
 }
 
 // clauseDoc is one clause: its keyword run, then the items that keyword governs,
@@ -133,14 +134,14 @@ func (d *clauseDoc) flat() string {
 	return b.String()
 }
 
-func (d *clauseDoc) hasLineComment() bool {
+func (d *clauseDoc) forbidsFlat() bool {
 	for _, a := range d.head {
 		if a.lineComment {
 			return true
 		}
 	}
 	for _, item := range d.items {
-		if item.hasLineComment() {
+		if item.forbidsFlat() {
 			return true
 		}
 	}
@@ -158,11 +159,119 @@ func (d *stmtDoc) flat() string {
 	return b.String()
 }
 
-func (d *stmtDoc) hasLineComment() bool {
+func (d *stmtDoc) forbidsFlat() bool {
 	for _, clause := range d.clauses {
-		if clause.hasLineComment() {
+		if clause.forbidsFlat() {
 			return true
 		}
 	}
 	return false
+}
+
+// trailingLineComment reports that the clause holds exactly one line comment
+// and it is the clause's last token. Such a clause can still stay on one line:
+// the comment ends the line the clause ends anyway, and nothing is swallowed.
+func (d *clauseDoc) trailingLineComment() bool {
+	count := 0
+	for _, a := range d.head {
+		if a.lineComment {
+			count++
+		}
+	}
+	for _, item := range d.items {
+		count += lineComments(item)
+	}
+	if count != 1 || len(d.items) == 0 {
+		return false
+	}
+	last := lastAtom(d.items[len(d.items)-1])
+	return last != nil && last.lineComment
+}
+
+// lineComments counts the line comments anywhere in a document.
+func lineComments(d sqlDoc) int {
+	switch v := d.(type) {
+	case *atomsDoc:
+		n := 0
+		for _, a := range v.atoms {
+			if a.lineComment {
+				n++
+			}
+		}
+		return n
+	case *seqDoc:
+		n := 0
+		for _, part := range v.parts {
+			n += lineComments(part)
+		}
+		return n
+	case *parenDoc:
+		if v.inner == nil {
+			return 0
+		}
+		return lineComments(v.inner)
+	case *clauseDoc:
+		n := 0
+		for _, a := range v.head {
+			if a.lineComment {
+				n++
+			}
+		}
+		for _, item := range v.items {
+			n += lineComments(item)
+		}
+		return n
+	case *stmtDoc:
+		n := 0
+		for _, clause := range v.clauses {
+			n += lineComments(clause)
+		}
+		return n
+	case *controlDoc:
+		n := 0
+		for _, branch := range v.branches {
+			if branch.body != nil {
+				n += lineComments(branch.body)
+			}
+		}
+		return n
+	}
+	return 0
+}
+
+// lastAtom is the token a document ends on, or nil when it ends on a marker
+// that is not an atom, such as a control closer.
+func lastAtom(d sqlDoc) *atom {
+	switch v := d.(type) {
+	case *atomsDoc:
+		if len(v.atoms) == 0 {
+			return nil
+		}
+		return &v.atoms[len(v.atoms)-1]
+	case *seqDoc:
+		if len(v.parts) == 0 {
+			return nil
+		}
+		return lastAtom(v.parts[len(v.parts)-1])
+	case *parenDoc:
+		if v.close.text != "" {
+			return &v.close
+		}
+		if v.inner == nil {
+			return &v.open
+		}
+		return lastAtom(v.inner)
+	case *clauseDoc:
+		if len(v.items) > 0 {
+			return lastAtom(v.items[len(v.items)-1])
+		}
+		if len(v.head) > 0 {
+			return &v.head[len(v.head)-1]
+		}
+	case *stmtDoc:
+		if len(v.clauses) > 0 {
+			return lastAtom(v.clauses[len(v.clauses)-1])
+		}
+	}
+	return nil
 }

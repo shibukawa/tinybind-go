@@ -177,7 +177,12 @@ func (b *docBuilder) control(node syntax.Node) (sqlDoc, error) {
 	if !ok {
 		return nil, errors.New("sqlbind: cannot print node type " + node.NodeType())
 	}
-	doc := &controlDoc{open: "{" + open + "}", close: "{" + syntax.ControlClose(node) + "}", spaced: b.takeSpace()}
+	doc := &controlDoc{open: "{" + open + "}", close: "{" + syntax.ControlClose(node) + "}", spaced: b.takeSpace(), depth: b.lexer.depth}
+	// Whitespace before the closing marker belongs to the branch; what
+	// stands after the marker decides its own spacing, so nothing carries
+	// out. Carrying it out put a space after {/for} that the source never
+	// had, and one the printer's own line break then created on every pass.
+	defer func() { b.pendingSpace = false }()
 	switch n := node.(type) {
 	case *syntax.IfNode:
 		body, err := b.body(n.Then)
@@ -218,7 +223,26 @@ func (b *docBuilder) control(node syntax.Node) (sqlDoc, error) {
 	default:
 		return nil, errors.New("sqlbind: cannot print node type " + node.NodeType())
 	}
+	doc.block = opensClauses(doc)
 	return doc, nil
+}
+
+// opensClauses reports a control whose every branch begins with a clause
+// keyword, which makes the branches clauses of the surrounding statement
+// rather than fragments of one.
+func opensClauses(doc *controlDoc) bool {
+	bodies := 0
+	for _, branch := range doc.branches {
+		if branch.body == nil {
+			continue
+		}
+		stmt, ok := branch.body.(*stmtDoc)
+		if !ok || len(stmt.clauses) == 0 || len(stmt.clauses[0].head) == 0 {
+			return false
+		}
+		bodies++
+	}
+	return bodies > 0
 }
 
 func relationText(n *RelationNode) string {
@@ -279,6 +303,16 @@ func (b *docBuilder) parseClause(els []element, i, depth int) (*clauseDoc, int) 
 	for i < len(els) {
 		e := els[i]
 		if e.is(")") && e.depth() < depth {
+			break
+		}
+		if c, ok := e.doc.(*controlDoc); ok && c.block && c.depth == depth {
+			// A block control is a clause of its own: it ends the clause
+			// before it, and nothing joins it.
+			if len(clause.head) > 0 || len(current) > 0 || len(clause.items) > 0 {
+				break
+			}
+			current = append(current, e)
+			i++
 			break
 		}
 		if e.isAtom() && e.atom.depth == depth {

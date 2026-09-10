@@ -36,11 +36,13 @@ indentation:
   select_list: one item per line when the list exceeds the width, one line otherwise
 comments:
   line_comment: ends its line; whatever followed it in the source moves to the next line, because joining would comment that content out
+  trailing: a line comment that is the last token of a clause forbids nothing, since the clause ends the line anyway, so FROM t -- note stays one line
   block_comment: stays on the line it begins and is never reflowed internally
   attachment: a comment stays immediately before the token it preceded
 control_flow:
   inline: an if or for that opens inside a clause stays where it sits, since its branches are fragments of one clause rather than clauses of their own
-  block: an if whose branches each begin with a clause keyword at statement depth puts its branches on their own lines, one level in, with else and the closing marker at the opening's indentation
+  block: an if whose branches each begin with a clause keyword at statement depth is a clause of its own, never an item of the clause before it; its branches go on their own lines, one level in, one clause per line as at the top of a statement, with else and the closing marker at the opening's indentation
+  branch_edges: whitespace before a closing marker belongs to the branch and never becomes spacing after the marker
 not_done:
   keyword_case: unchanged; the scanner knows a keyword position but this module owns no dialect keyword list, and case is a choice the author may have made deliberately
   literal_contents: untouched, so a multi-line dollar-quoted string keeps its own newlines and defeats the line width for its whole extent

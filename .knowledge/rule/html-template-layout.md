@@ -24,13 +24,14 @@ elements:
   text_only: an element whose children are one short text or expression stays on one line, opening tag, content, and closing tag together
   opening_tag: attributes stay on the tag line while they fit the width; past it, one attribute per line at one level in
   closing_bracket: the > of a broken opening tag goes on the line of the last attribute, not on a line of its own, so the tag does not look like it closed empty
-  closing_tag: at the opening tag's indentation when the children were broken out, on the same line when the element stayed on one
+  closing_tag: at the opening tag's indentation when the children were broken out, on the same line when the element stayed on one; in a free container the closer takes its own line even where the source glued it to the last child, because the break is invisible there
   void_and_self_closing: closed exactly as the source spelled it; normalizing <br> and <br/> to one form is a rewrite, not a layout
   doctype: its own line at column one
 components_and_slots: a component call is laid out as an element, with its arguments treated as attributes and its fill children as element children
 control_flow:
   form: an if or for inside markup indents its branches one level, with else and the closing marker at the opening's indentation
   constraint: the same whitespace budget applies, so a control node written glued between two inline elements stays glued
+  labels: else, else if, fallback and recover open a line only where the branch before them ended on a whitespace run or the container is free; a label glued to the last node of its branch stays glued, since a break there would render as a space
 attributes:
   order: preserved, never sorted; attribute order is authored meaning to a reader even where it is none to the parser
   quotes: normalized to double quotes, escaping any the value contains
@@ -41,7 +42,9 @@ raw_text:
   copied: byte for byte, so its own indentation is the author's; only the enclosing tags are placed
   braces: written back as authored CSS or JavaScript, per rule:template-format-fidelity; only a brace the parser reads as an insertion keeps its escape
   distinct_from: pre, textarea, and a preserve-whitespace subtree, which preserve whitespace but hold template text, so their braces are escaped
-preserve_option: with PreserveTemplateWhitespace on, only the free positions are laid out, because reshaping is neutral only while collapse follows it
+preserve_option:
+  rule: with PreserveTemplateWhitespace on, no whitespace run is added, removed, or reshaped anywhere, and tags and attributes alone are normalized
+  why_not_free_positions: the generator emits every run it is given under that option, so a break added in head or html would reach the output and generation equality would fail for exactly the projects the option exists for
 related:
   - requirement:template-source-formatting
   - rule:template-format-fidelity

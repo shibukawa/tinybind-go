@@ -31,7 +31,7 @@ func (bodyPrinter) PrintBody(p *syntax.Printer, decl *syntax.TemplateDecl) error
 	// because its caller can place it between two inline boxes, so its edge
 	// whitespace is only ever reshaped.
 	kind := containerFlow
-	if isDocumentBody(body) {
+	if isDocumentBody(body) && !w.preserve {
 		kind = containerFree
 	}
 	p.Indent()
@@ -39,6 +39,11 @@ func (bodyPrinter) PrintBody(p *syntax.Printer, decl *syntax.TemplateDecl) error
 		return err
 	}
 	p.Dedent()
+	if kind == containerFree {
+		// The closing brace is a free position too, so it gets its own line
+		// even when the source glued it to the html element.
+		p.Line()
+	}
 	return nil
 }
 
@@ -59,6 +64,8 @@ type container int
 const (
 	// containerFree is a position where the HTML parser discards a
 	// whitespace-only run, so a break may be added where the source had none.
+	// With collapse off no position is free: the generator then emits every
+	// run it is given, and a break added here would reach the output.
 	containerFree container = iota
 	// containerFlow is ordinary child position: an existing whitespace run may
 	// become a break, and glued nodes stay glued.
@@ -94,7 +101,7 @@ func (w *htmlWriter) containerFor(name string, attrs []Attribute) container {
 	if whitespaceSignificantElements[lower] || hasPreserveWhitespace(attrs) {
 		return containerVerbatim
 	}
-	if whitespaceDroppingElements[lower] {
+	if whitespaceDroppingElements[lower] && !w.preserve {
 		return containerFree
 	}
 	return containerFlow
@@ -235,7 +242,11 @@ func (w *htmlWriter) node(node syntax.Node, kind container) error {
 		outer := w.verbatimRawText
 		w.verbatimRawText = true
 		defer func() { w.verbatimRawText = outer }()
-		return w.block("head", nil, n.Children, false, containerFree)
+		kind := containerFree
+		if w.preserve {
+			kind = containerFlow
+		}
+		return w.block("head", nil, n.Children, false, kind)
 	case *SlotNode:
 		return w.slot(n)
 	case *ComponentNode:
@@ -327,6 +338,11 @@ func (w *htmlWriter) block(name string, attrs []Attribute, children []syntax.Nod
 		return err
 	}
 	w.p.Dedent()
+	if inner == containerFree {
+		// The children each took a line; the closer takes one too, rather
+		// than riding the last child because the source happened to glue it.
+		w.p.Line()
+	}
 	w.p.Write("</" + name + ">")
 	return nil
 }
@@ -420,12 +436,13 @@ func (w *htmlWriter) control(node syntax.Node, kind container) error {
 		if i > 0 {
 			// The run before a label is the previous branch's trailing gap,
 			// which children has already written. With collapse on, a break
-			// there is the same byte as the run, so the label may open its own
-			// line. With collapse off, the run was copied as it was, and
-			// opening a line on top of it would add whitespace the source
-			// never had: one blank line more on every pass. Only a free
-			// position may still take the break.
-			if !w.preserve || kind == containerFree {
+			// there is the same byte as that run, so the label may open its
+			// own line; where the branch ended glued there is no run, and a
+			// break would render as a space the source never had. With
+			// collapse off the run was copied as it was, and a line opened on
+			// top of it is one blank line more on every pass. A free position
+			// takes the break either way.
+			if kind == containerFree || (!w.preserve && endsWithGap(branches[i-1].nodes)) {
 				w.p.Line()
 			}
 			w.p.Write(branch.label)
@@ -438,6 +455,17 @@ func (w *htmlWriter) control(node syntax.Node, kind container) error {
 	}
 	w.p.Write("{" + syntax.ControlClose(node) + "}")
 	return nil
+}
+
+// endsWithGap reports that a child list closes on a whitespace run, which is
+// the position where a break may replace it.
+func endsWithGap(nodes []syntax.Node) bool {
+	pieces := split(nodes, false)
+	if len(pieces) == 0 {
+		return false
+	}
+	last := pieces[len(pieces)-1]
+	return !last.isText && last.node == nil
 }
 
 func (w *htmlWriter) flatControl(open, closeMarker string, branches []controlBranch, kind container) (string, bool) {

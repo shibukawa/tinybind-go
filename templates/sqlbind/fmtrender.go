@@ -21,6 +21,14 @@ type controlDoc struct {
 	close    string
 	spaced   bool
 	branches []controlBranch
+	// depth is the parenthesis depth the control sits at, so a statement
+	// knows whether the block is one of its own clauses.
+	depth int
+	// block marks a control whose branches open with clause keywords. Its
+	// branches are clauses of the statement around it, so it is laid out the
+	// way rule:sql-template-layout control_flow.block says: branches on their
+	// own lines one level in, else and the closer at the opening's level.
+	block bool
 }
 
 func (d *controlDoc) flat() string {
@@ -39,9 +47,12 @@ func (d *controlDoc) flat() string {
 	return b.String()
 }
 
-func (d *controlDoc) hasLineComment() bool {
+func (d *controlDoc) forbidsFlat() bool {
+	if d.block {
+		return true
+	}
 	for _, branch := range d.branches {
-		if branch.body != nil && branch.body.hasLineComment() {
+		if branch.body != nil && branch.body.forbidsFlat() {
 			return true
 		}
 	}
@@ -103,9 +114,14 @@ func (r *sqlRenderer) atoms(d *atomsDoc) {
 // rest of its line, and a literal carrying its own newlines has already decided
 // the question, so neither can be flat.
 func (r *sqlRenderer) fits(d sqlDoc) bool {
-	if d.hasLineComment() {
+	if d.forbidsFlat() {
 		return false
 	}
+	return r.fitsWidth(d)
+}
+
+// fitsWidth is the width half of fits alone.
+func (r *sqlRenderer) fitsWidth(d sqlDoc) bool {
 	flat := d.flat()
 	if strings.ContainsAny(flat, "\n") {
 		return false
@@ -151,7 +167,10 @@ func (r *sqlRenderer) statement(d *stmtDoc) {
 }
 
 func (r *sqlRenderer) clause(d *clauseDoc) {
-	if r.fits(d) {
+	// A clause ends its line, so a line comment that is its last token
+	// forbids nothing: only content after the comment would be swallowed.
+	trailing := d.trailingLineComment()
+	if r.fits(d) || (trailing && r.fitsWidth(d)) {
 		r.write(d.flat())
 		return
 	}
@@ -172,7 +191,7 @@ func (r *sqlRenderer) clause(d *clauseDoc) {
 	r.write(lead + d.headText())
 	// The items may still fit beside the keyword; only when they do not does
 	// the clause open a level of its own.
-	if tail := d.itemsFlat(); tail != "" && !strings.Contains(tail, "\n") && !d.itemsHaveLineComment() &&
+	if tail := d.itemsFlat(); tail != "" && !strings.Contains(tail, "\n") && (!d.itemsForbidFlat() || trailing) &&
 		r.p.Column()+len(tail) <= r.p.Width() {
 		r.write(tail)
 		return
@@ -181,7 +200,12 @@ func (r *sqlRenderer) clause(d *clauseDoc) {
 	for i, item := range d.items {
 		r.p.Line()
 		if !d.commaSeparated && i < len(d.seps) && d.seps[i].text != "" {
-			r.write(d.seps[i].text + " ")
+			// The item carries its own leading space when the author wrote
+			// one; only a glued item needs the gap supplied.
+			r.write(d.seps[i].text)
+			if !strings.HasPrefix(item.flat(), " ") {
+				r.write(" ")
+			}
 		}
 		r.render(item)
 		if d.commaSeparated && i+1 < len(d.seps) && d.seps[i+1].text != "" {
@@ -221,7 +245,13 @@ func (r *sqlRenderer) control(d *controlDoc) {
 		}
 		r.p.Indent()
 		r.p.Line()
-		r.render(branch.body)
+		// A block's branches hold clauses, and clauses open lines the way
+		// they do at the top of a statement, however short they are.
+		if stmt, ok := branch.body.(*stmtDoc); ok && d.block {
+			r.statement(stmt)
+		} else {
+			r.render(branch.body)
+		}
 		r.p.Dedent()
 		r.p.Line()
 	}
@@ -243,9 +273,9 @@ func (d *clauseDoc) itemsFlat() string {
 	return b.String()
 }
 
-func (d *clauseDoc) itemsHaveLineComment() bool {
+func (d *clauseDoc) itemsForbidFlat() bool {
 	for _, item := range d.items {
-		if item.hasLineComment() {
+		if item.forbidsFlat() {
 			return true
 		}
 	}

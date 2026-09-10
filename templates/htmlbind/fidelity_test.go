@@ -35,6 +35,10 @@ func normalizedAST(path string, source []byte) (string, error) {
 		}
 		template.Body = normalized
 	}
+	return marshalStripped(module)
+}
+
+func marshalStripped(module *Module) (string, error) {
 	encoded, err := json.Marshal(module)
 	if err != nil {
 		return "", err
