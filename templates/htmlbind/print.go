@@ -75,6 +75,11 @@ const (
 type htmlWriter struct {
 	p        *syntax.Printer
 	preserve bool
+	// verbatimRawText marks a raw-text body the parser read verbatim, with no
+	// brace decoded: one inside a head declared outside the document shell,
+	// or a component script block. It is written back with no brace escaped,
+	// because escaping what was never decoded adds a pair on every pass.
+	verbatimRawText bool
 }
 
 // containerFor reports the freedom inside an element, per
@@ -227,6 +232,9 @@ func (w *htmlWriter) node(node syntax.Node, kind container) error {
 	case *ElementNode:
 		return w.element(n)
 	case *HeadNode:
+		outer := w.verbatimRawText
+		w.verbatimRawText = true
+		defer func() { w.verbatimRawText = outer }()
 		return w.block("head", nil, n.Children, false, containerFree)
 	case *SlotNode:
 		return w.slot(n)
@@ -263,6 +271,13 @@ func (w *htmlWriter) node(node syntax.Node, kind container) error {
 
 func (w *htmlWriter) element(n *ElementNode) error {
 	inner := w.containerFor(n.Name, n.Attributes)
+	if isComponentScriptBlock(n.Name, n.Attributes) {
+		// The parser reads this body the way it reads one in a head
+		// contribution, so it is written back the same way.
+		outer := w.verbatimRawText
+		w.verbatimRawText = true
+		defer func() { w.verbatimRawText = outer }()
+	}
 	return w.block(n.Name, n.Attributes, n.Children, n.SelfClosing, inner)
 }
 
@@ -370,6 +385,10 @@ func (w *htmlWriter) verbatim(nodes []syntax.Node, rawText bool) error {
 	}
 	for _, node := range nodes {
 		if text, ok := node.(*TextNode); ok {
+			if rawText && w.verbatimRawText {
+				w.p.WriteRaw(text.Text)
+				continue
+			}
 			escaped, err := escapeText(text.Text, rawText)
 			if err != nil {
 				return err
