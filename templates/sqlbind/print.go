@@ -282,7 +282,11 @@ func (b *docBuilder) parseClause(els []element, i, depth int) (*clauseDoc, int) 
 			break
 		}
 		if e.isAtom() && e.atom.depth == depth {
-			if _, _, ok := matchClauseHead(els, i, depth); ok && len(clause.head) > 0 {
+			// A keyword at this depth opens the next clause. That holds for a
+			// clause with no keyword of its own too: a body that opens with a
+			// comment, an expression, or a binding is a clause of that alone,
+			// and the SELECT after it is not its item.
+			if _, _, ok := matchClauseHead(els, i, depth); ok {
 				// An absorbing clause ends only where the statement itself moves
 				// on, not at every keyword inside its own action.
 				if !clause.absorbing || endsAbsorbingClause(e.word()) {
@@ -291,8 +295,16 @@ func (b *docBuilder) parseClause(els []element, i, depth int) (*clauseDoc, int) 
 			}
 			if clause.commaSeparated && e.is(",") {
 				// A comma trails the item it ends, so it is carried into the
-				// separator of the item that follows.
+				// separator of the item that follows. A line comment at the end
+				// of the item would swallow that comma, so it moves over to
+				// open the next item instead.
+				var carried []element
+				if n := len(current); n > 0 && current[n-1].isAtom() && current[n-1].atom.lineComment {
+					carried = []element{current[n-1]}
+					current = current[:n-1]
+				}
 				flush(sep)
+				current = carried
 				sep = e.atom
 				i++
 				continue

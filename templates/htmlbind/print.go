@@ -118,8 +118,11 @@ type piece struct {
 }
 
 // split turns a child list into pieces, lifting whitespace runs out of text
-// nodes so they can act as separators.
-func split(nodes []syntax.Node) []piece {
+// nodes so they can act as separators. keepLone keeps a run that is the whole
+// list: with collapse on it is dropped, because the container writes its own
+// closer and a break there is invisible; with collapse off it is content and
+// has to come back.
+func split(nodes []syntax.Node, keepLone bool) []piece {
 	var out []piece
 	gap := ""
 	for _, node := range nodes {
@@ -142,7 +145,7 @@ func split(nodes []syntax.Node) []piece {
 		out = append(out, piece{text: body, isText: true, gap: gap})
 		gap = trail
 	}
-	if gap != "" && len(out) > 0 {
+	if gap != "" && (len(out) > 0 || keepLone) {
 		// A trailing run belongs to the container's own closing position.
 		out = append(out, piece{gap: gap})
 	}
@@ -156,7 +159,7 @@ func (w *htmlWriter) children(nodes []syntax.Node, kind container, mode layoutMo
 	if kind == containerVerbatim || kind == containerRawText {
 		return w.verbatim(nodes, kind == containerRawText)
 	}
-	for _, item := range split(nodes) {
+	for _, item := range split(nodes, w.preserve) {
 		w.gap(item.gap, kind, mode)
 		switch {
 		case item.isText:
@@ -396,7 +399,16 @@ func (w *htmlWriter) control(node syntax.Node, kind container) error {
 	w.p.Write("{" + open + "}")
 	for i, branch := range branches {
 		if i > 0 {
-			w.p.Line()
+			// The run before a label is the previous branch's trailing gap,
+			// which children has already written. With collapse on, a break
+			// there is the same byte as the run, so the label may open its own
+			// line. With collapse off, the run was copied as it was, and
+			// opening a line on top of it would add whitespace the source
+			// never had: one blank line more on every pass. Only a free
+			// position may still take the break.
+			if !w.preserve || kind == containerFree {
+				w.p.Line()
+			}
 			w.p.Write(branch.label)
 		}
 		w.p.Indent()

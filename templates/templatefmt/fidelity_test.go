@@ -43,23 +43,28 @@ func repoTemplates(t *testing.T) []string {
 // TestFormatIsIdempotent is the invariant that lets the tool run in CI: without
 // it a diff never settles.
 func TestFormatIsIdempotent(t *testing.T) {
-	for _, path := range repoTemplates(t) {
-		source, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		once, err := templatefmt.Source(path, source, templatefmt.Options{})
-		if err != nil {
-			t.Errorf("%s: format: %v", path, err)
-			continue
-		}
-		twice, err := templatefmt.Source(path, once, templatefmt.Options{})
-		if err != nil {
-			t.Errorf("%s: reformat: %v", path, err)
-			continue
-		}
-		if string(once) != string(twice) {
-			t.Errorf("%s: not idempotent\nfirst:\n%s\nsecond:\n%s", path, once, twice)
+	// Both whitespace modes are checked: a layout that settles with collapse
+	// on can still drift with it off, because there every run it copies is
+	// content the next pass sees again.
+	for _, options := range []templatefmt.Options{{}, {PreserveWhitespace: true}} {
+		for _, path := range repoTemplates(t) {
+			source, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			once, err := templatefmt.Source(path, source, options)
+			if err != nil {
+				t.Errorf("%s (preserve=%v): format: %v", path, options.PreserveWhitespace, err)
+				continue
+			}
+			twice, err := templatefmt.Source(path, once, options)
+			if err != nil {
+				t.Errorf("%s (preserve=%v): reformat: %v", path, options.PreserveWhitespace, err)
+				continue
+			}
+			if string(once) != string(twice) {
+				t.Errorf("%s (preserve=%v): not idempotent\nfirst:\n%s\nsecond:\n%s", path, options.PreserveWhitespace, once, twice)
+			}
 		}
 	}
 }

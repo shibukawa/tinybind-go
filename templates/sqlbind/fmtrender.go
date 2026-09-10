@@ -73,8 +73,29 @@ func (r *sqlRenderer) render(d sqlDoc) {
 		}
 	case *controlDoc:
 		r.control(v)
+	case *atomsDoc:
+		r.atoms(v)
 	default:
 		r.write(d.flat())
+	}
+}
+
+// atoms writes a run whose flat form was refused, which for a run can only mean
+// it holds a line comment. The comment owns the rest of its line, so whatever
+// followed it in the source moves to the next one; writing the run flat would
+// comment that content out.
+func (r *sqlRenderer) atoms(d *atomsDoc) {
+	start := 0
+	for i, a := range d.atoms {
+		if !a.lineComment {
+			continue
+		}
+		r.write((&atomsDoc{atoms: d.atoms[start : i+1]}).flat())
+		r.p.Line()
+		start = i + 1
+	}
+	if start < len(d.atoms) {
+		r.write((&atomsDoc{atoms: d.atoms[start:]}).flat())
 	}
 }
 
@@ -134,13 +155,21 @@ func (r *sqlRenderer) clause(d *clauseDoc) {
 		r.write(d.flat())
 		return
 	}
-	if len(d.head) > 0 {
-		lead := ""
-		if d.head[0].spaced {
-			lead = " "
+	if len(d.head) == 0 {
+		// Nothing to indent under: the items stand at the clause level.
+		for i, item := range d.items {
+			if i > 0 {
+				r.p.Line()
+			}
+			r.render(item)
 		}
-		r.write(lead + d.headText())
+		return
 	}
+	lead := ""
+	if d.head[0].spaced {
+		lead = " "
+	}
+	r.write(lead + d.headText())
 	// The items may still fit beside the keyword; only when they do not does
 	// the clause open a level of its own.
 	if tail := d.itemsFlat(); tail != "" && !strings.Contains(tail, "\n") && !d.itemsHaveLineComment() &&
