@@ -1,6 +1,8 @@
 package jsonbind
 
 import (
+	"encoding/binary"
+	"math/bits"
 	"strconv"
 	"sync/atomic"
 	"unicode/utf16"
@@ -237,6 +239,12 @@ func (p *Parser) IsNull() bool {
 // stringSpan returns the bytes between the quotes without copying. needsWork is
 // set when the span holds an escape or any non-ASCII byte, so a pure-ASCII
 // string skips both unescaping and UTF-8 validation.
+//
+// The scan runs eight bytes at a time: a word is checked at once for a quote,
+// a backslash or a control byte, and only a word holding one is walked byte
+// by byte. Most of a document is the inside of its strings, so this loop is
+// where a decoder spends its time, and the word scan is what keeps it at
+// memory speed on a long value.
 func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
 	p.ws()
 	if p.pos >= len(p.buf) || p.buf[p.pos] != '"' {
@@ -244,11 +252,30 @@ func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
 	}
 	start := p.pos + 1
 	i := start
+	var high uint64
 	for i < len(p.buf) {
+		for i+8 <= len(p.buf) {
+			w := binary.LittleEndian.Uint64(p.buf[i:])
+			if m := swarStringStop(w); m != 0 {
+				// The lowest lane is at or before the byte that stopped
+				// the scan, never after it, so the byte loop below settles
+				// it; the lanes under it are ordinary and only their high
+				// bits matter.
+				k := swarIndex(m)
+				high |= swarBelow(w, k)
+				i += k
+				break
+			}
+			high |= w
+			i += 8
+		}
+		if i >= len(p.buf) {
+			break
+		}
 		c := p.buf[i]
 		if c == '"' {
 			p.pos = i + 1
-			return p.buf[start:i], needsWork, nil
+			return p.buf[start:i], needsWork || high&swarHigh != 0, nil
 		}
 		if c == '\\' {
 			// The escape is validated here, where every string passes exactly
@@ -744,4 +771,38 @@ func parseInt64(span []byte) (int64, error) {
 		return 0, newError("json_parse", "JSON number out of range", nil)
 	}
 	return int64(acc), nil
+}
+
+// Word-at-a-time scanning, the classic SWAR idioms over eight packed bytes.
+//
+// swarStringStop reports which lanes of w end a JSON string literal's run of
+// ordinary bytes: a quote, a backslash or a control byte. Bytes at or above
+// 0x80 are never reported, which is what a UTF-8 string wants: they are the
+// inside of a multi-byte sequence, not a control character.
+//
+// A borrow crossing a lane boundary can set a lane above a genuine hit but
+// never below one, so the lowest set lane is always at or before the first
+// byte of interest, and a caller that falls back to a byte loop from there is
+// never wrong, only occasionally a byte early.
+const (
+	swarLow  = 0x0101010101010101
+	swarHigh = 0x8080808080808080
+)
+
+func swarStringStop(w uint64) uint64 {
+	q := w ^ (swarLow * '"')
+	e := w ^ (swarLow * '\\')
+	return ((w-swarLow*0x20)&^w | (q-swarLow)&^q | (e-swarLow)&^e) & swarHigh
+}
+
+// swarIndex is the byte offset of the lowest set lane of a mask, for a word
+// loaded little-endian.
+func swarIndex(mask uint64) int { return bits.TrailingZeros64(mask) / 8 }
+
+// swarBelow keeps the lanes under offset n.
+func swarBelow(w uint64, n int) uint64 {
+	if n >= 8 {
+		return w
+	}
+	return w & (uint64(1)<<(8*uint(n)) - 1)
 }

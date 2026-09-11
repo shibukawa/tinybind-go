@@ -39,6 +39,9 @@ func emitSelectedFor(plan *PackagePlan, selected map[string]bool, target transpo
 	if err := checkForeignFieldDirections(emitted); err != nil {
 		return nil, err
 	}
+	if err := checkNestedTypesEmitted(emitted); err != nil {
+		return nil, err
+	}
 	if plan.CBORHTTP {
 		if err := checkCBORHTTPTypes(emitted, plan.CBORHTTPProfile); err != nil {
 			return nil, err
@@ -456,6 +459,31 @@ func checkForeignFieldDirections(plans []TypePlan) error {
 	return nil
 }
 
+// checkNestedTypesEmitted refuses a codec whose nested struct has no codec of
+// its own in this emission, naming parent, field and child. The alternative is
+// the generated file calling an append or decode function nothing defines,
+// which is a compile error inside a DO NOT EDIT file that names code the
+// author never wrote. Every nested struct the planner admits is normally
+// emitted alongside its parent; this is the guard for the case that is not.
+func checkNestedTypesEmitted(emitted []TypePlan) error {
+	names := make(map[string]bool, len(emitted))
+	for _, t := range emitted {
+		names[t.Name] = true
+	}
+	for _, t := range emitted {
+		for _, f := range t.Fields {
+			if f.JSONSkip || f.TypeName == "" {
+				continue
+			}
+			nested := f.Kind == KindStruct || ((f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindMap) && f.ElemKind == KindStruct)
+			if nested && !names[f.TypeName] {
+				return fmt.Errorf("%s.%s: nested type %s has no codec in this generation; it is not a struct this generator can map, or it was excluded", t.Name, f.Name, f.TypeName)
+			}
+		}
+	}
+	return nil
+}
+
 // emitCodecMethods publishes the type's codec as the jsonbind Appender and
 // Decoder methods, so a package that never analyzed this type can still encode
 // and decode it.
@@ -614,6 +642,10 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case sizedIntCase(f.Kind):
 		sizedIntRead(b, f, prefix, dest, jsonMemberName(f))
+	case KindAny:
+		fmt.Fprintf(b, "%sv, err := p.Any()\n", prefix)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid value\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), prefix)
+		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
@@ -658,6 +690,8 @@ func parserMethod(kind string) string {
 		return "Bool"
 	case "float64":
 		return "Float64"
+	case KindAny:
+		return "Any"
 	}
 	return ""
 }
@@ -753,7 +787,7 @@ func zeroLiteralForKind(kind string) string {
 // did, rather than code that would not compile.
 func supportedElemKind(kind string) bool {
 	switch kind {
-	case "string", "bool", "float64", KindStruct:
+	case "string", "bool", "float64", KindStruct, KindAny:
 		return true
 	}
 	return isScalarKind(kind)
@@ -939,6 +973,10 @@ func notEmptyExpr(f FieldPlan, src string) string {
 		return src + ` != ""`
 	case KindSlice, KindArray, KindBytes, KindMap:
 		return "len(" + src + ") > 0"
+	case KindAny:
+		// A nil any encodes as null, which encoding/json/v2's omitempty drops
+		// along with the other empty values.
+		return src + " != nil"
 	default:
 		return ""
 	}
@@ -958,7 +996,7 @@ func notZeroExpr(f FieldPlan, src string) string {
 		return src + " != 0"
 	case "bool":
 		return src
-	case KindSlice, KindMap, KindRestAny, KindRestRaw:
+	case KindSlice, KindMap, KindRestAny, KindRestRaw, KindAny:
 		return src + " != nil"
 	case KindArray:
 		return arrayZeroExpr(f, src, " != ")
@@ -987,7 +1025,7 @@ func zeroExpr(f FieldPlan, src string) string {
 		return src + " == 0"
 	case "bool":
 		return "!" + src
-	case KindSlice, KindMap, KindRestAny, KindRestRaw:
+	case KindSlice, KindMap, KindRestAny, KindRestRaw, KindAny:
 		return src + " == nil"
 	case KindArray:
 		return arrayZeroExpr(f, src, " == ")
@@ -1103,6 +1141,8 @@ func emitAppendValue(b *bytes.Buffer, f FieldPlan, prefix, src string) {
 		}
 	case "file":
 		fmt.Fprintf(b, "%sdst = httpbind.AppendFileJSON(dst, %s)\n", prefix, src)
+	case KindAny:
+		fmt.Fprintf(b, "%sdst = jsonbind.AppendAny(dst, %s)\n", prefix, src)
 	case KindStruct:
 		fmt.Fprintf(b, "%sdst = append%sJSON(dst, %s)\n", prefix, f.TypeName, src)
 	case KindForeign:
@@ -1393,6 +1433,10 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
 	case sizedIntCase(f.Kind):
 		sizedIntRead(b, f, prefix, dest, f.Wire)
+	case KindAny:
+		fmt.Fprintf(b, "%sv, err := p.Any()\n", prefix)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid value\", err)\n%s}\n", prefix, prefix, f.Wire, prefix)
+		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindStruct:
 		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)

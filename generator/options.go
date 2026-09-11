@@ -574,6 +574,12 @@ func canonicalRuntimeCalls(path string) []CallPattern {
 		SocketReceiveCall(Function(path, "WebSocketWith"), GenericType("socket-in", 0)),
 		SocketSendCall(Function(path, "WebSocketWith"), GenericType("socket-out", 1)),
 		JSONDecodeCall(Function(path, "DecodeJSON"), GenericType("decode", 0)),
+		// The byte-slice and limited entries decode the same codec, so a
+		// package reading through either alone still gets its decoder; before
+		// they were listed such a package got encoders only and a missing
+		// codec error on its first request.
+		JSONDecodeCall(Function(path, "DecodeJSONBytes"), GenericType("decode", 0)),
+		JSONDecodeCall(Function(path, "DecodeJSONLimit"), GenericType("decode", 0)),
 		JSONEncodeCall(Function(path, "EncodeJSON"), GenericType("encode", 0)),
 		// The annotations of requirement:declared-json-codec. They are ordinary
 		// configured calls, so the package-level var initializer holding one is

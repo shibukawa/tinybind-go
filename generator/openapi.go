@@ -405,6 +405,9 @@ func schemaForKind(kind string) map[string]any {
 		// Rest maps are also expressed as additionalProperties on the parent object
 		// when present; this schema is used if the field appears as a property.
 		return map[string]any{"type": "object", "additionalProperties": true}
+	case KindAny:
+		// The empty schema admits every JSON value, which is what any means.
+		return map[string]any{}
 	default:
 		return map[string]any{"type": "string"}
 	}

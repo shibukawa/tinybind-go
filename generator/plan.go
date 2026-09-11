@@ -34,6 +34,12 @@ const (
 // Composite and special field kinds.
 const (
 	KindRestAny = "rest_any" // map[string]any with payload:"*"
+	// KindAny is a field declared as any or interface{}: an arbitrary JSON
+	// value, decoded to the shapes encoding/json gives an any destination and
+	// encoded back from them. It used to leave the plan without a word, so a
+	// member arriving under its name was skipped and a value set in Go was
+	// never written.
+	KindAny     = "any"
 	KindRestRaw = "rest_raw" // map[string]json.RawMessage with payload:"*"
 	KindStruct  = "struct"
 	KindSlice   = "slice"
@@ -200,7 +206,7 @@ func (f FieldPlan) BindsRepeatedFromQuery() bool {
 // A foreign field counts, because it is read from the document body through a
 // raw sub-slice exactly as a nested struct is, and never from the query.
 func (f FieldPlan) IsComposite() bool {
-	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindBytes || f.Kind == KindMap || f.Kind == KindForeign
+	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindBytes || f.Kind == KindMap || f.Kind == KindForeign || f.Kind == KindAny
 }
 
 // IsFixedBytes reports a KindBytes field declared as [N]byte rather than
@@ -238,6 +244,8 @@ func (f FieldPlan) GoType() string {
 		return "map[string]any"
 	case KindRestRaw:
 		return "map[string]json.RawMessage"
+	case KindAny:
+		return "any"
 	case "file":
 		return "httpbind.File"
 	default:
@@ -1190,9 +1198,11 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 			fields = append(fields, fp)
 		}
 	}
-	if len(fields) == 0 {
-		return TypePlan{}, false, nil
-	}
+	// A struct with no mappable field still gets a plan. It encodes as {} and
+	// decodes by consuming one object, which is a valid codec and the one
+	// encoding/json applies; dropping it here left a parent that names the
+	// type calling a decoder nothing had written, and the generated file did
+	// not compile.
 	return TypePlan{Name: name, Doc: doc, Fields: fields}, true, nil
 }
 
@@ -1472,6 +1482,13 @@ func exported(name string) bool {
 func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind, src FieldSource, wire, fieldName string) (kind, typeName, elemKind string, ok bool, err error) {
 	if restKind, isRest := mapRestKind(expr); isRest {
 		if wire != "*" {
+			if restKind == KindRestAny {
+				// Without payload:"*" a map[string]any is an ordinary map
+				// field whose values happen to be arbitrary, and the map arm
+				// below plans it as one. It used to be dropped here in
+				// silence, as an any field was.
+				goto ordinary
+			}
 			return "", "", "", false, nil
 		}
 		if src != SourcePayload {
@@ -1483,6 +1500,7 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 		return "", "", "", false, fmt.Errorf("field %s: payload:\"*\" requires map[string]any or map[string]json.RawMessage", fieldName)
 	}
 
+ordinary:
 	switch t := expr.(type) {
 	case *ast.Ident:
 		// string, bool, float64 and every fixed-width integer; the widths were
@@ -1493,8 +1511,14 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			return name, "", "", true, nil
 		}
 		switch t.Name {
-		case "any", "error":
-			return "", "", "", false, nil
+		case "any":
+			return KindAny, "", "", true, nil
+		case "error":
+			// There is no document shape for an error value, so the field is
+			// refused by name rather than dropped in silence.
+			return "", "", "", false, fmt.Errorf(
+				"field %s: an error value has no JSON form; declare the field as a supported type or mark it json:\"-\"",
+				fieldName)
 		default:
 			if t.Name == "" {
 				break
@@ -1550,6 +1574,12 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 				return named.Kind, named.Declared, "", true, nil
 			}
 		}
+	case *ast.InterfaceType:
+		// interface{} is the older spelling of any, and the field is the same
+		// arbitrary value. An interface with methods is not a document shape.
+		if t.Methods == nil || len(t.Methods.List) == 0 {
+			return KindAny, "", "", true, nil
+		}
 	case *ast.SelectorExpr:
 		if t.Sel != nil {
 			if pkg, ok := t.X.(*ast.Ident); ok {
@@ -1599,6 +1629,8 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			return kind, et, ek, true, nil
 		case ek == KindStruct:
 			return kind, et, KindStruct, true, nil
+		case ek == KindAny:
+			return kind, "", KindAny, true, nil
 		default:
 			return "", "", "", false, nil
 		}
@@ -1619,6 +1651,8 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 			return KindMap, et, ek, true, nil
 		case ek == KindStruct:
 			return KindMap, et, KindStruct, true, nil
+		case ek == KindAny:
+			return KindMap, "", KindAny, true, nil
 		default:
 			return "", "", "", false, nil
 		}

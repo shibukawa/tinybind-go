@@ -76,6 +76,9 @@ func checkCBORBindTypes(emitted []TypePlan) error {
 			if f.Kind == "file" {
 				return fmt.Errorf("cborbind: %s.%s: an uploaded file has no CBOR encoding; mark it json:\"-\"", t.Name, f.Name)
 			}
+			if f.Kind == KindAny || f.ElemKind == KindAny {
+				return fmt.Errorf("cborbind: %s.%s: an any value has no CBOR mapping here; mark it json:\"-\"", t.Name, f.Name)
+			}
 		}
 	}
 	return nil
