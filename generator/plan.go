@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +57,11 @@ const (
 	// KindArray.
 	KindBytes = "bytes"
 	KindMap   = "map"
+	// KindPtr is a pointer field: nil is null on the wire, and anything else
+	// is the pointee, which Elem describes. It used to leave the plan in
+	// silence, which is how a recursive type such as a tree node or a
+	// retweeted status lost its link.
+	KindPtr = "ptr"
 	// KindForeign is a field whose type is declared in another package and
 	// carries its own JSON codec through the jsonbind interfaces.
 	//
@@ -119,6 +125,14 @@ type FieldPlan struct {
 	// resolving the constant behind the author's back. It is empty for every
 	// other kind.
 	ArrayLen string
+	// Elem describes the element of a collection, or the pointee of a
+	// pointer, when that is itself a collection or a pointer: a [][]float64
+	// is a slice whose Elem is a slice of float64, a *Node a pointer whose
+	// Elem is the struct. It is nil when ElemKind says everything, which is
+	// every scalar, struct and any element, so the readers of ElemKind keep
+	// working unchanged and only the two JSON emitters and the schema walk
+	// down.
+	Elem     *FieldPlan
 	DB       string // SQL result column (db tag or snake_case field name)
 	GroupKey bool   // groupkey tag presence
 	Doc      string // godoc of the field (doc or line comment)
@@ -151,12 +165,17 @@ func (f FieldPlan) Write(expr string) string {
 // collection. It carries the element's declared name, so the conversions Read
 // and Write spell for a named field are the same ones an element gets.
 func (f FieldPlan) ElemPlan() FieldPlan {
+	if f.Elem != nil {
+		return *f.Elem
+	}
 	return FieldPlan{Kind: f.ElemKind, TypeName: f.TypeName, Named: f.ElemNamed}
 }
 
 // ElemGoType is the Go type of one element, as generated code has to spell it.
 func (f FieldPlan) ElemGoType() string {
 	switch {
+	case f.Elem != nil:
+		return f.Elem.GoType()
 	case f.ElemKind == KindStruct:
 		return f.TypeName
 	case f.ElemNamed != "":
@@ -206,7 +225,18 @@ func (f FieldPlan) BindsRepeatedFromQuery() bool {
 // A foreign field counts, because it is read from the document body through a
 // raw sub-slice exactly as a nested struct is, and never from the query.
 func (f FieldPlan) IsComposite() bool {
-	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindBytes || f.Kind == KindMap || f.Kind == KindForeign || f.Kind == KindAny
+	return f.Kind == KindStruct || f.Kind == KindSlice || f.Kind == KindArray || f.Kind == KindBytes || f.Kind == KindMap || f.Kind == KindForeign || f.Kind == KindAny || f.Kind == KindPtr
+}
+
+// StructTypeName is the name of the struct this field reaches, through any
+// collections and pointers on the way, or empty when it reaches none.
+func (f FieldPlan) StructTypeName() string {
+	for e := &f; e != nil; e = e.Elem {
+		if e.Kind == KindStruct || e.ElemKind == KindStruct {
+			return e.TypeName
+		}
+	}
+	return ""
 }
 
 // IsFixedBytes reports a KindBytes field declared as [N]byte rather than
@@ -240,6 +270,8 @@ func (f FieldPlan) GoType() string {
 		return "[]byte"
 	case KindMap:
 		return "map[string]" + f.ElemGoType()
+	case KindPtr:
+		return "*" + f.ElemGoType()
 	case KindRestAny:
 		return "map[string]any"
 	case KindRestRaw:
@@ -1207,7 +1239,7 @@ func analyzeStruct(name, doc string, st *ast.StructType, binderNames map[string]
 }
 
 func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src FieldSource, wire string, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind) (FieldPlan, bool, error) {
-	kind, typeName, elemKind, ok, err := fieldTypeKind(typ, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+	kind, typeName, elemKind, elem, ok, err := fieldTypeKind(typ, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
 	if err != nil {
 		return FieldPlan{}, false, err
 	}
@@ -1266,24 +1298,8 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 			return FieldPlan{}, false, fmt.Errorf("field %s: %w", fieldName, err)
 		}
 	}
-	// A collection of a named scalar carries the element's declared name where a
-	// collection of structs carries the struct's. They are moved apart here so
-	// TypeName keeps meaning "a struct this plan holds", which is what every
-	// other reader of it assumes.
-	var elemNamed string
-	if typeName != "" && isScalarKind(elemKind) {
-		elemNamed, typeName = typeName, ""
-	}
-	// The length is read off the field's own node rather than returned by
-	// fieldTypeKind: KindArray is produced only at the top level, since an
-	// array nested in a slice or a map is refused, so this is the node that
-	// carried it.
-	var arrayLen string
-	if kind == KindArray || kind == KindBytes {
-		if at, ok := typ.(*ast.ArrayType); ok && at.Len != nil {
-			arrayLen = types.ExprString(at.Len)
-		}
-	}
+	shape := shapePlan(kind, typeName, elemKind, elem, typ)
+	elemNamed, typeName, arrayLen := shape.ElemNamed, shape.TypeName, shape.ArrayLen
 	return FieldPlan{
 		Name:      fieldName,
 		Wire:      wire,
@@ -1297,6 +1313,7 @@ func analyzeField(fieldName, doc string, typ ast.Expr, tag *ast.BasicLit, src Fi
 		Enum:      enum,
 		Default:   def,
 		TypeName:  typeName,
+		Elem:      elem,
 		Named:     namedScalarType(kind, typeName),
 		Foreign:   foreignCodecs[typeName],
 		ElemKind:  elemKind,
@@ -1360,13 +1377,8 @@ func tagPresent(tag *ast.BasicLit, key string) bool {
 	if err != nil {
 		return false
 	}
-	for _, part := range strings.Fields(raw) {
-		k, _, ok := strings.Cut(part, ":")
-		if ok && k == key {
-			return true
-		}
-	}
-	return false
+	_, ok := reflect.StructTag(raw).Lookup(key)
+	return ok
 }
 
 // namedScalarType reports the declared type of a field whose kind came from
@@ -1479,7 +1491,46 @@ func exported(name string) bool {
 }
 
 // fieldTypeKind resolves a field's bind kind.
-func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind, src FieldSource, wire, fieldName string) (kind, typeName, elemKind string, ok bool, err error) {
+// shapePlan settles the parts of a plan that depend on how the kind was
+// reached: a collection of a named scalar carries the element's declared name
+// where a collection of structs carries the struct's, so the two are moved
+// apart and TypeName keeps meaning "a struct this plan holds"; and a fixed
+// length is read off the node that carried it, spelled as the source did.
+func shapePlan(kind, typeName, elemKind string, elem *FieldPlan, expr ast.Expr) FieldPlan {
+	var elemNamed string
+	if typeName != "" && isScalarKind(elemKind) {
+		elemNamed, typeName = typeName, ""
+	}
+	var arrayLen string
+	if kind == KindArray || kind == KindBytes {
+		if at, ok := expr.(*ast.ArrayType); ok && at.Len != nil {
+			arrayLen = types.ExprString(at.Len)
+		}
+	}
+	return FieldPlan{Kind: kind, TypeName: typeName, ElemKind: elemKind, ElemNamed: elemNamed, ArrayLen: arrayLen, Elem: elem, Named: namedScalarType(kind, typeName)}
+}
+
+// elementPlan plans the element of a collection, or the pointee of a
+// pointer, that is itself a collection or a pointer, so a [][]T or a []*T
+// carries the shape of what is inside it.
+func elementPlan(expr ast.Expr, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind, src FieldSource, wire, fieldName string) (*FieldPlan, error) {
+	kind, typeName, elemKind, elem, ok, err := fieldTypeKind(expr, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("field %s: this generator cannot map %s", fieldName, types.ExprString(expr))
+	}
+	p := shapePlan(kind, typeName, elemKind, elem, expr)
+	return &p, nil
+}
+
+// composite reports the kinds whose element needs a plan of its own.
+func composite(kind string) bool {
+	return kind == KindSlice || kind == KindArray || kind == KindMap || kind == KindPtr || kind == KindBytes
+}
+
+func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map[string]ForeignCodec, namedKinds map[string]NamedKind, src FieldSource, wire, fieldName string) (kind, typeName, elemKind string, elem *FieldPlan, ok bool, err error) {
 	if restKind, isRest := mapRestKind(expr); isRest {
 		if wire != "*" {
 			if restKind == KindRestAny {
@@ -1489,15 +1540,15 @@ func fieldTypeKind(expr ast.Expr, binderNames map[string]bool, foreignCodecs map
 				// silence, as an any field was.
 				goto ordinary
 			}
-			return "", "", "", false, nil
+			return "", "", "", nil, false, nil
 		}
 		if src != SourcePayload {
-			return "", "", "", false, fmt.Errorf("field %s: rest map requires payload:\"*\", got %s:%q", fieldName, src, wire)
+			return "", "", "", nil, false, fmt.Errorf("field %s: rest map requires payload:\"*\", got %s:%q", fieldName, src, wire)
 		}
-		return restKind, "", "", true, nil
+		return restKind, "", "", nil, true, nil
 	}
 	if wire == "*" {
-		return "", "", "", false, fmt.Errorf("field %s: payload:\"*\" requires map[string]any or map[string]json.RawMessage", fieldName)
+		return "", "", "", nil, false, fmt.Errorf("field %s: payload:\"*\" requires map[string]any or map[string]json.RawMessage", fieldName)
 	}
 
 ordinary:
@@ -1508,15 +1559,15 @@ ordinary:
 		// still spelled as the Go type name. byte and rune arrive as the width
 		// they are aliases for, which is what makes them ordinary fields here.
 		if name := predeclaredAliasKind(t.Name); isScalarKind(name) {
-			return name, "", "", true, nil
+			return name, "", "", nil, true, nil
 		}
 		switch t.Name {
 		case "any":
-			return KindAny, "", "", true, nil
+			return KindAny, "", "", nil, true, nil
 		case "error":
 			// There is no document shape for an error value, so the field is
 			// refused by name rather than dropped in silence.
-			return "", "", "", false, fmt.Errorf(
+			return "", "", "", nil, false, fmt.Errorf(
 				"field %s: an error value has no JSON form; declare the field as a supported type or mark it json:\"-\"",
 				fieldName)
 		default:
@@ -1532,13 +1583,13 @@ ordinary:
 				// No type information, which is the analysis running without a
 				// loaded package. The old assumption is all there is, and it is
 				// right for the ordinary case.
-				return KindStruct, t.Name, "", true, nil
+				return KindStruct, t.Name, "", nil, true, nil
 			}
 			if named.ForeignPackage != "" {
 				// t.Name is an alias reaching into another package, which this
 				// generator cannot plan for any more than it could plan for
 				// the same foreign type spelled out with a package qualifier.
-				return "", "", "", false, fmt.Errorf(
+				return "", "", "", nil, false, fmt.Errorf(
 					"field %s: %s is declared in %s, across a package boundary this generator cannot reach; declare the field as a supported type, or give %s its own JSON codec",
 					fieldName, t.Name, named.ForeignPackage, t.Name)
 			}
@@ -1550,17 +1601,17 @@ ordinary:
 				// the wrong one here would plan a struct nothing declares, and
 				// the emitted file would call a decode<Name>JSON that nothing
 				// defines.
-				return KindStruct, named.Declared, "", true, nil
+				return KindStruct, named.Declared, "", nil, true, nil
 			case "":
 				// A predeclared type is its own underlying type, so saying so
 				// twice reads as a bug in the message rather than as a fact
 				// about the field.
 				if named.Underlying == "" || named.Underlying == t.Name {
-					return "", "", "", false, fmt.Errorf(
+					return "", "", "", nil, false, fmt.Errorf(
 						"field %s: this generator cannot map %s; declare the field as a supported type, or give %s its own JSON codec",
 						fieldName, t.Name, t.Name)
 				}
-				return "", "", "", false, fmt.Errorf(
+				return "", "", "", nil, false, fmt.Errorf(
 					"field %s: type %s is %s underneath, which this generator cannot map; declare the field as a supported type, or give %s its own JSON codec",
 					fieldName, t.Name, named.Underlying, t.Name)
 			default:
@@ -1571,29 +1622,33 @@ ordinary:
 				// type itself, which is what makes such a field generate with
 				// no conversion at all, identical to declaring it with the
 				// predeclared type directly.
-				return named.Kind, named.Declared, "", true, nil
+				return named.Kind, named.Declared, "", nil, true, nil
 			}
 		}
 	case *ast.InterfaceType:
 		// interface{} is the older spelling of any, and the field is the same
 		// arbitrary value. An interface with methods is not a document shape.
 		if t.Methods == nil || len(t.Methods.List) == 0 {
-			return KindAny, "", "", true, nil
+			return KindAny, "", "", nil, true, nil
 		}
 	case *ast.SelectorExpr:
 		if t.Sel != nil {
 			if pkg, ok := t.X.(*ast.Ident); ok {
 				qualified := pkg.Name + "." + t.Sel.Name
 				if binderNames[qualified] {
-					return "file", "", "", true, nil
+					return "file", "", "", nil, true, nil
 				}
 				// A type from another package is otherwise unwalkable here, so
 				// it enters the plan only when it carries its own codec. One
 				// half is enough to enter: which halves this field needs
 				// follows from its parent's usage, which nothing knows yet.
 				if foreignCodecs[qualified].Any() {
-					return KindForeign, qualified, "", true, nil
+					return KindForeign, qualified, "", nil, true, nil
 				}
+				// A foreign type carrying no codec stays out of the plan, as
+				// it always has: the file may hold fields of types this
+				// generator was never asked to reach.
+				return "", "", "", nil, false, nil
 			}
 		}
 	case *ast.ArrayType:
@@ -1605,12 +1660,23 @@ ordinary:
 		if t.Len != nil {
 			kind = KindArray
 		}
-		ek, et, _, eok, eerr := fieldTypeKind(t.Elt, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+		ek, et, _, _, eok, eerr := fieldTypeKind(t.Elt, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
 		if eerr != nil {
-			return "", "", "", false, eerr
+			return "", "", "", nil, false, eerr
 		}
 		if !eok {
-			return "", "", "", false, nil
+			return "", "", "", nil, false, nil
+		}
+		if composite(ek) {
+			// A collection of collections, or of pointers: the element gets
+			// a plan of its own, and the struct it reaches, if any, is named
+			// here so usage propagation and the emitted-set check still find
+			// it.
+			inner, err := elementPlan(t.Elt, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+			if err != nil {
+				return "", "", "", nil, false, err
+			}
+			return kind, inner.StructTypeName(), ek, inner, true, nil
 		}
 		switch {
 		case ek == "uint8" && et == "":
@@ -1619,45 +1685,67 @@ ordinary:
 			// string encoding/json writes rather than the list of numbers the
 			// element kind would otherwise produce. A named element is not that
 			// type, so []Mark over byte stays a list of numbers.
-			return KindBytes, "", ek, true, nil
+			return KindBytes, "", ek, nil, true, nil
 		case isScalarKind(ek):
 			// et is the element's declared name when it has one. It used to be
 			// a refusal: the bulk decoders answer a concrete []int that Go will
 			// not assign to a slice of the named type, and converting meant a
 			// loop per element kind. The emitted element-reader closure is that
 			// loop written once as a shape, so the cost is one already paid.
-			return kind, et, ek, true, nil
+			return kind, et, ek, nil, true, nil
 		case ek == KindStruct:
-			return kind, et, KindStruct, true, nil
+			return kind, et, KindStruct, nil, true, nil
 		case ek == KindAny:
-			return kind, "", KindAny, true, nil
+			return kind, "", KindAny, nil, true, nil
 		default:
-			return "", "", "", false, nil
+			return "", "", "", nil, false, fmt.Errorf("field %s: this generator cannot map an array of %s", fieldName, types.ExprString(t.Elt))
 		}
+	case *ast.StarExpr:
+		// A pointer is null or its pointee. The pointee is planned as an
+		// element, so a *Node inside Node, the shape every tree has, is
+		// reached through the same struct plan the value form would be.
+		inner, err := elementPlan(t.X, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+		if err != nil {
+			return "", "", "", nil, false, err
+		}
+		if inner.Kind == "file" || inner.Kind == KindForeign || inner.IsRest() {
+			return "", "", "", nil, false, fmt.Errorf("field %s: this generator cannot map a pointer to %s", fieldName, types.ExprString(t.X))
+		}
+		return KindPtr, inner.StructTypeName(), inner.Kind, inner, true, nil
 	case *ast.MapType:
 		key, ok := t.Key.(*ast.Ident)
 		if !ok || key.Name != "string" {
-			return "", "", "", false, nil
+			return "", "", "", nil, false, fmt.Errorf("field %s: a map is mapped with a string key only, not %s", fieldName, types.ExprString(t.Key))
 		}
-		ek, et, _, eok, eerr := fieldTypeKind(t.Value, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+		ek, et, _, _, eok, eerr := fieldTypeKind(t.Value, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
 		if eerr != nil {
-			return "", "", "", false, eerr
+			return "", "", "", nil, false, eerr
 		}
 		if !eok {
-			return "", "", "", false, nil
+			return "", "", "", nil, false, nil
+		}
+		if composite(ek) {
+			inner, err := elementPlan(t.Value, binderNames, foreignCodecs, namedKinds, src, wire, fieldName)
+			if err != nil {
+				return "", "", "", nil, false, err
+			}
+			return KindMap, inner.StructTypeName(), ek, inner, true, nil
 		}
 		switch {
 		case isScalarKind(ek):
-			return KindMap, et, ek, true, nil
+			return KindMap, et, ek, nil, true, nil
 		case ek == KindStruct:
-			return KindMap, et, KindStruct, true, nil
+			return KindMap, et, KindStruct, nil, true, nil
 		case ek == KindAny:
-			return KindMap, "", KindAny, true, nil
+			return KindMap, "", KindAny, nil, true, nil
 		default:
-			return "", "", "", false, nil
+			return "", "", "", nil, false, fmt.Errorf("field %s: this generator cannot map a map of %s", fieldName, types.ExprString(t.Value))
 		}
 	}
-	return "", "", "", false, nil
+	// A shape nothing above recognises -- a channel, a function, an
+	// interface with methods -- is refused by name rather than dropped, so a
+	// member the author declared never vanishes from the document in silence.
+	return "", "", "", nil, false, fmt.Errorf("field %s: this generator cannot map %s", fieldName, types.ExprString(expr))
 }
 
 func mapRestKind(expr ast.Expr) (string, bool) {
@@ -1721,6 +1809,10 @@ func tagValue(tag *ast.BasicLit, key string) string {
 
 // tagLookup reports the value of key and whether the tag carried it at all,
 // which tagValue cannot express for tags whose empty value is meaningful.
+// The tag readers go through reflect.StructTag, which is the grammar the
+// runtime applies: a quoted value may hold spaces, so json:"Box Drawing" is
+// one name. Splitting on whitespace read it as two, and the second half was
+// a duplicate case in the generated switch.
 func tagLookup(tag *ast.BasicLit, key string) (string, bool) {
 	if tag == nil {
 		return "", false
@@ -1729,33 +1821,11 @@ func tagLookup(tag *ast.BasicLit, key string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	for _, part := range strings.Fields(raw) {
-		k, v, ok := strings.Cut(part, ":")
-		if !ok || k != key {
-			continue
-		}
-		val, err := strconv.Unquote(v)
-		if err != nil {
-			return strings.Trim(v, `"`), true
-		}
-		return val, true
-	}
-	return "", false
+	return reflect.StructTag(raw).Lookup(key)
 }
 
 func lookupTag(raw, key string) string {
-	for _, part := range strings.Fields(raw) {
-		k, v, ok := strings.Cut(part, ":")
-		if !ok || k != key {
-			continue
-		}
-		val, err := strconv.Unquote(v)
-		if err != nil {
-			return strings.Trim(v, `"`)
-		}
-		return val
-	}
-	return ""
+	return reflect.StructTag(raw).Get(key)
 }
 
 func lowerFirst(s string) string {

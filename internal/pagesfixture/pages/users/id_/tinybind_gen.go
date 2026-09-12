@@ -87,11 +87,11 @@ func decodeRenameRequestJSON(p *jsonbind.Parser, out *RenameRequest) (*RenameReq
 		}
 		switch idx {
 		case 0:
-			v, err := p.String()
+			v0, err := p.String()
 			if err != nil {
 				return out, jsonbind.FieldError("name", "invalid string", err)
 			}
-			out.Name = v
+			out.Name = v0
 		}
 	}
 }
@@ -173,11 +173,11 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 							continue
 						}
 						presentName = true
-						v, err := p.String()
+						v0, err := p.String()
 						if err != nil {
 							return out, jsonbind.FieldError("name", "invalid string", err)
 						}
-						out.Name = v
+						out.Name = v0
 					}
 				}
 				p.Release()

@@ -507,14 +507,24 @@ func compositeSchema(f FieldPlan, scope schemaScope) (map[string]any, bool) {
 		return map[string]any{"type": "object", "additionalProperties": elementSchema(f, scope)}, true
 	case KindStruct:
 		return namedSchema(f.TypeName, scope), true
+	case KindPtr:
+		// The pointee's schema, nullable: nil is null on the wire.
+		schema := elementSchema(f, scope)
+		schema["nullable"] = true
+		return schema, true
 	}
 	return nil, false
 }
 
-// elementSchema describes one element of a collection. A collection of
-// collections never reaches here: the analysis records no field plan for one,
-// so nothing downstream — this document included — ever sees it.
+// elementSchema describes one element of a collection, or the pointee of a
+// pointer. A collection of collections carries its element's plan, which is
+// described the way a field of that shape would be.
 func elementSchema(f FieldPlan, scope schemaScope) map[string]any {
+	if f.Elem != nil {
+		if schema, ok := compositeSchema(*f.Elem, scope); ok {
+			return schema
+		}
+	}
 	if f.ElemKind == KindStruct {
 		return namedSchema(f.TypeName, scope)
 	}

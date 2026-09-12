@@ -79,8 +79,8 @@ type NestedOrderRequest struct {
 		"decodeNestedLineItemJSON",
 		"RegisterDecode[NestedOrderRequest]",
 		"RegisterEncode[NestedOrderRequest]",
-		"decodeNestedLineItemJSON(p, &v[len(v)-1])",
-		"v[name] = e",
+		"decodeNestedLineItemJSON(p, &v0[len(v0)-1])",
+		"v0[name0] = e0",
 	} {
 		if !strings.Contains(s, n) {
 			t.Fatalf("missing %q in emit", n)

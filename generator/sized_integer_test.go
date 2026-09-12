@@ -109,9 +109,9 @@ func TestSizedIntegersAreEmitted(t *testing.T) {
 func TestSizedIntegerDecodeChecksTheWidth(t *testing.T) {
 	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
 	for _, want := range []string{
-		"v, err := p.Uint64()",
-		"if v < 0 || v > 4294967295 {",
-		"if v < -32768 || v > 32767 {",
+		"v0, err := p.Uint64()",
+		"if v0 < 0 || v0 > 4294967295 {",
+		"if v0 < -32768 || v0 > 32767 {",
 		"jsonbind.ErrIntegerRange",
 	} {
 		if !strings.Contains(source, want) {
@@ -128,10 +128,10 @@ func TestSizedIntegerDecodeChecksTheWidth(t *testing.T) {
 // integer and range-checked inline, which is where its width lives.
 func TestSizedIntegerSliceReadsThroughAClosure(t *testing.T) {
 	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
-	if !strings.Contains(source, "e := uint32(w)") {
+	if !strings.Contains(source, "e0 := uint32(w0)") {
 		t.Fatalf("generated source does not convert the element to its width\n%s", source)
 	}
-	if !strings.Contains(source, "if w < 0 || w > 4294967295 {") {
+	if !strings.Contains(source, "if w0 < 0 || w0 > 4294967295 {") {
 		t.Error("the element read does not range-check the element")
 	}
 	if !strings.Contains(source, `jsonbind.FieldError("samples", "invalid uint32", jsonbind.ErrIntegerRange)`) {

@@ -18,7 +18,7 @@ type EnumRule struct {
 // same limit the check tag had, where commas separated rules.
 func ParseEnumTag(raw, kind string) (EnumRule, error) {
 	switch kind {
-	case "file", KindRestAny, KindRestRaw, KindStruct, KindSlice, KindArray, KindBytes, KindMap, KindAny:
+	case "file", KindRestAny, KindRestRaw, KindStruct, KindSlice, KindArray, KindBytes, KindMap, KindAny, KindPtr:
 		return EnumRule{}, fmt.Errorf("enum: only scalar fields support enums, not %s", kind)
 	}
 	if raw == "" {

@@ -89,11 +89,11 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 		// The array is filled in place by an inline loop: too many elements
 		// is the error, the tail is cleared, and nothing is assigned whole.
 		`return out, jsonbind.ArrayTooLong("cells", len(out.Cells))`,
-		"out.Cells[i] = e",
-		"clear(out.Cells[filled:])",
+		"out.Cells[i0] = e0",
+		"clear(out.Cells[filled0:])",
 		// A struct cell is decoded in place, after being cleared.
-		"out.Marks[i] = Mark{}",
-		"decodeMarkJSON(p, &out.Marks[i])",
+		"out.Marks[i0] = Mark{}",
+		"decodeMarkJSON(p, &out.Marks[i0])",
 		"out.Seats = [seatCount]uint16{}",
 		"if n > len(out.Cells) {",
 	} {
@@ -105,7 +105,7 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 	if strings.Contains(source, "out.Cells = v") || strings.Contains(source, "out.Cells = slice") {
 		t.Error("a fixed-length field is still assigned a slice")
 	}
-	if !strings.Contains(source, "out.Tags = v") || !strings.Contains(source, "v = append(v, e)") {
+	if !strings.Contains(source, "out.Tags = v0") || !strings.Contains(source, "v0 = append(v0, e0)") {
 		t.Error("a slice field no longer builds and assigns a slice")
 	}
 }
@@ -140,7 +140,7 @@ func TestFixedArrayOfNamedElementIsGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(code), "e := Level(w)") || !strings.Contains(string(code), "out.Cells[i] = e") {
+	if !strings.Contains(string(code), "e0 := Level(w0)") || !strings.Contains(string(code), "out.Cells[i0] = e0") {
 		t.Fatalf("the array does not fill with the declared type:\n%s", code)
 	}
 }

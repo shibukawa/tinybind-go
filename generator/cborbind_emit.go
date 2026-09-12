@@ -79,6 +79,9 @@ func checkCBORBindTypes(emitted []TypePlan) error {
 			if f.Kind == KindAny || f.ElemKind == KindAny {
 				return fmt.Errorf("cborbind: %s.%s: an any value has no CBOR mapping here; mark it json:\"-\"", t.Name, f.Name)
 			}
+			if f.Kind == KindPtr || f.Elem != nil {
+				return fmt.Errorf("cborbind: %s.%s: a pointer or a collection of collections has no CBOR mapping here; mark it json:\"-\"", t.Name, f.Name)
+			}
 		}
 	}
 	return nil

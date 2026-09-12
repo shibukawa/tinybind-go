@@ -108,14 +108,39 @@ func (p *Parser) ws() {
 	if p.pos < len(p.buf) && p.buf[p.pos] > ' ' {
 		return
 	}
-	for p.pos < len(p.buf) {
-		switch p.buf[p.pos] {
-		case ' ', '\t', '\n', '\r':
-			p.pos++
-		default:
-			return
+	p.wsSlow()
+}
+
+// wsSlow consumes a run of whitespace, in the shape odjson's skipSpaceSlow
+// settled on and for its reasons. The one space after a colon is the
+// commonest run by far and is settled by the next byte. An indented document
+// is otherwise a newline followed by a run of spaces: two words cover up to
+// sixteen, and the run's length is computed rather than branched on, since
+// the lowest lane that differs from a space is the first non-space byte and
+// run lengths vary from line to line. Whatever the run ends on, the loop
+// below takes over.
+func (p *Parser) wsSlow() {
+	buf, i := p.buf, p.pos
+	if i+1 < len(buf) && buf[i] == ' ' && buf[i+1] > ' ' {
+		p.pos = i + 1
+		return
+	}
+	if i+17 <= len(buf) && buf[i] == '\n' {
+		n0 := bits.TrailingZeros64(binary.LittleEndian.Uint64(buf[i+1:])^swarSpaces) / 8
+		n1 := bits.TrailingZeros64(binary.LittleEndian.Uint64(buf[i+9:])^swarSpaces) / 8
+		i += 1 + n0 + n1&-(n0>>3)
+	}
+	for i < len(buf) && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t' || buf[i] == '\r') {
+		i++
+		for i+8 <= len(buf) {
+			n := bits.TrailingZeros64(binary.LittleEndian.Uint64(buf[i:])^swarSpaces) / 8
+			i += n
+			if n < 8 {
+				break
+			}
 		}
 	}
+	p.pos = i
 }
 
 // The Fast methods below are the inlinable halves the generated decoder
@@ -643,6 +668,7 @@ func (p *Parser) Int() (int, error) {
 // followed by more, a nineteenth digit, whitespace, null -- goes through the
 // grammar check and the checked conversion the slow half keeps.
 func (p *Parser) Int64() (int64, error) {
+	p.ws()
 	buf := p.buf
 	i := p.pos
 	neg := false
@@ -694,6 +720,7 @@ var ErrIntegerRange = newError("json_parse", "JSON number out of range", nil)
 // at generation, which keeps eight more methods out of the runtime a TinyGo
 // target links.
 func (p *Parser) Uint64() (uint64, error) {
+	p.ws()
 	buf := p.buf
 	i := p.pos
 	if i < len(buf) && buf[i] >= '1' && buf[i] <= '9' {
@@ -729,6 +756,7 @@ func (p *Parser) uint64Slow() (uint64, error) {
 // the pass accepts is the JSON one, and everything it does not accept goes
 // through numberSpan and strconv.
 func (p *Parser) Float64() (float64, error) {
+	p.ws()
 	buf := p.buf
 	i := p.pos
 	neg := false
@@ -1173,6 +1201,8 @@ func parseInt64(span []byte) (int64, error) {
 const (
 	swarLow  = 0x0101010101010101
 	swarHigh = 0x8080808080808080
+	// swarSpaces is eight spaces, the shape of JSON indentation.
+	swarSpaces = 0x2020202020202020
 )
 
 func swarStringStop(w uint64) uint64 {

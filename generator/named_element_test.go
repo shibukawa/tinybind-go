@@ -63,11 +63,11 @@ func TestNamedElementReadsThroughAClosure(t *testing.T) {
 	for _, want := range []string{
 		// The element is read in the kind underneath and converted inline,
 		// where a closure used to do the same through a func value.
-		"e := Mark(w)",
-		"e := Name(w)",
-		"e := Level(w)",
+		"e0 := Mark(w0)",
+		"e0 := Name(w0)",
+		"e0 := Level(w0)",
 		// The width is still checked, and the bound is still an untyped literal.
-		"if w < 0 || w > 65535 {",
+		"if w0 < 0 || w0 > 65535 {",
 		// The encoder converts the other way, at every shape.
 		"jsonbind.AppendUint(dst, uint64(v.Marks[i]))",
 		"jsonbind.AppendString(dst, string(v.Names[i]))",

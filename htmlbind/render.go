@@ -285,16 +285,45 @@ func Render(w io.Writer, leaf Fragment, options ...Option) error {
 // holding a loading state is a document that lies. This path writes as it goes,
 // so render into a buffer when you want that failure to become an error status.
 func RenderChain(w io.Writer, wrappers []Wrapper, leaf Fragment, options ...Option) error {
-	opts := newRenderOptions(options)
-	composed, head, err := assembleContext(opts.renderContext(), nil, wrappers, leaf)
+	// The renderer and its options come from a pool. This path is
+	// synchronous: nothing started under composed outlives it, so the pair
+	// can be handed back once it returns, and the conversion buffer the
+	// renderer keeps for a writer without WriteString comes back with it.
+	// The streaming entries build their own, since a coordinator holds the
+	// options past the call.
+	pr := rendererPool.Get().(*pooledRenderer)
+	pr.opts = renderOptions{}
+	for _, option := range options {
+		if option != nil {
+			option(&pr.opts)
+		}
+	}
+	err := pr.render(w, wrappers, leaf)
+	pr.opts = renderOptions{}
+	pr.r = Renderer{scratch: pr.r.scratch[:0]}
+	rendererPool.Put(pr)
+	return err
+}
+
+// pooledRenderer is a Renderer and its options in one pooled object.
+type pooledRenderer struct {
+	r    Renderer
+	opts renderOptions
+}
+
+var rendererPool = sync.Pool{New: func() any { return new(pooledRenderer) }}
+
+func (pr *pooledRenderer) render(w io.Writer, wrappers []Wrapper, leaf Fragment) error {
+	composed, head, err := assembleContext(pr.opts.renderContext(), nil, wrappers, leaf)
 	if err != nil {
 		return err
 	}
-	head, err = mergeCallerHead(head, opts.head)
+	head, err = mergeCallerHead(head, pr.opts.head)
 	if err != nil {
 		return err
 	}
-	return composed(&Renderer{w: w, sw: stringWriterOf(w), head: head, opts: opts})
+	pr.r = Renderer{w: w, sw: stringWriterOf(w), head: head, opts: &pr.opts, scratch: pr.r.scratch[:0]}
+	return composed(&pr.r)
 }
 
 // RenderAsync renders one component and yields each await boundary as it
