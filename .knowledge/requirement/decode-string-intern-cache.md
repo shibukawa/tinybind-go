@@ -11,7 +11,14 @@ source:
   - system:odjson odjsonrt/jsontext.go StringCache, read 2026-09-12
   - the same-document versus rotating-document decode rows in system:odjson
 review_gate: proposed
-status: proposed 2026-09-12; needs a decision on whether cross-call sharing is wanted
+status: implemented 2026-09-12; cross-call sharing chosen, see as_built
+as_built:
+  where: jsonbind/intern.go; a 256-slot direct-mapped table of strings from 2 to 64 bytes, hashed from first and last bytes and length, taken from a sync.Pool on first use and returned by Parser.Release
+  what_goes_through_it: Parser.String for a span with no escape, and Parser.Intern for map keys, which the generated map loops and Any's object walk use
+  utf8: a stored string is valid UTF-8, so a hit on a non-ASCII span skips validation; an invalid span never equals its coerced stored form and is coerced again
+  release: generated decodeXBytes and the binder's body walk call Release; a parser that is never released keeps its table until collected
+  ceiling: 64 bytes rather than odjson's 256, since long values are text that seldom repeats and the miss compare would outweigh the hash
+  test: jsonbind/fastpath_test.go TestInternedStringsAreSharedAndStillCorrect; both fuzz targets pass
 mechanics:
   table: 256 string slots in a sync.Pool object, hashed from the first and last eight bytes and the length, strings of 2 to 256 bytes only
   hit: an equal string already in the slot is returned; a miss allocates and overwrites the slot

@@ -39,6 +39,17 @@ remeasured_2026_09_12_after_adoption:
   decode_twitter_same_document: odjson 376 us; jsonbind 655 us, was 812 us, now reading the interface{} fields it used to drop
   benchfixture_readme_row: 777 ns to 634 ns
   reading: the gap went from 1.8x-2.2x to 1.5x-1.8x; what remains is the string allocations both pay, the per-token whitespace and depth bookkeeping of requirement:json-scalar-fast-paths, and odjson's string cache on the repetitive document
+remeasured_2026_09_12_after_the_second_round:
+  what_landed: requirement:json-scalar-fast-paths, requirement:decode-string-intern-cache, requirement:encode-size-hint, and the registry-first precedence of requirement:json-codec-interface
+  decode_rotating_distinct_documents:
+    order: odjson 466 ns 14 allocs; jsonbind 630 ns 13 allocs, from 798 ns before the first round
+    book: odjson 460 ns 10 allocs; jsonbind 675 ns 9 allocs, from 992 ns
+  decode_twitter_same_document: odjson 385 us 2466 allocs; jsonbind 635 us 2682 allocs, from 812 us; the cache took the any-field decode from 4349 allocations to 2682
+  encode_small: level; order 212 ns reused buffer against odjson 236 ns, book 189 ns against 225 ns
+  append_to_a_nil_buffer: AppendJSONTo(nil) 251 ns 1 alloc 352 B, where the raw append function into nil costs 353 ns 7 allocs 1016 B; the size hint is what separates them
+  benchfixture_readme_rows: decode 634 ns 15 allocs to 534 ns 4 allocs, encode 283 ns to 227 ns; the four allocations are the two slices, the body buffer and the reader, the strings being cache hits on a repeated document
+  reading: the gap is 1.35x-1.5x on the small documents and 1.65x on the large one, from 1.8x-2.2x at the start; the machine carried intermittent outside load during these runs, so medians of five with the run repeated until the reflection rows matched earlier idle runs
+  not_taken_from_here: the direct buffer path and the non-HTML-escaping mode, per not_portable and requirement:word-at-a-time-json-scanning encode_caveat
 techniques_by_portability:
   portable_pure_go:
     - requirement:decoder-key-decision-tree

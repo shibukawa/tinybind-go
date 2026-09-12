@@ -16,7 +16,7 @@ status: parser half implemented 2026-09-12; the boxed result is left as it was, 
 as_built:
   loops: generator/emit.go emitStreamSlice, emitStreamArray and emitStreamMap write the loop into the generated code with emitElemRead; ParseSlice, ParseArray and ParseMap stay for callers outside generated code, and jsonbind.ArrayTooLong keeps the error text the two agree on
   verified: go build -gcflags=-m over internal/benchfixture reports no moved to heap for the Parser; the decode fell from 16 to 15 allocations
-  not_done: decodeThroughInterface still boxes &out for a type carrying DecodeJSONFrom; it costs one allocation only on an annotated type, and removing it means the registry winning over the method when both exist, which concept:standalone-json-codec's precedence rule decides the other way
+  result_2026_09_12_later: the registry now wins when both exist, so decodeThroughInterface runs only for a type the registry does not hold and an annotated type decodes without the boxing; see requirement:json-codec-interface precedence.method_over_plan.reversed_2026_09_12
 the_four_structural_allocations:
   parser: 'var p jsonbind.Parser in decodeXBytes escapes because &p flows into ParseSlice''s read func(*Parser) argument, a function value the compiler cannot see through'
   result: decodeThroughInterface does any(&out).(Decoder), which boxes the pointer and moves out to the heap; carriesDecoder already avoids that for the probe, the conversion after it does not

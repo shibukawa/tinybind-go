@@ -95,6 +95,13 @@ precedence:
     why: generating a codec for a type whose author wrote an encoder, and then using the generated one, silently produces bytes the author did not intend
     precedent: encoding/json resolves the same conflict the same way, letting MarshalJSON win over field walking
     consequence: the tag semantics of concept:standalone-json-codec are opted out of by writing the method, which is the trade below
+    reversed_2026_09_12:
+      now: the registry is asked first and the interface serves a type it does not hold; jsonbind/codec.go EncodeJSON, DecodeJSONBytes and the reader entries
+      why: reaching a method means boxing the value or its address, one allocation per call, where a registered function returns by value; for every method the generator writes the two routes are the same code, so the cheaper one is taken (requirement:stack-resident-json-parser)
+      what_changed_for_authors: a hand-written method on a type this run also planned no longer overrides the generated codec; a type that wants its own bytes keeps the generator away from it, which json:"-" and an unplanned type do; a declared codec behaves as before
+      visible_difference: EncodeJSON on an annotated type now ends its document with the newline every registered writer adds; concept:standalone-json-codec already said callers must not rely on its absence
+      decided_by: the maintainer, when asked whether the precedence rule could change to remove the allocation
+      test: jsonbind/fastpath_test.go TestRegisteredCodecWinsOverAMethod
   no_runtime_branch: the binding phase type-checks, so this order is resolved at generation and the emitted call names one path
 not_reflection:
   what: a type assertion to an interface is dispatch, not field walking

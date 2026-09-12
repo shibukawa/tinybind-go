@@ -11,7 +11,13 @@ source:
   - system:odjson odjsonrt/decode.go ParseDecimal and ParseSimpleFloat, ftoa.go appendShortFloat, scan.go SkipSpace, read 2026-09-12
   - CPU profile 2026-09-12: ws was the second flat user-code frame of a Book decode; strconv.readFloat appeared for the three floats
 review_gate: proposed
-status: proposed 2026-09-12
+status: implemented 2026-09-12; see as_built
+as_built:
+  whitespace: Parser.ws returns after one compare when the next byte is above the space, which is every byte of a compact document
+  depth: the nesting bound is read once per Reset into Parser.maxDepth, not once per container through the atomic
+  float_in: parseFloatFast in jsonbind/parser.go takes a span with no exponent and at most nineteen digits whose integer is below 2^53 and whose fraction has at most 22 digits, and divides by an exact power of ten; anything else goes to strconv; jsonbind/fastpath_test.go compares it with strconv over 200000 random decimals
+  float_out: appendShortFloat in jsonbind/append.go writes an integer below 2^53, or a decimal of at most three fraction digits below 1e9 found by trying the lengths in order and keeping the first whose division returns exactly the value; zero, anything larger and every other value stay with strconv; fastpath_test.go compares it with encoding/json over 200000 random values including every bit pattern shape
+  decimal_int: parseInt64 already read digits in place; left as it was
 paths:
   whitespace: 'SkipSpace checks data[p] > '' '' first and returns, so the common no-space case is one compare inlined at every call site; jsonbind ws() is a loop with a switch, called before every token'
   decimal_int: parse digits in place with overflow detection and only fall to the general path on a sign, exponent or fraction; jsonbind parseInt64 already does most of this

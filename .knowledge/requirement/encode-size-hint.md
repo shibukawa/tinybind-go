@@ -11,7 +11,12 @@ source:
   - system:odjson odjsonrt/sizehint.go, read 2026-09-12; its MarshalJSON allocates through SizeHint.New and records the result
   - measured 2026-09-12: jsonbind's append into a nil buffer costs 7 allocations and 1016 B on the 312 B Order, against odjson's 1 allocation and 352 B
 review_gate: proposed
-status: proposed 2026-09-12
+status: implemented 2026-09-12; see as_built
+as_built:
+  runtime: jsonbind.SizeHint in jsonbind/append.go, Grow and Record over one atomic int64, an eighth of headroom, the hint only grows
+  emitted: every generated AppendJSONTo keeps a package-level sizeHintX, grows dst before appending and records the length it wrote; generator/emit.go emitCodecMethods
+  not_applied: EncodeJSON and the httpbind writers, which borrow a pooled buffer, as the requirement said
+  test: jsonbind/fastpath_test.go TestSizeHintGrowsOnceToTheRecordedSize; generator/declared_codec_test.go asserts the emitted shape
 mechanics:
   hint: one atomic int64 per generated type, holding the largest length recorded so far plus an eighth of headroom, floored at 64 bytes
   grows_only: a single large value raises the hint for good, which trades some memory on later small values for never growing again
