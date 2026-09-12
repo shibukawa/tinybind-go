@@ -131,7 +131,9 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = ` + "`" + `{"label":"home","origin":{"x":1,"y":2}}` + "`" + `
-	if got := buf.String(); got != want {
+	// The registered writer ends its document with a newline, as every
+	// generated writer does; the bytes before it are what is compared.
+	if got := strings.TrimSpace(buf.String()); got != want {
 		t.Fatalf("encoded %s, want %s", got, want)
 	}
 	out, err := jsonbind.DecodeJSONBytes[Marker]([]byte(want))

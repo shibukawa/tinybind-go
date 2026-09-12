@@ -498,9 +498,17 @@ func checkNestedTypesEmitted(emitted []TypePlan) error {
 // converts the shape rather than forwarding it.
 func emitCodecMethods(b *bytes.Buffer, t TypePlan) {
 	if t.DirectUsage&UsageAppendMethod != 0 {
+		// The method hands its bytes to the caller, so it cannot borrow a
+		// pooled buffer; the hint sizes the one allocation a nil dst needs
+		// from what this type's encodings have measured so far.
+		fmt.Fprintf(b, "var sizeHint%s jsonbind.SizeHint\n\n", t.Name)
 		fmt.Fprintf(b, "// AppendJSONTo implements jsonbind.Appender.\n")
 		fmt.Fprintf(b, "func (v %s) AppendJSONTo(dst []byte) []byte {\n", t.Name)
-		fmt.Fprintf(b, "\treturn append%sJSON(dst, v)\n", t.Name)
+		fmt.Fprintf(b, "\tdst = sizeHint%s.Grow(dst)\n", t.Name)
+		fmt.Fprintf(b, "\tstart := len(dst)\n")
+		fmt.Fprintf(b, "\tdst = append%sJSON(dst, v)\n", t.Name)
+		fmt.Fprintf(b, "\tsizeHint%s.Record(len(dst) - start)\n", t.Name)
+		fmt.Fprintf(b, "\treturn dst\n")
 		b.WriteString("}\n\n")
 	}
 	if t.DirectUsage&UsageDecodeMethod != 0 {
@@ -534,9 +542,11 @@ func emitDecodeJSON(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 	b.WriteString("\tvar p jsonbind.Parser\n")
 	b.WriteString("\tp.Reset(data)\n")
 	fmt.Fprintf(b, "\tout, err := decode%sJSON(&p)\n", t.Name)
-	b.WriteString("\tif err != nil {\n\t\treturn out, err\n\t}\n")
-	b.WriteString("\tif err := p.End(); err != nil {\n\t\treturn out, err\n\t}\n")
-	b.WriteString("\treturn out, nil\n}\n\n")
+	b.WriteString("\tif err == nil {\n\t\terr = p.End()\n\t}\n")
+	// The string cache goes back to the pool on every path, so the next
+	// decode starts from what this one learned.
+	b.WriteString("\tp.Release()\n")
+	b.WriteString("\treturn out, err\n}\n\n")
 
 	fmt.Fprintf(b, "func decode%sJSON(p *jsonbind.Parser) (%s, error) {\n", t.Name, t.Name)
 	fmt.Fprintf(b, "\tvar out %s\n", t.Name)
@@ -966,8 +976,9 @@ func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, ni
 	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", loop, loop, member, loop)
 	fmt.Fprintf(b, "%sif !ok {\n%s\tbreak\n%s}\n", loop, loop, loop)
 	// The key aliases parser scratch that the element read below may reuse,
-	// so it is copied before the value is read.
-	fmt.Fprintf(b, "%sname := string(key)\n", loop)
+	// so it is copied before the value is read; a key seen before comes back
+	// from the parser's cache rather than being copied again.
+	fmt.Fprintf(b, "%sname := p.Intern(key)\n", loop)
 	emitElemRead(b, f, loop, member)
 	fmt.Fprintf(b, "%sv[name] = e\n", loop)
 	fmt.Fprintf(b, "%s}\n", body)
@@ -1653,6 +1664,7 @@ func emitBinderJSONPass(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 		},
 		defaultArm: func(prefix string) { emitBinderRestDefault(b, t, prefix) },
 	})
+	fmt.Fprintf(b, "%sp.Release()\n", loop)
 	fmt.Fprintf(b, "%sif err := p.End(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", loop, loop, loop)
 	fmt.Fprintf(b, "%s}\n", in)
 }

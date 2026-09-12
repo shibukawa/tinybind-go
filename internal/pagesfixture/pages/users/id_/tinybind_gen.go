@@ -21,13 +21,11 @@ func decodeRenameRequestBytes(data []byte) (RenameRequest, error) {
 	var p jsonbind.Parser
 	p.Reset(data)
 	out, err := decodeRenameRequestJSON(&p)
-	if err != nil {
-		return out, err
+	if err == nil {
+		err = p.End()
 	}
-	if err := p.End(); err != nil {
-		return out, err
-	}
-	return out, nil
+	p.Release()
+	return out, err
 }
 
 func decodeRenameRequestJSON(p *jsonbind.Parser) (RenameRequest, error) {
@@ -152,6 +150,7 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 						out.Name = v
 					}
 				}
+				p.Release()
 				if err := p.End(); err != nil {
 					return out, httpbind.JSONBodyError(err)
 				}

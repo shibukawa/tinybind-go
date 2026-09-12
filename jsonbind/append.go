@@ -1,8 +1,10 @@
 package jsonbind
 
 import (
+	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 )
 
@@ -101,6 +103,9 @@ func AppendBool(dst []byte, v bool) []byte { return strconv.AppendBool(dst, v) }
 // round-trip, switching to exponent form outside [1e-6, 1e21) and trimming the
 // exponent's leading zero.
 func AppendFloat(dst []byte, v float64) []byte {
+	if dst, ok := appendShortFloat(dst, v); ok {
+		return dst
+	}
 	abs := v
 	if abs < 0 {
 		abs = -abs
@@ -226,4 +231,83 @@ func sortedKeys[V any](m map[string]V) []string {
 		}
 	}
 	return keys
+}
+
+// appendShortFloat writes v when it is an integer or a decimal of at most
+// three fraction digits, which is what most numbers in a document are: a
+// count, a price, a ratio. strconv's shortest formatting is the fallback and
+// costs about twice as much.
+//
+// The output is the one strconv would give. An integer below 2^53 is its own
+// shortest decimal, since floats are spaced no wider than one there. For a
+// fraction, the candidates are tried in order of length and the first whose
+// division comes back as exactly v is taken: division is correctly rounded,
+// so that candidate round-trips; nothing shorter does, or it would have been
+// taken first; and no other decimal of the same length rounds to v, because
+// below 1e9 the spacing of such decimals is far wider than the spacing of
+// floats. Zero is left to strconv so a negative zero keeps its sign.
+func appendShortFloat(dst []byte, v float64) ([]byte, bool) {
+	abs := math.Abs(v)
+	if v == 0 || abs >= 1e15 || abs != abs {
+		return dst, false
+	}
+	if abs == math.Trunc(abs) {
+		return strconv.AppendInt(dst, int64(v), 10), true
+	}
+	if abs >= 1e9 {
+		return dst, false
+	}
+	for k := 1; k <= 3; k++ {
+		scaled := math.Round(abs * pow10[k])
+		if scaled/pow10[k] != abs {
+			continue
+		}
+		if v < 0 {
+			dst = append(dst, '-')
+		}
+		m := int64(scaled)
+		whole, frac := m/int64(pow10[k]), m%int64(pow10[k])
+		dst = strconv.AppendInt(dst, whole, 10)
+		dst = append(dst, '.')
+		for d := k - 1; d >= 1; d-- {
+			if frac < int64(pow10[d]) {
+				dst = append(dst, '0')
+			}
+		}
+		return strconv.AppendInt(dst, frac, 10), true
+	}
+	return dst, false
+}
+
+// SizeHint remembers how large a type's encoding has been, so an encoder that
+// must hand its result to the caller allocates once at that size rather than
+// growing through several reallocations. Generated AppendJSONTo methods keep
+// one per type. The zero value is ready to use and safe for concurrent use.
+type SizeHint struct {
+	n atomic.Int64
+}
+
+// Grow returns dst with room for an encoding the size of the largest one
+// recorded so far, plus an eighth. A buffer that already has the room, and
+// a hint that has recorded nothing yet, come back untouched.
+func (h *SizeHint) Grow(dst []byte) []byte {
+	need := int(h.n.Load())
+	need += need / 8
+	if need == 0 || cap(dst)-len(dst) >= need {
+		return dst
+	}
+	grown := make([]byte, len(dst), len(dst)+need)
+	copy(grown, dst)
+	return grown
+}
+
+// Record notes the length of a finished encoding. The hint only grows, so one
+// large value does not make every later call start small and grow again.
+func (h *SizeHint) Record(n int) {
+	for {
+		old := h.n.Load()
+		if int64(n) <= old || h.n.CompareAndSwap(old, int64(n)) {
+			return
+		}
+	}
 }

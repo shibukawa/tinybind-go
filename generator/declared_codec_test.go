@@ -75,7 +75,8 @@ func TestGenerateCodecEmitsBothDirectionsAndBothMethods(t *testing.T) {
 		"func decodePointBytes(data []byte) (Point, error)",
 		"func (v Point) AppendJSONTo(dst []byte) []byte",
 		"func (v *Point) DecodeJSONFrom(data []byte) error",
-		"return appendPointJSON(dst, v)",
+		"dst = appendPointJSON(dst, v)",
+		"sizeHintPoint.Record(len(dst) - start)",
 	)
 }
 

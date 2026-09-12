@@ -34,10 +34,11 @@ func decodeJSON[T any](r io.Reader, limit, hint int64) (T, error) {
 		}
 		return zero, newError("body_read", "failed to read JSON", err)
 	}
-	if out, done, err := decodeThroughInterface[T](data); done {
-		return out, err
+	if ok {
+		return fn(data)
 	}
-	return fn(data)
+	out, _, err := decodeThroughInterface[T](data)
+	return out, err
 }
 
 // carriesDecoder reports whether *T implements [Decoder], which is what lets a
@@ -65,8 +66,13 @@ func carriesAppender[T any]() bool {
 }
 
 // decodeThroughInterface reads data into a T that carries its own decoder, and
-// reports whether it did. A false means the type carries none and the registry
-// is the remaining route.
+// reports whether it did. A false means the type carries none.
+//
+// The registry is asked first, and this runs only for a type it does not
+// hold. Boxing &out to reach the method moves out to the heap, one allocation
+// per decode; a registered function returns T by value and pays nothing. For
+// a declared codec the two routes are the same generated code, so the cheaper
+// one is taken, and a type that registered nothing is reached here as before.
 func decodeThroughInterface[T any](data []byte) (T, bool, error) {
 	if !carriesDecoder[T]() {
 		var out T
@@ -113,38 +119,38 @@ func encodeThroughInterface[T any](w io.Writer, v T) (bool, error) {
 // A type carrying [Decoder] is read through it, on the terms [EncodeJSON]
 // states for the other direction.
 func DecodeJSONBytes[T any](data []byte) (T, error) {
+	if fn, ok := lookupDecoder[T](); ok {
+		return fn(data)
+	}
 	if out, done, err := decodeThroughInterface[T](data); done {
 		return out, err
 	}
 	var zero T
-	fn, ok := lookupDecoder[T]()
-	if !ok {
-		return zero, missingDecoderError()
-	}
-	return fn(data)
+	return zero, missingDecoderError()
 }
 
 // EncodeJSON encodes v as compact JSON to w using a generated codec, or, for a
 // type carrying its own, through [Appender].
 //
-// The interface is tried first. A type this run planned and also carries a
-// method is one whose author wrote an encoder, and encoding it through the
-// generated one instead would silently produce bytes they did not intend. This
-// is how encoding/json resolves the same conflict, letting the method win over
-// walking the fields. For a declared codec the two are the same code, since the
-// emitted method delegates to the emitted function.
+// The registry is tried first and the interface serves a type it does not
+// hold. A type this run planned and also carries a method is, for every
+// method the generator writes, the same code twice, and the registered
+// function is the cheaper route: reaching a method means boxing the value or
+// its address, which is an allocation per call. A hand-written method on a
+// planned type therefore does not override the generated codec; a type that
+// wants its own bytes keeps the generator away from it, which is what
+// json:"-" and an unplanned type are for.
 //
 // It does not set HTTP headers or status.
 func EncodeJSON[T any](w io.Writer, v T) error {
 	if w == nil {
 		return newError("internal", "jsonbind: nil writer", nil)
 	}
+	if fn, ok := lookupEncoder[T](); ok {
+		return fn(w, v)
+	}
 	if done, err := encodeThroughInterface(w, v); done {
 		return err
 	}
-	fn, ok := lookupEncoder[T]()
-	if !ok {
-		return missingEncoderError()
-	}
-	return fn(w, v)
+	return missingEncoderError()
 }

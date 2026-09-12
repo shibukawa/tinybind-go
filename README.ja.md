@@ -335,16 +335,16 @@ go test ./internal/benchfixture -run xxx -bench . -benchmem
 
 | 経路 | 標準ライブラリ | 生成コード |
 |------|----------------|------------|
-| JSON decode（`io.Reader`） | 2378 ns · 1889 B · 18 allocs | **634 ns · 856 B · 15 allocs** |
-| JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 1772 ns · 496 B · 10 allocs | — |
-| JSON encode | 868 ns · 288 B · 2 allocs | **283 ns · 0 B · 0 allocs** |
+| JSON decode（`io.Reader`） | 2373 ns · 1889 B · 18 allocs | **534 ns · 752 B · 4 allocs** |
+| JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 1753 ns · 496 B · 10 allocs | — |
+| JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
 | `Bind` + `Write`（リクエスト再利用） | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
 | `Bind` + `Write`（リクエスト構築込み） | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
 | HTML レンダリング（`html/template` 対 `htmlbind`） | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
 
 JSON の各行は `encoding/json` との比較、ハンドラの行は同じ body decode・path・header 読み取りを手書きした `net/http` ハンドラとの比較、HTML の行は同じドキュメントを出力する `html/template` テンプレートとの比較です。
 
-エンコードのアロケーションはゼロです。生成エンコーダはプールしたバッファに append するので、レスポンス1本あたりのゴミが出ません。デコードの15回は、結果に残る文字列とスライス13個に body バッファとその reader を足した数で、呼び出し側が受け取る値を変えずに削れるものはもう残っていません。HTML レンダリングのアロケーションは行ごとではなくレンダリング1回ごとの固定費なので、ページが長くなっても数は変わりません。
+エンコードのアロケーションはゼロです。生成エンコーダはプールしたバッファに append するので、レスポンス1本あたりのゴミが出ません。デコードの4回は、結果に残るスライス2個と body バッファとその reader です。文書中の文字列11個は、デコーダが呼び出しをまたいで持つ小さなキャッシュから返ります。一度見た値は確保し直さないので、同じ文書を繰り返すこのベンチマークでは全部がヒットします。値がすべて異なる文書の流れでは、従来どおり文字列ごとに1回確保します。HTML レンダリングのアロケーションは行ごとではなくレンダリング1回ごとの固定費なので、ページが長くなっても数は変わりません。
 
 ### バイナリサイズ
 

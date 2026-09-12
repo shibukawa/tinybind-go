@@ -24,6 +24,12 @@ type Parser struct {
 	// valid while the matching value is being decoded.
 	keyScratch []byte
 	scratch    []byte
+	// maxDepth caches MaxNestingDepth for this document, so the bound is one
+	// atomic load per Reset rather than one per container.
+	maxDepth int
+	// cache interns short strings across documents; see intern.go. It is
+	// taken from a pool on first use and handed back by Release.
+	cache *stringCache
 }
 
 // DefaultMaxNestingDepth bounds how deeply objects and arrays may nest unless
@@ -68,7 +74,10 @@ func MaxNestingDepth() int {
 
 // enter counts one open object or array.
 func (p *Parser) enter() error {
-	if p.depth >= MaxNestingDepth() {
+	if p.maxDepth == 0 {
+		p.maxDepth = MaxNestingDepth()
+	}
+	if p.depth >= p.maxDepth {
 		return p.fail("JSON value nested too deeply")
 	}
 	p.depth++
@@ -89,11 +98,16 @@ func (p *Parser) leave() {
 func NewParser(data []byte) *Parser { return &Parser{buf: data} }
 
 // Reset points p at data, reusing its scratch buffers.
-func (p *Parser) Reset(data []byte) { p.buf, p.pos, p.depth = data, 0, 0 }
+func (p *Parser) Reset(data []byte) { p.buf, p.pos, p.depth, p.maxDepth = data, 0, 0, 0 }
 
 func (p *Parser) fail(msg string) error { return newError("json_parse", msg, nil) }
 
 func (p *Parser) ws() {
+	// Compact documents have no whitespace at all, so the common case is one
+	// compare: every byte JSON treats as whitespace is at or below the space.
+	if p.pos < len(p.buf) && p.buf[p.pos] > ' ' {
+		return
+	}
 	for p.pos < len(p.buf) {
 		switch p.buf[p.pos] {
 		case ' ', '\t', '\n', '\r':
@@ -151,7 +165,7 @@ func (p *Parser) objectKeySpan(n int) (span []byte, escaped, ok bool, err error)
 	if _, ok, err := p.ObjectKeyRest(n); err != nil || !ok {
 		return nil, false, ok, err
 	}
-	span, escaped, err = p.stringSpan()
+	span, escaped, _, err = p.stringSpan()
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -204,7 +218,7 @@ func (p *Parser) KeyMatched(k int) error {
 // and the colon after it. The name aliases parser scratch space and is valid
 // until the next member is read.
 func (p *Parser) ObjectKeyName() ([]byte, error) {
-	span, escaped, err := p.stringSpan()
+	span, escaped, _, err := p.stringSpan()
 	if err != nil {
 		return nil, err
 	}
@@ -287,19 +301,19 @@ func (p *Parser) IsNull() bool {
 	return false
 }
 
-// stringSpan returns the bytes between the quotes without copying. needsWork is
-// set when the span holds an escape or any non-ASCII byte, so a pure-ASCII
-// string skips both unescaping and UTF-8 validation.
+// stringSpan returns the bytes between the quotes without copying. escaped
+// reports an escape sequence in the span and nonASCII a byte at or above
+// 0x80, so a pure-ASCII string skips both unescaping and UTF-8 validation.
 //
 // The scan runs eight bytes at a time: a word is checked at once for a quote,
 // a backslash or a control byte, and only a word holding one is walked byte
 // by byte. Most of a document is the inside of its strings, so this loop is
 // where a decoder spends its time, and the word scan is what keeps it at
 // memory speed on a long value.
-func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
+func (p *Parser) stringSpan() (span []byte, escaped, nonASCII bool, err error) {
 	p.ws()
 	if p.pos >= len(p.buf) || p.buf[p.pos] != '"' {
-		return nil, false, p.fail("JSON value must be a string")
+		return nil, false, false, p.fail("JSON value must be a string")
 	}
 	start := p.pos + 1
 	i := start
@@ -326,7 +340,7 @@ func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
 		c := p.buf[i]
 		if c == '"' {
 			p.pos = i + 1
-			return p.buf[start:i], needsWork || high&swarHigh != 0, nil
+			return p.buf[start:i], escaped, nonASCII || high&swarHigh != 0, nil
 		}
 		if c == '\\' {
 			// The escape is validated here, where every string passes exactly
@@ -334,32 +348,32 @@ func (p *Parser) stringSpan() (span []byte, needsWork bool, err error) {
 			// one. Without this, \q decoded to a literal q and a truncated \u
 			// to U+FFFD — documents encoding/json rejects — and RawValue would
 			// re-emit them to a downstream parser as JSON.
-			needsWork = true
+			escaped = true
 			if i+1 >= len(p.buf) {
-				return nil, false, p.fail("unterminated JSON string")
+				return nil, false, false, p.fail("unterminated JSON string")
 			}
 			switch p.buf[i+1] {
 			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
 				i += 2
 			case 'u':
 				if i+6 > len(p.buf) || !isHex4(p.buf[i+2:i+6]) {
-					return nil, false, p.fail("invalid unicode escape in JSON string")
+					return nil, false, false, p.fail("invalid unicode escape in JSON string")
 				}
 				i += 6
 			default:
-				return nil, false, p.fail("invalid escape in JSON string")
+				return nil, false, false, p.fail("invalid escape in JSON string")
 			}
 			continue
 		}
 		if c < 0x20 {
-			return nil, false, p.fail("invalid control character in JSON string")
+			return nil, false, false, p.fail("invalid control character in JSON string")
 		}
 		if c >= utf8.RuneSelf {
-			needsWork = true
+			nonASCII = true
 		}
 		i++
 	}
-	return nil, false, p.fail("unterminated JSON string")
+	return nil, false, false, p.fail("unterminated JSON string")
 }
 
 // String decodes a JSON string. null decodes as "".
@@ -367,12 +381,12 @@ func (p *Parser) String() (string, error) {
 	if p.IsNull() {
 		return "", nil
 	}
-	span, work, err := p.stringSpan()
+	span, escaped, nonASCII, err := p.stringSpan()
 	if err != nil {
 		return "", err
 	}
-	if !work {
-		return string(span), nil
+	if !escaped {
+		return p.intern(span, nonASCII), nil
 	}
 	p.scratch = unescape(p.scratch[:0], span)
 	if !utf8.Valid(p.scratch) {
@@ -503,11 +517,62 @@ func (p *Parser) Float64() (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if v, ok := parseFloatFast(span); ok {
+		return v, nil
+	}
 	v, err := strconv.ParseFloat(string(span), 64)
 	if err != nil {
 		return 0, p.fail("invalid JSON number")
 	}
 	return v, nil
+}
+
+// pow10 holds the powers of ten a float64 represents exactly.
+var pow10 = [...]float64{1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22}
+
+// parseFloatFast converts a number span with no exponent whose digits fit an
+// exactly representable integer: the value is that integer divided by an
+// exactly representable power of ten, and IEEE division is correctly
+// rounded, so the result is the one strconv would produce. Anything longer,
+// and every exponent form, is handed to strconv. The span has already been
+// held to the JSON number grammar by numberSpan.
+func parseFloatFast(s []byte) (float64, bool) {
+	i, neg := 0, false
+	if len(s) > 0 && s[0] == '-' {
+		neg, i = true, 1
+	}
+	var m uint64
+	digits, frac := 0, 0
+	dot := false
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c == '.' {
+			dot = true
+			continue
+		}
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		if digits == 19 {
+			return 0, false
+		}
+		m = m*10 + uint64(c-'0')
+		digits++
+		if dot {
+			frac++
+		}
+	}
+	if m >= 1<<53 || frac >= len(pow10) {
+		return 0, false
+	}
+	v := float64(m)
+	if frac > 0 {
+		v /= pow10[frac]
+	}
+	if neg {
+		v = -v
+	}
+	return v, true
 }
 
 // Bool decodes a JSON boolean. null decodes as false.
@@ -559,7 +624,7 @@ func (p *Parser) Any() (any, error) {
 			if !ok {
 				return out, nil
 			}
-			name := string(key)
+			name := p.Intern(key)
 			v, err := p.Any()
 			if err != nil {
 				return nil, err
@@ -640,7 +705,7 @@ func (p *Parser) SkipValue() error {
 			}
 		}
 	case c == '"':
-		_, _, err := p.stringSpan()
+		_, _, _, err := p.stringSpan()
 		return err
 	case c == 't':
 		if p.pos+4 <= len(p.buf) && string(p.buf[p.pos:p.pos+4]) == "true" {

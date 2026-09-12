@@ -457,9 +457,9 @@ objects, and a string array. The page is a five-row user list.
 
 | Path | Standard library | Generated |
 |------|------------------|-----------|
-| JSON decode (`io.Reader`) | 2378 ns · 1889 B · 18 allocs | **634 ns · 856 B · 15 allocs** |
-| JSON decode (`json.Unmarshal`, bytes in hand) | 1772 ns · 496 B · 10 allocs | — |
-| JSON encode | 868 ns · 288 B · 2 allocs | **283 ns · 0 B · 0 allocs** |
+| JSON decode (`io.Reader`) | 2373 ns · 1889 B · 18 allocs | **534 ns · 752 B · 4 allocs** |
+| JSON decode (`json.Unmarshal`, bytes in hand) | 1753 ns · 496 B · 10 allocs | — |
+| JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
 | `Bind` + `Write` (request reused) | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
 | `Bind` + `Write` (incl. request construction) | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
 | HTML render (`html/template` vs `htmlbind`) | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
@@ -469,9 +469,12 @@ hand-written `net/http` handler doing the same decode, path, and header reads;
 the HTML row against an `html/template` template rendering the same document.
 
 Encoding allocates nothing: generated encoders append into a pooled buffer, so
-a response costs no garbage at all. Decoding's 15 allocations are the 13 strings
-and slices that end up in the result, plus the body buffer and its reader —
-there is nothing left to remove without changing what the caller gets back.
+a response costs no garbage at all. Decoding's four allocations are the two
+slices in the result, the body buffer, and its reader. The document's eleven
+strings come from a small cache the decoder keeps across calls, which serves a
+value it has seen before rather than allocating it again; this benchmark
+decodes one document repeatedly, so every string is a hit. On a stream of
+documents whose values all differ, each string is allocated once as before.
 The HTML render's allocations are per render rather than per row, so a longer
 page costs the same handful.
 

@@ -91,7 +91,8 @@ func base64Span(p *Parser, field string) (src []byte, isNull bool, err error) {
 	if p.IsNull() {
 		return nil, true, nil
 	}
-	span, work, err := p.stringSpan()
+	span, escaped, nonASCII, err := p.stringSpan()
+	work := escaped || nonASCII
 	if err != nil {
 		return nil, false, FieldError(field, "invalid base64", err)
 	}
