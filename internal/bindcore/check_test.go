@@ -2,6 +2,24 @@ package bindcore
 
 import "testing"
 
+func TestCheckEmailRejectsMalformedAddresses(t *testing.T) {
+	for _, in := range []string{
+		"",
+		"no-at-sign",
+		"@example.com",
+		"a@b",
+		"a b@example.com",
+		"a@@example.com",
+	} {
+		if CheckEmail(in) {
+			t.Errorf("CheckEmail(%q) = true, want false", in)
+		}
+	}
+	if !CheckEmail("user.name+tag@example.com") {
+		t.Error("a valid address stopped validating")
+	}
+}
+
 // CheckUUID must judge bytes, not runes: range over a string steps by rune, so
 // a multi-byte rune used to skip the byte positions it covered — a dash
 // position included — and the byte() truncation let a Cyrillic а pass as '0'.

@@ -40,24 +40,6 @@ func (n namedString) AppendJSONTo(dst []byte) []byte {
 
 type plainStruct struct{ Value string }
 
-func TestAppenderSatisfiedByValue(t *testing.T) {
-	var a Appender = point{X: 1, Y: 2}
-	if got := string(a.AppendJSONTo(nil)); got != `{"x":1,"y":2}` {
-		t.Fatalf("got %s", got)
-	}
-}
-
-func TestDecoderSatisfiedByPointer(t *testing.T) {
-	var p point
-	var d Decoder = &p
-	if err := d.DecodeJSONFrom([]byte(`{"x":3,"y":4}`)); err != nil {
-		t.Fatal(err)
-	}
-	if p.X != 3 || p.Y != 4 {
-		t.Fatalf("got %+v", p)
-	}
-}
-
 func TestDecoderReportsAFailure(t *testing.T) {
 	var p point
 	err := (&p).DecodeJSONFrom([]byte(`not json`))

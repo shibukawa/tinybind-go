@@ -13,12 +13,6 @@ import (
 	"github.com/shibukawa/tinygodriver/nosql/dynamodb"
 )
 
-// decodable is the minimal item type the generic entries need. Nothing here
-// decodes anything: every case reaches its error before a reply exists.
-type decodable struct{}
-
-func (*decodable) DecodeItem(dynamodb.Item) error { return nil }
-
 // newTestClient builds the client both the tests and the benchmark use. It
 // points at a port nothing listens on: every case here resolves a client
 // without sending anything.
@@ -69,19 +63,6 @@ func TestZeroHandleIsErrNoClient(t *testing.T) {
 	if zero.Client() != nil {
 		t.Fatal("the zero Handle carries a client")
 	}
-
-	// The iterators report it once rather than panicking, which is what a
-	// failed page already does.
-	calls := 0
-	for _, err := range zero.Scan[decodable, *decodable](context.Background(), "readings") {
-		calls++
-		if !errors.Is(err, dynamobind.ErrNoClient) {
-			t.Fatalf("iterator error = %v", err)
-		}
-	}
-	if calls != 1 {
-		t.Fatalf("the iterator yielded %d times, want 1", calls)
-	}
 }
 
 // TestHandleFromContextRoundTrips covers the lookup a framework does once per
@@ -106,18 +87,6 @@ func TestHandleFromContextRoundTrips(t *testing.T) {
 	_, table, err := got.Table(context.Background(), "readings")
 	if err != nil || table != "readings-prod" {
 		t.Fatalf("table = %q, err = %v", table, err)
-	}
-}
-
-// TestHandleClientIsTheEscapeHatch pins that Handle.Client applies no naming,
-// matching ClientFromContext, so the two escape hatches cannot disagree.
-func TestHandleClientIsTheEscapeHatch(t *testing.T) {
-	client := testClient(t)
-	handle := dynamobind.NewHandle(client, dynamobind.WithTableNames(
-		func(context.Context, string) string { return "never-used" },
-	))
-	if handle.Client() != client {
-		t.Fatal("Handle.Client returned another client")
 	}
 }
 

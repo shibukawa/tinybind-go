@@ -33,18 +33,3 @@ func TestAppendHelpersFrameLikeTheStringHelpers(t *testing.T) {
 		}
 	}
 }
-
-func TestSizeHintSizesTheNextBuffer(t *testing.T) {
-	var h cachekeybind.SizeHint
-	first := h.Buffer()
-	if cap(first) < 32 || len(first) != 0 {
-		t.Fatalf("cap %d len %d", cap(first), len(first))
-	}
-	key := h.Finish(append(first, make([]byte, 100)...))
-	if len(key) != 100 {
-		t.Fatalf("len %d", len(key))
-	}
-	if next := h.Buffer(); cap(next) < 100 {
-		t.Fatalf("hint did not grow: cap %d", cap(next))
-	}
-}

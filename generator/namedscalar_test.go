@@ -103,42 +103,18 @@ func TestNamedScalarGeneratesCompilableSource(t *testing.T) {
 	}
 }
 
-// analyzeNamedScalar generates over one struct and returns the analysis error.
-func analyzeNamedScalar(t *testing.T, body string) error {
-	t.Helper()
+// A named type this generator can place nothing for is reported rather than
+// assumed to be a nested struct, which is what produced a call to a codec
+// nothing emitted.
+func TestNamedTypeWithAnUnsupportedUnderlyingIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	writeTempModule(t, dir)
-	src := "package main\n\ntype UserID string\ntype Count int\n\n" + body + "\n\nfunc main() {}\n"
+	src := "package main\n\ntype Weird chan int\n\ntype Req struct {\n\tC Weird `json:\"c\"`\n}\n\nfunc main() {}\n"
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	tidyTempModule(t, dir)
 	_, err := generator.AnalyzePackage(dir)
-	return err
-}
-
-// A named element used to be refused: the bulk decoders answer a concrete
-// []string that Go will not assign to a slice of the named type, and converting
-// meant a loop per element kind. requirement:sized-integer-field-kinds pays for
-// that loop already, as an emitted element-reader closure, so the cost that
-// justified the refusal was one already being paid.
-func TestNamedScalarSliceIsGenerated(t *testing.T) {
-	if err := analyzeNamedScalar(t, "type Req struct {\n\tTags []UserID `json:\"tags\"`\n}"); err != nil {
-		t.Fatalf("a slice of a named scalar was refused: %v", err)
-	}
-}
-
-func TestNamedScalarMapValueIsGenerated(t *testing.T) {
-	if err := analyzeNamedScalar(t, "type Req struct {\n\tByName map[string]Count `json:\"byName\"`\n}"); err != nil {
-		t.Fatalf("a map of a named scalar was refused: %v", err)
-	}
-}
-
-// A named type this generator can place nothing for is reported rather than
-// assumed to be a nested struct, which is what produced a call to a codec
-// nothing emitted.
-func TestNamedTypeWithAnUnsupportedUnderlyingIsRefused(t *testing.T) {
-	err := analyzeNamedScalar(t, "type Weird chan int\n\ntype Req struct {\n\tC Weird `json:\"c\"`\n}")
 	if err == nil {
 		t.Fatal("want an error")
 	}

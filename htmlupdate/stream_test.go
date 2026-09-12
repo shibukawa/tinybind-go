@@ -92,12 +92,8 @@ func TestStreamIsFramedByHeadAndTerminator(t *testing.T) {
 	if records[len(records)-1]["r"] != "end" {
 		t.Fatalf("last record = %+v", records[len(records)-1])
 	}
-}
-
-// Each record carries its own manifest entry, because a trailing manifest
-// cannot be written before the operations it describes.
-func TestEveryRecordCarriesItsValidator(t *testing.T) {
-	_, records := streamRecords(t, "/search?q=go&section=Docs", nil)
+	// Each operation carries its own manifest entry; a trailing manifest could
+	// not be written before the operations it describes.
 	seen := map[string]bool{}
 	for _, item := range records {
 		if item["r"] != "op" {

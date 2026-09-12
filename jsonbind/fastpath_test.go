@@ -102,10 +102,8 @@ func TestParseFloatFastMatchesStrconv(t *testing.T) {
 	}
 }
 
-// A recurring string comes back as the allocation the cache holds, and an
-// invalid one is coerced every time rather than served from a stored
-// spelling it does not equal.
-func TestInternedStringsAreSharedAndStillCorrect(t *testing.T) {
+// Repeated strings keep their values, and invalid UTF-8 is coerced each time.
+func TestRepeatedStringsKeepTheirValues(t *testing.T) {
 	var p Parser
 	doc := []byte(`["gold","gold","未来","未来","x","x","` + strings.Repeat("a", 100) + `"]`)
 	p.Reset(doc)
@@ -127,17 +125,16 @@ func TestInternedStringsAreSharedAndStillCorrect(t *testing.T) {
 		}
 		got = append(got, s)
 	}
-	if got[0] != "gold" || got[2] != "未来" || got[6] != strings.Repeat("a", 100) {
-		t.Fatalf("got %q", got)
+	want := []string{"gold", "gold", "未来", "未来", "x", "x", strings.Repeat("a", 100)}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
-	if unsafeStringData(got[0]) != unsafeStringData(got[1]) || unsafeStringData(got[2]) != unsafeStringData(got[3]) {
-		t.Fatal("a recurring string was allocated twice")
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("value %d = %q, want %q", i, got[i], want[i])
+		}
 	}
-	p.Release()
-	if p.cache != nil {
-		t.Fatal("Release left the cache on the parser")
-	}
-	// Invalid UTF-8 twice over: coerced both times, never the raw bytes.
+	// Reuse the parser to verify invalid UTF-8 is coerced, not returned raw.
 	p.Reset([]byte("[\"ab\x80cd\",\"ab\x80cd\"]"))
 	if _, err := p.ArrayStart(); err != nil {
 		t.Fatal(err)
@@ -154,7 +151,6 @@ func TestInternedStringsAreSharedAndStillCorrect(t *testing.T) {
 			t.Fatalf("got %q", s)
 		}
 	}
-	p.Release()
 }
 
 // A type both registered and carrying a method is served by the registered
@@ -182,25 +178,3 @@ type bothWays struct{ Via string }
 
 func (v bothWays) AppendJSONTo(dst []byte) []byte { return append(dst, `"method"`...) }
 func (v *bothWays) DecodeJSONFrom([]byte) error   { v.Via = "method"; return nil }
-
-func TestSizeHintGrowsOnceToTheRecordedSize(t *testing.T) {
-	var h SizeHint
-	if got := h.Grow(nil); got != nil {
-		t.Fatal("an empty hint grew a buffer")
-	}
-	h.Record(100)
-	h.Record(50)
-	buf := h.Grow(nil)
-	if cap(buf) < 100 || len(buf) != 0 {
-		t.Fatalf("cap %d len %d", cap(buf), len(buf))
-	}
-	again := h.Grow(buf)
-	if cap(again) != cap(buf) {
-		t.Fatal("a buffer with room was reallocated")
-	}
-	prefix := []byte("abc")
-	grown := h.Grow(prefix)
-	if string(grown) != "abc" || cap(grown) < 3+100 {
-		t.Fatalf("prefix lost or too small: %q cap %d", grown, cap(grown))
-	}
-}

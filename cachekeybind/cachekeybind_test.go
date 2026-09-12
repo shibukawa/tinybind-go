@@ -115,14 +115,3 @@ func TestKeyArrayTreatsNilAsEmpty(t *testing.T) {
 		t.Fatal("nil and empty slice framed differently")
 	}
 }
-
-type staticKey struct{}
-
-func (staticKey) CacheKey() string { return "0:" }
-
-func TestCacheKeyInterfaceIsSatisfiableByAValue(t *testing.T) {
-	var key cachekeybind.CacheKey = staticKey{}
-	if key.CacheKey() != "0:" {
-		t.Fatalf("CacheKey = %q", key.CacheKey())
-	}
-}

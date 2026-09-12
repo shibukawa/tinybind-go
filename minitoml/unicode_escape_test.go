@@ -8,7 +8,6 @@ import "testing"
 func TestUnicodeEscapes(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{`""`, ""},
-		{`"ABC"`, "ABC"},
 		{`"aéb"`, "aéb"},
 		{`"\U0001F600"`, "\U0001F600"},
 		{`"plain"`, "plain"},

@@ -227,25 +227,3 @@ func TestParseInterspersedFlagsAfterPositionals(t *testing.T) {
 		t.Fatalf("Rest=%v", got)
 	}
 }
-
-func TestBuildDefsThenParseFixture(t *testing.T) {
-	// Shipped helper path used by codegen: FieldMeta → BuildDefs → Parse.
-	fields := []cliparser.FieldMeta{
-		{Prefix: "webserver", Key: "port", Opt: "port,p", Help: "HTTP listen port"},
-		{Prefix: "webserver", Key: "read_timeout", Help: "read timeout"},
-	}
-	defs, err := cliparser.BuildDefs(fields)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := cliparser.Parse([]string{"-p", "443", "--webserver-read_timeout", "5s"}, defs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Values["webserver.port"] != "443" {
-		t.Fatalf("port=%v", res.Values)
-	}
-	if res.Values["webserver.read_timeout"] != "5s" {
-		t.Fatalf("read_timeout=%v", res.Values)
-	}
-}

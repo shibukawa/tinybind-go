@@ -53,35 +53,6 @@ func main() {
 }
 `
 
-// The refusal this lifts: the bulk decoder answers a concrete []uint, which Go
-// will not assign to a []Mark. The closure is the conversion, written once as a
-// shape rather than once per element kind.
-func TestNamedElementReadsThroughAClosure(t *testing.T) {
-	opts := generator.DefaultOptions()
-	opts.EnableCBORHTTP = true
-	_, source := emitFixedArray(t, namedElementSource, opts)
-	for _, want := range []string{
-		// The element is read in the kind underneath and converted inline,
-		// where a closure used to do the same through a func value.
-		"e0 := Mark(w0)",
-		"e0 := Name(w0)",
-		"e0 := Level(w0)",
-		// The width is still checked, and the bound is still an untyped literal.
-		"if w0 < 0 || w0 > 65535 {",
-		// The encoder converts the other way, at every shape.
-		"jsonbind.AppendUint(dst, uint64(v.Marks[i]))",
-		"jsonbind.AppendString(dst, string(v.Names[i]))",
-		"jsonbind.AppendUint(dst, uint64(v.ByName[k]))",
-		// CBOR builds a collection of the declared type, not of the width.
-		"make([]Mark, 0, n)",
-		"make(map[string]Mark, n)",
-	} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated source is missing %q", want)
-		}
-	}
-}
-
 // A named element over byte is not a byte sequence: []Mark is not []byte, so it
 // stays a list of numbers rather than becoming base64.
 func TestANamedByteElementIsNotABlob(t *testing.T) {

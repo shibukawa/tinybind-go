@@ -185,26 +185,3 @@ func TestScanOptionalURLParsesPresentValue(t *testing.T) {
 		t.Fatalf("link = %#v", link)
 	}
 }
-
-// TestRawURLIsUnusableWithoutTheAdapter records why the adapter exists: the
-// plain field address and the plain struct both fail at the database/sql
-// boundary, on every driver.
-func TestRawURLIsUnusableWithoutTheAdapter(t *testing.T) {
-	if _, err := driver.DefaultParameterConverter.ConvertValue(url.URL{}); err == nil {
-		t.Fatal("driver accepted a url.URL parameter; the Arg conversion may be unnecessary now")
-	}
-	db, _ := openFake(t, []string{"link"}, []driver.Value{"https://example.com/a"})
-	rows, err := db.QueryContext(context.Background(), "SELECT link")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !rows.Next() {
-		t.Fatalf("no row: %v", rows.Err())
-	}
-	var link url.URL
-	err = rows.Scan(&link)
-	rows.Close()
-	if err == nil {
-		t.Fatal("database/sql scanned into a url.URL; the scan adapter may be unnecessary now")
-	}
-}

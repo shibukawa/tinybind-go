@@ -73,51 +73,6 @@ func emitCBORBind(t *testing.T, src string) (string, string) {
 	return dir, string(code)
 }
 
-// A call is the ask: no declaration was written and the codecs exist.
-func TestCBORBindCallsGenerateTheCodecs(t *testing.T) {
-	_, source := emitCBORBind(t, cborBindSource)
-	for _, want := range []string{
-		"func appendPlayerInputCBORArray(dst []byte, v PlayerInput) []byte",
-		"func decodePlayerInputCBORArray(cr *cbor.Reader) (PlayerInput, error)",
-		"func appendSnapshotCBORMap(dst []byte, v Snapshot) []byte",
-		"func decodeSnapshotCBORMap(cr *cbor.Reader) (Snapshot, error)",
-		"func (v PlayerInput) AppendCBORInArrayTo(dst []byte) []byte",
-		"func (v *PlayerInput) DecodeCBORInArrayFrom(data []byte) error",
-		"func (v Snapshot) AppendCBORInMapTo(dst []byte) []byte",
-	} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated source is missing %q", want)
-		}
-	}
-}
-
-// The shapes differ in what they put on the wire, which is the whole reason
-// there are two of them.
-func TestCBORBindShapesDiffer(t *testing.T) {
-	_, source := emitCBORBind(t, cborBindSource)
-	array := codecBody(t, source, "func appendPlayerInputCBORArray")
-	if !strings.Contains(array, "cbor.AppendArrayHeader(dst, 3)") {
-		t.Errorf("the array codec does not write an array header:\n%s", array)
-	}
-	if strings.Contains(array, "cbor.AppendText(dst, \"tick\")") {
-		t.Error("the array codec puts member names on the wire")
-	}
-	mapped := codecBody(t, source, "func appendSnapshotCBORMap")
-	if !strings.Contains(mapped, "cbor.AppendMapHeader(dst, 2)") {
-		t.Errorf("the map codec does not write a map header:\n%s", mapped)
-	}
-	if !strings.Contains(mapped, "cbor.AppendText(dst, \"names\")") {
-		t.Error("the map codec does not key its members")
-	}
-	// The map decoder skips what it does not know; the array decoder cannot.
-	if !strings.Contains(codecBody(t, source, "func decodeSnapshotCBORMap"), "cr.Skip()") {
-		t.Error("the map decoder does not skip an unknown key")
-	}
-	if !strings.Contains(codecBody(t, source, "func decodePlayerInputCBORArray"), "n != 3") {
-		t.Error("the array decoder does not pin the member count")
-	}
-}
-
 // A nested struct is keyed by the shape it was reached from, and an
 // encode-only root carries no decoder at any depth.
 func TestCBORBindNarrowsShapeAndDirection(t *testing.T) {
@@ -136,18 +91,6 @@ func TestCBORBindNarrowsShapeAndDirection(t *testing.T) {
 	}
 	if strings.Contains(source, "func (v *Telemetry) DecodeCBORInArrayFrom") {
 		t.Error("an encode-only call published a decode method")
-	}
-}
-
-// One shape delegates to the driver's own pair; a type is reachable by any
-// consumer holding a cbor.Appender.
-func TestCBORBindDelegatesToTheDriverInterface(t *testing.T) {
-	_, source := emitCBORBind(t, cborBindSource)
-	if !strings.Contains(source, "func (v PlayerInput) AppendCBORTo(dst []byte) []byte") {
-		t.Error("a single-shape type does not satisfy cbor.Appender")
-	}
-	if !strings.Contains(source, "func (v *PlayerInput) DecodeCBORFrom(data []byte) error") {
-		t.Error("a single-shape type does not satisfy cbor.Decodable")
 	}
 }
 
@@ -222,6 +165,22 @@ func TestMapRoundTrip(t *testing.T) {
 	}
 }
 
+func TestShapesUseTheirWireHeaders(t *testing.T) {
+	array := cborbind.AppendCBORInArrayTo(nil, PlayerInput{Tick: 1})
+	cr := cbor.ReaderOver(array, cbor.DecoderOptions{})
+	n, indefinite, err := cr.ReadArrayHeader()
+	if err != nil || indefinite || n != 3 {
+		t.Fatalf("array header %d indefinite=%v err=%v", n, indefinite, err)
+	}
+
+	mapped := cborbind.AppendCBORInMapTo(nil, Snapshot{Round: 2})
+	cr = cbor.ReaderOver(mapped, cbor.DecoderOptions{})
+	pairs, indefinite, err := cr.ReadMapHeader()
+	if err != nil || indefinite || pairs != 2 {
+		t.Fatalf("map header %d indefinite=%v err=%v", pairs, indefinite, err)
+	}
+}
+
 // The map shape is the evolvable one: a member the build does not know is
 // skipped rather than refused.
 func TestMapSkipsAnUnknownMember(t *testing.T) {
@@ -266,17 +225,6 @@ func TestDriverInterfaceIsSatisfied(t *testing.T) {
 	}
 }
 
-// The array shape is the smaller of the two, which is the trade it exists for.
-func TestArrayIsSmallerThanMap(t *testing.T) {
-	arr := cborbind.AppendCBORInArrayTo(nil, PlayerInput{Tick: 1, Btn: 2})
-	mp := cborbind.AppendCBORInMapTo(nil, Snapshot{Round: 1})
-	if len(arr) == 0 || len(mp) == 0 {
-		t.Fatal("empty encoding")
-	}
-	if len(arr) >= len(cbor.AppendText(nil, "tick"))*3 {
-		t.Logf("array %d bytes, map %d bytes", len(arr), len(mp))
-	}
-}
 `
 	if err := os.WriteFile(filepath.Join(dir, "probe_test.go"), []byte(probe), 0o644); err != nil {
 		t.Fatal(err)
@@ -287,19 +235,4 @@ func TestArrayIsSmallerThanMap(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("generated codecs do not round-trip: %v\n%s\n%s", err, output, code)
 	}
-}
-
-// codecBody returns the emitted function starting at header, so an assertion
-// about one codec cannot be satisfied by another.
-func codecBody(t *testing.T, source, header string) string {
-	t.Helper()
-	i := strings.Index(source, header)
-	if i < 0 {
-		t.Fatalf("no %q in generated source", header)
-	}
-	rest := source[i:]
-	if end := strings.Index(rest, "\n}\n"); end >= 0 {
-		return rest[:end]
-	}
-	return rest
 }

@@ -89,7 +89,8 @@ func parentsOf(t *testing.T, fragment string) (comments map[string]string, rows 
 }
 
 func TestAnAwaitFallbackInsideATableStaysInsideIt(t *testing.T) {
-	comments, rows := parentsOf(t, initialPass(t, tableAwaitPlan()))
+	initial := initialPass(t, tableAwaitPlan())
+	comments, rows := parentsOf(t, initial)
 	for _, marker := range []string{"tb:tb-1", "/tb:tb-1"} {
 		if comments[marker] != "tbody" {
 			t.Fatalf("marker %q parsed under %q, want tbody: %v", marker, comments[marker], comments)
@@ -98,13 +99,9 @@ func TestAnAwaitFallbackInsideATableStaysInsideIt(t *testing.T) {
 	if len(rows) != 1 || rows[0] != "tbody" {
 		t.Fatalf("the fallback row parsed under %v, want one row under tbody", rows)
 	}
-}
-
-// The markers have to survive together with the fallback. Separating them is the
-// failure this shape exists to prevent: a marker outside the table and rows
-// inside it means the settled content replaces the wrong range.
-func TestTheAwaitMarkersBracketTheirOwnFallback(t *testing.T) {
-	initial := initialPass(t, tableAwaitPlan())
+	// The markers have to survive together with the fallback. Separating them is
+	// the failure this shape exists to prevent: a marker outside the table and
+	// rows inside it means the settled content replaces the wrong range.
 	open := strings.Index(initial, "<!--tb:tb-1-->")
 	fallback := strings.Index(initial, "<tr><td>loading</td></tr>")
 	closing := strings.Index(initial, "<!--/tb:tb-1-->")

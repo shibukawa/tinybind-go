@@ -74,30 +74,6 @@ func main() {}
 	return dir
 }
 
-func TestForeignFieldIsEncodedThroughItsOwnCodec(t *testing.T) {
-	dir := writeForeignFixture(t, "`json:\"origin\"`")
-	plan, err := generator.AnalyzePackage(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := generator.Emit(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(code)
-	for _, want := range []string{
-		"dst = v.Origin.AppendJSONTo(dst)",
-		"out.Origin.DecodeJSONFrom(",
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("generated code missing %q:\n%s", want, source)
-		}
-	}
-	if strings.Contains(source, "appendPointJSON") {
-		t.Fatalf("a foreign type must not get a generated codec:\n%s", source)
-	}
-}
-
 // The generated codec has to compile against the foreign package and round-trip
 // the whole document, which is what proves the field is really carried rather
 // than merely mentioned.

@@ -69,57 +69,23 @@ func TestTableFromContextDefaultsToTheDeclaredName(t *testing.T) {
 	}
 }
 
-// TestTableFromContextMapsNames covers what the resolver exists for: the
-// mapping is a function, so a prefix, a suffix and an unrelated name cost the
-// same, and it sees the Context so it can vary per request.
+// TestTableFromContextMapsNames covers the resolver contract: it receives both
+// the request Context and the declared table name, and its result is used.
 func TestTableFromContextMapsNames(t *testing.T) {
 	client := testClient(t)
-
-	tests := []struct {
-		name    string
-		resolve dynamobind.TableResolver
-		want    string
-	}{
-		{
-			name:    "prefix",
-			resolve: func(context.Context, string) string { return "staging-readings" },
-			want:    "staging-readings",
-		},
-		{
-			name:    "suffix, which a prefix could not express",
-			resolve: func(_ context.Context, declared string) string { return declared + "-prod" },
-			want:    "readings-prod",
-		},
-		{
-			name:    "a name the IaC chose, sharing nothing with the declared one",
-			resolve: func(context.Context, string) string { return "Readings-A1B2C3D4" },
-			want:    "Readings-A1B2C3D4",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := dynamobind.WithClient(context.Background(), client, dynamobind.WithTableNames(test.resolve))
-			_, table, err := dynamobind.TableFromContext(ctx, "readings")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if table != test.want {
-				t.Fatalf("table = %q, want %q", table, test.want)
-			}
-		})
-	}
-
-	// The Context reaches the resolver, which is why it is a parameter: a
-	// per-tenant table is the same one function.
 	type tenantKey struct{}
-	byTenant := func(ctx context.Context, declared string) string {
+	resolve := func(ctx context.Context, declared string) string {
 		tenant, _ := ctx.Value(tenantKey{}).(string)
 		return tenant + "-" + declared
 	}
-	ctx := dynamobind.WithClient(context.Background(), client, dynamobind.WithTableNames(byTenant))
-	_, table, err := dynamobind.TableFromContext(context.WithValue(ctx, tenantKey{}, "acme"), "readings")
+	ctx := context.WithValue(context.Background(), tenantKey{}, "acme")
+	ctx = dynamobind.WithClient(ctx, client, dynamobind.WithTableNames(resolve))
+	gotClient, table, err := dynamobind.TableFromContext(ctx, "readings")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gotClient != client {
+		t.Fatal("TableFromContext returned another client")
 	}
 	if table != "acme-readings" {
 		t.Fatalf("table = %q", table)

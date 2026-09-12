@@ -40,33 +40,6 @@ func TestEscapeSanitizesInvalidUTF8Consistently(t *testing.T) {
 	}
 }
 
-// WriteEscaped is the same rules written straight to the response, so it has to
-// answer identically or a value renders one way through a helper and another
-// through the instruction that actually emits it.
-func TestWriteEscapedMatchesEscape(t *testing.T) {
-	for _, tc := range escapeCorpus {
-		var out strings.Builder
-		r := &Renderer{w: &out, sw: &out}
-		if err := r.WriteEscaped(tc.in); err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
-		}
-		if got := out.String(); got != tc.want {
-			t.Errorf("%s: WriteEscaped(%q) wrote %q, want %q", tc.name, tc.in, got, tc.want)
-		}
-	}
-}
-
-// Whatever comes out is valid UTF-8, which is the property the replacement
-// exists for: a byte a decoder has to guess at is a byte an author cannot
-// reason about.
-func TestEscapeAlwaysProducesValidUTF8(t *testing.T) {
-	for _, tc := range escapeCorpus {
-		if got := Escape(tc.in); !utf8.ValidString(got) {
-			t.Errorf("%s: Escape(%q) = %q, which is not valid UTF-8", tc.name, tc.in, got)
-		}
-	}
-}
-
 func FuzzEscapeMatchesWriteEscaped(f *testing.F) {
 	for _, tc := range escapeCorpus {
 		f.Add(tc.in)

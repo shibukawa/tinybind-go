@@ -2,6 +2,7 @@ package htmlbind
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,4 +147,43 @@ func normalizedASTWith(path string, source []byte, collapse bool) (string, error
 		template.Body = normalized
 	}
 	return marshalStripped(module)
+}
+
+func marshalStripped(module *Module) (string, error) {
+	encoded, err := json.Marshal(module)
+	if err != nil {
+		return "", err
+	}
+	var generic any
+	if err := json.Unmarshal(encoded, &generic); err != nil {
+		return "", err
+	}
+	stripped, err := json.Marshal(stripPositions(generic))
+	if err != nil {
+		return "", err
+	}
+	return string(stripped), nil
+}
+
+func stripPositions(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			switch key {
+			case "pos", "errorPos", "comments":
+				continue
+			}
+			out[key] = stripPositions(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = stripPositions(item)
+		}
+		return out
+	default:
+		return value
+	}
 }

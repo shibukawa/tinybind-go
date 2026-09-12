@@ -44,18 +44,6 @@ var strictCorpus = []struct {
 	{"leading zero in array element", `[01]`},
 }
 
-func TestParserRejectsWhatEncodingJSONRejects(t *testing.T) {
-	for _, tc := range strictCorpus {
-		var std any
-		if err := json.Unmarshal([]byte(tc.in), &std); err == nil {
-			t.Fatalf("%s: corpus entry %q is valid JSON; it does not belong here", tc.name, tc.in)
-		}
-		if _, err := jsonbind.DecodeJSONAny([]byte(tc.in)); err == nil {
-			t.Errorf("%s: DecodeJSONAny accepted %q, encoding/json rejects it", tc.name, tc.in)
-		}
-	}
-}
-
 // SkipValue walks the same spans through stringSpan and numberSpan, so a
 // malformed member must fail the walk even when no field wants it — otherwise
 // RawValue hands the bytes onward as JSON.

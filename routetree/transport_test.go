@@ -76,41 +76,6 @@ func TestFastHTTPRegistryEmitsTheCollapsedHandler(t *testing.T) {
 	}
 }
 
-// TestTransportArgsCollapse states the rule the registry template relies on: a
-// call taking the writer and the request takes one value where one carries
-// both, and two where they are distinct.
-func TestTransportArgsCollapse(t *testing.T) {
-	if got := DefaultSymbols().TransportArgs(); got != "w, r" {
-		t.Errorf("net/http TransportArgs = %q, want %q", got, "w, r")
-	}
-	if got := FastHTTPSymbols("").TransportArgs(); got != "ctx" {
-		t.Errorf("fasthttp TransportArgs = %q, want %q", got, "ctx")
-	}
-}
-
-// TestContextOfReadsTheTransportsOwnSpelling covers the difference the rewrite
-// table names as a selector: one transport reads a context off the request with
-// a call, and the other's request value is one.
-func TestContextOfReadsTheTransportsOwnSpelling(t *testing.T) {
-	if got := DefaultSymbols().ContextOf("r"); got != "r.Context()" {
-		t.Errorf("net/http ContextOf = %q", got)
-	}
-	if got := FastHTTPSymbols("").ContextOf("ctx"); got != "ctx" {
-		t.Errorf("fasthttp ContextOf = %q", got)
-	}
-	// The composer's request parameter is named by the caller, so the identifier
-	// is an argument rather than read off Symbols.
-	if got := DefaultSymbols().ContextOf("req"); got != "req.Context()" {
-		t.Errorf("ContextOf(req) = %q", got)
-	}
-	if got := DefaultSymbols().ContextOf(""); got != "" {
-		t.Errorf("ContextOf with no request in scope = %q, want empty", got)
-	}
-}
-
-// TestEmptyTransportFieldsKeepTheNetHTTPShape is the compatibility half: an
-// emitter configured before these fields existed set only HTTPAlias, and must
-// still get the pair it always got.
 func TestEmptyTransportFieldsKeepTheNetHTTPShape(t *testing.T) {
 	e := NewEmitter()
 	e.Symbols.HTTPImport = "net/http"

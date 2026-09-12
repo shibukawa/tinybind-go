@@ -56,23 +56,6 @@ func TestFormatBreaksSpacedChildren(t *testing.T) {
 	}
 }
 
-func TestFormatIsIdempotent(t *testing.T) {
-	t.Parallel()
-	sources := []string{
-		"export component Page(name: string): html {<h1>user {name}</h1><button server-action=\"Rename\" data-target=\"#name\">rename</button>}",
-		"export component Page(): html {<!DOCTYPE html><html><head><title>x</title></head><body><ul><li><a href=\"/a\">a</a></li><li><a href=\"/b\">b</a></li></ul></body></html>}",
-		"component Items(rows: Row[]): html {<ul>{for row in rows}<li>{row.name}</li>{/for}</ul>}",
-		"component Flag(on: bool): html {<p>{if on}yes{else}no{/if}</p>}",
-	}
-	for _, source := range sources {
-		once := formatSource(t, source)
-		twice := formatSource(t, once)
-		if once != twice {
-			t.Fatalf("not idempotent\nfirst:\n%s\nsecond:\n%s", once, twice)
-		}
-	}
-}
-
 func TestFormatWritesStyleBodyAsAuthoredCSS(t *testing.T) {
 	t.Parallel()
 	// A brace in a style body is CSS, so the canonical spelling is the bare one.

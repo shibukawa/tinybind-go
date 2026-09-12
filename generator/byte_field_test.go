@@ -57,26 +57,6 @@ func TestByteAndRuneAreTheWidthsTheyName(t *testing.T) {
 	}
 }
 
-// A byte sequence is a string on the wire whatever it was spelled as, since
-// []byte and []uint8 are one type.
-func TestByteSequencesEncodeAsBase64(t *testing.T) {
-	for _, tc := range []struct{ name, field, want string }{
-		{"byte slice", "L []byte `json:\"l\"`", "jsonbind.AppendBase64(dst, v.L)"},
-		{"uint8 slice", "L []uint8 `json:\"l\"`", "jsonbind.AppendBase64(dst, v.L)"},
-		{"byte array", "A [4]byte `json:\"a\"`", "jsonbind.AppendBase64(dst, v.A[:])"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, err := analyzeOneField(t, "", tc.field)
-			if err != nil {
-				t.Fatalf("refused: %v", err)
-			}
-			if !strings.Contains(code, tc.want) {
-				t.Fatalf("generated source is missing %q:\n%s", tc.want, code)
-			}
-		})
-	}
-}
-
 // The refusal used to read "type byte is  underneath", with a hole where the
 // underlying type should be, because a predeclared type is not a *types.Named
 // and nothing was recorded for it.
@@ -189,6 +169,7 @@ type Message struct {
 	Body  []byte  ` + "`payload:\"body\"`" + `
 	Tag   [4]byte ` + "`payload:\"tag\"`" + `
 	Runes []rune  ` + "`payload:\"runes\"`" + `
+	Counts map[string]byte ` + "`payload:\"counts\"`" + `
 }
 
 type Echo struct {
@@ -200,6 +181,7 @@ type Echo struct {
 	Body  []byte  ` + "`json:\"body\"`" + `
 	Tag   [4]byte ` + "`json:\"tag\"`" + `
 	Runes []rune  ` + "`json:\"runes\"`" + `
+	Counts map[string]byte ` + "`json:\"counts\"`" + `
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +268,7 @@ type echoWire struct {
 	Body  []byte ` + "`" + `json:"body"` + "`" + `
 	Tag   string ` + "`" + `json:"tag"` + "`" + `
 	Runes []rune ` + "`" + `json:"runes"` + "`" + `
+	Counts map[string]byte ` + "`" + `json:"counts"` + "`" + `
 }
 
 func decode(t *testing.T, w *httptest.ResponseRecorder) echoWire {
@@ -314,7 +297,7 @@ func tagOf(t *testing.T, w echoWire) [4]byte {
 	return out
 }
 
-const full = ` + "`" + `{"flag":7,"sym":128169,"body":"3q2+7w==","tag":"AQIDBA==","runes":[97,128169]}` + "`" + `
+	const full = ` + "`" + `{"flag":7,"sym":128169,"body":"3q2+7w==","tag":"AQIDBA==","runes":[97,128169],"counts":{"x":3,"y":255}}` + "`" + `
 
 func TestByteFieldsRoundTrip(t *testing.T) {
 	got := decode(t, post(t, full))
@@ -334,6 +317,9 @@ func TestByteFieldsRoundTrip(t *testing.T) {
 	if len(got.Runes) != 2 || got.Runes[0] != 'a' || got.Runes[1] != 128169 {
 		t.Fatalf("runes %v", got.Runes)
 	}
+	if got.Counts["x"] != 3 || got.Counts["y"] != 255 {
+		t.Fatalf("counts %v", got.Counts)
+	}
 }
 
 // The point of picking base64: another decoder reads what this one writes.
@@ -350,7 +336,7 @@ func TestTheWireFormMatchesEncodingJSON(t *testing.T) {
 		Level: 200, Flag: 7, Sym: 128169,
 		Body:  []byte{0xde, 0xad, 0xbe, 0xef},
 		Tag:   [4]byte{1, 2, 3, 4},
-		Runes: []rune{'a', 128169},
+		Runes: []rune{'a', 128169}, Counts: map[string]byte{"x": 3, "y": 255},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +345,7 @@ func TestTheWireFormMatchesEncodingJSON(t *testing.T) {
 	if err := json.Unmarshal(theirs, &std); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"level", "flag", "sym", "body", "runes"} {
+	for _, key := range []string{"level", "flag", "sym", "body", "runes", "counts"} {
 		if string(mine[key]) != string(std[key]) {
 			t.Fatalf("member %q: %s, encoding/json says %s", key, mine[key], std[key])
 		}
@@ -433,7 +419,7 @@ func TestCBORCarriesAByteString(t *testing.T) {
 	}
 	rd := cbor.ReaderOver(w.Body.Bytes(), cbor.DecoderOptions{})
 	pairs, indef, err := rd.ReadMapHeader()
-	if err != nil || indef || pairs != 8 {
+	if err != nil || indef || pairs != 9 {
 		t.Fatalf("map header %d indef=%v err=%v", pairs, indef, err)
 	}
 	for i := 0; i < pairs; i++ {

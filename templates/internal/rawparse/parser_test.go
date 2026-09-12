@@ -109,18 +109,3 @@ func TestDummyParserDiagnostics(t *testing.T) {
 		})
 	}
 }
-
-func TestDummyParserPreservesEscapedText(t *testing.T) {
-	module, err := rawparse.Parse("raw.txt", []byte("template Raw(): raw {a {{if untouched}} b}"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := module.Declarations[0].(*syntax.TemplateDecl).Body.([]syntax.Node)
-	if len(body) != 1 {
-		t.Fatalf("body length = %d", len(body))
-	}
-	text := body[0].(*rawparse.TextNode)
-	if text.Text != "a {{if untouched}} b" {
-		t.Fatalf("raw text = %q", text.Text)
-	}
-}

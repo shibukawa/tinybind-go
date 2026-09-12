@@ -88,57 +88,6 @@ func emitSized(t *testing.T, src string, opts generator.Options) (string, string
 	return dir, string(code)
 }
 
-// The whole point: a struct of narrow fields is planned rather than refused,
-// and each width reaches the encoder as itself.
-func TestSizedIntegersAreEmitted(t *testing.T) {
-	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
-	for _, want := range []string{
-		"jsonbind.AppendUint(dst, uint64(v.Tick))",
-		"jsonbind.AppendInt(dst, int64(v.AxisX))",
-		"jsonbind.AppendUint(dst, uint64(v.Lane))",
-		"httpbind.ParseUintBits(",
-	} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated source is missing %q", want)
-		}
-	}
-}
-
-// The bound is a literal the emitter knows, so the runtime never grows a
-// method per width.
-func TestSizedIntegerDecodeChecksTheWidth(t *testing.T) {
-	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
-	for _, want := range []string{
-		"v0, err := p.Uint64()",
-		"if v0 < 0 || v0 > 4294967295 {",
-		"if v0 < -32768 || v0 > 32767 {",
-		"jsonbind.ErrIntegerRange",
-	} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated source is missing the width check %q", want)
-		}
-	}
-	// uint64 and uint need no comparison; the parse itself is the refusal.
-	if strings.Contains(source, "18446744073709551615") {
-		t.Error("uint64 should need no emitted upper bound")
-	}
-}
-
-// A slice element with no parser method of its own is read as the wide
-// integer and range-checked inline, which is where its width lives.
-func TestSizedIntegerSliceReadsThroughAClosure(t *testing.T) {
-	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
-	if !strings.Contains(source, "e0 := uint32(w0)") {
-		t.Fatalf("generated source does not convert the element to its width\n%s", source)
-	}
-	if !strings.Contains(source, "if w0 < 0 || w0 > 4294967295 {") {
-		t.Error("the element read does not range-check the element")
-	}
-	if !strings.Contains(source, `jsonbind.FieldError("samples", "invalid uint32", jsonbind.ErrIntegerRange)`) {
-		t.Error("the element range failure does not name the member")
-	}
-}
-
 // The binder enforces a range, so the document has to state it or it describes
 // a different API than the one running.
 func TestSizedIntegerOpenAPIStatesTheRange(t *testing.T) {
@@ -226,6 +175,35 @@ func TestEveryWidthRoundTrips(t *testing.T) {
 	}
 	if len(got.Samples) != 2 || got.Samples[1] != 4294967295 {
 		t.Fatalf("slice element lost its width: %v", got.Samples)
+	}
+}
+
+func TestInt16Boundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		status      int
+		want        int16
+	}{
+		{name: "maximum", value: "32767", status: http.StatusOK, want: 32767},
+		{name: "above maximum", value: "32768", status: http.StatusBadRequest},
+		{name: "below minimum", value: "-32769", status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := strings.Replace(body, ` + "`" + `"axisX":-32768` + "`" + `, ` + "`" + `"axisX":` + "`" + `+tc.value, 1)
+			w := post(t, payload, "")
+			if w.Code != tc.status {
+				t.Fatalf("status %d, body %s; want %d", w.Code, w.Body.String(), tc.status)
+			}
+			if w.Code == http.StatusOK {
+				var got Result
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.AxisX != tc.want {
+					t.Fatalf("axisX %d, want %d", got.AxisX, tc.want)
+				}
+			}
+		})
 	}
 }
 

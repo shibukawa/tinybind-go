@@ -17,12 +17,6 @@ var unescapeCorpus = []string{
 	"a+b%20c", "=", "&", "%00", "%7F", "%FF", "%ff%fe", "a%2Bb", "%25", "%2520",
 }
 
-func TestUnescapeQueryMatchesNetURL(t *testing.T) {
-	for _, in := range unescapeCorpus {
-		checkUnescapeQuery(t, in)
-	}
-}
-
 func FuzzUnescapeQueryMatchesNetURL(f *testing.F) {
 	for _, in := range unescapeCorpus {
 		f.Add(in)
@@ -48,21 +42,12 @@ var parseQueryCorpus = []string{
 	"a=%E3%81%82", "tag=a&tag=&tag=b", "a=1&b=2&a=3",
 }
 
-// TestParseQueryMatchesNetURL pins the admission rules: which pairs exist at
-// all, and what each decodes to, has to be url.ParseQuery's answer, because a
-// binder and an application reading r.URL.Query() would otherwise see different
-// requests for the same bytes.
-func TestParseQueryMatchesNetURL(t *testing.T) {
-	for _, raw := range parseQueryCorpus {
-		for _, key := range []string{"a", "b", "tag", "", "a/b", "a b"} {
-			checkParseQuery(t, raw, key)
-		}
-	}
-}
-
 func FuzzParseQueryMatchesNetURL(f *testing.F) {
+	keys := []string{"a", "b", "tag", "", "a/b", "a b"}
 	for _, raw := range parseQueryCorpus {
-		f.Add(raw, "a")
+		for _, key := range keys {
+			f.Add(raw, key)
+		}
 	}
 	f.Fuzz(func(t *testing.T, raw, key string) { checkParseQuery(t, raw, key) })
 }

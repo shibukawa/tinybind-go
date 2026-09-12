@@ -13,32 +13,6 @@ import (
 	"github.com/shibukawa/tinybind-go/minitoml/codegen/fixture"
 )
 
-func TestGenerateEmitsIntermediateKeys(t *testing.T) {
-	src, err := codegen.Generate("fixture", []codegen.Spec{codegen.WebServiceFixtureSpec()})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	text := string(src)
-	// Generated apply must hard-code intermediate keys (no reflection).
-	for _, key := range []string{
-		`"webservice.listen_addr"`,
-		`"webservice.max_conns"`,
-		`"webservice.cors_origins"`,
-		`"webservice.tls.enabled"`,
-		`"webservice.tls.cert_path"`,
-	} {
-		if !strings.Contains(text, key) {
-			t.Fatalf("generated source missing key %s\n%s", key, text)
-		}
-	}
-	if strings.Contains(text, "reflect.") {
-		t.Fatal("generated code must not use reflect")
-	}
-	if !strings.Contains(text, "func ApplyWebServiceConfig") {
-		t.Fatal("missing ApplyWebServiceConfig")
-	}
-}
-
 func TestGenerateMatchesCommittedFixture(t *testing.T) {
 	src, err := codegen.Generate("fixture", []codegen.Spec{codegen.WebServiceFixtureSpec()})
 	if err != nil {

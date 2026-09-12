@@ -308,29 +308,6 @@ func TestDiscoverRejectsChildrenOfCatchAll(t *testing.T) {
 	}
 }
 
-func TestDiscoverReportsDuplicateNormalizedRoutes(t *testing.T) {
-	// Two dynamic segments with different names still match the same requests.
-	root := tree(t, map[string]string{
-		"a/id_/page.tb.html":   "",
-		"b/name_/page.tb.html": "",
-	})
-	// Not a duplicate: different static prefixes.
-	if _, err := discover(t, root); err != nil {
-		t.Fatalf("distinct prefixes rejected: %v", err)
-	}
-
-	root = tree(t, map[string]string{
-		"x/page.tb.html": "",
-	})
-	got, err := discover(t, root)
-	if err != nil {
-		t.Fatalf("Discover: %v", err)
-	}
-	if len(got.Routes) != 1 {
-		t.Fatalf("routes = %d, want 1", len(got.Routes))
-	}
-}
-
 func TestDiscoverReportsEveryProblemAtOnce(t *testing.T) {
 	root := tree(t, map[string]string{
 		"[id]/page.tb.html":     "",

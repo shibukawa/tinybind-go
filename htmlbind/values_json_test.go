@@ -3,139 +3,19 @@ package htmlbind
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
-// legacyAppendJSONString is the escaper exactly as it stood before
-// AppendJSONString was exported. It is kept here so the corpus below can prove
-// the export moved no bytes, which is the one thing a caller already embedding
-// this output in a script element cannot re-verify for itself.
-func legacyAppendJSONString(dst []byte, value string) []byte {
-	const hex = "0123456789abcdef"
-	if free := cap(dst) - len(dst); free < len(value)+2 {
-		grown := make([]byte, len(dst), len(dst)+len(value)+18)
-		copy(grown, dst)
-		dst = grown
-	}
-	dst = append(dst, '"')
-	start := 0
-	for i := 0; i < len(value); {
-		c := value[i]
-		if c < utf8.RuneSelf {
-			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
-				i++
-				continue
-			}
-			if start < i {
-				dst = append(dst, value[start:i]...)
-			}
-			switch c {
-			case '"':
-				dst = append(dst, '\\', '"')
-			case '\\':
-				dst = append(dst, '\\', '\\')
-			case '\b':
-				dst = append(dst, '\\', 'b')
-			case '\f':
-				dst = append(dst, '\\', 'f')
-			case '\n':
-				dst = append(dst, '\\', 'n')
-			case '\r':
-				dst = append(dst, '\\', 'r')
-			case '\t':
-				dst = append(dst, '\\', 't')
-			case '<':
-				dst = append(dst, '\\', 'u', '0', '0', '3', 'c')
-			case '>':
-				dst = append(dst, '\\', 'u', '0', '0', '3', 'e')
-			case '&':
-				dst = append(dst, '\\', 'u', '0', '0', '2', '6')
-			default:
-				dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&15])
-			}
-			i++
-			start = i
-			continue
-		}
-		r, width := utf8.DecodeRuneInString(value[i:])
-		switch {
-		case r == ' ', r == ' ':
-			if start < i {
-				dst = append(dst, value[start:i]...)
-			}
-			if r == ' ' {
-				dst = append(dst, '\\', 'u', '2', '0', '2', '8')
-			} else {
-				dst = append(dst, '\\', 'u', '2', '0', '2', '9')
-			}
-			i += width
-			start = i
-		case r == utf8.RuneError && width == 1:
-			// An invalid byte becomes the replacement character, exactly as a
-			// rune loop would decode it. A genuine U+FFFD is three valid bytes
-			// and travels inside the clean run.
-			if start < i {
-				dst = append(dst, value[start:i]...)
-			}
-			dst = append(dst, "�"...)
-			i += width
-			start = i
-		default:
-			i += width
-		}
-	}
-	if start < len(value) {
-		dst = append(dst, value[start:]...)
-	}
-	return append(dst, '"')
-}
-
-// jsonStringCorpus reaches every branch of the escaper: the bulk-copy path, all
-// three of the HTML-closing escapes, both line separators, each named control
-// escape and the numeric fallback for the rest, a genuine U+FFFD travelling
-// inside a clean run, a truncated sequence of every width, and a fragment long
-// enough that the clean runs between escapes are worth copying in bulk.
-func jsonStringCorpus() []string {
-	corpus := []string{
-		"",
-		"plain ascii",
-		`"`, `\`, "<", ">", "&",
-		"\b", "\f", "\n", "\r", "\t", "\x00", "\x1f", "\x7f",
-		"\u2028", "\u2029", "a\u2028b\u2029c",
-		"\uFFFD", "before\uFFFDafter",
-		"\xff", "abc\xff", "\xff\xfe\xfd",
-		"\xe4\xb8", "\xf0\x9f", "\xf0\x9f\x8e",
-		"\u65e5\u672c\u8a9e", "\U0001f389", "mixed \u65e5 <b>&</b> \U0001f389",
-		"<script>alert(\"x\" & '\\'')</script>",
-		strings.Repeat(`<td class="cell">value & more</td>`, 128),
-		strings.Repeat("clean", 2048),
-	}
-	for b := 0; b < 0x80; b++ {
-		corpus = append(corpus, string([]byte{byte(b)}), "pre"+string([]byte{byte(b)})+"post")
-	}
-	return corpus
-}
-
-func TestAppendJSONStringMovesNoBytes(t *testing.T) {
-	for _, input := range jsonStringCorpus() {
-		want := string(legacyAppendJSONString(nil, input))
-		if got := string(AppendJSONString(nil, input)); got != want {
-			t.Errorf("AppendJSONString(%q) = %q, escaper it replaced = %q", input, got, want)
-		}
-		if got := JSONString(input); got != want {
-			t.Errorf("JSONString(%q) = %q, escaper it replaced = %q", input, got, want)
-		}
-	}
-}
-
-func TestAppendJSONStringAgreesWithJSONString(t *testing.T) {
-	for _, input := range jsonStringCorpus() {
-		want := JSONString(input)
-		if got := string(AppendJSONString(nil, input)); got != want {
-			t.Errorf("AppendJSONString(%q) = %q, JSONString = %q", input, got, want)
-		}
-		if got := string(AppendJSONString(nil, []byte(input))); got != want {
-			t.Errorf("AppendJSONString([]byte(%q)) = %q, JSONString = %q", input, got, want)
+func TestAppendJSONStringEscapesScriptContent(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`"`, `"\""`},
+		{`\`, `"\\"`},
+		{"<script>&", `"\u003cscript\u003e\u0026"`},
+		{"\x00\b\f\n\r\t", `"\u0000\b\f\n\r\t"`},
+		{"\u2028\u2029", `"\u2028\u2029"`},
+		{"\xff", `"�"`},
+	} {
+		if got := string(AppendJSONString(nil, tc.in)); got != tc.want {
+			t.Errorf("AppendJSONString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

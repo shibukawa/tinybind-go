@@ -617,6 +617,8 @@ export statement Either(sensor: Sensor, from: time.Time): firestore.many<Reading
 		"q = q.Where(datastore.Or(",
 		`datastore.Prop("sensor", datastore.Equal, datastore.String(string(sensor))),`,
 		`datastore.Prop("at", datastore.GreaterThan, datastore.Time(from)),`,
+		"datastore.MaxDisjunctions",
+		"Nothing counts that here",
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("generated code is missing %q\n%s", want, code)
@@ -698,21 +700,5 @@ export statement A(s: Sensor, c: float64): firestore.many<Reading> {
 	}
 	if !strings.Contains(err.Error(), `Reading has no property "sensr"`) {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// A disjunctive query gets the disjunction note, which names MaxDisjunctions
-// and counts nothing.
-func TestFirestoreQueryDisjunctionNote(t *testing.T) {
-	code := generateFirestoreQuery(t, `
-export statement Either(sensor: Sensor, from: time.Time): firestore.many<Reading> {
-  where sensor == {sensor} or at > {from}
-}
-`)
-	if !strings.Contains(code, "datastore.MaxDisjunctions") {
-		t.Errorf("the disjunction note is missing\n%s", code)
-	}
-	if !strings.Contains(code, "Nothing counts that here") {
-		t.Errorf("the note does not say the count is left to the service\n%s", code)
 	}
 }

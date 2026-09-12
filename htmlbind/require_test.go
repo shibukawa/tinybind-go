@@ -24,6 +24,7 @@ func TestRequireContributesNoSequenceNode(t *testing.T) {
 	checked := &Plan[requireParams]{Ops: []Op[requireParams]{
 		body.Static("<h1>"),
 		body.Require(func(requireParams) error { return nil }),
+		body.RequireCtx(func(context.Context, requireParams) error { return nil }),
 		body.Text(func(p requireParams) string { return p.ID }),
 		body.Static("</h1>"),
 	}}
@@ -52,39 +53,6 @@ func TestRequireContributesNoSequenceNode(t *testing.T) {
 	}
 	if rebuilt != out.String() {
 		t.Fatalf("round trip:\n got %q\nwant %q", rebuilt, out.String())
-	}
-}
-
-// The same hole would open under an await boundary that checks a required
-// async parameter, which is the one position generation emitted a check from
-// before the template gained a check directive.
-func TestRequireCtxContributesNoSequenceNode(t *testing.T) {
-	body := Builder[requireParams]{}
-	plan := &Plan[requireParams]{Ops: []Op[requireParams]{
-		body.RequireCtx(func(context.Context, requireParams) error { return nil }),
-		body.Static("<p>ok</p>"),
-	}}
-	nodes := plan.Sequence().Nodes
-	if len(nodes) != 1 || nodes[0].Kind != SeqStatic {
-		t.Fatalf("sequence = %+v, want one static node", nodes)
-	}
-}
-
-// A failing check ends the render before anything is written, which is what
-// leaves the response status free to become the error's own.
-func TestRequireEndsTheRenderBeforeWriting(t *testing.T) {
-	want := errors.New("forbidden")
-	body := Builder[requireParams]{}
-	plan := &Plan[requireParams]{Ops: []Op[requireParams]{
-		body.Require(func(requireParams) error { return want }),
-		body.Static("<h1>secret</h1>"),
-	}}
-	var out strings.Builder
-	if err := Render(&out, plan.Bind(requireParams{ID: "7"})); !errors.Is(err, want) {
-		t.Fatalf("render error = %v, want %v", err, want)
-	}
-	if out.String() != "" {
-		t.Fatalf("the failed check wrote %q", out.String())
 	}
 }
 

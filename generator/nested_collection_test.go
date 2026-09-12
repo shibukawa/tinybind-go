@@ -10,33 +10,6 @@ import (
 	"github.com/shibukawa/tinybind-go/generator"
 )
 
-// The shapes the jsonbench datasets are declared with, which used to leave
-// the plan in silence: a pointer to a struct (a tree's link, a nullable
-// object), a collection of collections, a map of collections, and a struct
-// tag whose name holds a space.
-func TestPointersAndNestedCollectionsAreMapped(t *testing.T) {
-	for _, tc := range []struct{ name, decls, field, want string }{
-		{"pointer to struct", "type Node struct{ V int `json:\"v\"` }\n", "P *Node `json:\"p\"`", "decodeNodeJSON(p, out.P)"},
-		{"pointer to scalar", "", "P *int `json:\"p\"`", "out.P = new(int)"},
-		{"slice of slices", "", "M [][]int `json:\"m\"`", "v1 = append(v1, e1)"},
-		{"slice of arrays", "", "C [][2]float64 `json:\"c\"`", "clear(v0[len(v0)-1][filled1:])"},
-		{"slice of pointers", "type Item struct{ V int `json:\"v\"` }\n", "S []*Item `json:\"s\"`", "decodeItemJSON(p, v0[len(v0)-1])"},
-		{"map of slices", "", "MS map[string][]string `json:\"ms\"`", "v0[name0] = e0"},
-		{"slice of maps", "", "T []map[string]string `json:\"t\"`", "v1[name1] = e1"},
-		{"tag with a space", "", "B string `json:\"Box Drawing\"`", "\"\\\"Box Drawing\\\"\""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, err := analyzeOneField(t, tc.decls, tc.field)
-			if err != nil {
-				t.Fatalf("refused: %v", err)
-			}
-			if !strings.Contains(code, tc.want) {
-				t.Fatalf("generated source is missing %q:\n%s", tc.want, code)
-			}
-		})
-	}
-}
-
 // A shape the generator cannot map is refused by name, not dropped.
 func TestUnmappableShapesAreRefusedByName(t *testing.T) {
 	for _, tc := range []struct{ field, want string }{

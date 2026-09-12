@@ -80,23 +80,6 @@ func TestCBORHTTPOffEmitsNoCBOR(t *testing.T) {
 	mustContainNone(t, source, "CBORHTTP", "cbor.", "AcceptsCBOR", "IsCBORRequest", "VaryAccept")
 }
 
-func TestCBORHTTPEmitsNegotiationArms(t *testing.T) {
-	opts := generator.DefaultOptions()
-	opts.EnableCBORHTTP = true
-	_, source := emitCBORHTTP(t, cborHTTPFixtureSource, opts)
-	mustContainAll(t, source,
-		"github.com/shibukawa/tinygodriver/encoding/cbor",
-		"httpbind.IsCBORRequest(r)",
-		"cborBody, err = httpbind.ReadCBORBody(r)",
-		"httpbind.AcceptsCBOR(r)",
-		"httpbind.VaryAccept(w)",
-		"func appendUserCBORHTTP(dst []byte, v User) []byte",
-		"func appendTagCBORHTTP(dst []byte, v Tag) []byte",
-		"httpbind.WriteCBORBytes(w, http.StatusOK, *buf)",
-		"func cborHTTPReadOptions(n int) cbor.DecoderOptions",
-	)
-}
-
 // The generated pieces have to answer over a real request in both formats,
 // which is what proves the negotiation and the codecs name each other
 // correctly rather than merely appearing.

@@ -10,31 +10,6 @@ import (
 	"github.com/shibukawa/tinybind-go/generator"
 )
 
-// An any field used to leave the plan without a word: a member arriving under
-// its name was skipped and a value set in Go was never written. It is now a
-// kind of its own, read through Parser.Any and written through AppendAny.
-func TestAnyFieldsAreMapped(t *testing.T) {
-	for _, tc := range []struct{ name, field, want string }{
-		{"any", "V any `json:\"v\"`", "dst = jsonbind.AppendAny(dst, v.V)"},
-		{"interface", "V interface{} `json:\"v\"`", "dst = jsonbind.AppendAny(dst, v.V)"},
-		{"any slice", "L []any `json:\"l\"`", "dst = jsonbind.AppendAny(dst, v.L[i])"},
-		{"any map", "M map[string]any `json:\"m\"`", "dst = jsonbind.AppendAny(dst, v.M[k])"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, err := analyzeOneField(t, "", tc.field)
-			if err != nil {
-				t.Fatalf("refused: %v", err)
-			}
-			if !strings.Contains(code, tc.want) {
-				t.Fatalf("generated source is missing %q:\n%s", tc.want, code)
-			}
-			if !strings.Contains(code, "p.Any()") && !strings.Contains(code, "(*jsonbind.Parser).Any") {
-				t.Fatalf("generated source has no any reader:\n%s", code)
-			}
-		})
-	}
-}
-
 // An error value has no document shape, and silence is not an answer either.
 func TestErrorFieldIsRefusedByName(t *testing.T) {
 	_, err := analyzeOneField(t, "", "E error `json:\"e\"`")
@@ -43,38 +18,30 @@ func TestErrorFieldIsRefusedByName(t *testing.T) {
 	}
 }
 
-// A struct with no mappable field still gets a codec. Before, it was dropped
-// from the plan and the parent's generated code called a decoder nothing had
-// written, which was a compile error inside a DO NOT EDIT file.
-func TestEmptyStructGetsACodec(t *testing.T) {
-	code, err := analyzeOneField(t, "type Empty struct{ hidden int }\n", "E Empty `json:\"e\"`")
-	if err != nil {
-		t.Fatalf("refused: %v", err)
-	}
-	for _, want := range []string{"func appendEmptyJSON(", "func decodeEmptyJSON(", "dst = appendEmptyJSON(dst, v.E)"} {
-		if !strings.Contains(code, want) {
-			t.Fatalf("generated source is missing %q:\n%s", want, code)
-		}
-	}
-}
-
 // DecodeJSONBytes and DecodeJSONLimit decode the same codec as DecodeJSON, so a
 // package reading through either alone must get its decoder.
 func TestByteAndLimitDecodeEntriesAreDiscovered(t *testing.T) {
-	for _, call := range []string{"hb.DecodeJSONBytes[Note](nil)", "hb.DecodeJSONLimit[Note](nil, 1)"} {
-		t.Run(call, func(t *testing.T) {
-			dir := t.TempDir()
-			writeTempModule(t, dir)
-			writeTestFile(t, filepath.Join(dir, "main.go"), "package sample\nimport hb \"github.com/shibukawa/tinybind-go/jsonbind\"\ntype Note struct{ Text string }\nfunc use() { _, _ = "+call+" }\n")
-			tidyTempModule(t, dir)
-			plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(plan.Types) != 1 || plan.Types[0].Usage&generator.UsageDecodeJSON == 0 {
-				t.Fatalf("%s did not mark Note for decoding: %+v", call, plan.Types)
-			}
-		})
+	dir := t.TempDir()
+	writeTempModule(t, dir)
+	src := `package sample
+
+import hb "github.com/shibukawa/tinybind-go/jsonbind"
+
+type Note struct{ Text string }
+
+func use() {
+	_, _ = hb.DecodeJSONBytes[Note](nil)
+	_, _ = hb.DecodeJSONLimit[Note](nil, 1)
+}
+`
+	writeTestFile(t, filepath.Join(dir, "main.go"), src)
+	tidyTempModule(t, dir)
+	plan, err := generator.New(generator.DefaultOptions()).Analyze(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Types) != 1 || plan.Types[0].Usage&generator.UsageDecodeJSON == 0 {
+		t.Fatalf("the byte/limit decode entries did not mark Note for decoding: %+v", plan.Types)
 	}
 }
 

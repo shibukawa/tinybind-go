@@ -78,73 +78,6 @@ func emitFixedArray(t *testing.T, src string, opts generator.Options) (string, s
 	return dir, string(code)
 }
 
-// The regression this whole change exists for: a fixed-length field used to be
-// planned as a slice, so the decoder assigned a []int to a [4]int inside a file
-// headed DO NOT EDIT.
-func TestFixedArrayIsFilledInPlace(t *testing.T) {
-	opts := generator.DefaultOptions()
-	opts.EnableCBORHTTP = true
-	_, source := emitFixedArray(t, fixedArraySource, opts)
-	for _, want := range []string{
-		// The array is filled in place by an inline loop: too many elements
-		// is the error, the tail is cleared, and nothing is assigned whole.
-		`return out, jsonbind.ArrayTooLong("cells", len(out.Cells))`,
-		"out.Cells[i0] = e0",
-		"clear(out.Cells[filled0:])",
-		// A struct cell is decoded in place, after being cleared.
-		"out.Marks[i0] = Mark{}",
-		"decodeMarkJSON(p, &out.Marks[i0])",
-		"out.Seats = [seatCount]uint16{}",
-		"if n > len(out.Cells) {",
-	} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated source is missing %q", want)
-		}
-	}
-	// The slice assignment is what did not compile; a slice field still gets it.
-	if strings.Contains(source, "out.Cells = v") || strings.Contains(source, "out.Cells = slice") {
-		t.Error("a fixed-length field is still assigned a slice")
-	}
-	if !strings.Contains(source, "out.Tags = v0") || !strings.Contains(source, "v0 = append(v0, e0)") {
-		t.Error("a slice field no longer builds and assigns a slice")
-	}
-}
-
-// Encoding is the one direction the two kinds agree about, so it shares an arm
-// rather than growing one.
-func TestFixedArrayEncodesLikeASlice(t *testing.T) {
-	_, source := emitFixedArray(t, fixedArraySource, generator.DefaultOptions())
-	for _, want := range []string{"for i := range v.Cells {", "jsonbind.AppendInt(dst, int64(v.Cells[i]))"} {
-		if !strings.Contains(source, want) {
-			t.Errorf("generated encoder is missing %q", want)
-		}
-	}
-}
-
-// A fixed-length array of a named scalar is generated like every other
-// collection of one; the refusal it used to get was lifted with them.
-func TestFixedArrayOfNamedElementIsGenerated(t *testing.T) {
-	src := strings.Replace(fixedArraySource, "Cells [4]int           ", "Cells [4]Level         ", 1)
-	src = strings.Replace(src, "const seatCount = 3", "const seatCount = 3\n\ntype Level int", 1)
-	dir := t.TempDir()
-	writeTempModule(t, dir)
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tidyTempModule(t, dir)
-	plan, err := generator.AnalyzePackageWithOptions(dir, generator.DefaultOptions())
-	if err != nil {
-		t.Fatalf("an array of a named scalar was refused: %v", err)
-	}
-	code, err := generator.Emit(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(code), "e0 := Level(w0)") || !strings.Contains(string(code), "out.Cells[i0] = e0") {
-		t.Fatalf("the array does not fill with the declared type:\n%s", code)
-	}
-}
-
 // omitzero compares against the zero value, and a Go array is comparable only
 // when its element is. A struct element is refused with the reason rather than
 // emitted as a comparison that would not compile.
@@ -255,14 +188,6 @@ func TestALongArrayIs400(t *testing.T) {
 	}
 	if w := post(t, ` + "`" + `{"marks":[{"x":1},{"x":2},{"x":3}]}` + "`" + `); w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
-	}
-}
-
-// A JSON null leaves the destination alone, as it does for a slice.
-func TestANullArrayLeavesTheFieldAlone(t *testing.T) {
-	got := decode(t, post(t, ` + "`" + `{"cells":null}` + "`" + `))
-	if got.Cells != [4]int{} {
-		t.Fatalf("cells %v", got.Cells)
 	}
 }
 

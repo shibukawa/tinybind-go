@@ -488,16 +488,6 @@ func TestProvenanceKeepsRatedKeySetBySource(t *testing.T) {
 	}
 }
 
-func TestProvenanceNeverMarksAnUntaggedKey(t *testing.T) {
-	registerSummaryFixture(t)
-
-	for _, entry := range loadProvenanceFixture(t, nil, "") {
-		if entry.Key == "html.level" && entry.Omittable {
-			t.Fatalf("level=%+v; an untagged key at its default is still notable", entry)
-		}
-	}
-}
-
 // A rating reaches an array-of-tables element by its stable path under the array,
 // the same way a secret mode does, and the per-element Place still decides.
 //

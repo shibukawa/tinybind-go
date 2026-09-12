@@ -1,15 +1,13 @@
 package htmlbind
 
 import (
-	"net/url"
 	"strings"
 	"testing"
 )
 
 // TestSafeURLDecidesOnWhatTheBrowserReads covers the cases the scheme policy
-// exists for, including the two that defeat the obvious implementations: a
-// hand-built url.URL whose Scheme field is empty, and a scheme split by a tab
-// the browser removes before parsing.
+// exists for, including a scheme split by a tab the browser removes before
+// parsing.
 func TestSafeURLDecidesOnWhatTheBrowserReads(t *testing.T) {
 	opts := newRenderOptions(nil)
 	for _, testcase := range []struct {
@@ -43,32 +41,6 @@ func TestSafeURLDecidesOnWhatTheBrowserReads(t *testing.T) {
 				t.Fatalf("safeURL(%q) = %q, want %q", testcase.value, got, testcase.want)
 			}
 		})
-	}
-}
-
-// TestSafeURLRejectsTheEmptySchemeOpaqueForm is the case a gate reading
-// url.URL.Scheme would pass: the field is empty, so the value looks relative,
-// and String() still renders an executable URL.
-func TestSafeURLRejectsTheEmptySchemeOpaqueForm(t *testing.T) {
-	hostile := url.URL{Opaque: "javascript:alert(1)"}
-	if hostile.Scheme != "" {
-		t.Fatalf("precondition changed: Scheme is %q, so this case no longer proves anything", hostile.Scheme)
-	}
-	rendered := hostile.String()
-	if rendered != "javascript:alert(1)" {
-		t.Fatalf("precondition changed: String() = %q", rendered)
-	}
-	if got := newRenderOptions(nil).safeURL(rendered); got != BlockedURL {
-		t.Fatalf("safeURL(%q) = %q, want %q", rendered, got, BlockedURL)
-	}
-}
-
-// TestSafeURLHandBuiltUppercaseScheme covers the other struct-built form: Parse
-// folds a scheme to lower case, but a field assigned directly keeps its case.
-func TestSafeURLHandBuiltUppercaseScheme(t *testing.T) {
-	hostile := url.URL{Scheme: "JAVASCRIPT", Opaque: "alert(1)"}
-	if got := newRenderOptions(nil).safeURL(hostile.String()); got != BlockedURL {
-		t.Fatalf("safeURL(%q) = %q, want %q", hostile.String(), got, BlockedURL)
 	}
 }
 

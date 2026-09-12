@@ -7,29 +7,16 @@ import (
 	"github.com/shibukawa/tinybind-go/configbind"
 )
 
-func TestEnvNameFromLongOpt(t *testing.T) {
-	if got := configbind.EnvName("port"); got != "PORT" {
-		t.Fatalf("port -> %q", got)
-	}
-	if got := configbind.EnvName("webserver-host"); got != "WEBSERVER_HOST" {
-		t.Fatalf("webserver-host -> %q", got)
-	}
-	if got := configbind.EnvName("webserver-tls-cert_path"); got != "WEBSERVER_TLS_CERT_PATH" {
-		t.Fatalf("nested long -> %q", got)
-	}
-	if got := configbind.EnvName(cliparser.DefaultLongName("middleware.cache", "max_entries")); got != "MIDDLEWARE_CACHE_MAX_ENTRIES" {
-		t.Fatalf("dotted prefix -> %q", got)
-	}
-}
-
 func TestReadEnvUsesLongOptNames(t *testing.T) {
 	defs := []cliparser.Def{
 		{ConfigKey: "webserver.port", Longs: []string{"port"}},
 		{ConfigKey: "webserver.host", Longs: []string{"webserver-host"}},
+		{ConfigKey: "middleware.cache.max_entries", Longs: []string{cliparser.DefaultLongName("middleware.cache", "max_entries")}},
 	}
 	environ := []string{
 		"PORT=8080",
 		"WEBSERVER_PORT=9999", // must not map when long is "port"
+		"MIDDLEWARE_CACHE_MAX_ENTRIES=128",
 		"OTHER=1",
 	}
 	m := configbind.ReadEnv(defs, environ)
@@ -38,6 +25,9 @@ func TestReadEnvUsesLongOptNames(t *testing.T) {
 	}
 	if _, ok := m["webserver.host"]; ok {
 		t.Fatalf("unset host should be absent: %v", m)
+	}
+	if m["middleware.cache.max_entries"] != "128" {
+		t.Fatalf("nested default long name = %q", m["middleware.cache.max_entries"])
 	}
 }
 
