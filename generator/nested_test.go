@@ -79,7 +79,7 @@ type NestedOrderRequest struct {
 		"decodeNestedLineItemJSON",
 		"RegisterDecode[NestedOrderRequest]",
 		"RegisterEncode[NestedOrderRequest]",
-		"v = append(v, e)",
+		"decodeNestedLineItemJSON(p, &v[len(v)-1])",
 		"v[name] = e",
 	} {
 		if !strings.Contains(s, n) {

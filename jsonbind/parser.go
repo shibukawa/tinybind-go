@@ -118,8 +118,112 @@ func (p *Parser) ws() {
 	}
 }
 
+// The Fast methods below are the inlinable halves the generated decoder
+// calls between tokens: each is a byte compare or two over a compact
+// document, and answers false when anything else -- whitespace, null, the
+// end of a container, a malformed byte -- needs the full reader, which the
+// generated code then calls. A method that both checks the fast case and
+// calls the full reader cannot inline, because the call alone costs most of
+// the inliner's budget; the split puts the call in the generated code, where
+// it is taken only on a miss.
+
+// ObjectStartFast consumes '{' when it is right here and the nesting bound
+// allows it. A false means ObjectStart has to look.
+func (p *Parser) ObjectStartFast() bool {
+	if p.pos < len(p.buf) && p.buf[p.pos] == '{' && p.depth < p.maxDepth {
+		p.depth++
+		p.pos++
+		return true
+	}
+	return false
+}
+
+// ArrayStartFast consumes '[' when it is right here and the nesting bound
+// allows it. A false means ArrayStart has to look.
+func (p *Parser) ArrayStartFast() bool {
+	if p.pos < len(p.buf) && p.buf[p.pos] == '[' && p.depth < p.maxDepth {
+		p.depth++
+		p.pos++
+		return true
+	}
+	return false
+}
+
+// KeyFast positions the parser at member n's opening quote when the comma
+// and the quote are right here, and reports whether it did; Rest then hands
+// the unread input to the name tree. A false means ObjectKeyRest has to look,
+// which is also how the closing brace is reached.
+func (p *Parser) KeyFast(n int) bool {
+	i := p.pos
+	if n > 0 {
+		if i >= len(p.buf) || p.buf[i] != ',' {
+			return false
+		}
+		i++
+	}
+	if i < len(p.buf) && p.buf[i] == '"' {
+		p.pos = i
+		return true
+	}
+	return false
+}
+
+// Rest is the unread input.
+func (p *Parser) Rest() []byte { return p.buf[p.pos:] }
+
+// Skip advances past k bytes the caller has matched.
+func (p *Parser) Skip(k int) { p.pos += k }
+
+// ColonFast consumes the colon after a member name when it is right here. A
+// false means Colon has to look.
+func (p *Parser) ColonFast() bool {
+	if p.pos < len(p.buf) && p.buf[p.pos] == ':' {
+		p.pos++
+		return true
+	}
+	return false
+}
+
+// Colon consumes the colon after a member name, whitespace before it
+// included.
+func (p *Parser) Colon() error { return p.keyColon() }
+
+// ArrayNextFast answers ArrayNext when the next byte settles it: a comma
+// after an earlier element, the closing bracket, or a value's first byte for
+// the first element. ok is false when ArrayNext has to look.
+func (p *Parser) ArrayNextFast(n int) (more, ok bool) {
+	if p.pos < len(p.buf) {
+		c := p.buf[p.pos]
+		if c == ',' && n > 0 {
+			p.pos++
+			return true, true
+		}
+		if c == ']' {
+			p.pos++
+			p.leave()
+			return false, true
+		}
+		if n == 0 && c > ' ' {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+// The full readers below keep the same fast case at their head for callers
+// outside generated code, and the slow half that handles everything else.
+
 // ObjectStart consumes '{'. A JSON null reports isNull and consumes the literal.
 func (p *Parser) ObjectStart() (isNull bool, err error) {
+	if p.pos < len(p.buf) && p.buf[p.pos] == '{' && p.depth < p.maxDepth {
+		p.depth++
+		p.pos++
+		return false, nil
+	}
+	return p.objectStartSlow()
+}
+
+func (p *Parser) objectStartSlow() (isNull bool, err error) {
 	p.ws()
 	if p.pos >= len(p.buf) {
 		return false, p.fail("unexpected end of JSON input")
@@ -185,6 +289,18 @@ func (p *Parser) objectKeySpan(n int) (span []byte, escaped, ok bool, err error)
 // ordinary way with ObjectKeyName. The returned slice aliases the input and
 // is not advanced past.
 func (p *Parser) ObjectKeyRest(n int) (rest []byte, ok bool, err error) {
+	if p.pos < len(p.buf) {
+		if c := p.buf[p.pos]; c == '"' && n == 0 {
+			return p.buf[p.pos:], true, nil
+		} else if c == ',' && n > 0 && p.pos+1 < len(p.buf) && p.buf[p.pos+1] == '"' {
+			p.pos++
+			return p.buf[p.pos:], true, nil
+		}
+	}
+	return p.objectKeyRestSlow(n)
+}
+
+func (p *Parser) objectKeyRestSlow(n int) (rest []byte, ok bool, err error) {
 	p.ws()
 	if p.pos >= len(p.buf) {
 		return nil, false, p.fail("unexpected end of JSON object")
@@ -233,6 +349,14 @@ func (p *Parser) ObjectKeyName() ([]byte, error) {
 }
 
 func (p *Parser) keyColon() error {
+	if p.pos < len(p.buf) && p.buf[p.pos] == ':' {
+		p.pos++
+		return nil
+	}
+	return p.keyColonSlow()
+}
+
+func (p *Parser) keyColonSlow() error {
 	p.ws()
 	if p.pos >= len(p.buf) || p.buf[p.pos] != ':' {
 		return p.fail("missing ':' after JSON object key")
@@ -243,6 +367,15 @@ func (p *Parser) keyColon() error {
 
 // ArrayStart consumes '['. A JSON null reports isNull and consumes the literal.
 func (p *Parser) ArrayStart() (isNull bool, err error) {
+	if p.pos < len(p.buf) && p.buf[p.pos] == '[' && p.depth < p.maxDepth {
+		p.depth++
+		p.pos++
+		return false, nil
+	}
+	return p.arrayStartSlow()
+}
+
+func (p *Parser) arrayStartSlow() (isNull bool, err error) {
 	p.ws()
 	if p.pos >= len(p.buf) {
 		return false, p.fail("unexpected end of JSON input")
@@ -265,6 +398,22 @@ func (p *Parser) ArrayStart() (isNull bool, err error) {
 
 // ArrayNext reports whether another element follows. n is the element index.
 func (p *Parser) ArrayNext(n int) (bool, error) {
+	if p.pos < len(p.buf) {
+		if c := p.buf[p.pos]; c == ',' && n > 0 {
+			p.pos++
+			return true, nil
+		} else if c == ']' {
+			p.pos++
+			p.leave()
+			return false, nil
+		} else if n == 0 && c > ' ' {
+			return true, nil
+		}
+	}
+	return p.arrayNextSlow(n)
+}
+
+func (p *Parser) arrayNextSlow(n int) (bool, error) {
 	p.ws()
 	if p.pos >= len(p.buf) {
 		return false, p.fail("unexpected end of JSON array")
@@ -385,14 +534,30 @@ func (p *Parser) String() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !escaped {
-		return p.intern(span, nonASCII), nil
+	if escaped {
+		return p.unescaped(span), nil
 	}
+	// The cache hit is written here rather than reached through intern, so
+	// a recurring value costs a hash and a compare and no call.
+	if p.cache != nil && len(span) >= internMin && len(span) <= internMax {
+		i := internHash(span)
+		if s := p.cache.s[i]; s == string(span) {
+			return s, nil
+		}
+		s := p.makeString(span, nonASCII)
+		p.cache.s[i] = s
+		return s, nil
+	}
+	return p.intern(span, nonASCII), nil
+}
+
+// unescaped resolves a span holding escapes, replacing invalid UTF-8.
+func (p *Parser) unescaped(span []byte) string {
 	p.scratch = unescape(p.scratch[:0], span)
 	if !utf8.Valid(p.scratch) {
 		p.scratch = coerceUTF8(p.scratch)
 	}
-	return string(p.scratch), nil
+	return string(p.scratch)
 }
 
 // numberSpan returns the number token without copying, held to RFC 8259's
@@ -472,7 +637,38 @@ func (p *Parser) Int() (int, error) {
 }
 
 // Int64 decodes a JSON number as int64. null decodes as 0.
+//
+// A plain integer of up to eighteen digits is read in one pass, straight off
+// the input; anything else -- a fraction, an exponent, a leading zero
+// followed by more, a nineteenth digit, whitespace, null -- goes through the
+// grammar check and the checked conversion the slow half keeps.
 func (p *Parser) Int64() (int64, error) {
+	buf := p.buf
+	i := p.pos
+	neg := false
+	if i < len(buf) && buf[i] == '-' {
+		neg = true
+		i++
+	}
+	if i < len(buf) && buf[i] >= '1' && buf[i] <= '9' {
+		var acc int64
+		start := i
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' && i-start < 18 {
+			acc = acc*10 + int64(buf[i]-'0')
+			i++
+		}
+		if i >= len(buf) || (buf[i] != '.' && buf[i] != 'e' && buf[i] != 'E' && (buf[i] < '0' || buf[i] > '9')) {
+			p.pos = i
+			if neg {
+				return -acc, nil
+			}
+			return acc, nil
+		}
+	}
+	return p.int64Slow()
+}
+
+func (p *Parser) int64Slow() (int64, error) {
 	if p.IsNull() {
 		return 0, nil
 	}
@@ -498,6 +694,24 @@ var ErrIntegerRange = newError("json_parse", "JSON number out of range", nil)
 // at generation, which keeps eight more methods out of the runtime a TinyGo
 // target links.
 func (p *Parser) Uint64() (uint64, error) {
+	buf := p.buf
+	i := p.pos
+	if i < len(buf) && buf[i] >= '1' && buf[i] <= '9' {
+		var acc uint64
+		start := i
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' && i-start < 19 {
+			acc = acc*10 + uint64(buf[i]-'0')
+			i++
+		}
+		if i >= len(buf) || (buf[i] != '.' && buf[i] != 'e' && buf[i] != 'E' && (buf[i] < '0' || buf[i] > '9')) {
+			p.pos = i
+			return acc, nil
+		}
+	}
+	return p.uint64Slow()
+}
+
+func (p *Parser) uint64Slow() (uint64, error) {
 	if p.IsNull() {
 		return 0, nil
 	}
@@ -509,7 +723,63 @@ func (p *Parser) Uint64() (uint64, error) {
 }
 
 // Float64 decodes a JSON number. null decodes as 0.
+//
+// A number with no exponent whose digits fit an exactly representable
+// integer is read in one pass, as parseFloatFast reads a span; the grammar
+// the pass accepts is the JSON one, and everything it does not accept goes
+// through numberSpan and strconv.
 func (p *Parser) Float64() (float64, error) {
+	buf := p.buf
+	i := p.pos
+	neg := false
+	if i < len(buf) && buf[i] == '-' {
+		neg = true
+		i++
+	}
+	if i < len(buf) && buf[i] >= '0' && buf[i] <= '9' {
+		var m uint64
+		digits, frac := 0, 0
+		if buf[i] == '0' {
+			i++
+			digits = 1
+			if i < len(buf) && buf[i] >= '0' && buf[i] <= '9' {
+				return p.float64Slow()
+			}
+		}
+		for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' && digits < 19 {
+			m = m*10 + uint64(buf[i]-'0')
+			digits++
+			i++
+		}
+		if i < len(buf) && buf[i] == '.' {
+			i++
+			from := i
+			for i < len(buf) && buf[i] >= '0' && buf[i] <= '9' && digits < 19 {
+				m = m*10 + uint64(buf[i]-'0')
+				digits++
+				frac++
+				i++
+			}
+			if i == from {
+				return p.float64Slow()
+			}
+		}
+		if (i >= len(buf) || (buf[i] != 'e' && buf[i] != 'E' && buf[i] != '.' && (buf[i] < '0' || buf[i] > '9'))) && m < 1<<53 && frac < len(pow10) {
+			p.pos = i
+			v := float64(m)
+			if frac > 0 {
+				v /= pow10[frac]
+			}
+			if neg {
+				v = -v
+			}
+			return v, nil
+		}
+	}
+	return p.float64Slow()
+}
+
+func (p *Parser) float64Slow() (float64, error) {
 	if p.IsNull() {
 		return 0, nil
 	}

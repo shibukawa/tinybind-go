@@ -50,6 +50,17 @@ remeasured_2026_09_12_after_the_second_round:
   benchfixture_readme_rows: decode 634 ns 15 allocs to 534 ns 4 allocs, encode 283 ns to 227 ns; the four allocations are the two slices, the body buffer and the reader, the strings being cache hits on a repeated document
   reading: the gap is 1.35x-1.5x on the small documents and 1.65x on the large one, from 1.8x-2.2x at the start; the machine carried intermittent outside load during these runs, so medians of five with the run repeated until the reflection rows matched earlier idle runs
   not_taken_from_here: the direct buffer path and the non-HTML-escaping mode, per not_portable and requirement:word-at-a-time-json-scanning encode_caveat
+gap_analysis_2026_09_12_third:
+  method: partial Order documents decoded by both, GC off, so each row isolates one feature; empty document 12 ns against 42 ns, one string level, nested strings level, float and bool jsonbind ahead, a three-element struct array 123 ns against 232 ns
+  causes: the value-return chain zeroing and copying the result per level, sized by the struct; about twice the non-inlined calls per member; array bookkeeping through calls
+  landed: requirement:inlinable-token-readers and the in-place decoding recorded in requirement:stack-resident-json-parser
+  remeasured_after:
+    order_rotating: odjson 437 ns; jsonbind 490 ns, from 630 ns; 1.12x
+    book_rotating: odjson 479 ns; jsonbind 558 ns, from 675 ns; 1.16x
+    order_full_same_document: odjson 283 ns; jsonbind 357 ns, from 468 ns; 1.26x
+    empty_document: odjson 12 ns; jsonbind 32 ns, from 42 ns; the registry lookup is 8 ns of it and one value copy at the generic boundary most of the rest
+    benchfixture_readme_row: 534 ns to 428 ns
+    what_is_left: per-member call overhead that is now within a call or two of odjson's, the registry lookup, and the boundary copy the value-returning API keeps; the shape of the two decoders is otherwise the same
 techniques_by_portability:
   portable_pure_go:
     - requirement:decoder-key-decision-tree

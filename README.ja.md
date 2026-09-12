@@ -335,7 +335,7 @@ go test ./internal/benchfixture -run xxx -bench . -benchmem
 
 | 経路 | 標準ライブラリ | 生成コード |
 |------|----------------|------------|
-| JSON decode（`io.Reader`） | 2373 ns · 1889 B · 18 allocs | **534 ns · 752 B · 4 allocs** |
+| JSON decode（`io.Reader`） | 2381 ns · 1889 B · 18 allocs | **428 ns · 752 B · 4 allocs** |
 | JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 1753 ns · 496 B · 10 allocs | — |
 | JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
 | `Bind` + `Write`（リクエスト再利用） | 783 ns · 1154 B · 14 allocs | **371 ns · 529 B · 6 allocs** |

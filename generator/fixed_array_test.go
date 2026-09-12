@@ -91,8 +91,9 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 		`return out, jsonbind.ArrayTooLong("cells", len(out.Cells))`,
 		"out.Cells[i] = e",
 		"clear(out.Cells[filled:])",
-		"e, err := decodeMarkJSON(p)",
-		"out.Marks[i] = e",
+		// A struct cell is decoded in place, after being cleared.
+		"out.Marks[i] = Mark{}",
+		"decodeMarkJSON(p, &out.Marks[i])",
 		"out.Seats = [seatCount]uint16{}",
 		"if n > len(out.Cells) {",
 	} {

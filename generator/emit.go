@@ -514,9 +514,11 @@ func emitCodecMethods(b *bytes.Buffer, t TypePlan) {
 	if t.DirectUsage&UsageDecodeMethod != 0 {
 		fmt.Fprintf(b, "// DecodeJSONFrom implements jsonbind.Decoder.\n")
 		fmt.Fprintf(b, "func (v *%s) DecodeJSONFrom(data []byte) error {\n", t.Name)
-		fmt.Fprintf(b, "\tout, err := decode%sBytes(data)\n", t.Name)
-		b.WriteString("\tif err != nil {\n\t\treturn err\n\t}\n")
-		b.WriteString("\t*v = out\n\treturn nil\n")
+		// The document replaces the value, as it did when the method
+		// assigned a decoded copy; decoding straight into v is what saves
+		// that copy.
+		fmt.Fprintf(b, "\t*v = %s{}\n", t.Name)
+		fmt.Fprintf(b, "\treturn decode%sInto(data, v)\n", t.Name)
 		b.WriteString("}\n\n")
 	}
 }
@@ -524,34 +526,51 @@ func emitCodecMethods(b *bytes.Buffer, t TypePlan) {
 // emitDecodeJSON writes a decoder that walks the document once. Members are
 // dispatched by a switch over the key bytes, and values are read straight out
 // of the input buffer, so decoding allocates only what lands in the result.
+//
+// The decoders write into a destination the caller owns rather than
+// returning the value: a nested struct is decoded straight into its field, a
+// slice element into the slot append made for it, an array cell in place.
+// A value returned up through every level was zeroed and copied once per
+// level, which on a wide struct cost more than reading its members. The
+// pointer comes back as the first result only so the arms below keep one
+// spelling, `return out, err`, whichever of the two walks they are written
+// into; callers discard it.
 func emitDecodeJSON(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
-	fmt.Fprintf(b, "func decode%sBytes(data []byte) (%s, error) {\n", t.Name, t.Name)
+	fmt.Fprintf(b, "func decode%sInto(data []byte, out *%s) error {\n", t.Name, t.Name)
 	// An empty document has always decoded to the zero value rather than an
 	// error. Keep that: callers read config files and optional bodies through
 	// here, and turning silence into a failure is not this decoder's call.
 	b.WriteString("\tif jsonbind.IsBlank(data) {\n")
-	fmt.Fprintf(b, "\t\tvar out %s\n", t.Name)
 	for _, f := range t.Fields {
 		if f.IsRest() {
 			fmt.Fprintf(b, "\t\tout.%s = %s{}\n", f.Name, f.GoType())
 		}
 	}
-	b.WriteString("\t\treturn out, nil\n\t}\n")
+	b.WriteString("\t\treturn nil\n\t}\n")
 	// The parser lives on the stack; NewParser would heap-allocate one per
 	// decode for no reason the escape analysis can see past.
 	b.WriteString("\tvar p jsonbind.Parser\n")
 	b.WriteString("\tp.Reset(data)\n")
-	fmt.Fprintf(b, "\tout, err := decode%sJSON(&p)\n", t.Name)
+	fmt.Fprintf(b, "\t_, err := decode%sJSON(&p, out)\n", t.Name)
 	b.WriteString("\tif err == nil {\n\t\terr = p.End()\n\t}\n")
 	// The string cache goes back to the pool on every path, so the next
 	// decode starts from what this one learned.
 	b.WriteString("\tp.Release()\n")
+	b.WriteString("\treturn err\n}\n\n")
+
+	fmt.Fprintf(b, "func decode%sBytes(data []byte) (%s, error) {\n", t.Name, t.Name)
+	fmt.Fprintf(b, "\tvar out %s\n", t.Name)
+	fmt.Fprintf(b, "\terr := decode%sInto(data, &out)\n", t.Name)
 	b.WriteString("\treturn out, err\n}\n\n")
 
-	fmt.Fprintf(b, "func decode%sJSON(p *jsonbind.Parser) (%s, error) {\n", t.Name, t.Name)
-	fmt.Fprintf(b, "\tvar out %s\n", t.Name)
-	b.WriteString("\tnull, err := p.ObjectStart()\n")
-	b.WriteString("\tif err != nil || null {\n\t\treturn out, err\n\t}\n")
+	fmt.Fprintf(b, "func decode%sJSON(p *jsonbind.Parser, out *%s) (*%s, error) {\n", t.Name, t.Name, t.Name)
+	b.WriteString("\tif !p.ObjectStartFast() {\n")
+	b.WriteString("\t\tnull, err := p.ObjectStart()\n")
+	b.WriteString("\t\tif err != nil {\n\t\t\treturn out, err\n\t\t}\n")
+	// A null member leaves the zero value, which is what assigning the
+	// returned zero used to do.
+	fmt.Fprintf(b, "\t\tif null {\n\t\t\t*out = %s{}\n\t\t\treturn out, nil\n\t\t}\n", t.Name)
+	b.WriteString("\t}\n")
 
 	// A rest map is always non-nil once the body is an object, matching what
 	// the map-based decoder produced.
@@ -624,13 +643,25 @@ func emitMemberWalk(b *bytes.Buffer, indent string, w memberWalk) {
 	if len(cands) == 0 {
 		rest = "_"
 	}
-	fmt.Fprintf(b, "%s%s, ok, err := p.ObjectKeyRest(n)\n", body, rest)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", body, body, w.fail("err"), body)
-	fmt.Fprintf(b, "%sif !ok {\n%s\t%s\n%s}\n", body, body, w.end, body)
+	// KeyFast settles the comma and the quote of a compact document in
+	// place; ObjectKeyRest is where whitespace, the closing brace and every
+	// error are handled, and it is called only when KeyFast declines.
+	if rest == "_" {
+		fmt.Fprintf(b, "%sif !p.KeyFast(n) {\n", body)
+	} else {
+		fmt.Fprintf(b, "%svar rest []byte\n", body)
+		fmt.Fprintf(b, "%sif p.KeyFast(n) {\n%s\trest = p.Rest()\n%s} else {\n", body, body, body)
+	}
+	fmt.Fprintf(b, "%s\tvar ok bool\n%s\tvar err error\n", body, body)
+	fmt.Fprintf(b, "%s\t%s, ok, err = p.ObjectKeyRest(n)\n", body, rest)
+	fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\t%s\n%s\t}\n", body, body, w.fail("err"), body)
+	fmt.Fprintf(b, "%s\tif !ok {\n%s\t\t%s\n%s\t}\n", body, body, w.end, body)
+	fmt.Fprintf(b, "%s}\n", body)
 	fmt.Fprintf(b, "%sidx, k := -1, 0\n", body)
 	emitKeyTree(b, body, cands, 1, jsonKeyMatch)
 	fmt.Fprintf(b, "%sif idx >= 0 {\n", body)
-	fmt.Fprintf(b, "%s\tif err := p.KeyMatched(k); err != nil {\n%s\t\t%s\n%s\t}\n", body, body, w.fail("err"), body)
+	fmt.Fprintf(b, "%s\tp.Skip(k)\n", body)
+	fmt.Fprintf(b, "%s\tif !p.ColonFast() {\n%s\t\tif err := p.Colon(); err != nil {\n%s\t\t\t%s\n%s\t\t}\n%s\t}\n", body, body, body, w.fail("err"), body, body)
 	fmt.Fprintf(b, "%s} else {\n", body)
 	slow := body + "\t"
 	fmt.Fprintf(b, "%skey, err := p.ObjectKeyName()\n", slow)
@@ -873,9 +904,7 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid value\", err)\n%s}\n", prefix, prefix, jsonMemberName(f), prefix)
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindStruct:
-		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &%s); err != nil {\n%s\treturn out, err\n%s}\n", prefix, f.TypeName, dest, prefix, prefix)
 	case KindForeign:
 		// A foreign type cannot join the parser walk, because its decoder takes
 		// a complete document. RawValue lifts the sub-document out so it can be
@@ -936,8 +965,7 @@ func parserMethod(kind string) string {
 func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, nilOnNull bool) {
 	fmt.Fprintf(b, "%s{\n", prefix)
 	in := prefix + "\t"
-	fmt.Fprintf(b, "%snull, err := p.ArrayStart()\n", in)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", in, in, member, in)
+	emitArrayOpen(b, in, member)
 	if nilOnNull {
 		fmt.Fprintf(b, "%sif null {\n%s\t%s = nil\n%s} else {\n", in, in, dest, in)
 	} else {
@@ -947,14 +975,18 @@ func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, 
 	fmt.Fprintf(b, "%sv := %s{}\n", body, f.GoType())
 	fmt.Fprintf(b, "%sfor i := 0; ; i++ {\n", body)
 	loop := body + "\t"
-	fmt.Fprintf(b, "%smore, err := p.ArrayNext(i)\n", loop)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", loop, loop, member, loop)
-	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
+	emitArrayNext(b, loop, member)
 	// Sizing on the first element keeps an empty array allocation-free while
 	// giving a populated one a single growth step in the common case.
 	fmt.Fprintf(b, "%sif i == 0 {\n%s\tv = make(%s, 0, 8)\n%s}\n", loop, loop, f.GoType(), loop)
-	emitElemRead(b, f, loop, member)
-	fmt.Fprintf(b, "%sv = append(v, e)\n", loop)
+	if f.ElemKind == KindStruct {
+		// The element is decoded into the slot append makes for it.
+		fmt.Fprintf(b, "%sv = append(v, %s{})\n", loop, f.TypeName)
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &v[len(v)-1]); err != nil {\n%s\treturn out, err\n%s}\n", loop, f.TypeName, loop, loop)
+	} else {
+		emitElemRead(b, f, loop, member)
+		fmt.Fprintf(b, "%sv = append(v, e)\n", loop)
+	}
 	fmt.Fprintf(b, "%s}\n", body)
 	fmt.Fprintf(b, "%s%s = v\n", body, dest)
 	fmt.Fprintf(b, "%s}\n", in)
@@ -971,19 +1003,21 @@ func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, 
 func emitStreamArray(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) {
 	fmt.Fprintf(b, "%s{\n", prefix)
 	in := prefix + "\t"
-	fmt.Fprintf(b, "%snull, err := p.ArrayStart()\n", in)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", in, in, member, in)
+	emitArrayOpen(b, in, member)
 	fmt.Fprintf(b, "%sif !null {\n", in)
 	body := in + "\t"
 	fmt.Fprintf(b, "%sfilled := 0\n", body)
 	fmt.Fprintf(b, "%sfor i := 0; ; i++ {\n", body)
 	loop := body + "\t"
-	fmt.Fprintf(b, "%smore, err := p.ArrayNext(i)\n", loop)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", loop, loop, member, loop)
-	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
+	emitArrayNext(b, loop, member)
 	fmt.Fprintf(b, "%sif i >= len(%s) {\n%s\treturn out, jsonbind.ArrayTooLong(%q, len(%s))\n%s}\n", loop, dest, loop, member, dest, loop)
-	emitElemRead(b, f, loop, member)
-	fmt.Fprintf(b, "%s%s[i] = e\n", loop, dest)
+	if f.ElemKind == KindStruct {
+		fmt.Fprintf(b, "%s%s[i] = %s{}\n", loop, dest, f.TypeName)
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &%s[i]); err != nil {\n%s\treturn out, err\n%s}\n", loop, f.TypeName, dest, loop, loop)
+	} else {
+		emitElemRead(b, f, loop, member)
+		fmt.Fprintf(b, "%s%s[i] = e\n", loop, dest)
+	}
 	fmt.Fprintf(b, "%sfilled = i + 1\n", loop)
 	fmt.Fprintf(b, "%s}\n", body)
 	fmt.Fprintf(b, "%sclear(%s[filled:])\n", body, dest)
@@ -1011,8 +1045,11 @@ func emitStreamBytes(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) 
 func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, nilOnNull bool) {
 	fmt.Fprintf(b, "%s{\n", prefix)
 	in := prefix + "\t"
-	fmt.Fprintf(b, "%snull, err := p.ObjectStart()\n", in)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", in, in, member, in)
+	fmt.Fprintf(b, "%snull := false\n", in)
+	fmt.Fprintf(b, "%sif !p.ObjectStartFast() {\n", in)
+	fmt.Fprintf(b, "%s\tvar err error\n%s\tnull, err = p.ObjectStart()\n", in, in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s\t}\n", in, in, member, in)
+	fmt.Fprintf(b, "%s}\n", in)
 	if nilOnNull {
 		fmt.Fprintf(b, "%sif null {\n%s\t%s = nil\n%s} else {\n", in, in, dest, in)
 	} else {
@@ -1029,12 +1066,39 @@ func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, ni
 	// so it is copied before the value is read; a key seen before comes back
 	// from the parser's cache rather than being copied again.
 	fmt.Fprintf(b, "%sname := p.Intern(key)\n", loop)
-	emitElemRead(b, f, loop, member)
+	if f.ElemKind == KindStruct {
+		// A map value has no address, so the element is decoded into a
+		// local and stored.
+		fmt.Fprintf(b, "%svar e %s\n", loop, f.TypeName)
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &e); err != nil {\n%s\treturn out, err\n%s}\n", loop, f.TypeName, loop, loop)
+	} else {
+		emitElemRead(b, f, loop, member)
+	}
 	fmt.Fprintf(b, "%sv[name] = e\n", loop)
 	fmt.Fprintf(b, "%s}\n", body)
 	fmt.Fprintf(b, "%s%s = v\n", body, dest)
 	fmt.Fprintf(b, "%s}\n", in)
 	fmt.Fprintf(b, "%s}\n", prefix)
+}
+
+// emitArrayOpen writes the fast-or-full array start, leaving null set.
+func emitArrayOpen(b *bytes.Buffer, in, member string) {
+	fmt.Fprintf(b, "%snull := false\n", in)
+	fmt.Fprintf(b, "%sif !p.ArrayStartFast() {\n", in)
+	fmt.Fprintf(b, "%s\tvar err error\n%s\tnull, err = p.ArrayStart()\n", in, in)
+	fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s\t}\n", in, in, member, in)
+	fmt.Fprintf(b, "%s}\n", in)
+}
+
+// emitArrayNext writes the fast-or-full step to the next element, breaking
+// the loop at the closing bracket.
+func emitArrayNext(b *bytes.Buffer, loop, member string) {
+	fmt.Fprintf(b, "%smore, fast := p.ArrayNextFast(i)\n", loop)
+	fmt.Fprintf(b, "%sif !fast {\n", loop)
+	fmt.Fprintf(b, "%s\tvar err error\n%s\tmore, err = p.ArrayNext(i)\n", loop, loop)
+	fmt.Fprintf(b, "%s\tif err != nil {\n%s\t\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s\t}\n", loop, loop, member, loop)
+	fmt.Fprintf(b, "%s}\n", loop)
+	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
 }
 
 // emitElemRead reads one collection element into a local named e, under the
@@ -1048,8 +1112,8 @@ func emitElemRead(b *bytes.Buffer, f FieldPlan, prefix, member string) {
 	}
 	switch {
 	case f.ElemKind == KindStruct:
-		fmt.Fprintf(b, "%se, err := decode%sJSON(p)\n", prefix, f.TypeName)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
+		fmt.Fprintf(b, "%svar e %s\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &e); err != nil {\n%s\treturn out, err\n%s}\n", prefix, f.TypeName, prefix, prefix)
 	case isSizedIntKind(f.ElemKind):
 		_, unsigned, _ := intKindBits(f.ElemKind)
 		method := "Int64"
@@ -1734,9 +1798,7 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid value\", err)\n%s}\n", prefix, prefix, f.Wire, prefix)
 		fmt.Fprintf(b, "%s%s = v\n", prefix, dest)
 	case KindStruct:
-		fmt.Fprintf(b, "%sv, err := decode%sJSON(p)\n", prefix, f.TypeName)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+		fmt.Fprintf(b, "%sif _, err := decode%sJSON(p, &%s); err != nil {\n%s\treturn out, err\n%s}\n", prefix, f.TypeName, dest, prefix, prefix)
 	case KindForeign:
 		// The type fills itself from the raw sub-document, which is the one
 		// place a body span leaves the walk — the reason the body was read

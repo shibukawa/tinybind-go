@@ -16,6 +16,7 @@ status: parser half implemented 2026-09-12; the boxed result is left as it was, 
 as_built:
   loops: generator/emit.go emitStreamSlice, emitStreamArray and emitStreamMap write the loop into the generated code with emitElemRead; ParseSlice, ParseArray and ParseMap stay for callers outside generated code, and jsonbind.ArrayTooLong keeps the error text the two agree on
   verified: go build -gcflags=-m over internal/benchfixture reports no moved to heap for the Parser; the decode fell from 16 to 15 allocations
+  in_place_2026_09_12_later: the generated decoders write into a destination the caller owns -- decodeXJSON(p, out *X), decodeXInto(data, out *X) -- so a nested struct is decoded into its field, a slice element into the slot append made, an array cell in place, and DecodeJSONFrom into its receiver; a value returned through every level was zeroed and copied once per level, measured at 24 ns on a 144-byte struct for an empty document and 260 ns on a 1296-byte one; decodeXBytes keeps the value-returning signature the registry needs, one copy at the boundary
   result_2026_09_12_later: the registry now wins when both exist, so decodeThroughInterface runs only for a type the registry does not hold and an annotated type decodes without the boxing; see requirement:json-codec-interface precedence.method_over_plan.reversed_2026_09_12
 the_four_structural_allocations:
   parser: 'var p jsonbind.Parser in decodeXBytes escapes because &p flows into ParseSlice''s read func(*Parser) argument, a function value the compiler cannot see through'

@@ -13,42 +13,62 @@ func init() {
 	httpbind.RegisterBind[RenameRequest](bindRenameRequest)
 }
 
-func decodeRenameRequestBytes(data []byte) (RenameRequest, error) {
+func decodeRenameRequestInto(data []byte, out *RenameRequest) error {
 	if jsonbind.IsBlank(data) {
-		var out RenameRequest
-		return out, nil
+		return nil
 	}
 	var p jsonbind.Parser
 	p.Reset(data)
-	out, err := decodeRenameRequestJSON(&p)
+	_, err := decodeRenameRequestJSON(&p, out)
 	if err == nil {
 		err = p.End()
 	}
 	p.Release()
+	return err
+}
+
+func decodeRenameRequestBytes(data []byte) (RenameRequest, error) {
+	var out RenameRequest
+	err := decodeRenameRequestInto(data, &out)
 	return out, err
 }
 
-func decodeRenameRequestJSON(p *jsonbind.Parser) (RenameRequest, error) {
-	var out RenameRequest
-	null, err := p.ObjectStart()
-	if err != nil || null {
-		return out, err
-	}
-	for n := 0; ; n++ {
-		rest, ok, err := p.ObjectKeyRest(n)
+func decodeRenameRequestJSON(p *jsonbind.Parser, out *RenameRequest) (*RenameRequest, error) {
+	if !p.ObjectStartFast() {
+		null, err := p.ObjectStart()
 		if err != nil {
 			return out, err
 		}
-		if !ok {
+		if null {
+			*out = RenameRequest{}
 			return out, nil
+		}
+	}
+	for n := 0; ; n++ {
+		var rest []byte
+		if p.KeyFast(n) {
+			rest = p.Rest()
+		} else {
+			var ok bool
+			var err error
+			rest, ok, err = p.ObjectKeyRest(n)
+			if err != nil {
+				return out, err
+			}
+			if !ok {
+				return out, nil
+			}
 		}
 		idx, k := -1, 0
 		if len(rest) >= 6 && string(rest[:6]) == "\"name\"" {
 			idx, k = 0, 6
 		}
 		if idx >= 0 {
-			if err := p.KeyMatched(k); err != nil {
-				return out, err
+			p.Skip(k)
+			if !p.ColonFast() {
+				if err := p.Colon(); err != nil {
+					return out, err
+				}
 			}
 		} else {
 			key, err := p.ObjectKeyName()
@@ -104,20 +124,30 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 					return out, httpbind.JSONBodyNotObject()
 				}
 				for n := 0; ; n++ {
-					rest, ok, err := p.ObjectKeyRest(n)
-					if err != nil {
-						return out, httpbind.JSONBodyError(err)
-					}
-					if !ok {
-						break
+					var rest []byte
+					if p.KeyFast(n) {
+						rest = p.Rest()
+					} else {
+						var ok bool
+						var err error
+						rest, ok, err = p.ObjectKeyRest(n)
+						if err != nil {
+							return out, httpbind.JSONBodyError(err)
+						}
+						if !ok {
+							break
+						}
 					}
 					idx, k := -1, 0
 					if len(rest) >= 6 && string(rest[:6]) == "\"name\"" {
 						idx, k = 0, 6
 					}
 					if idx >= 0 {
-						if err := p.KeyMatched(k); err != nil {
-							return out, httpbind.JSONBodyError(err)
+						p.Skip(k)
+						if !p.ColonFast() {
+							if err := p.Colon(); err != nil {
+								return out, httpbind.JSONBodyError(err)
+							}
 						}
 					} else {
 						key, err := p.ObjectKeyName()
