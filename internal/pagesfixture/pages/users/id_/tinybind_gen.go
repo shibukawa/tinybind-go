@@ -37,24 +37,43 @@ func decodeRenameRequestJSON(p *jsonbind.Parser) (RenameRequest, error) {
 		return out, err
 	}
 	for n := 0; ; n++ {
-		key, ok, err := p.ObjectKey(n)
+		rest, ok, err := p.ObjectKeyRest(n)
 		if err != nil {
 			return out, err
 		}
 		if !ok {
 			return out, nil
 		}
-		switch string(key) {
-		case "name":
+		idx, k := -1, 0
+		if len(rest) >= 6 && string(rest[:6]) == "\"name\"" {
+			idx, k = 0, 6
+		}
+		if idx >= 0 {
+			if err := p.KeyMatched(k); err != nil {
+				return out, err
+			}
+		} else {
+			key, err := p.ObjectKeyName()
+			if err != nil {
+				return out, err
+			}
+			switch string(key) {
+			case "name":
+				idx = 0
+			default:
+				if err := p.SkipValue(); err != nil {
+					return out, err
+				}
+				continue
+			}
+		}
+		switch idx {
+		case 0:
 			v, err := p.String()
 			if err != nil {
 				return out, jsonbind.FieldError("name", "invalid string", err)
 			}
 			out.Name = v
-		default:
-			if err := p.SkipValue(); err != nil {
-				return out, err
-			}
 		}
 	}
 }
@@ -87,15 +106,38 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 					return out, httpbind.JSONBodyNotObject()
 				}
 				for n := 0; ; n++ {
-					key, ok, err := p.ObjectKey(n)
+					rest, ok, err := p.ObjectKeyRest(n)
 					if err != nil {
 						return out, httpbind.JSONBodyError(err)
 					}
 					if !ok {
 						break
 					}
-					switch string(key) {
-					case "name":
+					idx, k := -1, 0
+					if len(rest) >= 6 && string(rest[:6]) == "\"name\"" {
+						idx, k = 0, 6
+					}
+					if idx >= 0 {
+						if err := p.KeyMatched(k); err != nil {
+							return out, httpbind.JSONBodyError(err)
+						}
+					} else {
+						key, err := p.ObjectKeyName()
+						if err != nil {
+							return out, httpbind.JSONBodyError(err)
+						}
+						switch string(key) {
+						case "name":
+							idx = 0
+						default:
+							if err := p.SkipValue(); err != nil {
+								return out, httpbind.JSONBodyError(err)
+							}
+							continue
+						}
+					}
+					switch idx {
+					case 0:
 						if !needName {
 							if err := p.SkipValue(); err != nil {
 								return out, httpbind.JSONBodyError(err)
@@ -108,10 +150,6 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 							return out, jsonbind.FieldError("name", "invalid string", err)
 						}
 						out.Name = v
-					default:
-						if err := p.SkipValue(); err != nil {
-							return out, httpbind.JSONBodyError(err)
-						}
 					}
 				}
 				if err := p.End(); err != nil {

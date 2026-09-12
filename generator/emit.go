@@ -552,31 +552,197 @@ func emitDecodeJSON(b *bytes.Buffer, t TypePlan, types map[string]TypePlan) {
 		fmt.Fprintf(b, "\tout.%s = %s{}\n", f.Name, f.GoType())
 	}
 
-	b.WriteString("\tfor n := 0; ; n++ {\n")
-	b.WriteString("\t\tkey, ok, err := p.ObjectKey(n)\n")
-	b.WriteString("\t\tif err != nil {\n\t\t\treturn out, err\n\t\t}\n")
-	b.WriteString("\t\tif !ok {\n\t\t\treturn out, nil\n\t\t}\n")
-	b.WriteString("\t\tswitch string(key) {\n")
-
+	var members []FieldPlan
 	for _, f := range t.Fields {
-		if !isDocumentField(f) || f.IsRest() {
-			continue
+		if isDocumentField(f) && !f.IsRest() {
+			members = append(members, f)
 		}
-		fmt.Fprintf(b, "\t\tcase %q:\n", jsonMemberName(f))
-		emitStreamAssign(b, f, types, "\t\t\t", "out."+f.Name)
 	}
-
-	// Names that belong to the body but decode to nothing here (an uploaded
-	// file, say) must still be consumed rather than swept into a rest map.
-	for _, name := range skippedBodyNames(t) {
-		fmt.Fprintf(b, "\t\tcase %q:\n", name)
-		b.WriteString("\t\t\tif err := p.SkipValue(); err != nil {\n\t\t\t\treturn out, err\n\t\t\t}\n")
+	names := make([]string, len(members))
+	for i, f := range members {
+		names[i] = jsonMemberName(f)
 	}
+	emitMemberWalk(b, "\t", memberWalk{
+		names: names,
+		// Names that belong to the body but decode to nothing here (an
+		// uploaded file, say) must still be consumed rather than swept into
+		// a rest map.
+		skipped: skippedBodyNames(t),
+		fail:    func(err string) string { return "return out, " + err },
+		end:     "return out, nil",
+		assign: func(i int, prefix string) {
+			emitStreamAssign(b, members[i], types, prefix, "out."+members[i].Name)
+		},
+		defaultArm: func(prefix string) { emitStreamDefaultAt(b, t, prefix) },
+	})
+	b.WriteString("}\n\n")
+}
 
-	b.WriteString("\t\tdefault:\n")
-	emitStreamDefault(b, t)
-	b.WriteString("\t\t}\n")
-	b.WriteString("\t}\n}\n\n")
+// memberWalk is what an object walk needs from its caller: the member names
+// in field order, the names consumed without a field, how an error leaves,
+// what runs at the closing brace, and the per-member and unknown-member arms.
+type memberWalk struct {
+	names      []string
+	skipped    []string
+	fail       func(err string) string
+	end        string
+	assign     func(i int, prefix string)
+	defaultArm func(prefix string)
+}
+
+// emitMemberWalk writes the loop over an object's members.
+//
+// A member name is settled against the input in place first: a decision tree
+// over the byte positions that tell the declared names apart, ending in one
+// fixed-length compare of the quoted literal, so the common member costs a
+// few byte switches and one memequal rather than a full scan of the name and
+// a string switch. A name the tree does not match, an escaped spelling of a
+// declared one included, is read the ordinary way and matched by the same
+// switch the walk always had, so the two routes agree on every name.
+func emitMemberWalk(b *bytes.Buffer, indent string, w memberWalk) {
+	fmt.Fprintf(b, "%sfor n := 0; ; n++ {\n", indent)
+	body := indent + "\t"
+	var cands []keyCandidate
+	for i, name := range w.names {
+		if treeSafeName(name) {
+			cands = append(cands, keyCandidate{lit: "\"" + name + "\"", idx: i})
+		}
+	}
+	// A type with no name to match in place still walks its members, so the
+	// unknown-member arm runs for each; the input is then not looked at.
+	rest := "rest"
+	if len(cands) == 0 {
+		rest = "_"
+	}
+	fmt.Fprintf(b, "%s%s, ok, err := p.ObjectKeyRest(n)\n", body, rest)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", body, body, w.fail("err"), body)
+	fmt.Fprintf(b, "%sif !ok {\n%s\t%s\n%s}\n", body, body, w.end, body)
+	fmt.Fprintf(b, "%sidx, k := -1, 0\n", body)
+	emitKeyTree(b, body, cands, 1)
+	fmt.Fprintf(b, "%sif idx >= 0 {\n", body)
+	fmt.Fprintf(b, "%s\tif err := p.KeyMatched(k); err != nil {\n%s\t\t%s\n%s\t}\n", body, body, w.fail("err"), body)
+	fmt.Fprintf(b, "%s} else {\n", body)
+	slow := body + "\t"
+	fmt.Fprintf(b, "%skey, err := p.ObjectKeyName()\n", slow)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", slow, slow, w.fail("err"), slow)
+	fmt.Fprintf(b, "%sswitch string(key) {\n", slow)
+	for i, name := range w.names {
+		fmt.Fprintf(b, "%scase %q:\n%s\tidx = %d\n", slow, name, slow, i)
+	}
+	for _, name := range w.skipped {
+		fmt.Fprintf(b, "%scase %q:\n", slow, name)
+		fmt.Fprintf(b, "%s\tif err := p.SkipValue(); err != nil {\n%s\t\t%s\n%s\t}\n", slow, slow, w.fail("err"), slow)
+		fmt.Fprintf(b, "%s\tcontinue\n", slow)
+	}
+	fmt.Fprintf(b, "%sdefault:\n", slow)
+	w.defaultArm(slow + "\t")
+	fmt.Fprintf(b, "%s\tcontinue\n", slow)
+	fmt.Fprintf(b, "%s}\n", slow)
+	fmt.Fprintf(b, "%s}\n", body)
+	fmt.Fprintf(b, "%sswitch idx {\n", body)
+	for i := range w.names {
+		fmt.Fprintf(b, "%scase %d:\n", body, i)
+		w.assign(i, body+"\t")
+	}
+	fmt.Fprintf(b, "%s}\n", body)
+	fmt.Fprintf(b, "%s}\n", indent)
+}
+
+// keyCandidate is one quoted member name the decision tree can settle, with
+// the index its match reports.
+type keyCandidate struct {
+	lit string
+	idx int
+}
+
+// treeSafeName reports whether a member name can be matched raw against the
+// input: printable ASCII with nothing JSON would escape. Any other name is
+// matched by the slow route alone, which unescapes first.
+func treeSafeName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c < 0x20 || c >= 0x7f || c == '"' || c == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// emitKeyTree writes nested byte switches that tell cands apart, each leaf a
+// single compare of the whole quoted literal. known is how many bytes of rest
+// the enclosing guards have already proven present.
+//
+// Two distinct quoted names always differ at some position under the shorter
+// one's length, because the shorter one has its closing quote there and the
+// longer one does not; so a split position always exists and the recursion
+// always ends. The sequential fallback is kept for the case that cannot
+// happen, so a defect in the reasoning above costs speed and never a miss.
+func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int) {
+	if len(cands) == 0 {
+		return
+	}
+	if len(cands) == 1 {
+		emitKeyLeaf(b, prefix, cands[0], known)
+		return
+	}
+	minLen := len(cands[0].lit)
+	for _, c := range cands[1:] {
+		minLen = min(minLen, len(c.lit))
+	}
+	bestK, bestN := -1, 1
+	for k := 1; k < minLen; k++ {
+		seen := map[byte]bool{}
+		for _, c := range cands {
+			seen[c.lit[k]] = true
+		}
+		if len(seen) > bestN {
+			bestK, bestN = k, len(seen)
+		}
+	}
+	if bestK < 0 {
+		for _, c := range cands {
+			emitKeyLeaf(b, prefix, c, known)
+		}
+		return
+	}
+	in := prefix
+	guarded := known
+	if known <= bestK {
+		fmt.Fprintf(b, "%sif len(rest) > %d {\n", prefix, bestK)
+		in = prefix + "\t"
+		guarded = bestK + 1
+	}
+	fmt.Fprintf(b, "%sswitch rest[%d] {\n", in, bestK)
+	var order []byte
+	groups := map[byte][]keyCandidate{}
+	for _, c := range cands {
+		by := c.lit[bestK]
+		if _, ok := groups[by]; !ok {
+			order = append(order, by)
+		}
+		groups[by] = append(groups[by], c)
+	}
+	for _, by := range order {
+		fmt.Fprintf(b, "%scase %s:\n", in, strconv.QuoteRuneToASCII(rune(by)))
+		emitKeyTree(b, in+"\t", groups[by], guarded)
+	}
+	fmt.Fprintf(b, "%s}\n", in)
+	if in != prefix {
+		fmt.Fprintf(b, "%s}\n", prefix)
+	}
+}
+
+// emitKeyLeaf writes the compare that settles one candidate.
+func emitKeyLeaf(b *bytes.Buffer, prefix string, c keyCandidate, known int) {
+	n := len(c.lit)
+	guard := ""
+	if known < n {
+		guard = fmt.Sprintf("len(rest) >= %d && ", n)
+	}
+	fmt.Fprintf(b, "%sif %sstring(rest[:%d]) == %q {\n%s\tidx, k = %d, %d\n%s}\n", prefix, guard, n, c.lit, prefix, c.idx, n, prefix)
 }
 
 // skippedBodyNames lists body field names the streaming decoder must consume
@@ -602,25 +768,25 @@ func skippedBodyNames(t TypePlan) []string {
 
 // emitStreamDefault handles a member no case matched: collected into a rest
 // map when the model declares one, skipped otherwise.
-func emitStreamDefault(b *bytes.Buffer, t TypePlan) {
+func emitStreamDefaultAt(b *bytes.Buffer, t TypePlan, prefix string) {
 	for _, f := range t.Fields {
 		switch f.Kind {
 		case KindRestAny:
-			b.WriteString("\t\t\tname := string(key)\n")
-			b.WriteString("\t\t\tv, err := p.Any()\n")
-			b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn out, err\n\t\t\t}\n")
-			fmt.Fprintf(b, "\t\t\tout.%s[name] = v\n", f.Name)
+			fmt.Fprintf(b, "%sname := string(key)\n", prefix)
+			fmt.Fprintf(b, "%sv, err := p.Any()\n", prefix)
+			fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
+			fmt.Fprintf(b, "%sout.%s[name] = v\n", prefix, f.Name)
 			return
 		case KindRestRaw:
-			b.WriteString("\t\t\tname := string(key)\n")
-			b.WriteString("\t\t\traw, err := p.RawValue()\n")
-			b.WriteString("\t\t\tif err != nil {\n\t\t\t\treturn out, err\n\t\t\t}\n")
+			fmt.Fprintf(b, "%sname := string(key)\n", prefix)
+			fmt.Fprintf(b, "%sraw, err := p.RawValue()\n", prefix)
+			fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 			// RawValue aliases the input buffer, so a retained value is copied.
-			fmt.Fprintf(b, "\t\t\tout.%s[name] = append(json.RawMessage(nil), raw...)\n", f.Name)
+			fmt.Fprintf(b, "%sout.%s[name] = append(json.RawMessage(nil), raw...)\n", prefix, f.Name)
 			return
 		}
 	}
-	b.WriteString("\t\t\tif err := p.SkipValue(); err != nil {\n\t\t\t\treturn out, err\n\t\t\t}\n")
+	fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 }
 
 // jsonMemberName is the document key a streaming decoder matches a field by:
@@ -660,7 +826,7 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		fmt.Fprintf(b, "%sif err := %s.DecodeJSONFrom(raw); err != nil {\n%s\treturn out, err\n%s}\n", prefix, dest, prefix, prefix)
 	case KindSlice:
 		if supportedElemKind(f.ElemKind) {
-			emitStreamSlice(b, f, prefix, dest)
+			emitStreamSlice(b, f, prefix, dest, jsonMemberName(f), false)
 		}
 	case KindArray:
 		if supportedElemKind(f.ElemKind) {
@@ -670,7 +836,7 @@ func emitStreamAssign(b *bytes.Buffer, f FieldPlan, types map[string]TypePlan, p
 		emitStreamBytes(b, f, prefix, dest, jsonMemberName(f))
 	case KindMap:
 		if supportedElemKind(f.ElemKind) {
-			emitStreamMap(b, f, prefix, dest)
+			emitStreamMap(b, f, prefix, dest, jsonMemberName(f), false)
 		}
 	case "file":
 		// A file never arrives inside a JSON document.
@@ -696,26 +862,73 @@ func parserMethod(kind string) string {
 	return ""
 }
 
-func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
-	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sv, err := p.ParseSlice(%q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-	// A null member leaves the destination alone, so a value bound earlier
-	// survives it.
-	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
+// The collection loops below are written into the generated code rather than
+// handed to ParseSlice, ParseArray and ParseMap. Those helpers take the
+// element reader as a func value, and a *Parser flowing into a func value is
+// one the compiler cannot see the end of, so every decoder's Parser was moved
+// to the heap and every decode paid that allocation before reading a byte.
+// The loops are the helpers' bodies, element read spelled inline, and the
+// helpers stay for callers outside generated code.
+
+// emitStreamSlice reads an array member into a slice. A null member leaves
+// the destination alone under the codec's rules; the binder assigns nil for
+// it, which is what ParseSlice's nil result did there.
+func emitStreamSlice(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, nilOnNull bool) {
+	fmt.Fprintf(b, "%s{\n", prefix)
+	in := prefix + "\t"
+	fmt.Fprintf(b, "%snull, err := p.ArrayStart()\n", in)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", in, in, member, in)
+	if nilOnNull {
+		fmt.Fprintf(b, "%sif null {\n%s\t%s = nil\n%s} else {\n", in, in, dest, in)
+	} else {
+		fmt.Fprintf(b, "%sif !null {\n", in)
+	}
+	body := in + "\t"
+	fmt.Fprintf(b, "%sv := %s{}\n", body, f.GoType())
+	fmt.Fprintf(b, "%sfor i := 0; ; i++ {\n", body)
+	loop := body + "\t"
+	fmt.Fprintf(b, "%smore, err := p.ArrayNext(i)\n", loop)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", loop, loop, member, loop)
+	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
+	// Sizing on the first element keeps an empty array allocation-free while
+	// giving a populated one a single growth step in the common case.
+	fmt.Fprintf(b, "%sif i == 0 {\n%s\tv = make(%s, 0, 8)\n%s}\n", loop, loop, f.GoType(), loop)
+	emitElemRead(b, f, loop, member)
+	fmt.Fprintf(b, "%sv = append(v, e)\n", loop)
+	fmt.Fprintf(b, "%s}\n", body)
+	fmt.Fprintf(b, "%s%s = v\n", body, dest)
+	fmt.Fprintf(b, "%s}\n", in)
+	fmt.Fprintf(b, "%s}\n", prefix)
 }
 
-// emitStreamArray fills a fixed-length array field in place. The destination is
-// handed over as a slice of itself, so one runtime helper serves both the codec
-// and the binder and neither carries a length of its own.
+// emitStreamArray fills a fixed-length array field in place.
 //
 // A short array leaves the tail at the zero value and a long one is an error:
 // the length is the type's statement, and quietly dropping what does not fit
-// would lose data the document carried.
+// would lose data the document carried. The tail is cleared rather than left
+// alone, so a member that arrives twice decodes to the second array rather
+// than to the two overlaid. A null member leaves the destination untouched.
 func emitStreamArray(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) {
-	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sif err := p.ParseArray(%q, %q, %s[:], %s); err != nil {\n%s\treturn out, err\n%s}\n",
-		prefix, member, message, dest, read, prefix, prefix)
+	fmt.Fprintf(b, "%s{\n", prefix)
+	in := prefix + "\t"
+	fmt.Fprintf(b, "%snull, err := p.ArrayStart()\n", in)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", in, in, member, in)
+	fmt.Fprintf(b, "%sif !null {\n", in)
+	body := in + "\t"
+	fmt.Fprintf(b, "%sfilled := 0\n", body)
+	fmt.Fprintf(b, "%sfor i := 0; ; i++ {\n", body)
+	loop := body + "\t"
+	fmt.Fprintf(b, "%smore, err := p.ArrayNext(i)\n", loop)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid array\", err)\n%s}\n", loop, loop, member, loop)
+	fmt.Fprintf(b, "%sif !more {\n%s\tbreak\n%s}\n", loop, loop, loop)
+	fmt.Fprintf(b, "%sif i >= len(%s) {\n%s\treturn out, jsonbind.ArrayTooLong(%q, len(%s))\n%s}\n", loop, dest, loop, member, dest, loop)
+	emitElemRead(b, f, loop, member)
+	fmt.Fprintf(b, "%s%s[i] = e\n", loop, dest)
+	fmt.Fprintf(b, "%sfilled = i + 1\n", loop)
+	fmt.Fprintf(b, "%s}\n", body)
+	fmt.Fprintf(b, "%sclear(%s[filled:])\n", body, dest)
+	fmt.Fprintf(b, "%s}\n", in)
+	fmt.Fprintf(b, "%s}\n", prefix)
 }
 
 // emitStreamBytes reads a base64 member. A fixed-length destination is filled
@@ -732,53 +945,69 @@ func emitStreamBytes(b *bytes.Buffer, f FieldPlan, prefix, dest, member string) 
 	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
 }
 
-func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
-	read, message := streamElemReader(f)
-	fmt.Fprintf(b, "%sv, err := p.ParseMap(%q, %q, %s)\n", prefix, jsonMemberName(f), message, read)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-	fmt.Fprintf(b, "%sif v != nil {\n%s\t%s = v\n%s}\n", prefix, prefix, dest, prefix)
+// emitStreamMap reads an object member into a map. A null member leaves the
+// destination alone under the codec's rules and assigns nil under the
+// binder's, as emitStreamSlice does; an empty object is a non-nil empty map.
+func emitStreamMap(b *bytes.Buffer, f FieldPlan, prefix, dest, member string, nilOnNull bool) {
+	fmt.Fprintf(b, "%s{\n", prefix)
+	in := prefix + "\t"
+	fmt.Fprintf(b, "%snull, err := p.ObjectStart()\n", in)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", in, in, member, in)
+	if nilOnNull {
+		fmt.Fprintf(b, "%sif null {\n%s\t%s = nil\n%s} else {\n", in, in, dest, in)
+	} else {
+		fmt.Fprintf(b, "%sif !null {\n", in)
+	}
+	body := in + "\t"
+	fmt.Fprintf(b, "%sv := %s{}\n", body, f.GoType())
+	fmt.Fprintf(b, "%sfor n := 0; ; n++ {\n", body)
+	loop := body + "\t"
+	fmt.Fprintf(b, "%skey, ok, err := p.ObjectKey(n)\n", loop)
+	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, jsonbind.FieldError(%q, \"invalid map\", err)\n%s}\n", loop, loop, member, loop)
+	fmt.Fprintf(b, "%sif !ok {\n%s\tbreak\n%s}\n", loop, loop, loop)
+	// The key aliases parser scratch that the element read below may reuse,
+	// so it is copied before the value is read.
+	fmt.Fprintf(b, "%sname := string(key)\n", loop)
+	emitElemRead(b, f, loop, member)
+	fmt.Fprintf(b, "%sv[name] = e\n", loop)
+	fmt.Fprintf(b, "%s}\n", body)
+	fmt.Fprintf(b, "%s%s = v\n", body, dest)
+	fmt.Fprintf(b, "%s}\n", in)
+	fmt.Fprintf(b, "%s}\n", prefix)
 }
 
-// streamElemReader names the element read function handed to ParseSlice or
-// ParseMap, plus the message element errors get annotated with. A struct
-// decoder reports its own fields, so its message stays empty.
-func streamElemReader(f FieldPlan) (read, message string) {
-	if f.ElemKind == KindStruct {
-		return "decode" + f.TypeName + "JSON", ""
+// emitElemRead reads one collection element into a local named e, under the
+// annotation rules ParseSlice applied: a struct element reports its own
+// fields, so its error passes through, and a scalar's is wrapped with the
+// member name and the kind that failed. A sized integer is range-checked
+// against its width, and a named element is converted to its declared type.
+func emitElemRead(b *bytes.Buffer, f FieldPlan, prefix, member string) {
+	fail := func(cause string) string {
+		return fmt.Sprintf("return out, jsonbind.FieldError(%q, \"invalid %s\", %s)", member, f.ElemKind, cause)
 	}
-	message = "invalid " + f.ElemKind
 	switch {
+	case f.ElemKind == KindStruct:
+		fmt.Fprintf(b, "%se, err := decode%sJSON(p)\n", prefix, f.TypeName)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
 	case isSizedIntKind(f.ElemKind):
-		return sizedIntElemReader(f.ElemKind, f.ElemNamed), message
+		_, unsigned, _ := intKindBits(f.ElemKind)
+		method := "Int64"
+		if unsigned {
+			method = "Uint64"
+		}
+		fmt.Fprintf(b, "%sw, err := p.%s()\n", prefix, method)
+		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, fail("err"), prefix)
+		if lo, hi, needed := intKindBounds(f.ElemKind); needed {
+			fmt.Fprintf(b, "%sif w < %s || w > %s {\n%s\t%s\n%s}\n", prefix, lo, hi, prefix, fail("jsonbind.ErrIntegerRange"), prefix)
+		}
+		fmt.Fprintf(b, "%se := %s(w)\n", prefix, f.ElemGoType())
 	case f.ElemNamed != "":
-		// A named element cannot ride the bulk decoder's method expression:
-		// ParseSlice would answer a concrete []int, which Go will not assign to
-		// a slice of the named type. The closure is the conversion loop that
-		// refusal was avoiding, written once as a shape rather than once per
-		// element kind -- the same shape a sized element already needed.
-		return namedElemReader(f.ElemKind, f.ElemNamed), message
+		fmt.Fprintf(b, "%sw, err := p.%s()\n", prefix, parserMethod(f.ElemKind))
+		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, fail("err"), prefix)
+		fmt.Fprintf(b, "%se := %s(w)\n", prefix, f.ElemNamed)
 	default:
-		return "(*jsonbind.Parser)." + parserMethod(f.ElemKind), message
-	}
-}
-
-// namedElemReader wraps a parser method so the bulk decoder answers a slice or
-// map of the declared type rather than of the kind underneath it.
-func namedElemReader(kind, named string) string {
-	return fmt.Sprintf("func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return %s, err }; return %s(v), nil }",
-		named, parserMethod(kind), zeroLiteralForKind(kind), named)
-}
-
-// zeroLiteralForKind is the untyped zero an element reader returns on failure,
-// which assigns to the named type without naming it.
-func zeroLiteralForKind(kind string) string {
-	switch kind {
-	case "string":
-		return `""`
-	case "bool":
-		return "false"
-	default:
-		return "0"
+		fmt.Fprintf(b, "%se, err := p.%s()\n", prefix, parserMethod(f.ElemKind))
+		fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", prefix, prefix, fail("err"), prefix)
 	}
 }
 
@@ -1384,12 +1613,8 @@ func emitBinderJSONPass(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 	fmt.Fprintf(b, "%snull, err := p.ObjectStart()\n", loop)
 	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", loop, loop, loop)
 	fmt.Fprintf(b, "%sif null {\n%s\treturn out, httpbind.JSONBodyNotObject()\n%s}\n", loop, loop, loop)
-	fmt.Fprintf(b, "%sfor n := 0; ; n++ {\n", loop)
-	body := loop + "\t"
-	fmt.Fprintf(b, "%skey, ok, err := p.ObjectKey(n)\n", body)
-	fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", body, body, body)
-	fmt.Fprintf(b, "%sif !ok {\n%s\tbreak\n%s}\n", body, body, body)
-	fmt.Fprintf(b, "%sswitch string(key) {\n", body)
+	var members []FieldPlan
+	var skipped []string
 	for _, f := range t.Fields {
 		if f.IsRest() || f.Source != SourceInput && f.Source != SourcePayload {
 			continue
@@ -1397,28 +1622,37 @@ func emitBinderJSONPass(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 		if f.Wire == "" || f.Wire == "*" {
 			continue
 		}
-		fmt.Fprintf(b, "%scase %q:\n", body, f.Wire)
-		arm := body + "\t"
 		if f.Kind == "file" {
 			// A file never arrives inside a JSON document; its name is still
 			// spoken for, so the member is consumed rather than rest-collected.
-			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", arm, arm, arm)
+			skipped = append(skipped, f.Wire)
 			continue
 		}
-		if f.Source == SourceInput && !f.IsComposite() {
-			fmt.Fprintf(b, "%sif !need%s {\n", arm, f.Name)
-			fmt.Fprintf(b, "%s\tif err := p.SkipValue(); err != nil {\n%s\t\treturn out, httpbind.JSONBodyError(err)\n%s\t}\n", arm, arm, arm)
-			fmt.Fprintf(b, "%s\tcontinue\n%s}\n", arm, arm)
-		}
-		if f.NeedsPresence() {
-			fmt.Fprintf(b, "%spresent%s = true\n", arm, f.Name)
-		}
-		emitBinderStreamAssign(b, f, arm, "out."+f.Name)
+		members = append(members, f)
 	}
-	fmt.Fprintf(b, "%sdefault:\n", body)
-	emitBinderRestDefault(b, t, body+"\t")
-	fmt.Fprintf(b, "%s}\n", body)
-	fmt.Fprintf(b, "%s}\n", loop)
+	names := make([]string, len(members))
+	for i, f := range members {
+		names[i] = f.Wire
+	}
+	emitMemberWalk(b, loop, memberWalk{
+		names:   names,
+		skipped: skipped,
+		fail:    func(err string) string { return "return out, httpbind.JSONBodyError(" + err + ")" },
+		end:     "break",
+		assign: func(i int, arm string) {
+			f := members[i]
+			if f.Source == SourceInput && !f.IsComposite() {
+				fmt.Fprintf(b, "%sif !need%s {\n", arm, f.Name)
+				fmt.Fprintf(b, "%s\tif err := p.SkipValue(); err != nil {\n%s\t\treturn out, httpbind.JSONBodyError(err)\n%s\t}\n", arm, arm, arm)
+				fmt.Fprintf(b, "%s\tcontinue\n%s}\n", arm, arm)
+			}
+			if f.NeedsPresence() {
+				fmt.Fprintf(b, "%spresent%s = true\n", arm, f.Name)
+			}
+			emitBinderStreamAssign(b, f, arm, "out."+f.Name)
+		},
+		defaultArm: func(prefix string) { emitBinderRestDefault(b, t, prefix) },
+	})
 	fmt.Fprintf(b, "%sif err := p.End(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", loop, loop, loop)
 	fmt.Fprintf(b, "%s}\n", in)
 }
@@ -1453,10 +1687,7 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
 			return
 		}
-		read, message := binderElemReader(f)
-		fmt.Fprintf(b, "%sv, err := p.ParseSlice(%q, %q, %s)\n", prefix, f.Wire, message, read)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+		emitStreamSlice(b, f, prefix, dest, f.Wire, true)
 	case KindArray:
 		if !supportedElemKind(f.ElemKind) {
 			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
@@ -1470,20 +1701,11 @@ func emitBinderStreamAssign(b *bytes.Buffer, f FieldPlan, prefix, dest string) {
 			fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
 			return
 		}
-		read, message := binderElemReader(f)
-		fmt.Fprintf(b, "%sv, err := p.ParseMap(%q, %q, %s)\n", prefix, f.Wire, message, read)
-		fmt.Fprintf(b, "%sif err != nil {\n%s\treturn out, err\n%s}\n", prefix, prefix, prefix)
-		fmt.Fprintf(b, "%s%s = %s\n", prefix, dest, f.Write("v"))
+		emitStreamMap(b, f, prefix, dest, f.Wire, true)
 	default:
 		fmt.Fprintf(b, "%sif err := p.SkipValue(); err != nil {\n%s\treturn out, httpbind.JSONBodyError(err)\n%s}\n", prefix, prefix, prefix)
 	}
 }
-
-// binderElemReader is streamElemReader under the binder's wire naming. The two
-// walks differ in the member name they report, which their callers supply, and
-// in nothing the reader itself decides -- so this delegates rather than
-// repeating a body that has to stay identical.
-func binderElemReader(f FieldPlan) (read, message string) { return streamElemReader(f) }
 
 // emitBinderRestDefault writes the walk's default arm: collected into the rest
 // map when the model declares one, consumed otherwise. Exclusion needs no
@@ -1976,33 +2198,6 @@ func sizedIntCase(kind string) string {
 		return kind
 	}
 	return "\x00not-a-kind"
-}
-
-// sizedIntElemReader writes the closure ParseSlice and ParseMap are handed for
-// an element whose width has no parser method of its own. The closure is the
-// per-element conversion loop rule:named-type-field-kind priced when it
-// refused a named-scalar collection; written once as a shape, it costs one
-// literal comparison per element.
-// named is the element's declared type when it has one, which the closure
-// returns instead of the width. The bounds stay untyped literals, so the range
-// check reads the same either way.
-func sizedIntElemReader(kind, named string) string {
-	_, unsigned, _ := intKindBits(kind)
-	method := "Int64"
-	if unsigned {
-		method = "Uint64"
-	}
-	typ := kind
-	if named != "" {
-		typ = named
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "func(p *jsonbind.Parser) (%s, error) { v, err := p.%s(); if err != nil { return 0, err }; ", typ, method)
-	if lo, hi, needed := intKindBounds(kind); needed {
-		fmt.Fprintf(&b, "if v < %s || v > %s { return 0, jsonbind.ErrIntegerRange }; ", lo, hi)
-	}
-	fmt.Fprintf(&b, "return %s(v), nil }", typ)
-	return b.String()
 }
 
 // sizedIntLit renders a min or max bound as an untyped constant, which is what

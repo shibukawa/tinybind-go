@@ -61,12 +61,13 @@ func TestNamedElementReadsThroughAClosure(t *testing.T) {
 	opts.EnableCBORHTTP = true
 	_, source := emitFixedArray(t, namedElementSource, opts)
 	for _, want := range []string{
-		"func(p *jsonbind.Parser) (Mark, error)",
-		"func(p *jsonbind.Parser) (Name, error)",
-		"func(p *jsonbind.Parser) (Level, error)",
-		"return Mark(v), nil",
+		// The element is read in the kind underneath and converted inline,
+		// where a closure used to do the same through a func value.
+		"e := Mark(w)",
+		"e := Name(w)",
+		"e := Level(w)",
 		// The width is still checked, and the bound is still an untyped literal.
-		"if v < 0 || v > 65535 {",
+		"if w < 0 || w > 65535 {",
 		// The encoder converts the other way, at every shape.
 		"jsonbind.AppendUint(dst, uint64(v.Marks[i]))",
 		"jsonbind.AppendString(dst, string(v.Names[i]))",

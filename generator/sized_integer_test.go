@@ -124,21 +124,18 @@ func TestSizedIntegerDecodeChecksTheWidth(t *testing.T) {
 	}
 }
 
-// A slice element with no parser method of its own is read through an emitted
-// closure, which is where its range check lives.
+// A slice element with no parser method of its own is read as the wide
+// integer and range-checked inline, which is where its width lives.
 func TestSizedIntegerSliceReadsThroughAClosure(t *testing.T) {
 	_, source := emitSized(t, sizedIntegerSource, generator.DefaultOptions())
-	want := "func(p *jsonbind.Parser) (uint32, error)"
-	if !strings.Contains(source, want) {
-		t.Fatalf("generated source is missing the element closure %q\n%s", want, source)
+	if !strings.Contains(source, "e := uint32(w)") {
+		t.Fatalf("generated source does not convert the element to its width\n%s", source)
 	}
-	// gofmt breaks the emitted closure over lines, so the conversion is
-	// asserted on its own rather than as part of a one-line body.
-	if !strings.Contains(source, "return uint32(v), nil") {
-		t.Error("the element closure does not convert to the element width")
+	if !strings.Contains(source, "if w < 0 || w > 4294967295 {") {
+		t.Error("the element read does not range-check the element")
 	}
-	if !strings.Contains(source, "return 0, jsonbind.ErrIntegerRange") {
-		t.Error("the element closure does not range-check the element")
+	if !strings.Contains(source, `jsonbind.FieldError("samples", "invalid uint32", jsonbind.ErrIntegerRange)`) {
+		t.Error("the element range failure does not name the member")
 	}
 }
 

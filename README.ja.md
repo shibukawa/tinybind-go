@@ -321,7 +321,7 @@ curl 例の詳細は [`examples/demo/README.md`](examples/demo/README.md) を参
 
 ## ベンチマーク
 
-生成コードには駆動すべき reflection がなく、中間の `map[string]any` を組み立てる必要もありません。差はそこから出ています。計測環境は Apple M3・Go 1.26.5・`darwin/arm64`、10回計測の最良値です。
+生成コードには駆動すべき reflection がなく、中間の `map[string]any` を組み立てる必要もありません。差はそこから出ています。計測環境は Apple M3・Go 1.27.0・`darwin/arm64`、10回計測の最良値です。
 
 各ペアの出力は一致します。JSON codec は差分ファザで `encoding/json` と突き合わせており、ハンドラとテンプレートのペアはベンチマークに並ぶテストで等価性を検証しています。再現は次のコマンドです。
 
@@ -335,16 +335,16 @@ go test ./internal/benchfixture -run xxx -bench . -benchmem
 
 | 経路 | 標準ライブラリ | 生成コード |
 |------|----------------|------------|
-| JSON decode（`io.Reader`） | 3447 ns · 1688 B · 30 allocs | **777 ns · 856 B · 15 allocs** |
-| JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 3287 ns · 888 B · 25 allocs | — |
-| JSON encode | 579 ns · 144 B · 1 alloc | **272 ns · 0 B · 0 allocs** |
-| `Bind` + `Write`（リクエスト再利用） | 850 ns · 1584 B · 17 allocs | **584 ns · 1021 B · 16 allocs** |
-| `Bind` + `Write`（リクエスト構築込み） | 1695 ns · 7445 B · 31 allocs | **1422 ns · 6883 B · 30 allocs** |
-| HTML レンダリング（`html/template` 対 `htmlbind`） | 7346 ns · 2705 B · 107 allocs | **930 ns · 464 B · 4 allocs** |
+| JSON decode（`io.Reader`） | 2378 ns · 1889 B · 18 allocs | **634 ns · 856 B · 15 allocs** |
+| JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 1772 ns · 496 B · 10 allocs | — |
+| JSON encode | 868 ns · 288 B · 2 allocs | **283 ns · 0 B · 0 allocs** |
+| `Bind` + `Write`（リクエスト再利用） | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
+| `Bind` + `Write`（リクエスト構築込み） | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
+| HTML レンダリング（`html/template` 対 `htmlbind`） | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
 
 JSON の各行は `encoding/json` との比較、ハンドラの行は同じ body decode・path・header 読み取りを手書きした `net/http` ハンドラとの比較、HTML の行は同じドキュメントを出力する `html/template` テンプレートとの比較です。
 
-エンコードのアロケーションはゼロです。生成エンコーダはプールしたバッファに append するので、レスポンス1本あたりのゴミが出ません。デコードの15回は、結果に残る文字列とスライス13個に body バッファとその reader を足した数で、呼び出し側が受け取る値を変えずに削れるものはもう残っていません。HTML レンダリングの4回は行ごとではなくレンダリング1回ごとの固定費（bind した fragment・オプション・レンダラ・変換バッファ）なので、ページが長くなっても4回のままです。
+エンコードのアロケーションはゼロです。生成エンコーダはプールしたバッファに append するので、レスポンス1本あたりのゴミが出ません。デコードの15回は、結果に残る文字列とスライス13個に body バッファとその reader を足した数で、呼び出し側が受け取る値を変えずに削れるものはもう残っていません。HTML レンダリングのアロケーションは行ごとではなくレンダリング1回ごとの固定費なので、ページが長くなっても数は変わりません。
 
 ### バイナリサイズ
 

@@ -9,14 +9,14 @@
 - ネストした構造体、slice、map の変換
 - フィールドごとの JSON 型エラー
 - JSON document の読み込み上限
-- 実際に `DecodeJSON[T]` / `EncodeJSON[T]` で使われた型だけのコード生成
+- 実際に `DecodeJSON[T]` / `DecodeJSONBytes[T]` / `DecodeJSONLimit[T]` / `EncodeJSON[T]` で使われた型だけのコード生成
 
 HTTP status の選択や header の設定は、この境界の外側です。これらは [httpbind](httpbind.ja.md) の担当で、同じ codec の上に request / response の関心事を載せています。
 
 ## ユーザーが用意するもの
 
 1. JSON に対応する Go の構造体
-2. `jsonbind.DecodeJSON[T]` または `EncodeJSON[T]` の具体的な呼び出し
+2. `jsonbind.DecodeJSON[T]`、`DecodeJSONBytes[T]`、`DecodeJSONLimit[T]`、または `EncodeJSON[T]` の具体的な呼び出し
 3. コード生成の実行
 4. 入出力となる `io.Reader` / `io.Writer`
 
@@ -97,6 +97,11 @@ func encodeExample(user User) (string, error) {
 - 構造体の slice
 - `map[string]string` など scalar の map
 - `map[string]Struct`
+- `any` と `interface{}`(フィールド、slice の要素、map の値として)
+
+### 任意の値
+
+`any` のフィールドは届いた JSON 値をそのまま受け取ります。形は `encoding/json` が `any` に対して作るものと同じで、オブジェクトは `map[string]any`、配列は `[]any`、数値は `float64`、あとは `string`、`bool`、`nil` です。エンコードはその形をそのまま書き戻し、オブジェクトのメンバーはキー順に並びます。モデルが形を決めていないメンバーのための逃げ道であって、形が決まっているメンバーは型付きで宣言した方が map も boxing も要らない分だけ安くつきます。
 
 ```go
 type Address struct {

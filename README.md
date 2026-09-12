@@ -440,7 +440,7 @@ See [`examples/demo/README.md`](examples/demo/README.md) for full curl recipes.
 
 Generated code has no reflection to drive and no intermediate `map[string]any`
 to build, which is where the difference comes from. Measured on an Apple M3,
-Go 1.26.5, `darwin/arm64`, best of 10 runs.
+Go 1.27.0, `darwin/arm64`, best of 10 runs.
 
 Each pair produces the same output: the JSON codecs are checked against
 `encoding/json` by differential fuzzing, and the handler and template pairs are
@@ -457,12 +457,12 @@ objects, and a string array. The page is a five-row user list.
 
 | Path | Standard library | Generated |
 |------|------------------|-----------|
-| JSON decode (`io.Reader`) | 3447 ns · 1688 B · 30 allocs | **777 ns · 856 B · 15 allocs** |
-| JSON decode (`json.Unmarshal`, bytes in hand) | 3287 ns · 888 B · 25 allocs | — |
-| JSON encode | 579 ns · 144 B · 1 alloc | **272 ns · 0 B · 0 allocs** |
-| `Bind` + `Write` (request reused) | 850 ns · 1584 B · 17 allocs | **584 ns · 1021 B · 16 allocs** |
-| `Bind` + `Write` (incl. request construction) | 1695 ns · 7445 B · 31 allocs | **1422 ns · 6883 B · 30 allocs** |
-| HTML render (`html/template` vs `htmlbind`) | 7346 ns · 2705 B · 107 allocs | **930 ns · 464 B · 4 allocs** |
+| JSON decode (`io.Reader`) | 2378 ns · 1889 B · 18 allocs | **634 ns · 856 B · 15 allocs** |
+| JSON decode (`json.Unmarshal`, bytes in hand) | 1772 ns · 496 B · 10 allocs | — |
+| JSON encode | 868 ns · 288 B · 2 allocs | **283 ns · 0 B · 0 allocs** |
+| `Bind` + `Write` (request reused) | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
+| `Bind` + `Write` (incl. request construction) | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
+| HTML render (`html/template` vs `htmlbind`) | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
 
 The JSON comparisons are against `encoding/json`; the handler row against a
 hand-written `net/http` handler doing the same decode, path, and header reads;
@@ -472,9 +472,8 @@ Encoding allocates nothing: generated encoders append into a pooled buffer, so
 a response costs no garbage at all. Decoding's 15 allocations are the 13 strings
 and slices that end up in the result, plus the body buffer and its reader —
 there is nothing left to remove without changing what the caller gets back.
-The HTML render's four allocations are per render rather than per row — the
-bound fragment, the options, the renderer, and its conversion buffer — so a
-longer page costs the same four.
+The HTML render's allocations are per render rather than per row, so a longer
+page costs the same handful.
 
 ### Binary size
 

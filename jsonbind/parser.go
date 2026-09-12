@@ -148,32 +148,83 @@ func (p *Parser) ObjectKey(n int) (key []byte, ok bool, err error) {
 // aliases the input buffer, so a caller that needs the name to outlive the next
 // member can keep or copy it on its own terms.
 func (p *Parser) objectKeySpan(n int) (span []byte, escaped, ok bool, err error) {
-	p.ws()
-	if p.pos >= len(p.buf) {
-		return nil, false, false, p.fail("unexpected end of JSON object")
-	}
-	if p.buf[p.pos] == '}' {
-		p.pos++
-		p.leave()
-		return nil, false, false, nil
-	}
-	if n > 0 {
-		if p.buf[p.pos] != ',' {
-			return nil, false, false, p.fail("missing ',' in JSON object")
-		}
-		p.pos++
-		p.ws()
+	if _, ok, err := p.ObjectKeyRest(n); err != nil || !ok {
+		return nil, false, ok, err
 	}
 	span, escaped, err = p.stringSpan()
 	if err != nil {
 		return nil, false, false, err
 	}
+	if err := p.keyColon(); err != nil {
+		return nil, false, false, err
+	}
+	return span, escaped, true, nil
+}
+
+// ObjectKeyRest positions the parser at the next member name and returns the
+// unread input from that name's opening quote, or ok=false at '}'. n is the
+// zero-based member index, as for ObjectKey.
+//
+// It is the first half of ObjectKey, split out so a generated decoder can
+// match its member names against the input in place: a name that matches a
+// literal is consumed with KeyMatched, and one that does not is read the
+// ordinary way with ObjectKeyName. The returned slice aliases the input and
+// is not advanced past.
+func (p *Parser) ObjectKeyRest(n int) (rest []byte, ok bool, err error) {
+	p.ws()
+	if p.pos >= len(p.buf) {
+		return nil, false, p.fail("unexpected end of JSON object")
+	}
+	if p.buf[p.pos] == '}' {
+		p.pos++
+		p.leave()
+		return nil, false, nil
+	}
+	if n > 0 {
+		if p.buf[p.pos] != ',' {
+			return nil, false, p.fail("missing ',' in JSON object")
+		}
+		p.pos++
+		p.ws()
+	}
+	if p.pos >= len(p.buf) || p.buf[p.pos] != '"' {
+		return nil, false, p.fail("JSON value must be a string")
+	}
+	return p.buf[p.pos:], true, nil
+}
+
+// KeyMatched consumes the k bytes of member name, quotes included, that the
+// caller matched at the start of ObjectKeyRest's result, then the colon.
+func (p *Parser) KeyMatched(k int) error {
+	p.pos += k
+	return p.keyColon()
+}
+
+// ObjectKeyName reads the member name ObjectKeyRest positioned at, unescaped,
+// and the colon after it. The name aliases parser scratch space and is valid
+// until the next member is read.
+func (p *Parser) ObjectKeyName() ([]byte, error) {
+	span, escaped, err := p.stringSpan()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.keyColon(); err != nil {
+		return nil, err
+	}
+	if escaped {
+		p.keyScratch = unescape(p.keyScratch[:0], span)
+		span = p.keyScratch
+	}
+	return span, nil
+}
+
+func (p *Parser) keyColon() error {
 	p.ws()
 	if p.pos >= len(p.buf) || p.buf[p.pos] != ':' {
-		return nil, false, false, p.fail("missing ':' after JSON object key")
+		return p.fail("missing ':' after JSON object key")
 	}
 	p.pos++
-	return span, escaped, true, nil
+	return nil
 }
 
 // ArrayStart consumes '['. A JSON null reports isNull and consumes the literal.

@@ -9,14 +9,14 @@
 - Mapping nested structs, slices, and maps
 - Reporting field-specific JSON type errors
 - Enforcing a JSON document size limit
-- Generating only the decoder or encoder actually used by `DecodeJSON[T]` and `EncodeJSON[T]`
+- Generating only the decoder or encoder actually used by `DecodeJSON[T]`, `DecodeJSONBytes[T]`, `DecodeJSONLimit[T]`, and `EncodeJSON[T]`
 
 Choosing an HTTP status and setting headers stay outside that boundary. Those belong to [httpbind](httpbind.md), which handles request and response concerns on top of the same codecs.
 
 ## What you provide
 
 1. Go structs representing JSON documents
-2. Concrete calls to `jsonbind.DecodeJSON[T]` or `EncodeJSON[T]`
+2. Concrete calls to `jsonbind.DecodeJSON[T]`, `DecodeJSONBytes[T]`, `DecodeJSONLimit[T]`, or `EncodeJSON[T]`
 3. A code-generation command
 4. The `io.Reader` or `io.Writer`
 
@@ -97,6 +97,17 @@ The commonly supported combinations are:
 - Slices of structs
 - Scalar maps such as `map[string]string`
 - `map[string]Struct`
+- `any` and `interface{}`, as fields, slice elements, and map values
+
+### Arbitrary values
+
+An `any` field takes whatever JSON value arrives, in the shapes `encoding/json`
+gives an `any` destination: `map[string]any` for an object, `[]any` for an
+array, `float64` for a number, and `string`, `bool`, or `nil` for the rest.
+Encoding writes those shapes back, with an object's members in sorted key
+order. It is the escape hatch for a member whose shape the model does not
+state; a member whose shape it does state is better declared, since a typed
+field costs no map and no boxing.
 
 ```go
 type Address struct {

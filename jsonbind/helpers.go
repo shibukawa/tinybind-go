@@ -448,6 +448,13 @@ func (p *Parser) ParseMap[T any](field, message string, read func(*Parser) (T, e
 	}
 }
 
+// ArrayTooLong is the error a generated decoder reports for a JSON array
+// carrying more elements than the fixed-length Go array it decodes into can
+// hold; it is the one [ParseArray] reports, so the two spellings agree.
+func ArrayTooLong(field string, n int) error {
+	return FieldError(field, "expected at most "+strconv.Itoa(n)+" elements", ErrArrayTooLong)
+}
+
 func fieldTypeError(message string, cause error) error {
 	return newError("json_parse", message, cause)
 }

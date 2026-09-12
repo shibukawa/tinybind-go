@@ -86,8 +86,13 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 	opts.EnableCBORHTTP = true
 	_, source := emitFixedArray(t, fixedArraySource, opts)
 	for _, want := range []string{
-		`p.ParseArray("cells", "invalid int", out.Cells[:], (*jsonbind.Parser).Int)`,
-		`p.ParseArray("marks", "", out.Marks[:], decodeMarkJSON)`,
+		// The array is filled in place by an inline loop: too many elements
+		// is the error, the tail is cleared, and nothing is assigned whole.
+		`return out, jsonbind.ArrayTooLong("cells", len(out.Cells))`,
+		"out.Cells[i] = e",
+		"clear(out.Cells[filled:])",
+		"e, err := decodeMarkJSON(p)",
+		"out.Marks[i] = e",
 		"out.Seats = [seatCount]uint16{}",
 		"if n > len(out.Cells) {",
 	} {
@@ -99,8 +104,8 @@ func TestFixedArrayIsFilledInPlace(t *testing.T) {
 	if strings.Contains(source, "out.Cells = v") || strings.Contains(source, "out.Cells = slice") {
 		t.Error("a fixed-length field is still assigned a slice")
 	}
-	if !strings.Contains(source, `p.ParseSlice("tags"`) {
-		t.Error("a slice field no longer decodes through ParseSlice")
+	if !strings.Contains(source, "out.Tags = v") || !strings.Contains(source, "v = append(v, e)") {
+		t.Error("a slice field no longer builds and assigns a slice")
 	}
 }
 
@@ -134,7 +139,7 @@ func TestFixedArrayOfNamedElementIsGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(code), "out.Cells[:], func(p *jsonbind.Parser) (Level, error)") {
+	if !strings.Contains(string(code), "e := Level(w)") || !strings.Contains(string(code), "out.Cells[i] = e") {
 		t.Fatalf("the array does not fill with the declared type:\n%s", code)
 	}
 }
