@@ -140,8 +140,30 @@ func JSONBool(value bool) string { return strconv.FormatBool(value) }
 // JSONInt encodes an int as JSON.
 func JSONInt(value int) string { return strconv.Itoa(value) }
 
-// JSONFloat encodes a float64 as JSON.
-func JSONFloat(value float64) string { return strconv.FormatFloat(value, 'g', -1, 64) }
+// JSONFloat encodes a float64 as JSON, the way encoding/json and jsonbind
+// write one: the shortest round-trip decimal, in plain notation, switching
+// to an exponent only below 1e-6 or from 1e21 up. It used to use the 'g'
+// format, whose 1e+06 for a million was valid JSON but not the spelling the
+// rest of the module writes.
+func JSONFloat(value float64) string {
+	abs := value
+	if abs < 0 {
+		abs = -abs
+	}
+	format := byte('f')
+	if abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		format = 'e'
+	}
+	out := strconv.FormatFloat(value, format, -1, 64)
+	if format == 'e' {
+		// encoding/json trims the exponent's leading zero: 1e-07, not 1e-007
+		// is what strconv gives, and 1e-7 is what the wire carries.
+		if n := len(out); n >= 4 && out[n-4] == 'e' && out[n-3] == '-' && out[n-2] == '0' {
+			out = out[:n-2] + out[n-1:]
+		}
+	}
+	return out
+}
 
 // JSONOptional encodes a nil pointer as JSON null and otherwise delegates.
 func JSONOptional[T any](value *T, encode func(T) string) string {

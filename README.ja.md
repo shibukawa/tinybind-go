@@ -338,8 +338,8 @@ go test ./internal/benchfixture -run xxx -bench . -benchmem
 | JSON decode（`io.Reader`） | 2373 ns · 1889 B · 18 allocs | **534 ns · 752 B · 4 allocs** |
 | JSON decode（`json.Unmarshal`、バイト列が手元にある場合） | 1753 ns · 496 B · 10 allocs | — |
 | JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
-| `Bind` + `Write`（リクエスト再利用） | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
-| `Bind` + `Write`（リクエスト構築込み） | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
+| `Bind` + `Write`（リクエスト再利用） | 783 ns · 1154 B · 14 allocs | **371 ns · 529 B · 6 allocs** |
+| `Bind` + `Write`（リクエスト構築込み） | 1601 ns · 7024 B · 28 allocs | **1140 ns · 6399 B · 20 allocs** |
 | HTML レンダリング（`html/template` 対 `htmlbind`） | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
 
 JSON の各行は `encoding/json` との比較、ハンドラの行は同じ body decode・path・header 読み取りを手書きした `net/http` ハンドラとの比較、HTML の行は同じドキュメントを出力する `html/template` テンプレートとの比較です。

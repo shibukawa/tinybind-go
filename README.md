@@ -460,8 +460,8 @@ objects, and a string array. The page is a five-row user list.
 | JSON decode (`io.Reader`) | 2373 ns · 1889 B · 18 allocs | **534 ns · 752 B · 4 allocs** |
 | JSON decode (`json.Unmarshal`, bytes in hand) | 1753 ns · 496 B · 10 allocs | — |
 | JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
-| `Bind` + `Write` (request reused) | 789 ns · 1154 B · 14 allocs | **387 ns · 549 B · 8 allocs** |
-| `Bind` + `Write` (incl. request construction) | 1685 ns · 7027 B · 28 allocs | **1171 ns · 6411 B · 22 allocs** |
+| `Bind` + `Write` (request reused) | 783 ns · 1154 B · 14 allocs | **371 ns · 529 B · 6 allocs** |
+| `Bind` + `Write` (incl. request construction) | 1601 ns · 7024 B · 28 allocs | **1140 ns · 6399 B · 20 allocs** |
 | HTML render (`html/template` vs `htmlbind`) | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
 
 The JSON comparisons are against `encoding/json`; the handler row against a

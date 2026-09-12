@@ -3,6 +3,7 @@ package httpbind
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -190,40 +191,68 @@ func JSONBodyNotObject() error {
 	return bindcore.JSONBodyNotObject()
 }
 
+// FormValues is a form body read once; see bindcore.FormValues. Generated
+// binders ask it for their fields through FormLookup.
+type FormValues = bindcore.FormValues
+
 // ReadFormBody dispatches on the form content types alone, for binders that
 // read their JSON body inline through ReadJSONBody.
-func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
+//
+// An urlencoded body is read once and split into key=value spans, unescaped
+// only where a field is looked up, rather than parsed into url.Values and
+// copied into a map: the same trade the query string makes. A multipart body
+// goes through net/http's parser and keeps the map it built.
+func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (FormValues, map[string]File, error) {
 	if !wantForm && !wantFiles {
-		return nil, nil, nil
+		return FormValues{}, nil, nil
 	}
 	media := mediaType(r.Header.Get("Content-Type"))
 	if media == "application/x-www-form-urlencoded" {
-		m, err := ParseFormMap(r)
+		body, err := readFormBody(r)
 		if err != nil {
-			return nil, nil, err
+			return FormValues{}, nil, err
 		}
-		return m, nil, nil
+		return bindcore.ReadFormValues(body), nil, nil
 	}
 	if media == "multipart/form-data" {
 		m, files, err := ParseMultipartMap(r)
 		if err != nil {
-			return nil, nil, err
+			return FormValues{}, nil, err
 		}
 		if !wantFiles {
 			files = nil
 		}
-		return m, files, nil
+		return bindcore.FormFromMap(m), files, nil
 	}
-	return nil, nil, nil
+	return FormValues{}, nil, nil
 }
 
-// RestFormAny builds map[string]any from leftover form keys not in exclude (string values).
-func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
+// readFormBody reads an urlencoded body under the bound ParseForm applied,
+// as one string the pairs then alias.
+func readFormBody(r *http.Request) (string, error) {
+	if r.Body == nil {
+		return "", nil
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, bindcore.MaxFormBodyBytes+1))
+	if err != nil {
+		return "", BadRequest(Problem{Code: "form_parse", Message: "invalid form body"}, err)
+	}
+	if len(data) > bindcore.MaxFormBodyBytes {
+		return "", BadRequest(Problem{Code: "form_parse", Message: "form body too large"}, nil)
+	}
+	return string(data), nil
+}
+
+// FormLookup returns the first value for key in a form body.
+func FormLookup(f FormValues, key string) (string, bool) { return f.Lookup(key) }
+
+// RestFormAny builds map[string]any from the form keys not in exclude (string values).
+func RestFormAny(formBody FormValues, exclude []string) map[string]any {
 	return bindcore.RestFormAny(formBody, exclude)
 }
 
-// RestFormRaw builds map[string]json.RawMessage from leftover form keys (JSON-encoded strings).
-func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.RawMessage {
+// RestFormRaw builds map[string]json.RawMessage from the form keys not in exclude (JSON-encoded strings).
+func RestFormRaw(formBody FormValues, exclude []string) map[string]json.RawMessage {
 	return bindcore.RestFormRaw(formBody, exclude)
 }
 

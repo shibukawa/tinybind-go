@@ -141,37 +141,15 @@ func IsMessageTooLarge(err error) bool {
 		strings.Contains(msg, "message too large")
 }
 
-// RestFormAny builds map[string]any from leftover form keys not in exclude.
-func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
-	out := make(map[string]any)
-	if formBody == nil {
-		return out
-	}
-	for k, v := range formBody {
-		if isExcluded(exclude, k) {
-			continue
-		}
-		out[k] = v
-	}
-	return out
+// RestFormAny builds map[string]any from the form keys not in exclude.
+func RestFormAny(formBody FormValues, exclude []string) map[string]any {
+	return formBody.RestAny(exclude)
 }
 
-// RestFormRaw builds map[string]json.RawMessage from leftover form keys.
-func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.RawMessage {
-	out := make(map[string]json.RawMessage)
-	if formBody == nil {
-		return out
-	}
-	for k, v := range formBody {
-		if isExcluded(exclude, k) {
-			continue
-		}
-		// The value is a plain string, so it is quoted by the same append
-		// helper generated encoders use — reflection-free and byte-identical
-		// to what json.Marshal produced here before.
-		out[k] = json.RawMessage(jsonbind.AppendString(nil, v))
-	}
-	return out
+// RestFormRaw builds map[string]json.RawMessage from the form keys not in
+// exclude.
+func RestFormRaw(formBody FormValues, exclude []string) map[string]json.RawMessage {
+	return formBody.RestRaw(exclude)
 }
 
 func isExcluded(exclude []string, key string) bool {

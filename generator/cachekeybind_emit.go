@@ -110,14 +110,19 @@ func (e *cacheKeyEmitter) key(key CacheKeyPlan) error {
 		framed = append(framed, call)
 	}
 	fmt.Fprintf(&e.body, "var _ cachekeybind.CacheKey = %s{}\n\n", key.Name)
+	// The key is built in one buffer sized from the keys this type has
+	// produced, and converted once; a string per field and a concatenation
+	// on top was one allocation per field more than the key needs.
+	fmt.Fprintf(&e.body, "var cacheKeyHint%s cachekeybind.SizeHint\n\n", key.Name)
 	fmt.Fprintf(&e.body, "// CacheKey reports the cache key of a %s. The identity comes first, so an\n", key.Name)
 	e.body.WriteString("// entry of this type can never be read as an entry of another.\n")
 	fmt.Fprintf(&e.body, "func (%s %s) CacheKey() string {\n", receiver, key.Name)
-	fmt.Fprintf(&e.body, "\treturn cachekeybind.KeyString(%s)", strconv.Quote(key.Identity(e.packagePath)))
+	fmt.Fprintf(&e.body, "\tb := cacheKeyHint%s.Buffer()\n", key.Name)
+	fmt.Fprintf(&e.body, "\tb = cachekeybind.AppendKeyString(b, %s)\n", strconv.Quote(key.Identity(e.packagePath)))
 	for _, call := range framed {
-		fmt.Fprintf(&e.body, " +\n\t\t%s", call)
+		fmt.Fprintf(&e.body, "\tb = %s\n", call)
 	}
-	e.body.WriteString("\n}\n\n")
+	fmt.Fprintf(&e.body, "\treturn cacheKeyHint%s.Finish(b)\n}\n\n", key.Name)
 	return nil
 }
 
@@ -127,23 +132,23 @@ func (e *cacheKeyEmitter) key(key CacheKeyPlan) error {
 func (e *cacheKeyEmitter) frame(t CacheKeyType, expr string) (string, error) {
 	switch t.Kind {
 	case CacheKeyString:
-		return fmt.Sprintf("cachekeybind.KeyString(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyString(b, %s)", expr), nil
 	case CacheKeyBool:
-		return fmt.Sprintf("cachekeybind.KeyBool(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyBool(b, %s)", expr), nil
 	case CacheKeyInt:
-		return fmt.Sprintf("cachekeybind.KeyInt(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyInt(b, %s)", expr), nil
 	case CacheKeyUint:
-		return fmt.Sprintf("cachekeybind.KeyUint(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyUint(b, %s)", expr), nil
 	case CacheKeyFloat:
-		return fmt.Sprintf("cachekeybind.KeyFloat(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyFloat(b, %s)", expr), nil
 	case CacheKeyBytes:
-		return fmt.Sprintf("cachekeybind.KeyBytes(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyBytes(b, %s)", expr), nil
 	case CacheKeyTime:
-		return fmt.Sprintf("cachekeybind.KeyTime(%s)", expr), nil
+		return fmt.Sprintf("cachekeybind.AppendKeyTime(b, %s)", expr), nil
 	case CacheKeyOptional:
-		return e.wrap("KeyOptional", t, expr)
+		return e.wrap("AppendKeyOptional", t, expr)
 	case CacheKeyArray:
-		return e.wrap("KeyArray", t, expr)
+		return e.wrap("AppendKeyArray", t, expr)
 	default:
 		return "", fmt.Errorf("kind %q has no framing helper", t.Kind)
 	}
@@ -162,5 +167,7 @@ func (e *cacheKeyEmitter) wrap(helper string, t CacheKeyType, expr string) (stri
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("cachekeybind.%s(%s, func(%s %s) string { return %s })", helper, expr, param, t.Elem.Go, body), nil
+	// The element closure takes and returns the buffer, so an element frames
+	// onto the same key; its b shadows the caller's on purpose.
+	return fmt.Sprintf("cachekeybind.%s(b, %s, func(b []byte, %s %s) []byte { return %s })", helper, expr, param, t.Elem.Go, body), nil
 }

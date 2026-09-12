@@ -77,9 +77,9 @@ func TestCacheKeyEmitsMethodAndAssertion(t *testing.T) {
 }`)
 	requireContains(t, code, "var _ cachekeybind.CacheKey = UserSummary{}")
 	requireContains(t, code, "func (v UserSummary) CacheKey() string {")
-	requireContains(t, code, `cachekeybind.KeyString("tempmod.UserSummary")`)
-	requireContains(t, code, "cachekeybind.KeyString(v.UserID)")
-	requireContains(t, code, "cachekeybind.KeyInt(v.Page)")
+	requireContains(t, code, `cachekeybind.AppendKeyString(b, "tempmod.UserSummary")`)
+	requireContains(t, code, "cachekeybind.AppendKeyString(b, v.UserID)")
+	requireContains(t, code, "cachekeybind.AppendKeyInt(b, v.Page)")
 }
 
 // Marking is opt-in, so an entity's payload stays out of the key. Keying on it
@@ -90,7 +90,7 @@ func TestCacheKeyExcludesUnmarkedFields(t *testing.T) {
 	Name   string
 	Total  int
 }`)
-	requireContains(t, code, "cachekeybind.KeyString(v.UserID)")
+	requireContains(t, code, "cachekeybind.AppendKeyString(b, v.UserID)")
 	requireAbsent(t, code, "v.Name")
 	requireAbsent(t, code, "v.Total")
 }
@@ -101,7 +101,7 @@ func TestCacheKeyIgnoresStorageTagsOnTheSameField(t *testing.T) {
 	Sensor  string  `+"`dynamo:\"sensor,partitionkey\" cache:\"key\"`"+`
 	Celsius float64 `+"`dynamo:\"celsius\"`"+`
 }`)
-	requireContains(t, code, "cachekeybind.KeyString(v.Sensor)")
+	requireContains(t, code, "cachekeybind.AppendKeyString(b, v.Sensor)")
 	requireAbsent(t, code, "v.Celsius")
 }
 
@@ -132,13 +132,13 @@ type Every struct {
 	T  time.Time `+"`cache:\"key\"`"+`
 }`)
 	for _, want := range []string{
-		"cachekeybind.KeyString(v.S)",
-		"cachekeybind.KeyBool(v.B)",
-		"cachekeybind.KeyInt(v.I)",
-		"cachekeybind.KeyUint(v.U)",
-		"cachekeybind.KeyFloat(v.F)",
-		"cachekeybind.KeyBytes(v.By)",
-		"cachekeybind.KeyTime(v.T)",
+		"cachekeybind.AppendKeyString(b, v.S)",
+		"cachekeybind.AppendKeyBool(b, v.B)",
+		"cachekeybind.AppendKeyInt(b, v.I)",
+		"cachekeybind.AppendKeyUint(b, v.U)",
+		"cachekeybind.AppendKeyFloat(b, v.F)",
+		"cachekeybind.AppendKeyBytes(b, v.By)",
+		"cachekeybind.AppendKeyTime(b, v.T)",
 	} {
 		requireContains(t, code, want)
 	}
@@ -149,8 +149,8 @@ func TestCacheKeyFramesPointerAndSliceThroughClosures(t *testing.T) {
 	After *string  `+"`cache:\"key\"`"+`
 	Tags  []string `+"`cache:\"key\"`"+`
 }`)
-	requireContains(t, code, "cachekeybind.KeyOptional(v.After, func(e1 string) string { return cachekeybind.KeyString(e1) })")
-	requireContains(t, code, "cachekeybind.KeyArray(v.Tags, func(e1 string) string { return cachekeybind.KeyString(e1) })")
+	requireContains(t, code, "cachekeybind.AppendKeyOptional(b, v.After, func(b []byte, e1 string) []byte { return cachekeybind.AppendKeyString(b, e1) })")
+	requireContains(t, code, "cachekeybind.AppendKeyArray(b, v.Tags, func(b []byte, e1 string) []byte { return cachekeybind.AppendKeyString(b, e1) })")
 }
 
 // A nested closure must not shadow the one it is written inside.
@@ -158,8 +158,8 @@ func TestCacheKeyNestsClosuresWithoutShadowing(t *testing.T) {
 	code := generateCacheKeys(t, `type Query struct {
 	Groups [][]int `+"`cache:\"key\"`"+`
 }`)
-	requireContains(t, code, "func(e1 []int) string")
-	requireContains(t, code, "func(e2 int) string")
+	requireContains(t, code, "func(b []byte, e1 []int) []byte")
+	requireContains(t, code, "func(b []byte, e2 int) []byte")
 }
 
 // A named field type must reach a helper without a conversion, which is what
@@ -170,7 +170,7 @@ func TestCacheKeyFramesNamedScalarTypes(t *testing.T) {
 type Query struct {
 	P Page `+"`cache:\"key\"`"+`
 }`)
-	requireContains(t, code, "cachekeybind.KeyInt(v.P)")
+	requireContains(t, code, "cachekeybind.AppendKeyInt(b, v.P)")
 }
 
 func TestCacheKeyOrdersFieldsByDeclaration(t *testing.T) {
@@ -240,7 +240,7 @@ func TestCacheKeyIdentityCarriesNoDeclaredComponent(t *testing.T) {
 	code := generateCacheKeys(t, `type Query struct {
 	Name string `+"`cache:\"key\"`"+`
 }`)
-	requireContains(t, code, `cachekeybind.KeyString("tempmod.Query")`)
+	requireContains(t, code, `cachekeybind.AppendKeyString(b, "tempmod.Query")`)
 	requireAbsent(t, code, "/v")
 }
 

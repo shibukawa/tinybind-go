@@ -34,12 +34,12 @@ func SetMaxMultipartBodyBytes(n int64) { bindcore.SetMaxMultipartBodyBytes(n) }
 func MaxMultipartBodyBytes() int64 { return bindcore.MaxMultipartBodyBytes() }
 
 // RestFormAny builds map[string]any from leftover form keys not in exclude.
-func RestFormAny(formBody map[string]string, exclude []string) map[string]any {
+func RestFormAny(formBody FormValues, exclude []string) map[string]any {
 	return bindcore.RestFormAny(formBody, exclude)
 }
 
 // RestFormRaw builds map[string]json.RawMessage from leftover form keys.
-func RestFormRaw(formBody map[string]string, exclude []string) map[string]json.RawMessage {
+func RestFormRaw(formBody FormValues, exclude []string) map[string]json.RawMessage {
 	return bindcore.RestFormRaw(formBody, exclude)
 }
 

@@ -32,6 +32,7 @@ package cachekeybind
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -113,4 +114,119 @@ func KeyArray[T any](values []T, encode func(T) string) string {
 		out.WriteString(encode(value))
 	}
 	return out.String()
+}
+
+// The Append helpers below are the same framing written into a caller-owned
+// buffer. A generated CacheKey builds the whole key in one buffer and
+// converts it once, where the string helpers cost one allocation per field
+// and one more for the concatenation; the string helpers stay for callers
+// that want a field on its own.
+
+// AppendKeyString frames a string onto dst.
+func AppendKeyString[T ~string](dst []byte, value T) []byte {
+	dst = strconv.AppendInt(dst, int64(len(value)), 10)
+	dst = append(dst, ':')
+	return append(dst, value...)
+}
+
+// AppendKeyBytes frames a byte slice onto dst.
+func AppendKeyBytes(dst []byte, value []byte) []byte {
+	dst = strconv.AppendInt(dst, int64(len(value)), 10)
+	dst = append(dst, ':')
+	return append(dst, value...)
+}
+
+// AppendKeyBool frames a bool onto dst.
+func AppendKeyBool[T ~bool](dst []byte, value T) []byte {
+	if value {
+		return append(dst, "4:true"...)
+	}
+	return append(dst, "5:false"...)
+}
+
+// AppendKeyInt frames any signed integer onto dst.
+func AppendKeyInt[T ~int | ~int8 | ~int16 | ~int32 | ~int64](dst []byte, value T) []byte {
+	var scratch [20]byte
+	digits := strconv.AppendInt(scratch[:0], int64(value), 10)
+	dst = strconv.AppendInt(dst, int64(len(digits)), 10)
+	dst = append(dst, ':')
+	return append(dst, digits...)
+}
+
+// AppendKeyUint frames any unsigned integer onto dst.
+func AppendKeyUint[T ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr](dst []byte, value T) []byte {
+	var scratch [20]byte
+	digits := strconv.AppendUint(scratch[:0], uint64(value), 10)
+	dst = strconv.AppendInt(dst, int64(len(digits)), 10)
+	dst = append(dst, ':')
+	return append(dst, digits...)
+}
+
+// AppendKeyFloat frames a float onto dst, under KeyFloat's rules.
+func AppendKeyFloat[T ~float32 | ~float64](dst []byte, value T) []byte {
+	var scratch [32]byte
+	digits := strconv.AppendFloat(scratch[:0], float64(value), 'g', -1, 64)
+	dst = strconv.AppendInt(dst, int64(len(digits)), 10)
+	dst = append(dst, ':')
+	return append(dst, digits...)
+}
+
+// AppendKeyTime frames a time onto dst, under KeyTime's rules.
+func AppendKeyTime(dst []byte, value time.Time) []byte {
+	var scratch [40]byte
+	text := value.UTC().AppendFormat(scratch[:0], time.RFC3339Nano)
+	dst = strconv.AppendInt(dst, int64(len(text)), 10)
+	dst = append(dst, ':')
+	return append(dst, text...)
+}
+
+// AppendKeyOptional frames a pointer onto dst, distinguishing absence from
+// any present value.
+func AppendKeyOptional[T any](dst []byte, value *T, encode func([]byte, T) []byte) []byte {
+	if value == nil {
+		return append(dst, '-')
+	}
+	dst = append(dst, '+')
+	return encode(dst, *value)
+}
+
+// AppendKeyArray frames a slice onto dst as its element count followed by its
+// framed elements, under KeyArray's rules.
+func AppendKeyArray[T any](dst []byte, values []T, encode func([]byte, T) []byte) []byte {
+	dst = strconv.AppendInt(dst, int64(len(values)), 10)
+	dst = append(dst, ':')
+	for _, value := range values {
+		dst = encode(dst, value)
+	}
+	return dst
+}
+
+// SizeHint remembers how long a type's keys have been, so a generated CacheKey
+// allocates its buffer once at that size. The zero value is ready to use and
+// safe for concurrent use.
+type SizeHint struct {
+	n atomic.Int64
+}
+
+// Buffer returns an empty buffer sized for the longest key recorded so far,
+// plus an eighth; before anything is recorded it is sized for a short key.
+func (h *SizeHint) Buffer() []byte {
+	need := int(h.n.Load())
+	need += need / 8
+	if need < 32 {
+		need = 32
+	}
+	return make([]byte, 0, need)
+}
+
+// Finish records the length of a finished key and returns it as a string.
+func (h *SizeHint) Finish(key []byte) string {
+	n := int64(len(key))
+	for {
+		old := h.n.Load()
+		if n <= old || h.n.CompareAndSwap(old, n) {
+			break
+		}
+	}
+	return string(key)
 }

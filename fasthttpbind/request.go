@@ -153,32 +153,43 @@ func JSONBodyNotObject() error {
 	return bindcore.JSONBodyNotObject()
 }
 
+// FormValues is a form body read once; see bindcore.FormValues. Generated
+// binders ask it for their fields through FormLookup.
+type FormValues = bindcore.FormValues
+
 // ReadFormBody dispatches on the form content types alone, for binders that
 // read their JSON body inline through ReadJSONBody.
-func ReadFormBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (map[string]string, map[string]File, error) {
+//
+// An urlencoded body is split by the one implementation the query string
+// uses, over a copy of the pooled body taken once, so the two transports
+// admit the same pairs; the driver's own PostArgs parse is not consulted.
+func ReadFormBody(ctx *fasthttp.RequestCtx, wantForm, wantFiles bool) (FormValues, map[string]File, error) {
 	if !wantForm && !wantFiles {
-		return nil, nil, nil
+		return FormValues{}, nil, nil
 	}
 	media := contentType(ctx)
 	if media == "application/x-www-form-urlencoded" {
-		m, err := ParseFormMap(ctx)
-		if err != nil {
-			return nil, nil, err
+		body := ctx.PostBody()
+		if len(body) > bindcore.MaxFormBodyBytes {
+			return FormValues{}, nil, BadRequest(Problem{Code: "form_parse", Message: "form body too large"}, nil)
 		}
-		return m, nil, nil
+		return bindcore.ReadFormValues(string(body)), nil, nil
 	}
 	if media == "multipart/form-data" {
 		m, files, err := ParseMultipartMap(ctx)
 		if err != nil {
-			return nil, nil, err
+			return FormValues{}, nil, err
 		}
 		if !wantFiles {
 			files = nil
 		}
-		return m, files, nil
+		return bindcore.FormFromMap(m), files, nil
 	}
-	return nil, nil, nil
+	return FormValues{}, nil, nil
 }
+
+// FormLookup returns the first value for key in a form body.
+func FormLookup(f FormValues, key string) (string, bool) { return f.Lookup(key) }
 
 // ParseFormMap parses an urlencoded form body into a flat map (first value wins).
 func ParseFormMap(ctx *fasthttp.RequestCtx) (map[string]string, error) {

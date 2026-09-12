@@ -628,7 +628,7 @@ func emitMemberWalk(b *bytes.Buffer, indent string, w memberWalk) {
 	fmt.Fprintf(b, "%sif err != nil {\n%s\t%s\n%s}\n", body, body, w.fail("err"), body)
 	fmt.Fprintf(b, "%sif !ok {\n%s\t%s\n%s}\n", body, body, w.end, body)
 	fmt.Fprintf(b, "%sidx, k := -1, 0\n", body)
-	emitKeyTree(b, body, cands, 1)
+	emitKeyTree(b, body, cands, 1, jsonKeyMatch)
 	fmt.Fprintf(b, "%sif idx >= 0 {\n", body)
 	fmt.Fprintf(b, "%s\tif err := p.KeyMatched(k); err != nil {\n%s\t\t%s\n%s\t}\n", body, body, w.fail("err"), body)
 	fmt.Fprintf(b, "%s} else {\n", body)
@@ -658,11 +658,32 @@ func emitMemberWalk(b *bytes.Buffer, indent string, w memberWalk) {
 	fmt.Fprintf(b, "%s}\n", indent)
 }
 
-// keyCandidate is one quoted member name the decision tree can settle, with
-// the index its match reports.
+// keyCandidate is one member name the decision tree can settle, with the
+// index its match reports. Under jsonKeyMatch the literal carries its quotes.
 type keyCandidate struct {
 	lit string
 	idx int
+}
+
+// keyMatch is how a decision tree reads its input. The JSON walk matches a
+// quoted literal as a prefix of the unread input, since the name's end is
+// the closing quote; a CBOR walk holds the whole name and matches it exactly,
+// so the tree opens with a switch on its length.
+type keyMatch struct {
+	variable string
+	exact    bool
+	assign   func(c keyCandidate) string
+}
+
+var jsonKeyMatch = keyMatch{
+	variable: "rest",
+	assign:   func(c keyCandidate) string { return fmt.Sprintf("idx, k = %d, %d", c.idx, len(c.lit)) },
+}
+
+var cborKeyMatch = keyMatch{
+	variable: "key",
+	exact:    true,
+	assign:   func(c keyCandidate) string { return fmt.Sprintf("idx = %d", c.idx) },
 }
 
 // treeSafeName reports whether a member name can be matched raw against the
@@ -690,12 +711,32 @@ func treeSafeName(name string) bool {
 // longer one does not; so a split position always exists and the recursion
 // always ends. The sequential fallback is kept for the case that cannot
 // happen, so a defect in the reasoning above costs speed and never a miss.
-func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int) {
+func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int, km keyMatch) {
 	if len(cands) == 0 {
 		return
 	}
+	if km.exact && known == 0 {
+		// Exact matching settles the length first: names of different
+		// lengths can share every byte position ("id" and "identity"), and
+		// once the length is known the compare below needs no guard.
+		var lens []int
+		byLen := map[int][]keyCandidate{}
+		for _, c := range cands {
+			if _, ok := byLen[len(c.lit)]; !ok {
+				lens = append(lens, len(c.lit))
+			}
+			byLen[len(c.lit)] = append(byLen[len(c.lit)], c)
+		}
+		fmt.Fprintf(b, "%sswitch len(%s) {\n", prefix, km.variable)
+		for _, n := range lens {
+			fmt.Fprintf(b, "%scase %d:\n", prefix, n)
+			emitKeyTree(b, prefix+"\t", byLen[n], n, km)
+		}
+		fmt.Fprintf(b, "%s}\n", prefix)
+		return
+	}
 	if len(cands) == 1 {
-		emitKeyLeaf(b, prefix, cands[0], known)
+		emitKeyLeaf(b, prefix, cands[0], known, km)
 		return
 	}
 	minLen := len(cands[0].lit)
@@ -703,7 +744,11 @@ func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int
 		minLen = min(minLen, len(c.lit))
 	}
 	bestK, bestN := -1, 1
-	for k := 1; k < minLen; k++ {
+	first := 1 // position 0 is the opening quote under jsonKeyMatch
+	if km.exact {
+		first = 0
+	}
+	for k := first; k < minLen; k++ {
 		seen := map[byte]bool{}
 		for _, c := range cands {
 			seen[c.lit[k]] = true
@@ -714,18 +759,18 @@ func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int
 	}
 	if bestK < 0 {
 		for _, c := range cands {
-			emitKeyLeaf(b, prefix, c, known)
+			emitKeyLeaf(b, prefix, c, known, km)
 		}
 		return
 	}
 	in := prefix
 	guarded := known
 	if known <= bestK {
-		fmt.Fprintf(b, "%sif len(rest) > %d {\n", prefix, bestK)
+		fmt.Fprintf(b, "%sif len(%s) > %d {\n", prefix, km.variable, bestK)
 		in = prefix + "\t"
 		guarded = bestK + 1
 	}
-	fmt.Fprintf(b, "%sswitch rest[%d] {\n", in, bestK)
+	fmt.Fprintf(b, "%sswitch %s[%d] {\n", in, km.variable, bestK)
 	var order []byte
 	groups := map[byte][]keyCandidate{}
 	for _, c := range cands {
@@ -737,7 +782,7 @@ func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int
 	}
 	for _, by := range order {
 		fmt.Fprintf(b, "%scase %s:\n", in, strconv.QuoteRuneToASCII(rune(by)))
-		emitKeyTree(b, in+"\t", groups[by], guarded)
+		emitKeyTree(b, in+"\t", groups[by], guarded, km)
 	}
 	fmt.Fprintf(b, "%s}\n", in)
 	if in != prefix {
@@ -746,13 +791,18 @@ func emitKeyTree(b *bytes.Buffer, prefix string, cands []keyCandidate, known int
 }
 
 // emitKeyLeaf writes the compare that settles one candidate.
-func emitKeyLeaf(b *bytes.Buffer, prefix string, c keyCandidate, known int) {
+func emitKeyLeaf(b *bytes.Buffer, prefix string, c keyCandidate, known int, km keyMatch) {
 	n := len(c.lit)
+	if km.exact {
+		// The length switch above proved len(key) == n.
+		fmt.Fprintf(b, "%sif string(%s) == %q {\n%s\t%s\n%s}\n", prefix, km.variable, c.lit, prefix, km.assign(c), prefix)
+		return
+	}
 	guard := ""
 	if known < n {
-		guard = fmt.Sprintf("len(rest) >= %d && ", n)
+		guard = fmt.Sprintf("len(%s) >= %d && ", km.variable, n)
 	}
-	fmt.Fprintf(b, "%sif %sstring(rest[:%d]) == %q {\n%s\tidx, k = %d, %d\n%s}\n", prefix, guard, n, c.lit, prefix, c.idx, n, prefix)
+	fmt.Fprintf(b, "%sif %sstring(%s[:%d]) == %q {\n%s\t%s\n%s}\n", prefix, guard, km.variable, n, c.lit, prefix, km.assign(c), prefix)
 }
 
 // skippedBodyNames lists body field names the streaming decoder must consume
@@ -1778,12 +1828,12 @@ func emitBinderFormPass(b *bytes.Buffer, t TypePlan, indent string, needsForm, n
 			// Nested values arrive only in document bodies.
 			continue
 		}
-		cond := "formBody != nil"
+		cond := "formBody.Present()"
 		if f.Source == SourceInput {
-			cond = "need" + f.Name + " && formBody != nil"
+			cond = "need" + f.Name + " && formBody.Present()"
 		}
 		fmt.Fprintf(b, "%sif %s {\n", indent, cond)
-		fmt.Fprintf(b, "%s\tif fv, ok := formBody[%q]; ok {\n", indent, f.Wire)
+		fmt.Fprintf(b, "%s\tif fv, ok := httpbind.FormLookup(formBody, %q); ok {\n", indent, f.Wire)
 		if f.NeedsPresence() {
 			fmt.Fprintf(b, "%s\t\tpresent%s = true\n", indent, f.Name)
 		}
@@ -1795,7 +1845,7 @@ func emitBinderFormPass(b *bytes.Buffer, t TypePlan, indent string, needsForm, n
 		if !f.IsRest() {
 			continue
 		}
-		fmt.Fprintf(b, "%sif formBody != nil {\n", indent)
+		fmt.Fprintf(b, "%sif formBody.Present() {\n", indent)
 		switch f.Kind {
 		case KindRestAny:
 			fmt.Fprintf(b, "%s\tout.%s = httpbind.RestFormAny(formBody, bind%sRestExclude)\n", indent, f.Name, t.Name)

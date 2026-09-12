@@ -160,8 +160,8 @@ func bindRenameRequest(r *http.Request) (RenameRequest, error) {
 			if err != nil {
 				return out, err
 			}
-			if needName && formBody != nil {
-				if fv, ok := formBody["name"]; ok {
+			if needName && formBody.Present() {
+				if fv, ok := httpbind.FormLookup(formBody, "name"); ok {
 					presentName = true
 					out.Name = fv
 				}

@@ -155,9 +155,31 @@ func emitCBORBindDecode(b *bytes.Buffer, t TypePlan, types map[string]TypePlan, 
 		b.WriteString("\tfor i := 0; i < pairs; i++ {\n")
 		b.WriteString("\t\tkey, err := cr.ReadTextBytes()\n")
 		b.WriteString("\t\tif err != nil {\n\t\t\treturn out, err\n\t\t}\n")
-		b.WriteString("\t\tswitch string(key) {\n")
-		for _, f := range members {
-			fmt.Fprintf(b, "\t\tcase %q:\n", jsonMemberName(f))
+		// The key is settled by a decision tree over its length and the
+		// byte positions that tell the member names apart, as the JSON walk
+		// does; a name the tree cannot hold, one outside printable ASCII,
+		// is matched by the string switch below on a miss.
+		b.WriteString("\t\tidx := -1\n")
+		var cands []keyCandidate
+		var slow []int
+		for i, f := range members {
+			if name := jsonMemberName(f); treeSafeName(name) {
+				cands = append(cands, keyCandidate{lit: name, idx: i})
+			} else {
+				slow = append(slow, i)
+			}
+		}
+		emitKeyTree(b, "\t\t", cands, 0, cborKeyMatch)
+		if len(slow) > 0 {
+			b.WriteString("\t\tif idx < 0 {\n\t\t\tswitch string(key) {\n")
+			for _, i := range slow {
+				fmt.Fprintf(b, "\t\t\tcase %q:\n\t\t\t\tidx = %d\n", jsonMemberName(members[i]), i)
+			}
+			b.WriteString("\t\t\t}\n\t\t}\n")
+		}
+		b.WriteString("\t\tswitch idx {\n")
+		for i, f := range members {
+			fmt.Fprintf(b, "\t\tcase %d:\n", i)
 			emitCBORReadValue(b, f, "\t\t\t", "out."+f.Name, shape.suffix, cborPlainErrRet)
 		}
 		// An unknown key is skipped rather than refused: that tolerance is the
