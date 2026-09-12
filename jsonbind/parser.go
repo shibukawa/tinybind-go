@@ -551,7 +551,68 @@ func (p *Parser) stringSpan() (span []byte, escaped, nonASCII bool, err error) {
 }
 
 // String decodes a JSON string. null decodes as "".
+//
+// The common string -- the quote right here, no escape, and a value the
+// cache holds or a plain allocation -- is settled in this one function: the
+// word scan is written here rather than reached through stringSpan, and the
+// cache hit rather than through intern, so a string costs one call and a
+// miss one more for its allocation. Whitespace before the value, null, an
+// escape, a control byte and every error go through stringSlow, which is
+// the general path as it was.
 func (p *Parser) String() (string, error) {
+	buf := p.buf
+	i := p.pos
+	if i >= len(buf) || buf[i] != '"' {
+		return p.stringSlow()
+	}
+	start := i + 1
+	i = start
+	var high uint64
+	for i < len(buf) {
+		for i+8 <= len(buf) {
+			w := binary.LittleEndian.Uint64(buf[i:])
+			if m := swarStringStop(w); m != 0 {
+				k := swarIndex(m)
+				high |= swarBelow(w, k)
+				i += k
+				break
+			}
+			high |= w
+			i += 8
+		}
+		if i >= len(buf) {
+			break
+		}
+		c := buf[i]
+		if c == '"' {
+			p.pos = i + 1
+			span := buf[start:i]
+			nonASCII := high&swarHigh != 0
+			if p.cache != nil && len(span) >= internMin && len(span) <= internMax {
+				h := internHash(span)
+				if s := p.cache.s[h]; s == string(span) {
+					return s, nil
+				}
+				s := p.makeString(span, nonASCII)
+				p.cache.s[h] = s
+				return s, nil
+			}
+			return p.intern(span, nonASCII), nil
+		}
+		if c == '\\' || c < 0x20 {
+			return p.stringSlow()
+		}
+		if c >= utf8.RuneSelf {
+			high |= swarHigh
+		}
+		i++
+	}
+	return p.stringSlow()
+}
+
+// stringSlow is String's general path: whitespace, null, escapes, invalid
+// UTF-8 and the errors, at the cost of the calls the fast path avoids.
+func (p *Parser) stringSlow() (string, error) {
 	if p.IsNull() {
 		return "", nil
 	}
@@ -561,17 +622,6 @@ func (p *Parser) String() (string, error) {
 	}
 	if escaped {
 		return p.unescaped(span), nil
-	}
-	// The cache hit is written here rather than reached through intern, so
-	// a recurring value costs a hash and a compare and no call.
-	if p.cache != nil && len(span) >= internMin && len(span) <= internMax {
-		i := internHash(span)
-		if s := p.cache.s[i]; s == string(span) {
-			return s, nil
-		}
-		s := p.makeString(span, nonASCII)
-		p.cache.s[i] = s
-		return s, nil
 	}
 	return p.intern(span, nonASCII), nil
 }

@@ -36,16 +36,14 @@ type stringCache struct {
 var stringCachePool = sync.Pool{New: func() any { return new(stringCache) }}
 
 // internHash folds the first and last bytes and the length of b into a slot.
-// b is at least internMin bytes.
+// b is at least internMin bytes. It is kept small enough to inline into
+// String, where it runs for every cacheable value.
 func internHash(b []byte) uint32 {
 	var h uint64
-	switch {
-	case len(b) >= 8:
+	if len(b) >= 8 {
 		h = binary.LittleEndian.Uint64(b) ^ binary.LittleEndian.Uint64(b[len(b)-8:])*0x9e3779b97f4a7c15
-	case len(b) >= 4:
-		h = uint64(binary.LittleEndian.Uint32(b)) ^ uint64(binary.LittleEndian.Uint32(b[len(b)-4:]))*0x9e3779b97f4a7c15
-	default:
-		h = uint64(binary.LittleEndian.Uint16(b)) ^ uint64(binary.LittleEndian.Uint16(b[len(b)-2:]))*0x9e3779b97f4a7c15
+	} else {
+		h = (uint64(b[0]) | uint64(b[len(b)-1])<<8 | uint64(b[len(b)/2])<<16) * 0x9e3779b97f4a7c15
 	}
 	h ^= uint64(len(b)) * 0xff51afd7ed558ccd
 	return uint32(h>>32) % internSlots

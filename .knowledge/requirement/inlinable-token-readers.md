@@ -17,6 +17,9 @@ as_built:
   runtime: jsonbind/parser.go ObjectStartFast, ArrayStartFast, KeyFast, Rest, Skip, ColonFast, Colon, ArrayNextFast; each verified inlinable; the full readers keep the same fast case at their head for callers outside generated code
   numbers: Int64, Uint64 and Float64 read a plain integer or a short decimal in one pass off the input and hand everything else to the grammar check and the checked conversion, one call where there were two
   strings: the cache hit is written into Parser.String, so a recurring value costs a hash and a compare and no call
+  strings_second_pass_2026_09_12: the word scan itself is written into String too, and internHash trimmed to inline (cost 67), so a plain string is one call and a miss one more for its allocation; whitespace, null, escapes and errors go through stringSlow, the general path as it was; both fuzz targets pass
+  cache_ceiling_measured: raising the 64-byte ceiling to odjson's 256 changed nothing on citm and synthea and cost allocations on twitter, whose long unique strings evicted the short recurring ones from the 256 slots the two caches share the count of; the ceiling stays at 64
+  measurement_caveat: the second pass was validated by tests and fuzzing but its timing could not be taken on an idle machine that day; minimums over twelve short runs under load put nested-3-strings at 1.04x and twitter at 1.21x of odjson, from 1.16x and 1.36x
   emitted: generator/emit.go emitMemberWalk, emitArrayOpen, emitArrayNext, and the map open, on both the codec and the binder walks
   measured: with requirement:stack-resident-json-parser's in-place decoding landed in the same pass, benchfixture decode 534 ns to 428 ns best of ten; against odjson the rotating Order decode went from 1.35x to 1.12x and Book from 1.47x to 1.16x
 related:
