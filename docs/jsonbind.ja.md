@@ -98,6 +98,10 @@ func encodeExample(user User) (string, error) {
 - `map[string]string` など scalar の map
 - `map[string]Struct`
 - `any` と `interface{}`(フィールド、slice の要素、map の値として)
+- 上記どれかへのポインタ。`null` かポインタ先で、`Node` の中の `*Node` が木の書き方です
+- コレクションのコレクション。`[][]int`、`[][2]float64`、`map[string][]string`、`[]map[string]string` など
+
+生成器が扱えない形(文字列以外をキーにした map、チャネル、関数など)はフィールド名付きの生成エラーになります。フィールドが黙って落ちることはありません。唯一の例外は、自前のコーデックを持たない他パッケージの型で、これは従来どおり plan に入りません。
 
 ### 任意の値
 

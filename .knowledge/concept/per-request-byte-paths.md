@@ -17,6 +17,13 @@ paths:
     what: AppendJSONString, JSONString, Renderer.WriteEscaped, Escape
     applies: swar, as requirement:html-escape-word-scan
     not: key_tree and intern, there are no keys; no_heap, the writer is already append-style
+  htmlbind_render_against_quicktemplate_2026_09_12:
+    harness: the benchfixture five-row user page written once as a .qtpl and once as page.tb.html, both rendering to a discarding writer, outputs byte-equal
+    before: quicktemplate 342 ns 0 allocs; htmlbind 1016 ns 712 B 7 allocs
+    allocations_removed: RenderChain takes its Renderer and renderOptions from a sync.Pool, which the synchronous path can hand back once composed returns, and the renderer's conversion buffer comes back with it; Bind allocates one bound[P] holding the plan and its parameters and answering as render, prepare and check, where three closures over the same values were three allocations and the parameters boxed once more; a plan with nothing to prepare renders through that same object
+    after: htmlbind 3 allocs 152 B, of which one is the harness writer's conversion buffer; about 950 ns against quicktemplate's 390 ns under the same outside load
+    what_is_left: the time is the op interpreter -- an interface call and a closure call per instruction, and per row for a loop -- where quicktemplate emits straight-line writes; that is the price of the plan being data a boundary, a cache and a live delivery can walk, and closing it would mean emitting Go per component the way the CBOR and JSON codecs are emitted
+    fixture_fixed: the generated probe in templates/htmlbind/builtin_test.go shared two package variables between tests marked t.Parallel, and one test's token was read by another's render; the probes run one at a time now
   cachekeybind:
     what: generated CacheKey concatenates one framed string per marked field; each KeyString call allocates its framing and the + chain allocates once more
     applies: no_heap in spirit, as an append-style KeyAppend beside KeyString so a generated key is one allocation, the same move requirement:append-style-json-escaper made for the escaper

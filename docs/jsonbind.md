@@ -98,6 +98,10 @@ The commonly supported combinations are:
 - Scalar maps such as `map[string]string`
 - `map[string]Struct`
 - `any` and `interface{}`, as fields, slice elements, and map values
+- Pointers to any of the above, as `null` or the pointee: `*Node` inside `Node` is how a tree is declared
+- Collections of collections, such as `[][]int`, `[][2]float64`, `map[string][]string`, and `[]map[string]string`
+
+A shape the generator cannot map, such as a map with a non-string key, a channel, or a function, is a generation error naming the field. A field is never dropped in silence; the one exception is a type from another package that carries no codec of its own, which stays out of the plan as it always has.
 
 ### Arbitrary values
 

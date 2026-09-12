@@ -280,7 +280,7 @@ type Fragment struct {
 	declaresPrivate bool
 	declaresPublic  bool
 	privateSource   string
-	validate        func() error
+	validate        validator
 	// prepare computes the leading value bindings of this fragment's plan
 	// before anything is written, and returns the render to run in place of the
 	// unprepared one. It is what lets a loader's failure still choose the
@@ -288,8 +288,8 @@ type Fragment struct {
 	//
 	// It is nil for a fragment that is not a chain member, because only a chain
 	// member is assembled; such a fragment computes its bindings where they run.
-	prepare func(context.Context) (func(*Renderer) error, error)
-	render  func(*Renderer) error
+	prepare preparer
+	render  renderer
 	// opensBoundary marks a fragment that opens its own boundary when it renders,
 	// which a chain member does. Without it a slot holding one would be recorded
 	// as an inlined component while a boundary opened inside it, and the values
@@ -303,6 +303,10 @@ type Fragment struct {
 
 // Bind pairs a plan with parameters, producing the value a slot accepts.
 func (plan *Plan[P]) Bind(params P) Fragment {
+	// One object carries the plan and its parameters and answers as the
+	// render, the prepare and the check; three closures over the same two
+	// values were three allocations, and the parameters boxed once more.
+	b := &bound[P]{plan: plan, params: params}
 	fragment := Fragment{
 		head:            plan.Head,
 		headSources:     plan.HeadSources,
@@ -314,11 +318,11 @@ func (plan *Plan[P]) Bind(params P) Fragment {
 		declaresPrivate: plan.DeclaresPrivate,
 		declaresPublic:  plan.DeclaresPublic,
 		privateSource:   plan.PrivateSource,
-		render:          func(r *Renderer) error { return plan.Exec(r, params) },
+		render:          b,
 		sequence:        plan.Sequence,
 	}
 	if plan.Check != nil {
-		fragment.validate = func() error { return plan.Check(params) }
+		fragment.validate = b
 	}
 	// A storing cache is not prepared. The prologue runs during assembly and the
 	// store is consulted during the render, so hoisting a cached component's
@@ -330,16 +334,64 @@ func (plan *Plan[P]) Bind(params P) Fragment {
 	// Paying a fetch per hit to keep a choice that half the requests cannot use
 	// is the wrong trade.
 	if plan.Cache == nil || plan.Cache.TTL <= 0 {
-		fragment.prepare = func(ctx context.Context) (func(*Renderer) error, error) {
-			prepared, err := prepareOps(ctx, params, plan.Ops)
-			if err != nil {
-				return nil, err
-			}
-			return func(r *Renderer) error { return plan.exec(r, params, prepared) }, nil
-		}
+		fragment.prepare = b
 	}
 	return foldSlots(fragment, plan.Slots, params)
 }
+
+// renderer is what a fragment renders through. A bound plan is one; a
+// composition written as a closure is wrapped as renderFunc.
+type renderer interface {
+	run(*Renderer) error
+}
+
+// renderFunc is a closure as a renderer.
+type renderFunc func(*Renderer) error
+
+func (f renderFunc) run(r *Renderer) error { return f(r) }
+
+// preparer computes a fragment's leading value bindings and answers with the
+// render to run in their place.
+type preparer interface {
+	prepare(context.Context) (renderer, error)
+}
+
+// validator runs a fragment's parameter check.
+type validator interface {
+	validate() error
+}
+
+// bound is a plan with its parameters: the value Bind allocates once.
+type bound[P any] struct {
+	plan   *Plan[P]
+	params P
+}
+
+func (b *bound[P]) run(r *Renderer) error { return b.plan.Exec(r, b.params) }
+
+func (b *bound[P]) validate() error { return b.plan.Check(b.params) }
+
+func (b *bound[P]) prepare(ctx context.Context) (renderer, error) {
+	prepared, err := prepareOps(ctx, b.params, b.plan.Ops)
+	if err != nil {
+		return nil, err
+	}
+	// A plan with nothing to prepare hands back the list it was given, and
+	// then this bound value renders it as it stands: no second object.
+	if len(prepared) == len(b.plan.Ops) && (len(prepared) == 0 || &prepared[0] == &b.plan.Ops[0]) {
+		return b, nil
+	}
+	return &preparedBound[P]{plan: b.plan, params: b.params, ops: prepared}, nil
+}
+
+// preparedBound is a bound plan whose leading bindings have run.
+type preparedBound[P any] struct {
+	plan   *Plan[P]
+	params P
+	ops    []Op[P]
+}
+
+func (b *preparedBound[P]) run(r *Renderer) error { return b.plan.exec(r, b.params, b.ops) }
 
 // foldSlots merges what the fragments in a parameter struct contribute into the
 // value the binder returns: their head, and whether rendering will open an await
@@ -419,7 +471,7 @@ func (f Fragment) Validate() error {
 	if f.validate == nil {
 		return nil
 	}
-	return f.validate()
+	return f.validate.validate()
 }
 
 // Present reports whether the fragment carries content. An absent optional
@@ -753,7 +805,7 @@ func (f Fragment) prepared(ctx context.Context) (Fragment, error) {
 	if f.prepare == nil || !f.Present() {
 		return f, nil
 	}
-	render, err := f.prepare(ctx)
+	render, err := f.prepare.prepare(ctx)
 	if err != nil {
 		return Fragment{}, err
 	}

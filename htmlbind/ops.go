@@ -700,13 +700,13 @@ func (o componentCtxOp[P]) Exec(r *Renderer, params P) error {
 func renderNested(r *Renderer, fragment Fragment) error {
 	decl := fragment.boundary
 	if r.collect == nil {
-		return fragment.render(r)
+		return fragment.render.run(r)
 	}
 	if fragment.opensBoundary {
 		// A chain member opens its own boundary as it renders, so this only says
 		// which shape the sequence takes and leaves the opening to it.
 		r.collect.Choice(seqBoundary)
-		return fragment.render(r)
+		return fragment.render.run(r)
 	}
 	if decl == nil || decl.instance == "" {
 		// An inlined component is opaque to the sequence: its plan is chosen by a
@@ -714,14 +714,14 @@ func renderNested(r *Renderer, fragment Fragment) error {
 		// and the instructions inside it do not split it further.
 		r.collect.Choice(seqInline)
 		r.collect.Slot(true)
-		err := fragment.render(r)
+		err := fragment.render.run(r)
 		r.collect.Slot(false)
 		return err
 	}
 	r.collect.Choice(seqBoundary)
 	r.collect.Open(decl.instance, decl.componentID, decl.attr, decl.input(),
 		fragment.sequenceAddress())
-	if err := fragment.render(r); err != nil {
+	if err := fragment.render.run(r); err != nil {
 		return err
 	}
 	r.collect.Close()

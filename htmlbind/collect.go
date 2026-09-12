@@ -69,7 +69,7 @@ func CollectChain(w io.Writer, collect Collector, wrappers []Wrapper, leaf Fragm
 	if err != nil {
 		return nil, err
 	}
-	if err := composed(&Renderer{w: w, sw: stringWriterOf(w), head: head, opts: opts, collect: collect}); err != nil {
+	if err := composed.run(&Renderer{w: w, sw: stringWriterOf(w), head: head, opts: opts, collect: collect}); err != nil {
 		return nil, err
 	}
 	return head, nil
@@ -108,17 +108,17 @@ func memberFragment(member Fragment, decl *boundary, index int) Fragment {
 		hasLive:       member.hasLive,
 		sequence:      member.sequence,
 		opensBoundary: true,
-		render: func(r *Renderer) error {
+		render: renderFunc(func(r *Renderer) error {
 			if r.collect == nil {
-				return member.render(r)
+				return member.render.run(r)
 			}
 			r.collect.Open(id, decl.componentID, decl.attr, decl.input(),
 				member.sequenceAddress())
-			if err := member.render(r); err != nil {
+			if err := member.render.run(r); err != nil {
 				return err
 			}
 			r.collect.Close()
 			return nil
-		},
+		}),
 	}
 }

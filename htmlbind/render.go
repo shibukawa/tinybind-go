@@ -323,7 +323,7 @@ func (pr *pooledRenderer) render(w io.Writer, wrappers []Wrapper, leaf Fragment)
 		return err
 	}
 	pr.r = Renderer{w: w, sw: stringWriterOf(w), head: head, opts: &pr.opts, scratch: pr.r.scratch[:0]}
-	return composed(&pr.r)
+	return composed.run(&pr.r)
 }
 
 // RenderAsync renders one component and yields each await boundary as it
@@ -412,7 +412,7 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 		// this path: the script that applies a completion belongs with the framing
 		// the caller writes around it, so both are the framework's to ship.
 		renderer := &Renderer{w: w, sw: stringWriterOf(w), head: head, opts: coordinator.opts, async: coordinator, collect: collect}
-		if err := composed(renderer); err != nil {
+		if err := composed.run(renderer); err != nil {
 			yield(Content{}, err)
 			return
 		}
@@ -464,7 +464,7 @@ func streamChain(ctx context.Context, w io.Writer, collect Collector, rendered f
 //
 // Every entry passes its own render's context rather than a background one, or
 // a hoisted loader on that entry would lose the request.
-func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper, leaf Fragment) (func(*Renderer) error, []string, error) {
+func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper, leaf Fragment) (renderer, []string, error) {
 	if !leaf.Present() {
 		return nil, nil, ErrNoLeaf
 	}
@@ -503,7 +503,7 @@ func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper,
 			next = Fragment{
 				hasAwait: wrapper.hasAwait || inner.hasAwait,
 				hasLive:  wrapper.hasLive || inner.hasLive,
-				render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+				render:   renderFunc(func(r *Renderer) error { return wrapper.render(r, inner) }),
 			}
 		}
 		return next.render, head, nil
@@ -512,7 +512,7 @@ func assembleContext(ctx context.Context, collect Collector, wrappers []Wrapper,
 	for i := len(wrappers) - 1; i >= 0; i-- {
 		wrapper, inner, index := wrappers[i], next, i
 		child := Fragment{
-			render:   func(r *Renderer) error { return wrapper.render(r, inner) },
+			render:   renderFunc(func(r *Renderer) error { return wrapper.render(r, inner) }),
 			sequence: wrapper.sequence,
 		}
 		next = memberFragment(child, wrapper.boundary, index)

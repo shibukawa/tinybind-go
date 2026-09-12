@@ -462,7 +462,7 @@ objects, and a string array. The page is a five-row user list.
 | JSON encode | 866 ns · 288 B · 2 allocs | **227 ns · 0 B · 0 allocs** |
 | `Bind` + `Write` (request reused) | 783 ns · 1154 B · 14 allocs | **371 ns · 529 B · 6 allocs** |
 | `Bind` + `Write` (incl. request construction) | 1601 ns · 7024 B · 28 allocs | **1140 ns · 6399 B · 20 allocs** |
-| HTML render (`html/template` vs `htmlbind`) | 6415 ns · 2705 B · 107 allocs | **1051 ns · 712 B · 7 allocs** |
+| HTML render (`html/template` vs `htmlbind`) | 6421 ns · 2705 B · 107 allocs | **1197 ns · 72 B · 2 allocs** |
 
 The JSON comparisons are against `encoding/json`; the handler row against a
 hand-written `net/http` handler doing the same decode, path, and header reads;
@@ -475,8 +475,9 @@ strings come from a small cache the decoder keeps across calls, which serves a
 value it has seen before rather than allocating it again; this benchmark
 decodes one document repeatedly, so every string is a hit. On a stream of
 documents whose values all differ, each string is allocated once as before.
-The HTML render's allocations are per render rather than per row, so a longer
-page costs the same handful.
+The HTML render's two allocations are per render rather than per row, so a
+longer page costs the same two: the bound page and its parameters, and the
+writer's conversion buffer; the renderer itself comes from a pool.
 
 ### Binary size
 
