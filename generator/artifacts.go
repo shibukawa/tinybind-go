@@ -30,6 +30,7 @@ const (
 	ArtifactSQLTemplate  ArtifactKind = "sql_template"
 	ArtifactBinding      ArtifactKind = "binding"
 	ArtifactConfigBind   ArtifactKind = "configbind"
+	ArtifactTOMLBind     ArtifactKind = "tomlbind"
 	ArtifactDynamoItem   ArtifactKind = "dynamo_item"
 	ArtifactDynamoQuery  ArtifactKind = "dynamo_query"
 
@@ -180,6 +181,11 @@ func (g *Generator) generateArtifacts(ctx context.Context, request GenerateReque
 		return nil, nil, fmt.Errorf("generate configbind: %w", err)
 	}
 	artifacts = append(artifacts, config...)
+	toml, err := runner.tomlBindArtifacts(load)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate tomlbind: %w", err)
+	}
+	artifacts = append(artifacts, toml...)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}

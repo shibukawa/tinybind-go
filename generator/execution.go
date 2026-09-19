@@ -29,6 +29,8 @@ type GenerateRequest struct {
 	// retains it.
 	SQLDialect     string
 	ConfigBindName string
+	// TOMLBindName is the generated tomlbind decoder output file.
+	TOMLBindName string
 	// TransportName is the generated transport output file. Empty uses the
 	// default; it is written only when Options.Transform selects a backend.
 	TransportName string
@@ -84,6 +86,7 @@ type GenerateRequest struct {
 type GenerateResult struct {
 	BinderPath         string
 	ConfigBindPath     string
+	TOMLBindPath       string
 	DynamoPath         string
 	DynamoQueryPath    string
 	FirestorePath      string
@@ -147,7 +150,7 @@ func (result GenerateResult) Paths() []string {
 	if result.DepsPath != "" {
 		paths = append(paths, result.DepsPath)
 	}
-	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.CacheKeyPath, result.OpenAPIPath} {
+	for _, path := range []string{result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.TOMLBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.CacheKeyPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -160,7 +163,7 @@ func (result GenerateResult) Paths() []string {
 // Go and its name already records the hash of its bytes.
 func (result GenerateResult) goPaths() []string {
 	paths := make([]string, 0, 6)
-	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
+	for _, path := range []string{result.TemplatesPath, result.BinderPath, result.FastBindersPath, result.TransportPath, result.RoutesPath, result.ConfigBindPath, result.TOMLBindPath, result.DynamoPath, result.DynamoQueryPath, result.FirestorePath, result.FirestoreQueryPath, result.OpenAPIPath} {
 		if path != "" {
 			paths = append(paths, path)
 		}
@@ -193,6 +196,9 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	}
 	if request.ConfigBindName == "" {
 		request.ConfigBindName = defaultConfigBindOut
+	}
+	if request.TOMLBindName == "" {
+		request.TOMLBindName = defaultTOMLBindOut
 	}
 	if request.DynamoName == "" {
 		request.DynamoName = defaultDynamoOut
@@ -289,6 +295,10 @@ func (g *Generator) GeneratePackage(ctx context.Context, request GenerateRequest
 	result.ConfigBindPath, err = runner.generateConfigBind(load, request.Out, request.ConfigBindName)
 	if err != nil {
 		return GenerateResult{}, fmt.Errorf("generate configbind: %w", err)
+	}
+	result.TOMLBindPath, err = runner.generateTOMLBind(load, request.Out, request.TOMLBindName)
+	if err != nil {
+		return GenerateResult{}, fmt.Errorf("generate tomlbind: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return GenerateResult{}, err

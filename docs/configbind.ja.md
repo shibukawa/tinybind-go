@@ -8,6 +8,9 @@
 default < TOML file < environment variable < CLI option
 ```
 
+> [!TIP]
+> env や CLI の層は要らず、TOML ファイルを1つ構造体に読みたいだけなら [tomlbind](tomlbind.ja.md) を参照してください。同じ構造体と同じ TOML サブセットを読み、他のパーサをリンクしません。
+
 > [!IMPORTANT]
 > configbind の TOML parser は標準 TOML のフルセットではなく、設定用途に絞った subset です。quoted key、inline table、nested array などは利用できません。既存の一般的な TOML file をそのまま読み込む用途ではなく、対応範囲に合わせて設定 file を用意してください。詳しくは「[TOML file](#toml-file)」を参照してください。
 

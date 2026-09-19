@@ -129,6 +129,25 @@ func (v Value) AsInt() (int64, error) {
 	}
 }
 
+// AsFloat coerces a numeric scalar to float64. An integer widens, since a
+// TOML author writes a whole number without a point.
+func (v Value) AsFloat() (float64, error) {
+	switch v.Kind {
+	case KindFloat:
+		return v.Float, nil
+	case KindInt:
+		return float64(v.Int), nil
+	case KindString:
+		f, err := strconv.ParseFloat(v.Str, 64)
+		if err != nil {
+			return 0, fmt.Errorf("minitoml: cannot convert string %q to float: %w", v.Str, err)
+		}
+		return f, nil
+	default:
+		return 0, fmt.Errorf("minitoml: expected float, got %s", v.KindName())
+	}
+}
+
 // AsStringSlice returns a primitive array as []string.
 func (v Value) AsStringSlice() ([]string, error) {
 	if v.Kind != KindArray {

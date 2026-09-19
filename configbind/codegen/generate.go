@@ -42,6 +42,9 @@ const (
 	FieldStringSlice = codegen.FieldStringSlice
 	FieldStruct      = codegen.FieldStruct
 	FieldStructSlice = codegen.FieldStructSlice
+	// FieldFloat is what the shared collector produces for tomlbind; the
+	// configbind emitter has no form for it and refuses it by kind.
+	FieldFloat = codegen.FieldFloat
 )
 
 // Generate emits package source that registers one Definition for each Spec.

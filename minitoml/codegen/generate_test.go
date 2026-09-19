@@ -220,3 +220,82 @@ func TestGenerateRejectsOutOfRangeIntDefault(t *testing.T) {
 		t.Fatalf("err=%v want an out-of-range default rejection", err)
 	}
 }
+
+// A float field reads a TOML float and widens a TOML integer; the narrower
+// width converts, and a default is rendered as a float literal.
+func TestGenerateFloatFields(t *testing.T) {
+	var b bytes.Buffer
+	spec := codegen.Spec{
+		TypeName: "Gauge",
+		Fields: []codegen.Field{
+			{GoName: "Ratio", Key: "ratio", Kind: codegen.FieldFloat, Default: "0.5"},
+			{GoName: "Scale", Key: "scale", Kind: codegen.FieldFloat, GoType: "float32"},
+		},
+	}
+	err := codegen.EmitApply(&b, spec, codegen.ApplyOptions{FuncName: "fill", ErrorPrefix: "gauge", AllowEmptyPrefix: true})
+	if err != nil {
+		t.Fatalf("EmitApply: %v", err)
+	}
+	src := b.String()
+	for _, want := range []string{
+		"func fill(dst *Gauge, doc minitoml.Document) error",
+		`doc.Get("ratio")`,
+		"x, err := v.AsFloat()",
+		"dst.Ratio = x",
+		"dst.Ratio = 0.5",
+		"dst.Scale = float32(x)",
+		`"gauge: scale: %w"`,
+		`"gauge: nil destination"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("emitted source lacks %q\n%s", want, src)
+		}
+	}
+	if strings.Contains(src, "minitoml: ") {
+		t.Errorf("the error prefix was not replaced everywhere\n%s", src)
+	}
+	if err := codegen.EmitApply(&b, codegen.Spec{TypeName: "G", Fields: []codegen.Field{{GoName: "R", Key: "r", Kind: codegen.FieldFloat, Default: "half"}}}, codegen.ApplyOptions{AllowEmptyPrefix: true}); err == nil {
+		t.Error("an unparsable float default was accepted")
+	}
+	if err := codegen.EmitApply(&b, codegen.Spec{TypeName: "G", Fields: []codegen.Field{{GoName: "R", Key: "r", Kind: codegen.FieldFloat, GoType: "complex64"}}}, codegen.ApplyOptions{AllowEmptyPrefix: true}); err == nil {
+		t.Error("a non-float GoType was accepted")
+	}
+}
+
+// AsFloat is what the emitted float field reads through.
+func TestValueAsFloat(t *testing.T) {
+	doc, err := minitoml.ParseString("a = 1.5\nb = 2\nc = \"x\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]float64{"a": 1.5, "b": 2} {
+		v, _ := doc.Get(key)
+		got, err := v.AsFloat()
+		if err != nil || got != want {
+			t.Errorf("%s: got %v %v", key, got, err)
+		}
+	}
+	v, _ := doc.Get("c")
+	if _, err := v.AsFloat(); err == nil {
+		t.Error("a non-numeric string converted to float")
+	}
+}
+
+// The zero options emit exactly the form Generate does, so the pinned
+// fixture and a caller of EmitApply cannot drift.
+func TestEmitApplyZeroOptionsMatchesGenerate(t *testing.T) {
+	var b bytes.Buffer
+	if err := codegen.EmitApply(&b, codegen.WebServiceFixtureSpec(), codegen.ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	whole, err := codegen.Generate("fixture", []codegen.Spec{codegen.WebServiceFixtureSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(whole), strings.TrimSpace(b.String())) {
+		t.Fatalf("EmitApply output is not what Generate writes\n%s", b.String())
+	}
+	if _, err := codegen.Generate("fixture", []codegen.Spec{{TypeName: "NoPrefix"}}); err == nil {
+		t.Error("Generate accepted an empty prefix")
+	}
+}

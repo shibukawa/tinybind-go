@@ -4,7 +4,7 @@
 
 Reflection-free, code-generation-first binding for TinyGo and standard Go. Runtime dependencies are isolated into HTTP, JSON, SQL, and DynamoDB packages.
 
-User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [cborbind](docs/cborbind.md) · [configbind](docs/configbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md) · [size and shape limits](docs/limits.md)
+User guides: [httpbind](docs/httpbind.md) · [jsonbind](docs/jsonbind.md) · [cborbind](docs/cborbind.md) · [configbind](docs/configbind.md) · [tomlbind](docs/tomlbind.md) · [htmlbind](docs/htmlbind.md) · [sqlbind](docs/sqlbind.md) · [dynamobind](docs/dynamobind.md) · [firestorebind](docs/firestorebind.md) · [cachekeybind](docs/cachekeybind.md) · [reloadable components](docs/httpbind_reloadable_componet.md) · [fasthttp backend](docs/httpbind_fasthttp.md) · [size and shape limits](docs/limits.md)
 
 Building a framework on top of this? Start with [framework facilities](docs/httpbind_framework_facilities.md), the index of what is available to you and what is not, then [htmlbind for framework owners](docs/htmlbind_frameworkowner.md) and, if your users will build against fasthttp, [the fasthttp backend for framework owners](docs/httpbind_fasthttp_frameworkowner.md). Owning a browser runtime as well? [Client behaviour](docs/httpbind_client_behavior.md) covers server actions, client handlers, and component parameters in one place.
 
@@ -112,6 +112,7 @@ httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
 |------|------|
 | `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / WriteStream / OpenAPI serve / SwaggerUI |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
+| `tomlbind/` | Standalone DecodeTOML runtime over `minitoml`; the TOML layer of configbind without its env, CLI, or config-dir parsers |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
 | `dynamobind/` | DynamoDB item runtime over `tinygodriver/nosql/dynamodb`; does not import `net/http` or `database/sql` |
 | `firestorebind/` | Firestore Datastore-mode entity runtime over `tinygodriver/nosql/datastore`; does not import `net/http` or `database/sql` |

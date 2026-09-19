@@ -340,6 +340,10 @@ type configFieldCollector struct {
 	// open are the element struct types currently being walked, so a struct that
 	// holds a slice of itself is reported instead of recursing forever.
 	open []*types.Named
+	// floats admits float64 and float32 fields. tomlbind sets it; configbind
+	// does not, since its Overlay apply has no float form and a float field
+	// there is refused by kind, per decision:configbind-supported-types.
+	floats bool
 }
 
 // help returns the description for one field. An existing help tag always wins,
@@ -445,6 +449,11 @@ func (c *configFieldCollector) fields(st *types.Struct, keyPrefix string) ([]cbc
 			}
 		}
 		kind, goType, err := configFieldKind(ft)
+		if c.floats && err != nil {
+			if basic, ok := ft.Underlying().(*types.Basic); ok && (basic.Kind() == types.Float64 || basic.Kind() == types.Float32) {
+				kind, goType, err = cbcg.FieldFloat, basic.Name(), nil
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Name(), err)
 		}

@@ -8,6 +8,9 @@ Nothing about that layering is configurable. The precedence is fixed, and source
 default < TOML file < environment variable < CLI option
 ```
 
+> [!TIP]
+> If you only want one TOML file read into a struct, with no environment or CLI layer, see [tomlbind](tomlbind.md). It reads the same struct and the same TOML subset and links none of the other parsers.
+
 > [!IMPORTANT]
 > configbind implements a configuration-focused TOML subset, not the complete TOML specification. Quoted keys, inline tables, nested arrays, and some other TOML syntax are unsupported. Prepare configuration files for this supported subset rather than assuming that an arbitrary existing TOML document can be loaded. See [TOML files](#toml-files) for the complete list used by configbind.
 

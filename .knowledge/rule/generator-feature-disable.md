@@ -28,6 +28,7 @@ behavior:
   - generate-all never overrides disablement
 not_a_feature:
   - CBOR HTTP negotiation, which is an off-by-default generator option rather than a disablable feature, per requirement:cbor-http-body; the wire and world codec features left with their pass, per decision:cbor-codecs-are-application-side
+  - the tomlbind decoder of requirement:tomlbind-standalone-decoder, as decode-toml; one feature and one operation, since the call and the declaration ask for the same method
 returning_as_features:
   - the array and map codec of requirement:cbor-codec-generation, one feature per shape and one pattern per direction, so a project may disable a shape or a direction and leave the other standing; this is a feature rather than an option because a declaration names it per type, where the HTTP mode is project-wide
 validation:

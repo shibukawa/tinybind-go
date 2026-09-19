@@ -42,10 +42,14 @@ const (
 	OperationCBORArrayDecode CallOperation = "cbor_array_decode"
 	OperationCBORMapEncode   CallOperation = "cbor_map_encode"
 	OperationCBORMapDecode   CallOperation = "cbor_map_decode"
-	OperationRowsScan        CallOperation = "rows_scan"
-	OperationItemEncode      CallOperation = "item_encode"
-	OperationItemDecode      CallOperation = "item_decode"
-	OperationItemKey         CallOperation = "item_key"
+	// OperationTOMLDecode is every tomlbind entry point, the declaration
+	// included: there is one direction and the method is always published,
+	// so nothing tells a call from a declaration here.
+	OperationTOMLDecode CallOperation = "toml_decode"
+	OperationRowsScan   CallOperation = "rows_scan"
+	OperationItemEncode CallOperation = "item_encode"
+	OperationItemDecode CallOperation = "item_decode"
+	OperationItemKey    CallOperation = "item_key"
 	// OperationItemEncodeDecode is a write that reads back what it replaced, and
 	// OperationItemKeyDecode a delete that does. One call needs two generated
 	// methods, and a call target carries exactly one operation, so the pair gets
@@ -255,6 +259,11 @@ func JSONEncoderDeclareCall(target CallTarget, options ...CallPatternOption) Cal
 // JSONDecoderDeclareCall declares the annotation asking for the decoder alone.
 func JSONDecoderDeclareCall(target CallTarget, options ...CallPatternOption) CallPattern {
 	return Call(OperationJSONDecoderDeclare, target, options...)
+}
+
+// TOMLDecodeCall declares a tomlbind decoder entry point or declaration.
+func TOMLDecodeCall(target CallTarget, options ...CallPatternOption) CallPattern {
+	return Call(OperationTOMLDecode, target, options...)
 }
 
 // CBORArrayEncodeCall declares the array-shaped CBOR encoder entry point.
@@ -572,6 +581,7 @@ func supportedCallOperation(operation CallOperation) bool {
 		OperationJSONEncoderDeclare, OperationJSONDecoderDeclare,
 		OperationCBORArrayEncode, OperationCBORArrayDecode,
 		OperationCBORMapEncode, OperationCBORMapDecode,
+		OperationTOMLDecode,
 		OperationRowsScan, OperationConfigBind, OperationConfigSubCommand,
 		OperationRouteRegister, OperationErrorResponse, OperationTransportOnly,
 		OperationItemEncode, OperationItemDecode, OperationItemKey,
@@ -608,7 +618,7 @@ func requiredCallRoles(operation CallOperation) (types, values []string) {
 		return []string{"decode"}, nil
 	case OperationCBORArrayEncode, OperationCBORMapEncode:
 		return []string{"encode"}, nil
-	case OperationCBORArrayDecode, OperationCBORMapDecode:
+	case OperationCBORArrayDecode, OperationCBORMapDecode, OperationTOMLDecode:
 		return []string{"decode"}, nil
 	case OperationRowsScan:
 		return []string{"row"}, nil

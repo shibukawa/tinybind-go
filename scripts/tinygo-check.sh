@@ -75,6 +75,17 @@ if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go)$' <<<"$JS
 fi
 tinygo build -target wasm -o /tmp/tinybind-json-smoke.wasm ./testdata/cmd/tinygo-json-smoke
 
+echo "==> tinygo build -target wasm and run -target wasip1 (TOML-only generated code)"
+# tomlbind is the TOML layer on its own: the graph must carry none of the CLI,
+# env or config-dir parsers configbind links, and no HTTP or SQL runtime.
+TOML_DEPS="$(go list -deps ./testdata/cmd/tinygo-toml-smoke)"
+if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go|github.com/shibukawa/tinybind-go/configbind|github.com/shibukawa/tinybind-go/cliparser|github.com/shibukawa/configdir|github.com/hashicorp/go-envparse)$' <<<"$TOML_DEPS"; then
+  echo "TOML-only dependency graph contains a config, HTTP, SQL, or root runtime" >&2
+  exit 1
+fi
+tinygo build -target wasm -o /tmp/tinybind-toml-smoke.wasm ./testdata/cmd/tinygo-toml-smoke
+tinygo run -target=wasip1 ./testdata/cmd/tinygo-toml-smoke
+
 # The CBOR game-codec smoke is gone with the pass that generated it: the wire
 # and world profiles are ebigentserver's protocol, and their codecs are
 # generated application-side since decision:cbor-codecs-are-application-side.

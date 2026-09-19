@@ -62,6 +62,8 @@ const (
 	// own pattern under them.
 	FeatureCBORArrayCodec Feature = "cbor-array-codec"
 	FeatureCBORMapCodec   Feature = "cbor-map-codec"
+	// FeatureDecodeTOML turns off tomlbind decoder generation entirely.
+	FeatureDecodeTOML Feature = "decode-toml"
 	// FeatureCacheKey turns off cache key generation entirely.
 	FeatureCacheKey Feature = "cache-key"
 	// FeatureHelpBackfill writes help tags derived from godoc into config
@@ -481,6 +483,7 @@ func (o Options) callPatterns() ([]CallPattern, error) {
 		}
 		if len(o.RuntimePackages.Set) > 0 {
 			patterns = append(patterns, canonicalCBORBindCalls()...)
+			patterns = append(patterns, canonicalTOMLBindCalls()...)
 			patterns = append(patterns, htmlupdateTransportOnlyCalls()...)
 			patterns = append(patterns, ConfigBindCall(
 				Function(configbindImportPath, "Bind"),
@@ -803,6 +806,8 @@ func featureDisabledForCall(operation CallOperation, disabled map[Feature]bool) 
 		return disabled[FeatureCBORArrayCodec]
 	case OperationCBORMapEncode, OperationCBORMapDecode:
 		return disabled[FeatureCBORMapCodec]
+	case OperationTOMLDecode:
+		return disabled[FeatureDecodeTOML]
 	case OperationRowsScan:
 		return disabled[FeatureScanRows]
 	case OperationItemEncode, OperationItemDecode, OperationItemKey,
