@@ -41,8 +41,10 @@ func JSONString[T ~string](value T) string {
 }
 
 // AppendJSONString appends value to dst under JSONString's rules and returns
-// the extended slice. It scans bytes and copies clean runs in bulk, so a value
-// needing no escapes costs one copy rather than a write per rune.
+// the extended slice. It scans plain ASCII a word at a time and copies clean
+// runs in bulk, so a value needing no escapes costs one copy rather than a
+// write per rune; a run of multibyte runes stays with the rune decoder
+// rather than returning to the word scan at every rune.
 //
 // It is exported because the framing around a record is the caller's, as
 // Content.AppendJSON says: a caller that assembles its own record shape still
@@ -59,13 +61,14 @@ func AppendJSONString[T ~string | ~[]byte](dst []byte, value T) []byte {
 	}
 	dst = append(dst, '"')
 	start := 0
-	for i := 0; i < len(value); {
+	i := 0
+	for i < len(value) {
+		i = jsonRun(value, i)
+		if i >= len(value) {
+			break
+		}
 		c := value[i]
 		if c < utf8.RuneSelf {
-			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
-				i++
-				continue
-			}
 			if start < i {
 				dst = append(dst, value[start:i]...)
 			}
@@ -97,35 +100,37 @@ func AppendJSONString[T ~string | ~[]byte](dst []byte, value T) []byte {
 			start = i
 			continue
 		}
-		// Decoding through a window of one rune at most keeps this call free
-		// for a []byte value: a conversion this short stays on the stack,
-		// where converting the whole remaining tail would copy it.
-		end := min(i+utf8.UTFMax, len(value))
-		r, width := utf8.DecodeRuneInString(string(value[i:end]))
-		switch {
-		case r == ' ', r == ' ':
-			if start < i {
-				dst = append(dst, value[start:i]...)
+		for i < len(value) && value[i] >= utf8.RuneSelf {
+			// Decoding through a window of one rune at most keeps this call
+			// free for a []byte value: a conversion this short stays on the
+			// stack, where converting the whole remaining tail would copy it.
+			end := min(i+utf8.UTFMax, len(value))
+			r, width := utf8.DecodeRuneInString(string(value[i:end]))
+			switch {
+			case r == '\u2028', r == '\u2029':
+				if start < i {
+					dst = append(dst, value[start:i]...)
+				}
+				if r == '\u2028' {
+					dst = append(dst, '\\', 'u', '2', '0', '2', '8')
+				} else {
+					dst = append(dst, '\\', 'u', '2', '0', '2', '9')
+				}
+				i += width
+				start = i
+			case r == utf8.RuneError && width == 1:
+				// An invalid byte becomes the replacement character, exactly
+				// as a rune loop would decode it. A genuine U+FFFD is three
+				// valid bytes and travels inside the clean run.
+				if start < i {
+					dst = append(dst, value[start:i]...)
+				}
+				dst = append(dst, "\uFFFD"...)
+				i += width
+				start = i
+			default:
+				i += width
 			}
-			if r == ' ' {
-				dst = append(dst, '\\', 'u', '2', '0', '2', '8')
-			} else {
-				dst = append(dst, '\\', 'u', '2', '0', '2', '9')
-			}
-			i += width
-			start = i
-		case r == utf8.RuneError && width == 1:
-			// An invalid byte becomes the replacement character, exactly as a
-			// rune loop would decode it. A genuine U+FFFD is three valid bytes
-			// and travels inside the clean run.
-			if start < i {
-				dst = append(dst, value[start:i]...)
-			}
-			dst = append(dst, "�"...)
-			i += width
-			start = i
-		default:
-			i += width
 		}
 	}
 	if start < len(value) {

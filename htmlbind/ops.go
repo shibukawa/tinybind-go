@@ -792,26 +792,46 @@ func (mergedHeadOp[P]) Exec(r *Renderer, _ P) error {
 	return nil
 }
 
-// escapeNeeded reports whether value carries anything the escaping loops
-// rewrite: one of the five entity characters, or a byte that is not valid
-// UTF-8.
+// escapeNeeded reports whether Escape would change value: it carries an entity
+// character, or it is not valid UTF-8. Both halves are checked, because the
+// rune loop below turns every invalid byte into the replacement character, so a
+// guard testing only for entity characters sanitizes "a\xffb<" and passes
+// "a\xffb" straight through — one value treated two ways depending on a
+// character that has nothing to do with it.
 //
-// The UTF-8 half is not decoration. The loops decode each invalid byte to the
-// replacement character, so a guard testing only for entity characters
-// sanitizes "a\xffb<" and passes "a\xffb" straight through — one value treated
-// two ways depending on a character that has nothing to do with it.
-//
-// Both halves are stdlib scans rather than one hand-written pass, which is
-// what keeps this off the render's critical path: a fused loop measured three
-// to four times slower than either, because neither of these is a byte loop
-// once the compiler is done with it. ValidString costs almost nothing over an
-// ASCII value, which is nearly every value.
+// The entity check is one word scan over the value. It used to be
+// strings.ContainsAny beside utf8.ValidString, chosen because a fused byte
+// loop measured three to four times slower than the pair; the word scan is
+// what makes a single pass win instead, and ValidString is consulted only
+// when the scan saw a byte outside ASCII.
 func escapeNeeded(value string) bool {
-	return strings.ContainsAny(value, `&<>"'`) || !utf8.ValidString(value)
+	i := 0
+	var high uint64
+	for i+8 <= len(value) {
+		w := loadWord(value[i:])
+		if htmlEntityWord(w) != 0 {
+			return true
+		}
+		high |= w
+		i += 8
+	}
+	for ; i < len(value); i++ {
+		c := value[i]
+		if c >= utf8.RuneSelf {
+			high = wordHigh
+		} else if htmlStop(c) {
+			return true
+		}
+	}
+	return high&wordHigh != 0 && !utf8.ValidString(value)
 }
 
 // Escape applies HTML text and attribute escaping. It is exported so generated
 // helpers can reuse exactly the runtime's rules.
+//
+// A value needing no change is returned as it is, which is why the scan runs
+// twice over a value that does need one: the first pass is what keeps the
+// common value off the allocator.
 func Escape(value string) string {
 	if !escapeNeeded(value) {
 		return value
@@ -819,35 +839,32 @@ func Escape(value string) string {
 	var out strings.Builder
 	out.Grow(len(value) + 32)
 	start := 0
-	for i, r := range value {
+	i := 0
+	for i < len(value) {
+		i = htmlRun(value, i)
+		if i >= len(value) {
+			break
+		}
 		var entity string
-		switch r {
-		case '&':
-			entity = "&amp;"
-		case '<':
-			entity = "&lt;"
-		case '>':
-			entity = "&gt;"
-		case '"':
-			entity = "&#34;"
-		case '\'':
-			entity = "&#39;"
-		case utf8.RuneError:
+		if c := value[i]; c < utf8.RuneSelf {
+			entity = htmlEntity(c)
+		} else {
 			// A rune loop decodes each invalid byte to the replacement
 			// character. A genuine U+FFFD is its own three bytes and passes
 			// through inside the clean run.
-			if _, width := utf8.DecodeRuneInString(value[i:]); width != 1 {
+			next, invalid := multibyteRun(value, i)
+			i = next
+			if !invalid {
 				continue
 			}
-			entity = "�"
-		default:
-			continue
+			entity = "\uFFFD"
 		}
 		if start < i {
 			out.WriteString(value[start:i])
 		}
 		out.WriteString(entity)
-		start = i + 1
+		i++
+		start = i
 	}
 	if start < len(value) {
 		out.WriteString(value[start:])

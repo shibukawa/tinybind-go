@@ -81,7 +81,7 @@ third_survey_2026_10_21:
   not_done:
     query_pairs: the one slice ParseQuery allocates stays, per form_body.not_done above; an inline array would make QueryValues a 160-byte value copied into every lookup
     json_body_buffer: pooling the buffer ReadJSONBody fills would need the generated binder to hand it back after the parse, a generator change with a fixture regeneration behind it, for one allocation the body's own size
-    htmlbind_escaper: AppendJSONString in htmlbind is still the byte loop; requirement:html-escape-word-scan's measurement now exists on the jsonbind side and favours the same fold
+  htmlbind_escapers_2026_10_21: done the same day, after the jsonbind measurement; Escape, WriteEscaped and AppendJSONString run over one word scan in htmlbind/escape_scan.go, HTMLGenerated 1008 to 789 ns interleaved; per requirement:html-escape-word-scan as_built
 excluded_at_startup: minitoml, cliparser, configbind env and interpolation, per decision:startup-parsers-stay-simple
 reading: outside jsonbind the only clear candidate is the htmlbind escaper pair, and it needs a measurement against its existing prefilter first; everything else is either already vectorised by the standard library or not on a per-request path
 related:

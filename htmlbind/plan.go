@@ -724,35 +724,29 @@ func (r *Renderer) Write(value string) error {
 
 // WriteEscaped emits value under Escape's rules, writing clean runs and
 // entities separately so a value that needs escaping never builds an
-// intermediate string.
+// intermediate string. The scan is Escape's, in one pass: a value needing no
+// change is one write of the whole value.
 func (r *Renderer) WriteEscaped(value string) error {
-	if !escapeNeeded(value) {
-		return r.Write(value)
-	}
 	start := 0
-	for i, c := range value {
+	i := 0
+	for i < len(value) {
+		i = htmlRun(value, i)
+		if i >= len(value) {
+			break
+		}
 		var entity string
-		switch c {
-		case '&':
-			entity = "&amp;"
-		case '<':
-			entity = "&lt;"
-		case '>':
-			entity = "&gt;"
-		case '"':
-			entity = "&#34;"
-		case '\'':
-			entity = "&#39;"
-		case utf8.RuneError:
+		if c := value[i]; c < utf8.RuneSelf {
+			entity = htmlEntity(c)
+		} else {
 			// Escape's rune loop turns each invalid byte into the replacement
 			// character. A genuine U+FFFD decodes to its own three bytes and
 			// passes through inside the clean run.
-			if _, width := utf8.DecodeRuneInString(value[i:]); width != 1 {
+			next, invalid := multibyteRun(value, i)
+			i = next
+			if !invalid {
 				continue
 			}
-			entity = "�"
-		default:
-			continue
+			entity = "\uFFFD"
 		}
 		if start < i {
 			if err := r.Write(value[start:i]); err != nil {
@@ -762,7 +756,14 @@ func (r *Renderer) WriteEscaped(value string) error {
 		if err := r.Write(entity); err != nil {
 			return err
 		}
-		start = i + 1
+		i++
+		start = i
+	}
+	if start == 0 {
+		// Nothing stopped the scan, or there was nothing to scan: the whole
+		// value is one write, which a Collector observes even when empty, as
+		// it did before the scan was one pass.
+		return r.Write(value)
 	}
 	if start < len(value) {
 		return r.Write(value[start:])
