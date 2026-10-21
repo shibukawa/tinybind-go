@@ -64,6 +64,24 @@ second_survey_2026_09_12:
     was: strconv 'g', so a million rendered as 1e+06
     now: encoding/json's spelling, plain notation with an exponent only below 1e-6 or from 1e21, exponent leading zero trimmed; htmlbind/jsonfloat_test.go compares with encoding/json; decided by the maintainer 2026-09-12 when asked which format to keep
   query_binding: unchanged; see form_body.not_done
+third_survey_2026_10_21:
+  asked: what the net/http handler path still allocated and spent after the second survey, read from an allocation profile of the benchfixture handler rows
+  response_headers:
+    was: WriteJSONBytes declared Content-Length as []string{strconv.Itoa(n)}, two allocations per response once the body passed 99 bytes, on a path that otherwise allocated nothing; WriteStatus, WriteError and WriteCBORBytes set Content-Type through Header.Set, one allocation each
+    now: contentLength answers a body under 1024 bytes from a table of one atomic pointer per length, each entry built on first use and shared for the life of the process under the contract jsonContentType already carried; above the bound the two allocations are paid against a body at least that long; the three other writers store a shared Content-Type slice, and WriteError and WriteCBORBytes declare their length the same way
+    bound: 1024 entries, eight kilobytes of pointers in BSS and nothing until a length is answered; TinyGo 0.42 runs the table in tinycheck
+  content_type:
+    was: every bind read Content-Type through Header.Get, which re-canonicalizes the constant key, then MediaType cut, trimmed and case-folded a value that needs none of it; strings.ToLower alone was the cost of a query parse in the profile, and the form path paid it twice
+    now: canonicalHeader indexes the header map by its canonical spelling for the constant keys the runtime reads itself, the same map entry Header.Get reaches since net/http canonicalizes every key it parses; MediaType answers application/json, the urlencoded form type and the empty value as they stand; a name from a struct tag still goes through HeaderValue and Get
+  form_body:
+    was: readFormBody read through io.ReadAll over a LimitReader, three allocations before the string the pairs alias
+    now: jsonbind.ReadLimitHint sized by Content-Length, as the JSON body already was, with a declared length over the bound refused before a read; the buffer and the string it becomes are the two allocations left
+  encoder: AppendString scans plain ASCII a word at a time, per requirement:word-at-a-time-json-scanning as_built_encode_2026_10_21
+  measured: benchfixture allocation rows, which do not move with load: HandlerGenerated 6 to 5, HandlerGeneratedQueryBind 5 to 4, HandlerGeneratedFormBind 10 to 8 and 1128 to 624 bytes; of what remains, the body buffer and the harness writer's header map are the JSON row entire, the query row adds the pair slice and the one escaped value, the form row the pair slice and the body string; timings interleaved eight rounds under a load average above twelve: JSONEncodeGenerated -18%, HandlerGenerated -14%, the other rows inside their noise
+  not_done:
+    query_pairs: the one slice ParseQuery allocates stays, per form_body.not_done above; an inline array would make QueryValues a 160-byte value copied into every lookup
+    json_body_buffer: pooling the buffer ReadJSONBody fills would need the generated binder to hand it back after the parse, a generator change with a fixture regeneration behind it, for one allocation the body's own size
+    htmlbind_escaper: AppendJSONString in htmlbind is still the byte loop; requirement:html-escape-word-scan's measurement now exists on the jsonbind side and favours the same fold
 excluded_at_startup: minitoml, cliparser, configbind env and interpolation, per decision:startup-parsers-stay-simple
 reading: outside jsonbind the only clear candidate is the htmlbind escaper pair, and it needs a measurement against its existing prefilter first; everything else is either already vectorised by the standard library or not on a per-request path
 related:

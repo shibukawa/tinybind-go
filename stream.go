@@ -106,5 +106,5 @@ func NegotiateStreamFormat(r *http.Request) StreamFormat {
 	if r.URL != nil {
 		streamQuery, _ = bindcore.ScanQuery(r.URL.RawQuery, "stream")
 	}
-	return bindcore.NegotiateStream(streamQuery, r.Header.Get("Accept"), r.Header.Get("User-Agent"))
+	return bindcore.NegotiateStream(streamQuery, canonicalHeader(r, "Accept"), canonicalHeader(r, "User-Agent"))
 }

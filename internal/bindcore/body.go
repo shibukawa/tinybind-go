@@ -56,6 +56,14 @@ func MaxMultipartBodyBytes() int64 {
 // MediaType returns the lowercase type/subtype of a Content-Type header value
 // (parameters after ';' are stripped).
 func MediaType(ct string) string {
+	// The two spellings a generated client or a browser form sends are
+	// answered as they stand: with no parameter, no padding and no upper
+	// case there is nothing for the cut, the trim and the fold to do, and
+	// together they were the cost of a query parse on every bind.
+	switch ct {
+	case "application/json", "application/x-www-form-urlencoded", "":
+		return ct
+	}
 	media, _, _ := strings.Cut(ct, ";")
 	return strings.TrimSpace(strings.ToLower(media))
 }

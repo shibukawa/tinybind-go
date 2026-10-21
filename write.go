@@ -3,6 +3,7 @@ package httpbind
 import (
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
@@ -47,7 +48,7 @@ func WriteStatus[T any](w http.ResponseWriter, r *http.Request, status int, valu
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header()["Content-Type"] = jsonContentType
 	w.WriteHeader(status)
 	return jsonbind.EncodeJSON(w, value)
 }
@@ -74,7 +75,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if !ok {
 		return
 	}
-	w.Header().Set("Content-Type", bindcore.ProblemContentType)
+	h := w.Header()
+	h["Content-Type"] = problemContentType
+	h["Content-Length"] = contentLength(len(body))
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
@@ -92,7 +95,7 @@ func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
 	if len(data) == 0 || data[len(data)-1] != '\n' {
 		// The full body is in hand, so declare its length; without it a body
 		// beyond net/http's output buffer is sent chunked for no reason.
-		h["Content-Length"] = []string{strconv.Itoa(len(data) + 1)}
+		h["Content-Length"] = contentLength(len(data) + 1)
 		w.WriteHeader(status)
 		if _, err := w.Write(data); err != nil {
 			return err
@@ -100,7 +103,7 @@ func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
 		_, err := w.Write(newline)
 		return err
 	}
-	h["Content-Length"] = []string{strconv.Itoa(len(data))}
+	h["Content-Length"] = contentLength(len(data))
 	w.WriteHeader(status)
 	_, err := w.Write(data)
 	return err
@@ -110,7 +113,43 @@ func WriteJSONBytes(w http.ResponseWriter, status int, data []byte) error {
 // never be appended to or written through.
 var jsonContentType = []string{"application/json"}
 
+// problemContentType is the shared header value WriteError stores, under the
+// same contract as jsonContentType.
+var problemContentType = []string{bindcore.ProblemContentType}
+
 var newline = []byte("\n")
+
+// contentLengthCached bounds the body lengths whose Content-Length value is
+// built once and then shared, the way jsonContentType is. Declaring the length
+// otherwise costs two allocations per response — the digits and the
+// one-element slice the header map holds — on a path that has just gone to
+// some trouble to allocate nothing else. Above the bound the two allocations
+// are paid, amortized against a body at least that long; the table itself is
+// one pointer per length, filled on first use, so a process that never
+// answers with a given length never pays for it.
+const contentLengthCached = 1024
+
+var contentLengths [contentLengthCached]atomic.Pointer[[1]string]
+
+// contentLength returns the header value for a body of n bytes. The value for
+// a cached length is shared and must never be appended to or written through;
+// a header Add on it reallocates rather than touching it, since the slice is
+// at capacity.
+func contentLength(n int) []string {
+	if n >= contentLengthCached {
+		return []string{strconv.Itoa(n)}
+	}
+	slot := &contentLengths[n]
+	v := slot.Load()
+	if v == nil {
+		// Two first uses racing here each build an equal value; whichever
+		// store lands last is the one later calls share, and nothing holds
+		// the other beyond the response that built it.
+		v = &[1]string{strconv.Itoa(n)}
+		slot.Store(v)
+	}
+	return v[:]
+}
 
 // AppendFileJSON appends an uploaded file the way encoding/json rendered it
 // before generated encoders stopped going through reflection: exported fields

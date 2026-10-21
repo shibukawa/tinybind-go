@@ -3,7 +3,6 @@ package httpbind
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -69,7 +68,20 @@ func isJSONMediaType(media string) bool { return bindcore.IsJSONMediaType(media)
 // Matches application/json, text/json, and *+json types such as
 // application/problem+json (RFC 7807 / RFC 9457).
 func IsJSONRequest(r *http.Request) bool {
-	return isJSONMediaType(mediaType(r.Header.Get("Content-Type")))
+	return isJSONMediaType(mediaType(canonicalHeader(r, "Content-Type")))
+}
+
+// canonicalHeader reads one request header by a key already in canonical
+// form. net/http canonicalizes every key it parses off the wire and Header.Set
+// canonicalizes every key a test stores, so indexing the map with the
+// canonical spelling finds exactly what Header.Get would — without Get
+// re-canonicalizing a constant on every request. The key must be a literal
+// in canonical form; a name from a struct tag still goes through HeaderValue.
+func canonicalHeader(r *http.Request, key string) string {
+	if v := r.Header[key]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
 }
 
 // ParseMultipartMap parses a multipart/form-data body into scalar form fields
@@ -206,7 +218,7 @@ func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (FormValues, map[st
 	if !wantForm && !wantFiles {
 		return FormValues{}, nil, nil
 	}
-	media := mediaType(r.Header.Get("Content-Type"))
+	media := mediaType(canonicalHeader(r, "Content-Type"))
 	if media == "application/x-www-form-urlencoded" {
 		body, err := readFormBody(r)
 		if err != nil {
@@ -229,16 +241,24 @@ func ReadFormBody(r *http.Request, wantForm, wantFiles bool) (FormValues, map[st
 
 // readFormBody reads an urlencoded body under the bound ParseForm applied,
 // as one string the pairs then alias.
+//
+// The read is sized by the Content-Length the way the JSON body's is, so a
+// body of known size lands in one buffer rather than growing through
+// io.ReadAll's, and the string it becomes is the only other allocation. A
+// declared length over the bound is refused before any byte is read.
 func readFormBody(r *http.Request) (string, error) {
 	if r.Body == nil {
 		return "", nil
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, bindcore.MaxFormBodyBytes+1))
-	if err != nil {
-		return "", BadRequest(Problem{Code: "form_parse", Message: "invalid form body"}, err)
-	}
-	if len(data) > bindcore.MaxFormBodyBytes {
+	if r.ContentLength > bindcore.MaxFormBodyBytes {
 		return "", BadRequest(Problem{Code: "form_parse", Message: "form body too large"}, nil)
+	}
+	data, err := jsonbind.ReadLimitHint(r.Body, bindcore.MaxFormBodyBytes, r.ContentLength)
+	if err != nil {
+		if err == jsonbind.ErrBodyTooLarge {
+			return "", BadRequest(Problem{Code: "form_parse", Message: "form body too large"}, nil)
+		}
+		return "", BadRequest(Problem{Code: "form_parse", Message: "invalid form body"}, err)
 	}
 	return string(data), nil
 }

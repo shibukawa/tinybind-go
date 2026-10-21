@@ -31,14 +31,14 @@ func MaxCBORBodyBytes() int64 {
 // IsCBORRequest reports whether the request body should be treated as CBOR.
 // Matches application/cbor and *+cbor types (RFC 6839).
 func IsCBORRequest(r *http.Request) bool {
-	return bindcore.IsCBORMediaType(mediaType(r.Header.Get("Content-Type")))
+	return bindcore.IsCBORMediaType(mediaType(canonicalHeader(r, "Content-Type")))
 }
 
 // AcceptsCBOR reports whether the client asked for a CBOR response. Only an
 // explicit application/cbor entry in Accept counts; wildcards keep the JSON
 // default, so a browser's */* never flips the response format.
 func AcceptsCBOR(r *http.Request) bool {
-	return bindcore.AcceptsCBOR(r.Header.Get("Accept"))
+	return bindcore.AcceptsCBOR(canonicalHeader(r, "Accept"))
 }
 
 // VaryAccept records that the response body depends on the Accept header, so
@@ -72,10 +72,17 @@ func ReadCBORBody(r *http.Request) ([]byte, error) {
 
 // WriteCBORBytes writes an already-encoded CBOR document, the WriteJSONBytes
 // twin. Generated writers build the body into a pooled buffer and hand it
-// over here.
+// over here. The headers are stored the way that twin stores them: a shared
+// Content-Type and a declared length, neither allocated per response.
 func WriteCBORBytes(w http.ResponseWriter, status int, data []byte) error {
-	w.Header().Set("Content-Type", bindcore.CBORContentType)
+	h := w.Header()
+	h["Content-Type"] = cborContentType
+	h["Content-Length"] = contentLength(len(data))
 	w.WriteHeader(status)
 	_, err := w.Write(data)
 	return err
 }
+
+// cborContentType is the shared header value WriteCBORBytes stores, under the
+// same contract as jsonContentType.
+var cborContentType = []string{bindcore.CBORContentType}

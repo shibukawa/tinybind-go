@@ -36,16 +36,32 @@ const hexDigits = "0123456789abcdef"
 // AppendString appends a JSON string literal. Like encoding/json's encoder it
 // escapes <, > and & so the result is safe to embed in HTML, and U+2028/U+2029
 // so it stays valid JavaScript.
+//
+// A run of plain ASCII is passed over eight bytes at a time, the scan
+// Parser.String makes on the way in, and copied through in one piece; the
+// last seven bytes, which are the whole of a short value, go one at a time. A
+// run of multibyte runes stays with the rune decoder rather than returning to
+// the word scan at every rune, since each of them would stop it again.
 func AppendString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
 	start := 0
-	for i := 0; i < len(s); {
+	i := 0
+	for i < len(s) {
+		for i+8 <= len(s) {
+			if m := swarEscapeStop(loadWord(s[i:])); m != 0 {
+				i += swarIndex(m)
+				break
+			}
+			i += 8
+		}
+		for i < len(s) && !escapeStop(s[i]) {
+			i++
+		}
+		if i >= len(s) {
+			break
+		}
 		c := s[i]
 		if c < utf8.RuneSelf {
-			if c >= 0x20 && c != '"' && c != '\\' && c != '<' && c != '>' && c != '&' {
-				i++
-				continue
-			}
 			dst = append(dst, s[start:i]...)
 			switch c {
 			case '"':
@@ -69,25 +85,58 @@ func AppendString(dst []byte, s string) []byte {
 			start = i
 			continue
 		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && size == 1 {
-			dst = append(dst, s[start:i]...)
-			dst = append(dst, '\\', 'u', 'f', 'f', 'f', 'd')
+		for i < len(s) && s[i] >= utf8.RuneSelf {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				dst = append(dst, s[start:i]...)
+				dst = append(dst, '\\', 'u', 'f', 'f', 'f', 'd')
+				i += size
+				start = i
+				continue
+			}
+			if r == '\u2028' || r == '\u2029' {
+				dst = append(dst, s[start:i]...)
+				dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[r&0xF])
+				i += size
+				start = i
+				continue
+			}
 			i += size
-			start = i
-			continue
 		}
-		if r == ' ' || r == ' ' {
-			dst = append(dst, s[start:i]...)
-			dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[r&0xF])
-			i += size
-			start = i
-			continue
-		}
-		i += size
 	}
 	dst = append(dst, s[start:]...)
 	return append(dst, '"')
+}
+
+// escapeStop reports a byte AppendString cannot copy through: a control byte,
+// one of the five escaped punctuation bytes, or the start of a multibyte
+// sequence. It is the byte form of swarEscapeStop.
+func escapeStop(c byte) bool {
+	return c < 0x20 || c >= utf8.RuneSelf || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&'
+}
+
+// loadWord reads the first eight bytes of s as one little-endian word. Written
+// as byte loads rather than through encoding/binary because the parser's
+// buffer is bytes and this one is a string; the compiler fuses the eight loads
+// into one.
+func loadWord(s string) uint64 {
+	_ = s[7]
+	return uint64(s[0]) | uint64(s[1])<<8 | uint64(s[2])<<16 | uint64(s[3])<<24 |
+		uint64(s[4])<<32 | uint64(s[5])<<40 | uint64(s[6])<<48 | uint64(s[7])<<56
+}
+
+// swarEscapeStop marks the lanes AppendString cannot copy through: a byte
+// below 0x20, one of the five punctuation bytes encoding/json escapes, or a
+// byte with the high bit set. The quote and the ampersand (0x22, 0x26) differ
+// in one bit, as do the two angle brackets (0x3c, 0x3e), so each pair is one
+// has-zero test over the word with that bit forced on. As in swarStringStop a
+// borrow can mark a lane above a hit but never below one, and the caller
+// takes the lowest.
+func swarEscapeStop(w uint64) uint64 {
+	qa := (w | swarLow*0x04) ^ (swarLow * '&')
+	lg := (w | swarLow*0x02) ^ (swarLow * '>')
+	bs := w ^ (swarLow * '\\')
+	return ((w-swarLow*0x20)&^w | (qa-swarLow)&^qa | (lg-swarLow)&^lg | (bs-swarLow)&^bs | w) & swarHigh
 }
 
 // AppendInt appends a JSON number.
