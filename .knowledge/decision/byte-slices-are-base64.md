@@ -45,6 +45,7 @@ as_built:
   cbor_copies_what_it_reads: Reader.ReadBytes borrows the body buffer, so a field keeping the slice would alias input the caller may reuse; the copy is what the JSON half pays anyway, since a base64 decode allocates its result
   openapi: 'string with format byte, which is the OpenAPI spelling of base64 and better than the untyped string the default arm gave'
   the_span_is_not_copied_first: decoding reads the encoded payload straight out of the parser buffer, so a large blob costs the one allocation its decoded form needs
+  codec: 'tinygodriver/encoding/simdbase64 since 2026-10-24, aliased base64 in jsonbind and bindcore so the call sites read as the standard package: Go arm64 assembly and native TinyGo C vectors encode a 1 KiB blob about 6.6x and decode it about 2x faster on an M-series host, 32-byte blobs and wasm builds are unchanged, and the native TinyGo binary grows about 16 KB for the kernels'
 value_sources_carry_it_too:
   decided: 2026-08-24, by the maintainer, immediately after the wire form
   what: 'a byte field tagged query, path, header or cookie binds from that value as base64'
