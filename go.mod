@@ -5,17 +5,17 @@ go 1.27.0
 require (
 	github.com/hashicorp/go-envparse v0.1.0
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
-	github.com/shibukawa/tinygodriver v1.2.11
-	golang.org/x/net v0.57.0
-	golang.org/x/tools v0.48.0
+	github.com/shibukawa/tinygodriver v1.3.5
+	golang.org/x/net v0.61.0
+	golang.org/x/tools v0.52.0
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.2 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
-	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
