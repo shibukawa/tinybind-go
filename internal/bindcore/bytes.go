@@ -1,8 +1,9 @@
 package bindcore
 
 import (
-	"encoding/base64"
 	"strings"
+
+	base64 "github.com/shibukawa/tinygodriver/encoding/simdbase64"
 )
 
 // ParseBytes decodes a base64 value carried by a query, path, header or cookie

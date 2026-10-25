@@ -13,6 +13,8 @@ packages:
       - api:decode-json
       - api:encode-json
       - JSON codec registry and document helpers
+    imports:
+      - github.com/shibukawa/tinygodriver/encoding/simdbase64, aliased base64 since 2026-10-24; encoding/base64's API with SIMD on Go arm64 and native TinyGo, the standard library elsewhere, and no dependencies of its own, so the JSON-only graph stays free of HTTP, SQL and the root runtime
     excludes:
       - net/http
       - database/sql

@@ -1,7 +1,6 @@
 package bindcore
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -9,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/shibukawa/tinybind-go/jsonbind"
+	base64 "github.com/shibukawa/tinygodriver/encoding/simdbase64"
 )
 
 // Body-side logic both transport runtimes share. The multipart limit in

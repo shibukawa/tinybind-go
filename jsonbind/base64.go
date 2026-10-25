@@ -1,9 +1,14 @@
 package jsonbind
 
 import (
-	"encoding/base64"
 	"slices"
 	"strconv"
+
+	// simdbase64 is encoding/base64 behind the same API, with SIMD kernels
+	// on Go arm64 and on native TinyGo builds and the standard library
+	// everywhere else, wasm included. The alias keeps the call sites reading
+	// as the standard package they are compatible with.
+	base64 "github.com/shibukawa/tinygodriver/encoding/simdbase64"
 )
 
 // A byte slice is a string on the wire, not a list of numbers.
