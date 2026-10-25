@@ -69,8 +69,8 @@ tinygo run -target=wasip1 ./testdata/cmd/tinygo-htmlbind-smoke
 
 echo "==> tinygo build -target wasm (JSON-only generated code)"
 JSON_DEPS="$(go list -deps ./testdata/cmd/tinygo-json-smoke)"
-if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go)$' <<<"$JSON_DEPS"; then
-  echo "JSON-only dependency graph contains an HTTP, SQL, or root runtime" >&2
+if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go/httpbind)$' <<<"$JSON_DEPS"; then
+  echo "JSON-only dependency graph contains an HTTP or SQL runtime" >&2
   exit 1
 fi
 tinygo build -target wasm -o /tmp/tinybind-json-smoke.wasm ./testdata/cmd/tinygo-json-smoke
@@ -79,8 +79,8 @@ echo "==> tinygo build -target wasm and run -target wasip1 (TOML-only generated 
 # tomlbind is the TOML layer on its own: the graph must carry none of the CLI,
 # env or config-dir parsers configbind links, and no HTTP or SQL runtime.
 TOML_DEPS="$(go list -deps ./testdata/cmd/tinygo-toml-smoke)"
-if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go|github.com/shibukawa/tinybind-go/configbind|github.com/shibukawa/tinybind-go/cliparser|github.com/shibukawa/configdir|github.com/hashicorp/go-envparse)$' <<<"$TOML_DEPS"; then
-  echo "TOML-only dependency graph contains a config, HTTP, SQL, or root runtime" >&2
+if grep -Eq '^(net/http|database/sql|github.com/shibukawa/tinybind-go/httpbind|github.com/shibukawa/tinybind-go/configbind|github.com/shibukawa/tinybind-go/cliparser|github.com/shibukawa/configdir|github.com/hashicorp/go-envparse)$' <<<"$TOML_DEPS"; then
+  echo "TOML-only dependency graph contains a config, HTTP, or SQL runtime" >&2
   exit 1
 fi
 tinygo build -target wasm -o /tmp/tinybind-toml-smoke.wasm ./testdata/cmd/tinygo-toml-smoke

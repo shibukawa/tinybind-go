@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/hashicorp/go-envparse v0.1.0
 	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
-	github.com/shibukawa/tinygodriver v1.3.6
+	github.com/shibukawa/tinygodriver v1.3.8
 	golang.org/x/net v0.61.0
 	golang.org/x/tools v0.52.0
 )
