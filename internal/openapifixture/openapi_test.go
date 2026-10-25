@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/generator"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	_ "github.com/shibukawa/tinybind-go/internal/openapifixture" // register generated OpenAPI
 )
 

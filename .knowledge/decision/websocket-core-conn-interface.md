@@ -14,7 +14,7 @@ problem:
 shape:
   interface: |
     type MessageConn interface {
-        ReadMessage() (int, []byte, error)
+        NextReader() (int, io.Reader, error)
         NextWriter(int) (io.WriteCloser, error)
         WriteControl(int, []byte, time.Time) error
         SetReadLimit(int64)
@@ -39,6 +39,13 @@ why_not_duplicate_the_socket_per_package:
   precedent_against: bindcore holds the stream whole because two implementations of one wire contract are two chances to disagree
   here: the read discipline, the deadline placement, the close handshake, and the write serialization are all behaviour a parity test would have to police twice
   cost_of_the_interface: one interface value per connection and one dynamic call per message, which is not measurable beside the JSON work on the same path
+revised_2026-10-25:
+  change: ReadMessage became NextReader, and Read counts the bytes the reader yields against ReadLimit
+  why: ReadMessage hands over a message the driver has already admitted by its wire length, and with permessage-deflate negotiated the wire length is the compressed length; SetReadLimit never saw the inflated size, so a 33 KB frame was accepted as 32 MiB under a 1 MiB limit
+  refusal: a message past ReadLimit gets close code 1009, the socket is marked closed so no normal-closure frame follows, and Read returns a 413 websocket_read_limit problem whose cause is ErrReadLimit
+  driver_sentinel: each transport registers its driver's own ErrReadLimit through RegisterReadLimit, beside RegisterNormalClose, so the driver's wire-length refusal and the socket's inflated-length refusal are one error on both surfaces
+  kept: SetReadLimit on the driver, as the early refusal of an uncompressed frame whose header already states a length over the limit
+  source: downstream report 2026-10-25 against v0.5.37 and tinygodriver v1.3.6; the same defect is CVE-2026-54464 and CVE-2026-54490 in websocket-driver, fixed there by measuring after extension processing
 not_exported:
   where: internal/bindcore
   why: an exported MessageConn invites an application to supply its own, which would put an untested framing implementation behind the typed API

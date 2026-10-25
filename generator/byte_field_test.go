@@ -83,7 +83,7 @@ func TestUnmappableTypeDiagnosticHasNoHole(t *testing.T) {
 // emits the value-source arms.
 func bindOneField(t *testing.T, field string) (string, error) {
 	t.Helper()
-	src := "package main\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/shibukawa/tinybind-go\"\n)\n\n" +
+	src := "package main\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/shibukawa/tinybind-go/httpbind\"\n)\n\n" +
 		"type Doc struct {\n\t" + field + "\n}\n\n" +
 		"func Handler(w http.ResponseWriter, r *http.Request) {\n" +
 		"\tin, err := httpbind.Bind[Doc](r)\n\tif err != nil {\n\t\thttpbind.WriteError(w, r, err)\n\t\treturn\n\t}\n\t_ = in\n}\n\n" +
@@ -157,7 +157,7 @@ const byteFieldSource = `package main
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Message struct {

@@ -78,13 +78,15 @@ go run github.com/shibukawa/tinybind-go/cmd/tinybind-gen generate -dir . -check
 
 ## 最小の API
 
+ランタイムの import パスは `github.com/shibukawa/tinybind-go/httpbind` です。v0.5 まではモジュールルートにあり、`httpbind "github.com/shibukawa/tinybind-go"` と書いていました。v0.6 への移行はこのパスを置き換えてエイリアスを外すだけで、ほかに変わるものはありません。
+
 ```go
 package api
 
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type HelloRequest struct {
@@ -475,12 +477,12 @@ func chat(w http.ResponseWriter, r *http.Request) {
 
 | オプション | 既定値 | 役割 |
 |---|---|---|
-| `ReadLimit` | 1 MiB | 受信メッセージの上限 |
+| `ReadLimit` | 1 MiB | 受信メッセージの上限。伸長後の大きさで数え、超えたピアには close 1009 を送り、`Read` は `ErrReadLimit` を返す |
 | `IdleTimeout` | 60s | すべての読み込みに掛かる制限 |
 | `PingInterval` | 54s | キープアライブ間隔。`IdleTimeout` より短いこと |
 | `WriteTimeout` | 10s | すべての書き込みに掛かる制限 |
 | `Subprotocols` | なし | 優先順に提示。結果は `s.Subprotocol()` で読む |
-| `EnableCompression` | off | permessage-deflate。TinyGo ではバイナリサイズを食う |
+| `EnableCompression` | off | permessage-deflate。TinyGo ではバイナリサイズを食う。`ReadLimit` は伸長後のメッセージを縛ったまま |
 | `CheckOrigin` | 同一ホスト | `func(origin, host string) bool` |
 
 プロセス全体は `httpbind.SetSocketDefaults`、エンドポイント単位は `httpbind.WebSocketWith` で変えられます。`ReadLimit` はモジュールの他のサイズ上限とあわせて[サイズと形の上限](limits.ja.md)に一覧があります。

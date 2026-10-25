@@ -23,8 +23,15 @@ import (
 
 // MessageConn is the part of a driver WebSocket connection a typed socket
 // uses. Both driver Conn types satisfy it structurally, with no adapter.
+//
+// It takes NextReader rather than ReadMessage on purpose. ReadMessage reads a
+// whole message into memory before the caller can see it, and the driver's
+// read limit counts the bytes on the wire: with permessage-deflate negotiated
+// those are the compressed bytes, so a 33 KB frame can inflate to 32 MiB
+// without the limit noticing. A reader lets the socket count the bytes it is
+// actually handed and stop at the limit the options state.
 type MessageConn interface {
-	ReadMessage() (messageType int, p []byte, err error)
+	NextReader() (messageType int, r io.Reader, err error)
 	NextWriter(messageType int) (io.WriteCloser, error)
 	WriteControl(messageType int, data []byte, deadline time.Time) error
 	SetReadLimit(limit int64)
@@ -44,6 +51,7 @@ const (
 	pingMessage   = 9
 
 	closeNormalClosure = 1000
+	closeMessageTooBig = 1009
 )
 
 var (
@@ -51,6 +59,11 @@ var (
 	ErrSocketClosed = errors.New("httpbind: socket closed")
 	// ErrBinaryMessage reports a binary frame on a socket carrying JSON.
 	ErrBinaryMessage = errors.New("httpbind: binary message on a JSON socket")
+	// ErrReadLimit reports an inbound message larger than ReadLimit. It is the
+	// cause of the error Read returns whether the driver refused the frame by
+	// its wire length or the socket refused the message by its inflated
+	// length, so one check covers both transports and both encodings.
+	ErrReadLimit = errors.New("httpbind: websocket message exceeds the read limit")
 )
 
 // Socket option defaults. Every one is non-zero: an unset limit is an
@@ -312,6 +325,19 @@ func (s *Socket[In, Out]) Subprotocol() string {
 // deadline by value when a read begins, so the bound has to be in place before
 // the call rather than pushed into it afterwards.
 //
+// ReadLimit is enforced here, on the bytes the message yields, and not only by
+// the driver. The driver's limit sums frame payload lengths as they appear on
+// the wire, which with permessage-deflate is the compressed size; a message at
+// deflate's best ratio inflates about a thousandfold past it. Counting what
+// the reader hands over bounds the message the application receives, which is
+// the size the option names. The driver's check stays as the early refusal: a
+// wire length over the limit is refused before any payload is read.
+//
+// A message over the limit ends the socket the way the driver ends one: a
+// close frame carrying 1009 (message too big), then an error whose cause is
+// ErrReadLimit. The driver's own refusal is reshaped to the same error, so a
+// handler tests one sentinel on either transport.
+//
 // A decode failure is returned without closing the socket, because a message
 // this application cannot read is the application's to answer.
 func (s *Socket[In, Out]) Read() (In, error) {
@@ -325,9 +351,9 @@ func (s *Socket[In, Out]) Read() (In, error) {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.opts.IdleTimeout)); err != nil {
 		return zero, err
 	}
-	messageType, data, err := s.conn.ReadMessage()
+	messageType, r, err := s.conn.NextReader()
 	if err != nil {
-		return zero, err
+		return zero, s.readError(err)
 	}
 	if messageType != textMessage {
 		return zero, BadRequest(Problem{
@@ -335,7 +361,54 @@ func (s *Socket[In, Out]) Read() (In, error) {
 			Message: "expected a text frame carrying JSON",
 		}, ErrBinaryMessage)
 	}
+	// ReadLimitHint reads one byte past the limit to tell "at it" from "over
+	// it", so a message exactly ReadLimit long is still delivered.
+	data, err := jsonbind.ReadLimitHint(r, s.opts.ReadLimit, 0)
+	if err != nil {
+		if errors.Is(err, jsonbind.ErrBodyTooLarge) {
+			s.closeTooBig()
+			return zero, readLimitError()
+		}
+		return zero, s.readError(err)
+	}
 	return jsonbind.DecodeJSONBytes[In](data)
+}
+
+// readError reshapes a driver read failure. The driver's own read-limit
+// refusal has already sent the 1009 close frame, so the socket is marked
+// closed — a second close frame from Close would be a protocol error — and
+// the error becomes the one the inflated-length check returns.
+func (s *Socket[In, Out]) readError(err error) error {
+	if isDriverReadLimit(err) {
+		s.closed.Store(true)
+		return readLimitError()
+	}
+	return err
+}
+
+// closeTooBig sends the close frame for a message over the limit, once, and
+// marks the socket closed so no normal-closure frame follows it.
+func (s *Socket[In, Out]) closeTooBig() {
+	if !s.closed.CompareAndSwap(false, true) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.conn.WriteControl(
+		closeMessage,
+		closeFrame(closeMessageTooBig),
+		time.Now().Add(s.opts.WriteTimeout),
+	)
+}
+
+// readLimitError is the error a message over ReadLimit produces. It carries a
+// Problem like the socket's other refusals, with the status that close code
+// 1009 corresponds to, and ErrReadLimit as its cause.
+func readLimitError() error {
+	return PayloadTooLarge(Problem{
+		Code:    "websocket_read_limit",
+		Message: "message exceeds the read limit",
+	}, ErrReadLimit)
 }
 
 // Write encodes v as one text frame. Safe to call from any goroutine.
@@ -470,6 +543,33 @@ func RegisterNormalClose(fn func(error) bool) {
 	if fn != nil {
 		normalCloseClassifiers = append(normalCloseClassifiers, fn)
 	}
+}
+
+// readLimitClassifiers hold each transport's rule for recognizing the driver's
+// own read-limit refusal, which is a sentinel of the driver's package and so,
+// like the CloseError types, is registered by the transport that imports it.
+var readLimitClassifiers []func(error) bool
+
+// RegisterReadLimit adds a transport's rule for the driver's read-limit error.
+// Each transport package calls it once from init, so Read returns one error
+// for a message over the limit whichever transport and whichever check —
+// the driver's wire length or the socket's inflated length — refused it.
+func RegisterReadLimit(fn func(error) bool) {
+	if fn != nil {
+		readLimitClassifiers = append(readLimitClassifiers, fn)
+	}
+}
+
+func isDriverReadLimit(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, fn := range readLimitClassifiers {
+		if fn(err) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsNormalClose reports whether err is the ordinary end of a socket rather than

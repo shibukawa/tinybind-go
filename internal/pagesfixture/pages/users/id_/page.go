@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // DisplayName is the page's own loader, bound by the template with {val}. The

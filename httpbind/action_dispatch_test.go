@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 func postForm(body string) *http.Request {

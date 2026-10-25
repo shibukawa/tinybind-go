@@ -3,7 +3,7 @@ package openapifixture
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // createUserHandler creates one organization user.

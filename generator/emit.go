@@ -252,8 +252,7 @@ func writeMappingImports(out *bytes.Buffer, body []byte, target transportTarget)
 		} else if path != item.path {
 			// A swapped runtime is aliased to the qualifier every emitted call
 			// already spells, which is the whole point of the pairing. The
-			// unswapped path is left alone even when its last element differs
-			// from the package name, because that is how it has always read.
+			// unswapped path needs none: its last element is the package name.
 			tinybind = append(tinybind, item.qualifier+" "+strconv.Quote(path))
 		} else {
 			tinybind = append(tinybind, strconv.Quote(path))

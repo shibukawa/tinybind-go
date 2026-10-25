@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/fasthttpbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 	"github.com/shibukawa/tinygodriver/fasthttp"
 )

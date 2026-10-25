@@ -32,7 +32,7 @@ func use() { _, _ = jsonbind.DecodeJSON[Note](nil) }
 		t.Fatal(err)
 	}
 	s := string(code)
-	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go"`) || strings.Contains(s, "RegisterBind") || strings.Contains(s, "RegisterWrite") {
+	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go/httpbind"`) || strings.Contains(s, "RegisterBind") || strings.Contains(s, "RegisterWrite") {
 		t.Fatalf("decode-only output contains HTTP mapping:\n%s", s)
 	}
 	if !strings.Contains(s, "RegisterDecode[Note]") {
@@ -68,7 +68,7 @@ func use() { _ = jsonbind.EncodeJSON[Note](io.Discard, Note{}) }
 		t.Fatal(err)
 	}
 	s := string(code)
-	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go"`) || strings.Contains(s, "RegisterBind") || strings.Contains(s, "RegisterWrite") || strings.Contains(s, "RegisterDecode") {
+	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go/httpbind"`) || strings.Contains(s, "RegisterBind") || strings.Contains(s, "RegisterWrite") || strings.Contains(s, "RegisterDecode") {
 		t.Fatalf("encode-only output contains unrelated mapping:\n%s", s)
 	}
 	if !strings.Contains(s, "RegisterEncode[Note]") {
@@ -110,7 +110,7 @@ func use(rows *sql.Rows) { _, _ = sqlbind.ScanRows[Organization](rows) }
 			t.Fatalf("missing %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go"`) || strings.Contains(s, `"reflect"`) {
+	if strings.Contains(s, `"net/http"`) || strings.Contains(s, `"github.com/shibukawa/tinybind-go/httpbind"`) || strings.Contains(s, `"reflect"`) {
 		t.Fatalf("SQL-only output has unrelated dependency:\n%s", s)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "tinybind_gen.go"), code, 0o644); err != nil {
@@ -167,7 +167,7 @@ func TestAnalyze_CustomDiscoverySymbol(t *testing.T) {
 	compat := `package compat
 import (
  "io"
- hb "github.com/shibukawa/tinybind-go"
+ hb "github.com/shibukawa/tinybind-go/httpbind"
 )
 type File = hb.File
 func DecodeJSON[T any](io.Reader) (T,error) { var z T; return z,nil }
@@ -208,7 +208,7 @@ func TestAnalyze_DiscoversInferredWriteType(t *testing.T) {
 	src := `package sample
 import (
  "net/http"
- "github.com/shibukawa/tinybind-go"
+ "github.com/shibukawa/tinybind-go/httpbind"
 )
 type Response struct{ ID int }
 func use(w http.ResponseWriter,r *http.Request){ _ = httpbind.Write(w,r,Response{ID:1}) }

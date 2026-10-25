@@ -10,7 +10,7 @@ detection_call: "httpbind.Bind[T](r)"
 example: "input, err := httpbind.Bind[CreateUserRequest](r)"
 model_source: generic type argument T
 symbol_identity: rule:go-types-symbol-identity
-must_be: github.com/shibukawa/tinybind-go.Bind
+must_be: github.com/shibukawa/tinybind-go/httpbind.Bind
 reject: same-named Bind from other packages
 alias_ok: true
 scope:

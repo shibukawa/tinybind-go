@@ -40,7 +40,7 @@ const concurrentHandlerSource = `package pkg%[1]d
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	_ "github.com/shibukawa/tinybind-go/htmlbind"
 )
 

@@ -198,7 +198,7 @@ func TestBuildOpenAPI_RequiredIsJSONArray(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct {

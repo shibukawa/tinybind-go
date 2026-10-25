@@ -67,7 +67,7 @@ type control struct {
 	payload     []byte
 }
 
-func (c *fakeConn) ReadMessage() (int, []byte, error) {
+func (c *fakeConn) NextReader() (int, io.Reader, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.readIndex >= len(c.inbound) {
@@ -78,7 +78,10 @@ func (c *fakeConn) ReadMessage() (int, []byte, error) {
 	if frame.err != nil {
 		return 0, nil, frame.err
 	}
-	return frame.messageType, []byte(frame.payload), nil
+	// A reader with no Len method, so the socket cannot size its buffer from
+	// the payload and has to count what it is handed, the way it must with a
+	// decompressing reader in front of the wire.
+	return frame.messageType, io.MultiReader(strings.NewReader(frame.payload)), nil
 }
 
 func (c *fakeConn) NextWriter(int) (io.WriteCloser, error) {
@@ -339,5 +342,117 @@ func TestCheckOriginDefault(t *testing.T) {
 		if got := bindcore.CheckOriginDefault(tc.origin, tc.host); got != tc.want {
 			t.Errorf("CheckOriginDefault(%q, %q) = %v, want %v", tc.origin, tc.host, got, tc.want)
 		}
+	}
+}
+
+// A payload of exactly n bytes that the test codec decodes.
+func documentOfLength(n int) string {
+	const overhead = len(`{"text":"`) + len(`"}`)
+	return `{"text":"` + strings.Repeat("a", n-overhead) + `"}`
+}
+
+func closeCode(c control) int {
+	if c.messageType != 8 || len(c.payload) != 2 {
+		return -1
+	}
+	return int(c.payload[0])<<8 | int(c.payload[1])
+}
+
+func TestReadBoundsTheMessageByTheBytesItIsHanded(t *testing.T) {
+	// The fake hands the socket a reader with no length, the position a
+	// decompressing reader puts it in: the only size it can enforce is the one
+	// it counts. A driver limit on the wire bytes never sees this length.
+	opts := testOptions()
+	opts.ReadLimit = 64
+	conn := &fakeConn{inbound: []inboundFrame{
+		{messageType: 1, payload: documentOfLength(64)},
+		{messageType: 1, payload: documentOfLength(65)},
+		{messageType: 1, payload: documentOfLength(16)},
+	}}
+	socket := bindcore.NewSocket[msg, msg](conn, opts)
+
+	if _, err := socket.Read(); err != nil {
+		t.Fatalf("a message exactly at the limit must be delivered: %v", err)
+	}
+
+	_, err := socket.Read()
+	if err == nil {
+		t.Fatal("a message one byte over the limit was delivered")
+	}
+	if !errors.Is(err, bindcore.ErrReadLimit) {
+		t.Fatalf("err = %v, want ErrReadLimit as its cause", err)
+	}
+	problem, ok := bindcore.AsHTTPError(err)
+	if !ok || problem.Problem.Code != "websocket_read_limit" || problem.Status != 413 {
+		t.Fatalf("err = %v, want a 413 websocket_read_limit problem", err)
+	}
+
+	// The peer is told why, with the code the driver itself uses, exactly once.
+	if len(conn.controls) != 1 || closeCode(conn.controls[0]) != 1009 {
+		t.Fatalf("controls = %v, want one close frame carrying 1009", conn.controls)
+	}
+	// The socket is over: the next message, though small, is not read, and
+	// Close adds no second close frame to the one already sent.
+	if _, err := socket.Read(); err == nil {
+		t.Fatal("read after a refused message should fail")
+	}
+	if err := socket.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(conn.controls) != 1 {
+		t.Fatalf("controls = %v, want no normal-closure frame after the 1009", conn.controls)
+	}
+}
+
+func TestServeSocketReportsAnOversizeMessageAndSendsOneCloseFrame(t *testing.T) {
+	opts := testOptions()
+	opts.ReadLimit = 64
+	opts.PingInterval = 0
+	conn := &fakeConn{inbound: []inboundFrame{
+		{messageType: 1, payload: documentOfLength(65)},
+	}}
+
+	err := bindcore.ServeSocket(conn, opts, func(s *bindcore.Socket[msg, msg]) error {
+		_, err := s.Read()
+		return err
+	})
+	// A refused message is a failure the stream error handler should see, not
+	// a normal close to be swallowed.
+	if !errors.Is(err, bindcore.ErrReadLimit) {
+		t.Fatalf("ServeSocket returned %v, want the read-limit error", err)
+	}
+	if bindcore.IsNormalClose(err) {
+		t.Fatal("a read-limit refusal was classified as a normal close")
+	}
+	if len(conn.controls) != 1 || closeCode(conn.controls[0]) != 1009 {
+		t.Fatalf("controls = %v, want exactly one 1009 close frame", conn.controls)
+	}
+}
+
+var errFakeDriverLimit = errors.New("fake driver: read limit exceeded")
+
+func TestTheDriverOwnReadLimitRefusalIsTheSameError(t *testing.T) {
+	// The transport registers the driver's sentinel, the way it registers the
+	// driver's CloseError for IsNormalClose. The fake stands in for that
+	// transport here.
+	bindcore.RegisterReadLimit(func(err error) bool { return errors.Is(err, errFakeDriverLimit) })
+
+	conn := &fakeConn{inbound: []inboundFrame{{err: errFakeDriverLimit}}}
+	socket := bindcore.NewSocket[msg, msg](conn, testOptions())
+
+	_, err := socket.Read()
+	if !errors.Is(err, bindcore.ErrReadLimit) {
+		t.Fatalf("err = %v, want ErrReadLimit as its cause", err)
+	}
+	if problem, ok := bindcore.AsHTTPError(err); !ok || problem.Problem.Code != "websocket_read_limit" {
+		t.Fatalf("err = %v, want the websocket_read_limit problem", err)
+	}
+	// The driver sent its own 1009 before returning, so the socket sends
+	// nothing: not a second 1009, and not a normal closure from Close.
+	if err := socket.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(conn.controls) != 0 {
+		t.Fatalf("controls = %v, want none after the driver's own refusal", conn.controls)
 	}
 }

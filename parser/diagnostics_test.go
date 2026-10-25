@@ -16,7 +16,7 @@ func TestCheckPackage_DynamicPatternDiagnostic(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct{ Name string }
@@ -97,7 +97,7 @@ func TestParsePackage_WriteStatusSuccessStatuses(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type CreateReq struct{ Name string }

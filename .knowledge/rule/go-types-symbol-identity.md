@@ -22,7 +22,7 @@ route_registration_only:
   - "(*net/http.ServeMux).HandleFunc"
 
 tinybind_calls_only:
-  package: github.com/shibukawa/tinybind-go
+  package: github.com/shibukawa/tinybind-go/httpbind
   functions:
     - Bind
     - Write
@@ -49,7 +49,7 @@ tinybind_calls_only:
 alias_import:
   required: true
   example: |
-    import hb "github.com/shibukawa/tinybind-go"
+    import hb "github.com/shibukawa/tinybind-go/httpbind"
     hb.Bind[T](r)           # recognized via types
     hb.BadRequest(...)      # recognized via types
   forbid: matching only default name "httpbind"

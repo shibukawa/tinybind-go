@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 func TestOpenAPIJSON_Unregistered(t *testing.T) {

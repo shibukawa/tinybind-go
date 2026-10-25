@@ -289,7 +289,7 @@ func (f FieldPlan) GoType() string {
 }
 
 const (
-	httpbindImportPath = "github.com/shibukawa/tinybind-go"
+	httpbindImportPath = "github.com/shibukawa/tinybind-go/httpbind"
 	jsonbindImportPath = "github.com/shibukawa/tinybind-go/jsonbind"
 	sqlbindImportPath  = "github.com/shibukawa/tinybind-go/sqlbind"
 )

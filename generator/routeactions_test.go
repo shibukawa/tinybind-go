@@ -37,7 +37,7 @@ export component Page(): html { {val name = LoadName()} <p>{name}</p> }`)
 import (
 	"context"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type User struct {

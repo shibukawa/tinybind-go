@@ -5,9 +5,9 @@ package app
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/htmlbind"
 	"github.com/shibukawa/tinybind-go/htmlupdate"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // The partial-update entries in a handler, which is the shape the whole

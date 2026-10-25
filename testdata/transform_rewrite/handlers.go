@@ -5,7 +5,7 @@ package app
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // createUser is the ordinary shape: bind, work, write, and report errors.

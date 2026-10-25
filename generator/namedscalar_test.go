@@ -25,7 +25,7 @@ const namedScalarSource = `package main
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type UserID string

@@ -17,7 +17,7 @@ func TestBuildOpenAPI_WriteStatusCreated(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type CreateReq struct {

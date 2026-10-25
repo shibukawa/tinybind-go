@@ -22,7 +22,7 @@ const typedActionHeader = `package users
 import (
 	"context"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type User struct{ ID string }

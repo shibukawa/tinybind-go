@@ -5,7 +5,7 @@
 
 package openapifixture
 
-import "github.com/shibukawa/tinybind-go"
+import "github.com/shibukawa/tinybind-go/httpbind"
 
 func init() {
 	httpbind.RegisterOpenAPIFragmentString("github.com/shibukawa/tinybind-go/internal/openapifixture", openapiFragmentJSON)

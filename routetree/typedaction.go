@@ -12,7 +12,7 @@ import (
 // annotation this module ships. A framework declaring its own supplies its own
 // pair through [ActionDeclaration].
 const (
-	DefaultActionDeclarationImport  = "github.com/shibukawa/tinybind-go"
+	DefaultActionDeclarationImport  = "github.com/shibukawa/tinybind-go/httpbind"
 	DefaultActionDeclarationPackage = "httpbind"
 	DefaultActionDeclarationName    = "ServerAction"
 )
@@ -30,9 +30,11 @@ type ActionDeclaration struct {
 	// imports it without an explicit alias.
 	//
 	// It has to be declared rather than derived, because a path's last element
-	// is not always the package name: this module's own path ends in
-	// tinybind-go and its package is httpbind. The handler shape check never
-	// met that, resolving only net/http, where the two agree.
+	// is not always the package name: this module's own runtime lived at the
+	// module root, reached as httpbind from a path ending in tinybind-go,
+	// until v0.6, and a framework's annotation package may still be spelled
+	// that way. The handler shape check never met that, resolving only
+	// net/http, where the two agree.
 	Package string
 	// Name is the function name within it.
 	Name string
