@@ -5,8 +5,8 @@ package pages
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/about"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/archive"
 	"github.com/shibukawa/tinybind-go/internal/pagesfixture/pages/records/id_"

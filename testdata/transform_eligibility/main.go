@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type CreateUserRequest struct {

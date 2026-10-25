@@ -15,7 +15,7 @@ import (
 	"os"
 	"time"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinygodriver/httpserver"
 
 	// Registers the host Netdever for TinyGo's net package.

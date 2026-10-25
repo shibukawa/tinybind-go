@@ -133,7 +133,7 @@ func TestParsePackage_RejectsForeignHandleFunc(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type FakeMux struct{}
@@ -180,7 +180,7 @@ func TestParsePackage_AliasImportRecognized(t *testing.T) {
 import (
 	"net/http"
 
-	hb "github.com/shibukawa/tinybind-go"
+	hb "github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct{ Name string }
@@ -235,7 +235,7 @@ func TestParsePackage_RejectsForeignBindAndError(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct{ Name string }
@@ -298,7 +298,7 @@ func TestParsePackage_HTTPPackageHandleFunc(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct{}

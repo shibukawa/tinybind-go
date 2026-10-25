@@ -78,13 +78,15 @@ The one-package rule shapes more than caching. Because a single invocation never
 
 ## Minimal API
 
+The runtime is imported as `github.com/shibukawa/tinybind-go/httpbind`. Up to v0.5 it was the module root, spelled `httpbind "github.com/shibukawa/tinybind-go"`; moving to v0.6 is replacing that path and dropping the alias, with no other change.
+
 ```go
 package api
 
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type HelloRequest struct {
@@ -488,12 +490,12 @@ The runtime owns the connection's lifecycle, and every knob has a working defaul
 
 | Option | Default | What it does |
 |---|---|---|
-| `ReadLimit` | 1 MiB | Largest inbound message |
+| `ReadLimit` | 1 MiB | Largest inbound message, counted after decompression; over it the peer gets close 1009 and `Read` returns `ErrReadLimit` |
 | `IdleTimeout` | 60s | Bound placed on every read |
 | `PingInterval` | 54s | Keepalive cadence; must be shorter than `IdleTimeout` |
 | `WriteTimeout` | 10s | Bound placed on every write |
 | `Subprotocols` | none | Offered in preference order; read the result with `s.Subprotocol()` |
-| `EnableCompression` | off | permessage-deflate, which costs binary size under TinyGo |
+| `EnableCompression` | off | permessage-deflate, which costs binary size under TinyGo; `ReadLimit` still bounds the inflated message |
 | `CheckOrigin` | same-host | `func(origin, host string) bool` |
 
 Change them per process with `httpbind.SetSocketDefaults`, or per endpoint with `httpbind.WebSocketWith`. `ReadLimit` is listed with the module's other size limits in [size and shape limits](limits.md).

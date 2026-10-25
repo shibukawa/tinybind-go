@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/fasthttpbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinybind-go/internal/bindcore"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 	"github.com/shibukawa/tinygodriver/fasthttp"
@@ -331,5 +331,123 @@ func TestIsNormalCloseParity(t *testing.T) {
 	}
 	if httpbind.IsNormalClose(errors.New("boom")) || fasthttpbind.IsNormalClose(errors.New("boom")) {
 		t.Error("a plain error was classified as a normal close")
+	}
+}
+
+// dialSocketWith dials with the caller's dialer and also returns the handshake
+// response, for a test that has to know what the handshake negotiated.
+func dialSocketWith(t *testing.T, url string, dialer *websocket.Dialer) (*websocket.Conn, *http.Response) {
+	t.Helper()
+	conn, resp, err := dialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial %s: %v", url, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn, resp
+}
+
+// readLimitBackends serve echoSocket with the stream error handler captured,
+// so a test can assert what the runtime reported about a refused message.
+func readLimitBackends(t *testing.T) (backends []socketBackend, reported chan error) {
+	t.Helper()
+	reported = make(chan error, 8)
+	bindcore.SetStreamErrorHandler(func(err error) { reported <- err })
+	t.Cleanup(func() { bindcore.SetStreamErrorHandler(nil) })
+	return socketBackends(), reported
+}
+
+// The read limit bounds the message the application receives, not the bytes on
+// the wire. With permessage-deflate negotiated the two differ by the deflate
+// ratio — about a thousand to one for this payload — so a 2 MiB message that
+// occupies a few kilobytes on the wire has to be refused by its inflated
+// length, which only the socket's own count can see. The plain case is the
+// driver's wire-length refusal, reshaped to the same error, on both transports.
+func TestAMessageOverTheReadLimitIsRefusedByItsInflatedLengthOnBothTransports(t *testing.T) {
+	const readLimit = 64 << 10
+	message := `{"text":"` + strings.Repeat("a", 2<<20) + `"}`
+
+	for _, compressed := range []bool{true, false} {
+		backends, reported := readLimitBackends(t)
+		for _, backend := range backends {
+			name := backend.name + "/plain"
+			if compressed {
+				name = backend.name + "/deflate"
+			}
+			t.Run(name, func(t *testing.T) {
+				url, _ := backend.serve(t, fasthttpbind.SocketOptions{
+					ReadLimit:         readLimit,
+					EnableCompression: compressed,
+				})
+				dialer := &websocket.Dialer{HandshakeTimeout: 5 * time.Second, EnableCompression: compressed}
+				conn, resp := dialSocketWith(t, url, dialer)
+				negotiated := strings.Contains(resp.Header.Get("Sec-WebSocket-Extensions"), "permessage-deflate")
+				if negotiated != compressed {
+					t.Fatalf("permessage-deflate negotiated = %v, want %v: the test would not exercise the path it names", negotiated, compressed)
+				}
+
+				// The server may reset the connection before the whole message
+				// is written; what matters is what it did with the part it read.
+				_ = conn.WriteMessage(websocket.TextMessage, []byte(message))
+
+				select {
+				case err := <-reported:
+					if !errors.Is(err, httpbind.ErrReadLimit) || !errors.Is(err, fasthttpbind.ErrReadLimit) {
+						t.Fatalf("reported %v, want ErrReadLimit from either surface", err)
+					}
+					problem, ok := bindcore.AsHTTPError(err)
+					if !ok || problem.Problem.Code != "websocket_read_limit" {
+						t.Fatalf("reported %v, want the websocket_read_limit problem", err)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("the oversize message was not reported: it was read in full")
+				}
+
+				// No echo comes back. The peer sees the 1009 close frame when
+				// the reset of the unread remainder does not overtake it; a
+				// transport error is the other way the same refusal arrives.
+				_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+				_, data, err := conn.ReadMessage()
+				if err == nil {
+					t.Fatalf("got a %d-byte message back, want the socket closed", len(data))
+				}
+				var closeErr *websocket.CloseError
+				if errors.As(err, &closeErr) && closeErr.Code != websocket.CloseMessageTooBig {
+					t.Fatalf("close code = %d, want 1009", closeErr.Code)
+				}
+			})
+		}
+	}
+}
+
+// The control for the test above: the same compressed message under a limit
+// that admits it is read whole and echoed, so the refusal is the limit and not
+// the inflating path.
+func TestACompressedMessageWithinTheReadLimitIsDeliveredOnBothTransports(t *testing.T) {
+	text := strings.Repeat("a", 2<<20)
+	message := `{"text":"` + text + `"}`
+
+	for _, backend := range socketBackends() {
+		t.Run(backend.name, func(t *testing.T) {
+			url, _ := backend.serve(t, fasthttpbind.SocketOptions{
+				ReadLimit:         4 << 20,
+				EnableCompression: true,
+			})
+			dialer := &websocket.Dialer{HandshakeTimeout: 5 * time.Second, EnableCompression: true}
+			conn, resp := dialSocketWith(t, url, dialer)
+			if !strings.Contains(resp.Header.Get("Sec-WebSocket-Extensions"), "permessage-deflate") {
+				t.Fatal("permessage-deflate was not negotiated")
+			}
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+				t.Fatalf("client write: %v", err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				t.Fatalf("client read: %v", err)
+			}
+			if want := `{"text":"echo:` + text + `"}`; string(data) != want {
+				t.Fatalf("echo is %d bytes, want %d", len(data), len(want))
+			}
+		})
 	}
 }

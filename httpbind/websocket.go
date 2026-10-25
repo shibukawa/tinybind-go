@@ -27,7 +27,20 @@ func init() {
 		return errors.Is(err, websocket.ErrCloseSent) ||
 			websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
 	})
+	// The driver refuses a frame whose wire length is over the limit with its
+	// own sentinel; the socket refuses a message whose inflated length is over
+	// it with ErrReadLimit. Registering the former makes Read return the
+	// latter for both.
+	bindcore.RegisterReadLimit(func(err error) bool {
+		return errors.Is(err, websocket.ErrReadLimit)
+	})
 }
+
+// ErrReadLimit is the cause of the error Read returns for an inbound message
+// larger than SocketOptions.ReadLimit. The limit counts the message as
+// delivered, after permessage-deflate has inflated it, not the bytes on the
+// wire; the peer is sent close code 1009 and the socket is closed.
+var ErrReadLimit = bindcore.ErrReadLimit
 
 // IsNormalClose reports whether a socket error is the ordinary end of the
 // connection — the peer's normal or going-away close, an already-sent close, or

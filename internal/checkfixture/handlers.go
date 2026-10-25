@@ -3,7 +3,7 @@ package checkfixture
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // RegisterRoutes exposes OpenAPICheck for OpenAPI generation tests.

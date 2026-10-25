@@ -142,7 +142,7 @@ func register(mux *petit.ServeMux) { mux.HandleFunc("POST /notes", route) }
 		{PackagePath: "net/http", Name: "ServeMux"},
 		{PackagePath: "tempmod/handler", Name: "ServeMux"},
 	}
-	opts.RuntimePackages.Set = []string{"github.com/shibukawa/tinybind-go", "tempmod/handler"}
+	opts.RuntimePackages.Set = []string{"github.com/shibukawa/tinybind-go/httpbind", "tempmod/handler"}
 	g := generator.New(opts)
 	plan, err := g.Analyze(dir)
 	if err != nil {

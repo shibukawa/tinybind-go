@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/configbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	_ "github.com/shibukawa/tinybind-go/internal/checkfixture"
 	_ "github.com/shibukawa/tinybind-go/internal/openapifixture"
 	configmodulea "github.com/shibukawa/tinybind-go/testdata/configmodulea"

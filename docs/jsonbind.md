@@ -352,7 +352,7 @@ func save(path string, value Config) error {
 
 ## Keeping generation HTTP-free
 
-The import path decides the dependency. In a JSON-only package, call `jsonbind.DecodeJSON` / `EncodeJSON` directly instead of going through the root HTTP package; the generated output then references `jsonbind` alone and never pulls in `net/http`. For TinyGo and WASM builds, where every transitive dependency costs binary size, that separation is worth enforcing deliberately.
+The import path decides the dependency. In a JSON-only package, call `jsonbind.DecodeJSON` / `EncodeJSON` directly instead of going through the `httpbind` HTTP package; the generated output then references `jsonbind` alone and never pulls in `net/http`. For TinyGo and WASM builds, where every transitive dependency costs binary size, that separation is worth enforcing deliberately.
 
 ## Missing generated codecs
 

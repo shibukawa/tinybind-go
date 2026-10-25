@@ -21,7 +21,17 @@ func init() {
 		return errors.Is(err, websocket.ErrCloseSent) ||
 			websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
 	})
+	// This driver's read-limit sentinel is a distinct value from the net/http
+	// driver's, so each surface registers its own and Read answers alike.
+	bindcore.RegisterReadLimit(func(err error) bool {
+		return errors.Is(err, websocket.ErrReadLimit)
+	})
 }
+
+// ErrReadLimit is the cause of the error Read returns for an inbound message
+// larger than SocketOptions.ReadLimit, counted after permessage-deflate has
+// inflated it. It is the same value the net/http surface exports.
+var ErrReadLimit = bindcore.ErrReadLimit
 
 // IsNormalClose reports whether a socket error is the ordinary end of the
 // connection rather than a failure. It answers the same as the net/http

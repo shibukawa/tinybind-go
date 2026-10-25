@@ -111,7 +111,7 @@ httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
 
 | パス | 役割 |
 |------|------|
-| `.`（`package httpbind`） | ランタイム: Bind / Write / WriteError / WriteStream / OpenAPI 配信 / SwaggerUI |
+| `httpbind/` | ランタイム: Bind / Write / WriteError / WriteStream / OpenAPI 配信 / SwaggerUI（v0.6 より前はモジュールルート） |
 | `jsonbind/` | 単独の DecodeJSON / EncodeJSON。`net/http` と `database/sql` を import しない |
 | `tomlbind/` | `minitoml` 上の単独の DecodeTOML。configbind の TOML 層だけで、env・CLI・設定ディレクトリのパーサを持たない |
 | `sqlbind/` | ScanRows と行変換ヘルパ。`net/http` を import しない |
@@ -224,7 +224,7 @@ result, err := generator.New(options).GeneratePackage(ctx, generator.GenerateReq
 直接呼びます。
 
 生成は利用箇所単位で絞られ、`DecodeJSON[T]` だけを使うコードには JSON
-デコーダだけが生成され、root の HTTP runtime と `net/http` へ依存しません。従来どおり有効な全
+デコーダだけが生成され、`httpbind` の HTTP runtime と `net/http` へ依存しません。従来どおり有効な全
 マッピングを生成する場合は `Options.GenerateAll`、互換File型は
 `Options.FileTypes.Set` で明示できます。
 

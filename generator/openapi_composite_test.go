@@ -55,7 +55,7 @@ const compositeBodySource = `package main
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // Item is one element.
@@ -178,7 +178,7 @@ func TestOpenAPIDocumentsASelfReferentialType(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // Node is a tree.
@@ -216,7 +216,7 @@ func TestOpenAPIDocumentsAFixedLengthArrayBound(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // Board is a fixed grid.

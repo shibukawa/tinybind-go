@@ -110,7 +110,7 @@ httpbind.WriteStream(w, r, func(s *httpbind.Stream[ChatEvent]) error {
 
 | Path | Role |
 |------|------|
-| `.` (`package httpbind`) | Runtime: Bind / Write / WriteError / WriteStream / OpenAPI serve / SwaggerUI |
+| `httpbind/` | Runtime: Bind / Write / WriteError / WriteStream / OpenAPI serve / SwaggerUI (the module root before v0.6) |
 | `jsonbind/` | Standalone DecodeJSON / EncodeJSON runtime; does not import `net/http` or `database/sql` |
 | `tomlbind/` | Standalone DecodeTOML runtime over `minitoml`; the TOML layer of configbind without its env, CLI, or config-dir parsers |
 | `sqlbind/` | ScanRows runtime and row helpers; does not import `net/http` |
@@ -294,7 +294,7 @@ process boundary; tests and composed commands should call `CommandSet.Run` or
 `GeneratePackage` directly.
 
 Generation is usage-aware: a package that only calls `DecodeJSON[T]` gets only
-its JSON decoder, imports `jsonbind`, and does not import the root HTTP runtime
+its JSON decoder, imports `jsonbind`, and does not import the `httpbind` HTTP runtime
 or `net/http`. Set `Options.GenerateAll` for
 the legacy all-enabled-mappings mode. Compatible multipart file aliases can be
 listed in `Options.FileTypes.Set`.

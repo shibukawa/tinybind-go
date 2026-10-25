@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinybind-go/internal/mappingfixture"
 )
 

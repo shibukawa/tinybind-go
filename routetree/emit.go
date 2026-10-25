@@ -23,10 +23,14 @@ const (
 
 // Error codes the default decoder template reports.
 const (
-	CodeInvalidPath    = "invalid_path_parameter"
-	CodeInvalidQuery   = "invalid_query_parameter"
-	CodeMissingPath    = "missing_path_parameter"
-	defaultErrorImport = "github.com/shibukawa/tinybind-go"
+	CodeInvalidPath  = "invalid_path_parameter"
+	CodeInvalidQuery = "invalid_query_parameter"
+	CodeMissingPath  = "missing_path_parameter"
+	// modulePath is the root the runtime packages hang off. The HTTP runtime is
+	// one of them, not the root itself, so its siblings are spelled from here
+	// rather than from it.
+	modulePath         = "github.com/shibukawa/tinybind-go"
+	defaultErrorImport = modulePath + "/httpbind"
 )
 
 // TemplateDecoder is the name of the template that renders a route decoder.
@@ -172,7 +176,7 @@ func DefaultSymbols() Symbols {
 		DispatchAction: "DispatchAction",
 		StrconvImport:  "strconv",
 		StrconvAlias:   "strconv",
-		RuntimeImport:  defaultErrorImport + "/htmlbind",
+		RuntimeImport:  modulePath + "/htmlbind",
 		RuntimeAlias:   "htmlbind",
 	}
 }
@@ -185,7 +189,7 @@ const DefaultFastHTTPImport = "github.com/shibukawa/tinygodriver/fasthttp"
 
 // defaultFastHTTPRuntime is the runtime package the fasthttp symbols call. It
 // declares the same names as the net/http runtime, so only the import moves.
-const defaultFastHTTPRuntime = defaultErrorImport + "/fasthttpbind"
+const defaultFastHTTPRuntime = modulePath + "/fasthttpbind"
 
 // FastHTTPSymbols targets the fasthttpbind runtime this module ships.
 // transportImport names the fasthttp package; empty uses

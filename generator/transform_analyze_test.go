@@ -148,7 +148,7 @@ func TestTransportParamsAreRecorded(t *testing.T) {
 
 func TestImportRewriteIsConfiguration(t *testing.T) {
 	options := DefaultTransformOptions()
-	to, ok := options.RewriteImport("github.com/shibukawa/tinybind-go")
+	to, ok := options.RewriteImport("github.com/shibukawa/tinybind-go/httpbind")
 	if !ok || to != fasthttpbindImportPath {
 		t.Errorf("default runtime rewrite = %q (%v), want %q", to, ok, fasthttpbindImportPath)
 	}

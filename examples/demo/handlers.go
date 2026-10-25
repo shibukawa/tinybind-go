@@ -3,8 +3,8 @@ package main
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinygodriver/httpmux"
 )
 

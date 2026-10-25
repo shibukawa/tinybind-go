@@ -16,7 +16,7 @@ recognized_constructors:
   - httpbind.Internal
   - httpbind.Validation
 symbol_identity: rule:go-types-symbol-identity
-must_be_package: github.com/shibukawa/tinybind-go
+must_be_package: github.com/shibukawa/tinybind-go/httpbind
 alias_ok: true
 note: import alias must still resolve; name-only match of BadRequest is insufficient
 purpose: generate OpenAPI error responses

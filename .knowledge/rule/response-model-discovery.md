@@ -18,8 +18,8 @@ model_source: generic type argument T
 streaming_type: "httpbind.Stream[EventType] via WriteStream[EventType]"
 symbol_identity: rule:go-types-symbol-identity
 must_be:
-  - github.com/shibukawa/tinybind-go.Write
-  - github.com/shibukawa/tinybind-go.WriteStatus
+  - github.com/shibukawa/tinybind-go/httpbind.Write
+  - github.com/shibukawa/tinybind-go/httpbind.WriteStatus
 reject: same-named Write/WriteStream from other packages
 alias_ok: true
 openapi_status: rule:openapi-success-status

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
 	"github.com/shibukawa/tinybind-go/htmlbind"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type redirectParams struct{ ID string }

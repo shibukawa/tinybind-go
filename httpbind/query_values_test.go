@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // The flat scanner replaced r.URL.Query(), so what it must stay is agreement:

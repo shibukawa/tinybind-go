@@ -18,7 +18,7 @@ security review asks every time.
 | multipart body | 1 MiB | `SetMaxMultipartBodyBytes` | 413 |
 | multipart file part | the multipart body limit | same knob | 413 |
 | multipart RAM before spilling | 32 MiB, capped by the body limit | fixed (`DefaultMultipartMaxMemory`) | — |
-| WebSocket message | 1 MiB | `SocketOptions.ReadLimit` | connection closes |
+| WebSocket message, after decompression | 1 MiB | `SocketOptions.ReadLimit` | close frame 1009, connection closes |
 | fixed-length array or `[N]byte` field | the length the Go type declares | the type | 400 |
 | urlencoded form body | **not this module's** — see [what the transport owns](#what-the-transport-owns) | | |
 
@@ -135,8 +135,20 @@ here; both are bounded by the body and URL limits the transport enforces.
 ## WebSocket messages — 1 MiB
 
 `SocketOptions.ReadLimit`, per process with `httpbind.SetSocketDefaults` or per
-endpoint with `httpbind.WebSocketWith`. A peer that sends more has its
-connection closed rather than its message truncated.
+endpoint with `httpbind.WebSocketWith`. A peer that sends more is sent a close
+frame carrying 1009 (message too big) and has its connection closed rather than
+its message truncated; the handler's `Read` returns an error whose cause is
+`httpbind.ErrReadLimit`, on either transport.
+
+The limit counts the message as the application receives it, not the bytes on
+the wire. The two differ once `EnableCompression` is on: permessage-deflate can
+shrink a message about a thousandfold, and the driver's own read limit sums
+frame lengths as they appear on the wire, so a 33 KB frame would inflate to
+32 MiB without that check noticing. The socket therefore counts the bytes the
+message yields after decompression and stops one past the limit, which is the
+bound this table promises. The driver's wire-length check stays in front of it
+as the early refusal: an uncompressed frame over the limit is refused before
+its payload is read.
 
 It sits beside the lifecycle bounds — `IdleTimeout`, `PingInterval`,
 `WriteTimeout` — which are documented with the socket surface in

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 func TestIsJSONRequest_JSONAndPlusJSON(t *testing.T) {

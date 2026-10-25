@@ -3,7 +3,7 @@ package main
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // socketOf names the socket type once so the hub and the handler agree.

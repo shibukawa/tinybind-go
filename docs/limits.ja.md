@@ -17,7 +17,7 @@
 | multipart ボディ | 1 MiB | `SetMaxMultipartBodyBytes` | 413 |
 | multipart のファイルパート | multipart ボディの上限 | 同じつまみ | 413 |
 | multipart をメモリに置く量 | 32 MiB、ボディ上限で頭打ち | 固定（`DefaultMultipartMaxMemory`） | — |
-| WebSocket メッセージ | 1 MiB | `SocketOptions.ReadLimit` | 接続が閉じる |
+| WebSocket メッセージ（伸長後） | 1 MiB | `SocketOptions.ReadLimit` | close 1009 を送り、接続が閉じる |
 | 固定長配列・`[N]byte` フィールド | Go の型が宣言した長さ | 型そのもの | 400 |
 | urlencoded フォームボディ | **このモジュールの管轄外** — [トランスポート側の上限](#トランスポート側の上限)を参照 | | |
 
@@ -129,7 +129,17 @@ cause に持ちます。先頭 `N` 個を格納して残りを捨てるのは、
 
 `SocketOptions.ReadLimit`。プロセス単位なら `httpbind.SetSocketDefaults`、エンドポイント
 単位なら `httpbind.WebSocketWith` で設定します。これを超えて送ってきたピアは、メッセージを
-切り詰められるのではなく接続を閉じられます。
+切り詰められるのではなく、1009（message too big）の close フレームを受け取って接続を
+閉じられます。ハンドラー側の `Read` は、どちらのトランスポートでも `httpbind.ErrReadLimit`
+を cause に持つエラーを返します。
+
+上限が数えるのはアプリケーションが受け取るメッセージの大きさであって、ワイヤ上のバイト数
+ではありません。`EnableCompression` を有効にすると両者は食い違います。permessage-deflate は
+メッセージを千分の一程度まで縮められる一方、ドライバ自身の read limit はフレームヘッダに
+書かれたワイヤ上の長さを累計するので、33 KB のフレームが 32 MiB に伸長してもそちらの検査は
+気づきません。そのためソケットは伸長後にリーダーから出てくるバイト数を数え、上限を 1 バイト
+超えた時点で止めます。この表が約束しているのはその上限です。ドライバのワイヤ長検査はその
+手前に残り、圧縮なしで上限を超えるフレームはペイロードを読む前に拒否されます。
 
 ライフサイクルの上限（`IdleTimeout`、`PingInterval`、`WriteTimeout`）と同じ場所にあり、
 そちらはソケット面と一緒に [httpbind ガイド](httpbind.ja.md)に書かれています。ゼロの

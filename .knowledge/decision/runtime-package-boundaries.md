@@ -19,7 +19,7 @@ packages:
       - net/http
       - database/sql
   httpbind:
-    path: github.com/shibukawa/tinybind-go
+    path: github.com/shibukawa/tinybind-go/httpbind, the module root until v0.6 per decision:httpbind-package-directory
     owns:
       - api:bind
       - api:write

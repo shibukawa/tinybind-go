@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type PingRequest struct{}

@@ -14,7 +14,7 @@ import (
 // refusal names them and nothing else can mask it.
 func bindOneRequest(t *testing.T, fields string) (string, error) {
 	t.Helper()
-	src := "package main\n\nimport \"github.com/shibukawa/tinybind-go\"\n\n" +
+	src := "package main\n\nimport \"github.com/shibukawa/tinybind-go/httpbind\"\n\n" +
 		"type Req struct {\n\t" + fields + "\n}\n\n" +
 		"var _ = func() (Req, error) { return httpbind.Bind[Req](nil) }\n\nfunc main() {}\n"
 	dir := t.TempDir()
@@ -120,12 +120,12 @@ func TestUntaggedSliceStaysBodyBound(t *testing.T) {
 // else is written: form/explode-true is the OpenAPI default for a query
 // parameter, and that is already the repeated spelling.
 func TestOpenAPIDocumentsARepeatedQueryParameterAsAnArray(t *testing.T) {
-	src := "package main\n\nimport \"github.com/shibukawa/tinybind-go\"\n\n" +
+	src := "package main\n\nimport \"github.com/shibukawa/tinybind-go/httpbind\"\n\n" +
 		"// Req is the filter.\ntype Req struct {\n\tTags []string `query:\"tag\"`\n}\n\n" +
 		"func handler(w http.ResponseWriter, r *http.Request) {\n\t_, _ = httpbind.Bind[Req](r)\n}\n\n" +
 		"func main() { http.HandleFunc(\"GET /search\", handler) }\n"
-	src = strings.Replace(src, "import \"github.com/shibukawa/tinybind-go\"",
-		"import (\n\t\"net/http\"\n\n\t\"github.com/shibukawa/tinybind-go\"\n)", 1)
+	src = strings.Replace(src, "import \"github.com/shibukawa/tinybind-go/httpbind\"",
+		"import (\n\t\"net/http\"\n\n\t\"github.com/shibukawa/tinybind-go/httpbind\"\n)", 1)
 
 	dir := t.TempDir()
 	writeTempModule(t, dir)

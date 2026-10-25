@@ -7,7 +7,7 @@ import (
 	"github.com/shibukawa/tinybind-go/generator"
 )
 
-const httpbindPath = "github.com/shibukawa/tinybind-go"
+const httpbindPath = "github.com/shibukawa/tinybind-go/httpbind"
 
 func defaultPatterns(t *testing.T) map[string]generator.CallPattern {
 	t.Helper()

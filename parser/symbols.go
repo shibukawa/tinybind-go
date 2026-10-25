@@ -15,7 +15,7 @@ import (
 
 const (
 	netHTTPPath  = "net/http"
-	httpbindPath = "github.com/shibukawa/tinybind-go"
+	httpbindPath = "github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type RouteSymbol struct {

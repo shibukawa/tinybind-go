@@ -5,7 +5,7 @@ package id_
 import (
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // RouteParams holds the URL inputs of GET /users/{id}.

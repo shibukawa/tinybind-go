@@ -60,7 +60,7 @@ package fixture
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 func Greet(w http.ResponseWriter, r *http.Request) {

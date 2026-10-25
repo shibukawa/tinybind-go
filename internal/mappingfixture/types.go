@@ -3,7 +3,7 @@ package mappingfixture
 import (
 	"encoding/json"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // CreateUserRequest exercises default input, path, and header sources.

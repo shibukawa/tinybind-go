@@ -19,7 +19,7 @@ const fixedArraySource = `package main
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 const seatCount = 3

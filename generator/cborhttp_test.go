@@ -18,7 +18,7 @@ const cborHTTPFixtureSource = `package main
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Tag struct {
@@ -238,7 +238,7 @@ func TestCBORHTTPRefusesARestMap(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type PatchRequest struct {
@@ -281,7 +281,7 @@ func TestCBORHTTPProfileRejectsAFloatField(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Reading struct {

@@ -4,7 +4,7 @@ import (
 	"io"
 	"net/http"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 	"github.com/shibukawa/tinybind-go/jsonbind"
 )
 

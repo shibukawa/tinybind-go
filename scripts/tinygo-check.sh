@@ -31,7 +31,7 @@ echo "==> tinygo test (runtime + generated mapping)"
 # binary still has to compile whatever the excluded tests import. They remain
 # covered by go test.
 tinygo test -run 'Test(Bind|Decode|Write|RoundTrip|GeneratedFile)' ./internal/mappingfixture
-tinygo test ./internal/tinycheck .
+tinygo test ./internal/tinycheck ./httpbind
 # jsonbind is the runtime every TinyGo binary carries, and its nesting bound is
 # sized for TinyGo's stacks, so it runs on both schedulers: the wasm one is where
 # an overflow shows up as a wrong answer rather than a crash.

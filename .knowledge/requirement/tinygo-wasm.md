@@ -24,7 +24,7 @@ v0_1_3_boundary:
 resolution:
   module: github.com/shibukawa/tinybind-go
   JSON-only runtime: jsonbind
-  HTTP runtime: httpbind root package
+  HTTP runtime: the httpbind package
   SQL runtime: sqlbind
   dependency_check: jsonbind dependency graph excludes net/http and database/sql
 acceptance:

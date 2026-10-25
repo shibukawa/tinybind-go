@@ -14,7 +14,7 @@ func TestAnalyzeAndEmit_NoReflect(t *testing.T) {
 	writeTempModule(t, dir)
 	src := `package sample
 
-import "github.com/shibukawa/tinybind-go"
+import "github.com/shibukawa/tinybind-go/httpbind"
 
 type Req struct {
 	Name  string

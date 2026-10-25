@@ -19,7 +19,7 @@ func TestDefaultTag_WithoutCheckTag(t *testing.T) {
 import (
 	"net/http"
 
-	"github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 type Req struct {
@@ -81,7 +81,7 @@ func TestAnalyzePackage_InvalidDefaultFails(t *testing.T) {
 		"unparsable": "package sample\n\ntype Bad struct {\n\tX int `default:\"nope\"`\n}\n",
 		"composite":  "package sample\n\ntype Bad struct {\n\tX []string `payload:\"x\" default:\"a\"`\n}\n",
 		"check_rule": "package sample\n\ntype Bad struct {\n\tX int `check:\"default=1\"`\n}\n",
-		"file_upload": "package sample\n\nimport httpbind \"github.com/shibukawa/tinybind-go\"\n\n" +
+		"file_upload": "package sample\n\nimport \"github.com/shibukawa/tinybind-go/httpbind\"\n\n" +
 			"type Bad struct {\n\tX httpbind.File `payload:\"x\" default:\"a\"`\n}\n",
 	} {
 		t.Run(name, func(t *testing.T) {

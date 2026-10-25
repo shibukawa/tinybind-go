@@ -70,10 +70,10 @@ default_options:
   ServeMuxes: [net/http.ServeMux]
   RouteFunctions: [net/http.Handle, net/http.HandleFunc]
   RuntimePackages:
-    - github.com/shibukawa/tinybind-go
+    - github.com/shibukawa/tinybind-go/httpbind
     - github.com/shibukawa/tinybind-go/jsonbind
     - github.com/shibukawa/tinybind-go/sqlbind
-  FileTypes: [github.com/shibukawa/tinybind-go.File]
+  FileTypes: [github.com/shibukawa/tinybind-go/httpbind.File]
   HTMLTemplatePattern: '*.tb.html'
   SQLTemplatePattern: '*.tb.sql'
   PublicDir: public/generated

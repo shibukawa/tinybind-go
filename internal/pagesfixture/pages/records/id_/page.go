@@ -9,7 +9,7 @@ package id_
 import (
 	"context"
 
-	httpbind "github.com/shibukawa/tinybind-go"
+	"github.com/shibukawa/tinybind-go/httpbind"
 )
 
 // RequireVisible answers whether this record may be rendered at all, and

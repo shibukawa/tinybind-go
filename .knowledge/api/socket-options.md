@@ -17,7 +17,8 @@ fields:
     default: 1 MiB
     reason: the same number as jsonbind's DefaultMaxJSONBodyBytes, so the two limits are unsurprising together
     separate_knob_because: a socket message is not an HTTP body, and raising one should not raise the other
-    on_breach: the driver closes with a protocol code
+    counts: the message as delivered, after permessage-deflate has inflated it; the driver's own SetReadLimit stays installed too, as the early refusal of an uncompressed frame whose header states a length over the limit
+    on_breach: close 1009 from the socket or the driver, then a Read error whose cause is ErrReadLimit, per api:socket-read-write
   idle_timeout:
     default: 60s
     is: the read deadline set before every read, per rule:websocket-deadline-discipline
@@ -43,6 +44,7 @@ fields:
     default: off
     reason: permessage-deflate pulls flate into the binary, which requirement:tinygo-wasm cares about, and only no-context-takeover mode is supported so the saving is smaller than the cost
     overridable: yes, per call and per process
+    read_limit_still_holds: the driver's wire-length check sees only the compressed bytes, so the socket counts the inflated ones; before 2026-10-25 enabling compression quietly lifted the limit by the deflate ratio, about a thousandfold
   check_origin:
     default: refuse when Origin is present and its host differs from Host
     shape: "func(origin, host string) bool, per decision:websocket-origin-check-seam"

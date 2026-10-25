@@ -16,7 +16,7 @@ methods:
   conn: "each shell exposes its own driver Conn, for anything the typed surface does not carry"
 read_behavior:
   - set the read deadline from the idle bound, per rule:websocket-deadline-discipline
-  - read one message
+  - open the next message's reader and read it through jsonbind.ReadLimitHint bounded by ReadLimit, so the limit counts the bytes the message yields after permessage-deflate rather than the wire length the driver sums; one past the limit sends close 1009 and returns ErrReadLimit, per decision:websocket-core-conn-interface revised_2026-10-25
   - decode the payload into In through the generated codec
   - a decode failure is returned and does not close the socket, so a protocol error is the application's to answer
   - single reader only, per decision:websocket-loop-and-write-serialization
@@ -35,7 +35,7 @@ jsonbind_gap:
   encoding_needs_nothing: "EncodeJSON already takes an io.Writer, which is what NextWriter returns"
 errors:
   decode: returned to the caller, with the message left consumed
-  read_limit: the driver closes with a protocol code and returns its own error
+  read_limit: close 1009 and a 413 websocket_read_limit problem whose cause is ErrReadLimit, exported by both surfaces, whether the driver refused the frame by its wire length or the socket refused the message by its inflated length; the socket is closed and Close then sends no second frame
   idle_timeout: a timeout error from the read, which the callback turns into a return
   post_commit: anything the callback returns goes to the installed sink, per decision:websocket-callback-shape
 related:
